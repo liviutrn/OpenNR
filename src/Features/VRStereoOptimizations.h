@@ -144,28 +144,10 @@ struct VRStereoOptimizations
 	 * @brief Returns true when stencil classification/write resources are ready.
 	 *
 	 * This mirrors DispatchStencil prerequisites except transient per-frame inputs
-	 * like depth SRV availability.
+	 * like depth SRV availability, and rejects paused/map/menu views whose camera
+	 * and G-buffer contract is not the gameplay stereo contract.
 	 */
-	bool CanDispatchStencil() const
-	{
-		// Cull Eye 1 geometry only when every pass that repairs it is ready: the stencil
-		// classify/write pass AND the depth-fill + G-buffer-fill passes. Without this, a
-		// fill-shader compile failure would cull Eye 1 and never restore it (full corruption).
-		return loaded &&
-		       settings.stereoMode != StereoMode::Off &&
-		       !settings.debugSkipMerge &&
-		       gBufferFillSupported &&
-		       stencilCS &&
-		       stencilWriteVS &&
-		       stencilWritePS &&
-		       depthFillPS &&
-		       gBufferFillCS &&
-		       texPerPixelMode &&
-		       paramsCB &&
-		       stencilWriteDSS &&
-		       stencilWriteRS &&
-		       depthFillDSS;
-	}
+	bool CanDispatchStencil() const;
 
 	/**
 	 * @brief Creates or retrieves a modified DSS with stencil NOT_EQUAL test.
@@ -222,6 +204,9 @@ private:
 
 	/// Compiles all shaders used by this feature
 	void CompileShaders();
+
+	/// Returns true when the current UI state is unsafe for cross-eye geometry culling.
+	bool IsMenuSuppressed() const;
 
 	/// Updates the constant buffer with current settings and frame dimensions
 	void UpdateConstantBuffer();

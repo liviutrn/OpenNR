@@ -30,6 +30,7 @@
 #include "Features/ScreenSpaceGI.h"
 #include "Features/ScreenSpaceShadows.h"
 #include "Features/ScreenshotFeature.h"
+#include "Features/OpenNRCapture.h"
 #include "Features/Skin.h"
 #include "Features/SkySync.h"
 #include "Features/Skylighting.h"
@@ -41,6 +42,7 @@
 #include "Features/UnderwaterDepthOfField.h"
 #include "Features/UnifiedWater.h"
 #include "Features/Upscaling.h"
+#include "Features/VRS.h"
 #include "Features/VR.h"
 #include "Features/VanillaFresnel.h"
 #include "Features/VolumetricLighting.h"
@@ -101,6 +103,7 @@ namespace globals
 		WetnessEffects wetnessEffects{};
 		ExtendedTranslucency extendedTranslucency{};
 		Upscaling upscaling{};
+		VRS vrs{};
 		HDRDisplay hdrDisplay{};
 #if defined(ENABLE_EFFECTS11)
 		Effects11 effects11{};
@@ -108,6 +111,7 @@ namespace globals
 		RenderDoc renderDoc{};
 		RemoteControl remoteControl{};
 		ScreenshotFeature screenshotFeature{};
+		OpenNRCaptureFeature openNRCapture{};
 		CSEditor csEditor{};
 		CSUtility csUtility{};
 		ExponentialHeightFog exponentialHeightFog{};

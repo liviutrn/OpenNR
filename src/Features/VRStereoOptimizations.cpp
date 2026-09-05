@@ -6,6 +6,8 @@
 #include "GpuPass.h"
 #include "I18n/I18n.h"
 #include "Menu.h"
+#include "RE/M/MapMenu.h"
+#include "RE/S/StatsMenu.h"
 #include "State.h"
 #include "Utils/D3D.h"
 #include "Utils/Game.h"
@@ -83,6 +85,45 @@ bool VRStereoOptimizations::SupportsGBufferFill()
 	       State::SupportsTypedUAVLoad(DXGI_FORMAT_R10G10B10A2_UNORM) &&
 	       State::SupportsTypedUAVLoad(DXGI_FORMAT_R11G11B10_FLOAT) &&
 	       State::SupportsTypedUAVLoad(DXGI_FORMAT_R16_UNORM);
+}
+
+bool VRStereoOptimizations::IsMenuSuppressed() const
+{
+	// Menu cameras and their depth/G-buffer passes do not share the gameplay scene's
+	// reprojection contract. Fail closed for paused menus and query map/stats directly
+	// as well, because their cached State flags update at frame boundaries.
+	if (!globals::state)
+		return true;
+
+	auto* ui = globals::game::ui;
+	if (globals::state->IsPausedOrMenuOpen(ui))
+		return true;
+
+	return ui && (ui->IsMenuOpen(RE::MapMenu::MENU_NAME) || ui->IsMenuOpen(RE::StatsMenu::MENU_NAME));
+}
+
+bool VRStereoOptimizations::CanDispatchStencil() const
+{
+	// Cull Eye 1 geometry only when every pass that repairs it is ready: the stencil
+	// classify/write pass AND the depth-fill + G-buffer-fill passes. Without this, a
+	// fill-shader compile failure would cull Eye 1 and never restore it (full corruption).
+	// Menu suppression is a correctness gate, not a performance heuristic: a paused or
+	// map/statistics camera must never inherit the gameplay G-buffer reprojection mask.
+	return loaded &&
+	       settings.stereoMode != StereoMode::Off &&
+	       !settings.debugSkipMerge &&
+	       !IsMenuSuppressed() &&
+	       gBufferFillSupported &&
+	       stencilCS &&
+	       stencilWriteVS &&
+	       stencilWritePS &&
+	       depthFillPS &&
+	       gBufferFillCS &&
+	       texPerPixelMode &&
+	       paramsCB &&
+	       stencilWriteDSS &&
+	       stencilWriteRS &&
+	       depthFillDSS;
 }
 
 void VRStereoOptimizations::SetupResources()
@@ -268,7 +309,7 @@ void VRStereoOptimizations::DrawSettings()
 	int currentMode = static_cast<int>(settings.stereoMode);
 	if (ImGui::Combo(T("feature.vr_stereo.enable_stereo_reprojection", "Enable Stereo Reprojection"), &currentMode, modeNames, IM_ARRAYSIZE(modeNames)))
 		settings.stereoMode = static_cast<StereoMode>(currentMode);
-	Util::AddTooltip(T("feature.vr_stereo.enable_stereo_reprojection_tooltip", "Reprojects Eye 0 (left) pixels into Eye 1 (right) using depth and motion data,\nskipping redundant full shading where the views overlap.\nReduces GPU cost in VR by shading each pixel fewer times per frame."));
+	Util::AddTooltip(T("feature.vr_stereo.enable_stereo_reprojection_tooltip", "Reprojects Eye 0 (left) pixels into Eye 1 (right) using depth and motion data,\nskipping redundant full shading where the views overlap.\nReduces GPU cost in VR by shading each pixel fewer times per frame.\nAutomatically pauses while paused, map, stats, main-menu, or loading-menu views are active."));
 
 	if (globals::game::isVR)
 		Util::UI::DrawSettingDiff(bootSnapshot, settings, &Settings::stereoMode);

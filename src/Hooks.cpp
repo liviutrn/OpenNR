@@ -5,6 +5,7 @@
 
 #include "Feature.h"
 #include "Globals.h"
+#include "Features/OpenNRCapture.h"
 #include "Menu.h"
 #include "ShaderCache.h"
 #include "State.h"
@@ -371,7 +372,10 @@ struct IDXGISwapChain_Present
 		if (SUCCEEDED(retval) && armStartupMenuBlurSource)
 			globals::state->startupMenuBlurSourceReady = true;
 
-		// Runs after HDR Present so the captured back buffer matches what's on screen.
+		// OpenNR Capture is explicitly opt-in. Do not call into its hotkey
+		// polling path at all while the feature is disabled.
+		if (globals::features::openNRCapture.settings.enableCapture)
+			globals::features::openNRCapture.PollHotkeys();
 		globals::features::screenshotFeature.ProcessCaptureRequest();
 
 		TracyD3D11Collect(globals::state->tracyCtx);

@@ -25,7 +25,7 @@ option(
 project(
     # gersemi: ignore
     CommunityShaders
-    VERSION 2.10.1
+    VERSION 0.5.5
     LANGUAGES CXX
 )
 
@@ -70,6 +70,16 @@ option(
     OFF
 )
 option(
+    AIO_INCLUDE_OPENNR_CAPTURE
+    "Include the opt-in OpenNR Capture feature registration in the AIO archive. Keep OFF for distributable packages; local test installs can add the feature registration separately."
+    OFF
+)
+option(
+    BUILD_OPENNR_CAPTURE
+    "Compile the local-only OpenNR Capture feature into CommunityShaders.dll. Turn OFF for a distributable DLL with no OpenNR implementation."
+    ON
+)
+option(
     SKIP_RUNTIME_DOWNLOADS
     "Skip redistributable runtime downloads for DLL-only development builds."
     OFF
@@ -80,6 +90,8 @@ message("\tAIO Zip to dist: ${AIO_ZIP_TO_DIST}")
 message("\tTracy profiler: ${TRACY_SUPPORT}")
 message("\tShader tests: ${BUILD_SHADER_TESTS}")
 message("\tAIO include non-autoupload features: ${AIO_INCLUDE_NON_AUTOUPLOAD}")
+message("\tAIO include OpenNR Capture: ${AIO_INCLUDE_OPENNR_CAPTURE}")
+message("\tBuild OpenNR Capture: ${BUILD_OPENNR_CAPTURE}")
 message("\tSkip runtime downloads: ${SKIP_RUNTIME_DOWNLOADS}")
 message("\tEffects11: ${ENABLE_EFFECTS11}")
 
@@ -118,6 +130,19 @@ if(NOT ENABLE_EFFECTS11)
     unset(_cs_all_sources)
 endif()
 
+# OpenNR Capture is a local-only feature. Keep its shared no-op surface in the
+# public build so the renderer remains source-compatible, but do not compile
+# the capture implementation into a distributable DLL.
+if(NOT BUILD_OPENNR_CAPTURE)
+    get_target_property(_cs_all_sources_no_opennr "${PROJECT_NAME}" SOURCES)
+    list(FILTER _cs_all_sources_no_opennr EXCLUDE REGEX "/src/Features/OpenNRCapture\\.cpp$")
+    set_target_properties(
+        "${PROJECT_NAME}"
+        PROPERTIES SOURCES "${_cs_all_sources_no_opennr}"
+    )
+    unset(_cs_all_sources_no_opennr)
+endif()
+
 # #######################################################################################################################
 # # Find dependencies
 # #######################################################################################################################
@@ -146,6 +171,7 @@ if(ENABLE_EFFECTS11)
     find_package(effects11 CONFIG REQUIRED)
 endif()
 add_subdirectory(${CMAKE_SOURCE_DIR}/cmake/Streamline)
+add_subdirectory(${CMAKE_SOURCE_DIR}/cmake/NVAPI)
 
 find_path(DETOURS_INCLUDE_DIRS "detours/detours.h")
 find_library(DETOURS_LIBRARY detours REQUIRED)
@@ -159,7 +185,9 @@ target_link_directories(${PROJECT_NAME} PRIVATE "${CMAKE_SOURCE_DIR}/bin/ffx_sdk
 
 target_compile_definitions(
     ${PROJECT_NAME}
-    PRIVATE "$<$<BOOL:${TRACY_SUPPORT}>:TRACY_SUPPORT>"
+    PRIVATE
+        "$<$<BOOL:${TRACY_SUPPORT}>:TRACY_SUPPORT>"
+        "$<$<BOOL:${BUILD_OPENNR_CAPTURE}>:OPENNR_CAPTURE_ENABLED>"
 )
 
 file(
@@ -238,6 +266,7 @@ target_link_libraries(
         xxHash::xxhash
         Tracy::TracyClient
         Streamline
+        NVAPI
         d3d12.lib
         Microsoft::DirectX-Headers
         ${DETOURS_LIBRARY}
@@ -532,7 +561,10 @@ foreach(_fpath IN LISTS FEATURE_PATHS)
     if(NOT IS_DIRECTORY "${_fpath}")
         continue()
     endif()
-    if(NOT ENABLE_EFFECTS11 AND _fpath MATCHES "/Effects11$")
+    get_filename_component(_feature_name "${_fpath}" NAME)
+    if((NOT BUILD_OPENNR_CAPTURE OR NOT AIO_INCLUDE_OPENNR_CAPTURE) AND _feature_name STREQUAL "OpenNRCapture")
+        list(APPEND AIO_EXCLUDED_FEATURE_PATHS "${_fpath}")
+    elseif(NOT ENABLE_EFFECTS11 AND _fpath MATCHES "/Effects11$")
         list(APPEND AIO_EXCLUDED_FEATURE_PATHS "${_fpath}")
     elseif(AIO_INCLUDE_NON_AUTOUPLOAD)
         list(APPEND AIO_INCLUDED_FEATURE_PATHS "${_fpath}")
@@ -603,7 +635,7 @@ list(REMOVE_DUPLICATES AIO_EXCLUDED_STAGE_RELPATHS)
 
 if(_aio_out_count GREATER 0)
     message(
-        "\tAIO features excluded from release archive (autoupload != true, set AIO_INCLUDE_NON_AUTOUPLOAD=ON to override): ${_aio_out_count}"
+        "\tAIO features excluded from release archive by partition options: ${_aio_out_count}"
     )
     foreach(_fname IN LISTS AIO_EXCLUDED_FEATURE_NAMES)
         message("\t\t- ${_fname}")

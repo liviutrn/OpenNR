@@ -1,4 +1,5 @@
 #include "Feature.h"
+#include "Features/OpenNRCapture.h"
 
 #include "FeatureIssues.h"
 #include "FeatureVersions.h"
@@ -43,6 +44,7 @@
 #include "Features/TerrainVariation.h"
 #include "Features/UnifiedWater.h"
 #include "Features/Upscaling.h"
+#include "Features/VRS.h"
 #include "Features/VR.h"
 #include "Features/VanillaFresnel.h"
 #include "Features/VolumetricLighting.h"
@@ -266,12 +268,18 @@ namespace
 			&globals::features::ibl,
 			&globals::features::extendedTranslucency,
 			&globals::features::upscaling,
+			// VRS deliberately follows Upscaling: both wrap the same jitter call site,
+			// and VRS must chain after Upscaling rather than replace it.
+			&globals::features::vrs,
 			&globals::features::renderDoc,
 			&globals::features::remoteControl,
 			&globals::features::csEditor,
 			&globals::features::sceneSelector,
 			&globals::features::csUtility,
 			&globals::features::screenshotFeature,
+#if defined(OPENNR_CAPTURE_ENABLED)
+			&globals::features::openNRCapture,
+#endif
 			&globals::features::linearLighting,
 #if defined(ENABLE_EFFECTS11)
 			&globals::features::effects11,

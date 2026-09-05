@@ -37,6 +37,7 @@ struct PerformanceOverlay;
 struct WetnessEffects;
 struct ExtendedTranslucency;
 struct Upscaling;
+struct VRS;
 class Profiler;
 struct CSEditor;
 struct CSUtility;
@@ -47,6 +48,7 @@ struct ExponentialHeightFog;
 struct HDRDisplay;
 struct PostProcessing;
 struct ScreenshotFeature;
+struct OpenNRCaptureFeature;
 struct Skin;
 
 class State;
@@ -135,6 +137,7 @@ namespace globals
 		extern WetnessEffects wetnessEffects;
 		extern ExtendedTranslucency extendedTranslucency;
 		extern Upscaling upscaling;
+		extern VRS vrs;
 		extern HDRDisplay hdrDisplay;
 #if defined(ENABLE_EFFECTS11)
 		extern Effects11 effects11;
@@ -142,6 +145,7 @@ namespace globals
 		extern RenderDoc renderDoc;
 		extern RemoteControl remoteControl;
 		extern ScreenshotFeature screenshotFeature;
+		extern OpenNRCaptureFeature openNRCapture;
 		extern CSEditor csEditor;
 		extern CSUtility csUtility;
 		extern ExponentialHeightFog exponentialHeightFog;
