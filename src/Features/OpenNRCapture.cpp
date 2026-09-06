@@ -5,6 +5,7 @@
 #include "Globals.h"
 #include "Utils/D3D.h"
 #include "Utils/DevBenchUx.h"
+#include "Features/Upscaling/NeuralRendering/Integration.h"
 
 #include <algorithm>
 #include <array>
@@ -352,6 +353,7 @@ public:
 			{ "full_frame_every_samples", owner.settings.fullFrameEverySamples },
 			{ "capture_rate_fps", owner.settings.captureRateFps },
 			{ "burst_frames", owner.settings.burstFrames },
+			{ "history_reset_policy", "request_on_sequence_start" },
 			{ "max_samples", owner.settings.maxSamples },
 			{ "pre_nr", owner.settings.capturePreNR },
 			{ "post_nr", owner.settings.capturePostNR },
@@ -377,6 +379,11 @@ public:
 		}
 		if (recording)
 			return;
+		// A new sequence must begin from a known Feature 18 temporal state.  The
+		// request is consumed on the render thread before the first eligible sample,
+		// so the first frame's history_reset metadata describes the actual teacher
+		// dispatch rather than relying on the user to open/close the UI menu.
+		NeuralRendering::RequestHistoryReset();
 		const auto timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(
 			std::chrono::system_clock::now().time_since_epoch()).count();
 		const auto outputRoot = ResolveOutputRoot(owner.settings.outputDirectory);
@@ -395,7 +402,7 @@ public:
 		nextDue = Clock::now();
 		dueDeferred = false;
 		recording = true;
-		logger::info("OpenNR Capture started: {}", sequenceRoot.string());
+		logger::info("OpenNR Capture started (history reset requested): {}", sequenceRoot.string());
 	}
 
 	void Stop()
