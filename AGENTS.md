@@ -23,16 +23,15 @@ Claude Code loads it via the `@../AGENTS.md` import in `.claude/CLAUDE.md`.
 ## Fork Identity & Logo Policy
 
 -   **Keep as `CommunityShaders` (Do NOT rename C++ runtime identity):** Keep CMake `PROJECT_NAME`, DLL name, `SKSE/Plugins/CommunityShaders/` directory, `CommunityShaders.log`, ImGui window ID after `###`, asset paths under `package/Interface/CommunityShaders/`, and HLSL include paths.
--   **Use "Open Shaders" for public identity:** Use in in-game menu titles, READMEs/instructions, Nexus filenames, GitHub release names, and Welcome/FAQ/About text.
--   **Link Upstream Explicitly:** Link upstream references to `community-shaders/skyrim-community-shaders` (Nexus 86492). Do not link dead `doodlum` paths. Open Shaders' own Nexus is 180419.
+-   **Use "OpenNR" for public identity:** Use in in-game menu titles, READMEs/instructions, package filenames, GitHub release names, and Welcome/FAQ/About text. Describe Open Shaders and Community Shaders as upstream lineage where relevant.
+-   **Link Upstream Explicitly:** Link upstream references to `alandtse/open-shaders` and `community-shaders/skyrim-community-shaders` (Nexus 86492). Do not present OpenNR as an official upstream project or reuse upstream marks.
 -   **AIO Bundling Semantics:**
     -   The Nexus upload workflow ships **ONLY** the AIO archive; there is no per-feature matrix distribution.
     -   The per-feature matrix upload is gated on `autoupload = true` (in the feature's `.ini` `[Info]` section).
     -   Use `aio = true` (with `autoupload = false`) to bundle a third-party feature redistributed with permission without uploading it standalone.
     -   A runtime-core feature (`IsCore()` returns `true`) must **also** carry a `CORE` marker file, or its shaders are excluded from the AIO bundle and it ships broken (e.g. shared includes).
     -   Partition logic is handled by `feature_in_aio` in `CMakeLists.txt`. For local development, configure `AIO_INCLUDE_NON_AUTOUPLOAD=ON` to include everything.
--   **No Logo:** `cs-logo.png` is intentionally absent (non-GPL). Do not "fix" this or restore upstream assets. Logo draws are null-safe fallback (retries colored fallback in `IconLoader.cpp` and gates draw on null check in `Menu.cpp`, `MenuHeaderRenderer`, and `HomePageRenderer`).
-    -   _Exception to comment rules:_ A regression-risk warning naming removed code so a future maintainer doesn't restore it (e.g. "do not restore cs-logo.png") is load-bearing and stays.
+-   **OpenNR Logo:** The original OpenNR wordmark lives under `.github/assets/logo/` and is packaged under `package/Interface/CommunityShaders/OpenNR Logo/`. Do not restore upstream logo assets or present the OpenNR wordmark as an upstream mark; see `BRANDING_AND_ATTRIBUTIONS.md` and the logo LICENSE.
 
 ---
 

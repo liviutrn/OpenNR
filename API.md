@@ -1,6 +1,6 @@
-# Open Shaders SKSE API
+# OpenNR SKSE API
 
-This document explains how another SKSE plugin can talk to Open Shaders (plugin name
+This document explains how another SKSE plugin can talk to OpenNR (plugin name
 `CommunityShaders`) at runtime. The interface is binary-compatible with the sibling
 Community Shaders fork's revision-3 API: plugins compiled against that fork's
 `include/VRAPI/CSinterface001.h` work unchanged against this one.
@@ -95,7 +95,7 @@ source compatibility only; they have no meaning here.
 
 -   Always null-check the API pointer and treat a missing API as optional integration.
 -   New virtual methods are only ever appended to the interface; never reordered.
--   Settings changed through this API are persisted with Open Shaders' own settings when
+-   Settings changed through this API are persisted with OpenNR's own settings when
     the user saves them in the menu; the API does not force a save itself.
 -   Setters targeting a feature the user disabled at boot are ignored (and logged); the
     corresponding getter continues to report the stored value.

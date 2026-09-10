@@ -1,12 +1,12 @@
 # Repository Architecture & Core Systems
 
-This document provides a detailed overview of the Open Shaders plugin architecture, DirectX 11 integration, runtime targeting system, and codebase organization.
+This document provides a detailed overview of the OpenNR plugin architecture, DirectX 11 integration, runtime targeting system, and codebase organization. OpenNR remains source-compatible with its Open Shaders and Community Shaders lineage where noted.
 
 ## Architecture Overview
 
 ### Plugin Architecture
 
-Open Shaders uses a feature-driven modular system where each graphics enhancement is an independent `Feature` class that can be enabled/disabled at runtime.
+OpenNR uses a feature-driven modular system where each graphics enhancement is an independent `Feature` class that can be enabled/disabled at runtime.
 
 -   **`Feature`** ([src/Feature.h](file:///E:/Documents/source/repos/open-shaders/src/Feature.h)) - Base class for all graphics features.
 -   **`State`** ([src/State.h](file:///E:/Documents/source/repos/open-shaders/src/State.h)) - Global singleton managing feature lifecycle.

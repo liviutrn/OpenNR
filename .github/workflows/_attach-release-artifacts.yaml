@@ -182,7 +182,7 @@ jobs:
               uses: ./.github/actions/publish-release
               with:
                   token: ${{ secrets.token }}
-                  name: "Open Shaders ${{ inputs.tag }}"
+ name: "OpenNR ${{ inputs.tag }}"
                   tag: ${{ inputs.tag }}
                   draft: ${{ inputs.draft }}
                   omit-draft-during-update: "true"

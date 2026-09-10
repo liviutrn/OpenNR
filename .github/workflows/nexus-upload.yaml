@@ -32,7 +32,7 @@ on:
                 required: false
                 default: ""
             mod_filename:
-                description: "Nexus mod filename. Defaults: `Open Shaders` in aio mode, `Community Shaders` in matrix mode."
+    description: "Nexus mod filename. Defaults: `OpenNR` in aio mode, `Community Shaders` in matrix mode."
                 required: false
                 default: ""
             dry_run:
@@ -166,7 +166,7 @@ jobs:
 
                   # Workflow inputs default to empty so matrix mode keeps
                   # its upstream defaults below; aio mode uses fork defaults.
-                  # Keep 180419/"Open Shaders" in sync with
+# Keep 180419/"OpenNR" in sync with
                   # .github/configs/project.yaml, which build-fomod-package.py
                   # reads for the same facts -- left as literals here rather
                   # than reading that file too, to avoid touching this
@@ -174,7 +174,7 @@ jobs:
                   if [ "$MODE" = "aio" ]; then
                     EFFECTIVE_MOD_ID="${INPUT_NEXUS_MOD_ID:-180419}"
                     EFFECTIVE_ARTIFACT="${INPUT_ARTIFACT_PATTERN:-CommunityShaders_AIO-*.7z}"
-                    EFFECTIVE_FILENAME="${INPUT_MOD_FILENAME:-Open Shaders}"
+EFFECTIVE_FILENAME="${INPUT_MOD_FILENAME:-OpenNR}"
                   else
                     EFFECTIVE_MOD_ID="${INPUT_NEXUS_MOD_ID:-86492}"
                     EFFECTIVE_ARTIFACT="${INPUT_ARTIFACT_PATTERN:-CommunityShaders-*.7z}"
@@ -189,7 +189,7 @@ jobs:
 
                   if [ "$MODE" = "aio" ]; then
                     if [ -z "$EFFECTIVE_MOD_ID" ] && [ "$DRY_RUN" != "true" ]; then
-                      echo "::error::aio mode requires nexus_mod_id for a real upload. Set it via the workflow input or update the default once the Open Shaders Nexus page exists."
+echo "::error::aio mode requires nexus_mod_id for a real upload. Set it via the workflow input or update the default once the OpenNR Nexus page exists."
                       exit 1
                     fi
                     if [ -z "$EFFECTIVE_MOD_ID" ]; then
@@ -218,7 +218,7 @@ jobs:
                       'auto_upload': True,
                       'changelog': changelog,
                       'file_description': (
-                          f'Open Shaders {release_ver} AIO. See changelog for included features. '
+ f'OpenNR {release_ver} AIO. See changelog for included features. '
                           'FOMOD installer: pick your runtime\'s prebuilt shader cache during '
                           'setup to skip first-launch shader compilation, or skip that step.'
                       ),
@@ -531,7 +531,7 @@ jobs:
         # not depend on the session cookie (which only sets MAIN files and silently expires;
         # it dropped the v2.0.0 AIO until a manual re-run). Mirrors upstream #2405's migration
         # to the official uploader. aio mode is a single 'core' row; 7490333 is the AIO's
-        # manually-minted file group on the Open Shaders page. The official API cannot edit the
+ # manually-minted file group on the OpenNR page. The official API cannot edit the
         # changelog tab -> upload-aio-changelog handles that best-effort below.
         needs: [prepare-nexus-matrix, prepare-artifacts]
         if: >

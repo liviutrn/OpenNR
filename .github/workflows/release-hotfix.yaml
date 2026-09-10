@@ -319,7 +319,7 @@ jobs:
                     echo ""
                     # Link to the running repo's own wiki. Both upstream
                     # (community-shaders/skyrim-community-shaders) and the
-                    # Open Shaders fork (alandtse/open-shaders) maintain
+ # OpenNR fork (alandtse/open-shaders) maintain
                     # wiki copies; `maint-update-wiki.yaml` keeps them in
                     # sync from buffer scans, so `${{ github.repository }}`
                     # resolves correctly in either context.

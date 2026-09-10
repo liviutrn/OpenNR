@@ -66,7 +66,7 @@ jobs:
                   send_embed() {
                       local desc="$1" title="$2" payload
                       payload=$(jq -n --arg desc "$desc" --arg title "$title" --arg url "$URL" --argjson color "$COLOR" \
-                          '{username: "Open Shaders", embeds: [ ({description: $desc, color: $color}
+'{username: "OpenNR", embeds: [ ({description: $desc, color: $color}
                               + (if $title != "" then {title: $title} else {} end)
                               + (if $title != "" and $url != "" then {url: $url} else {} end)) ]}')
                       curl -sf --retry 3 --retry-delay 2 --connect-timeout 5 --max-time 20 \

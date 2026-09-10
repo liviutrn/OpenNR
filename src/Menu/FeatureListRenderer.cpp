@@ -14,6 +14,7 @@
 #include "FeatureConstraints.h"
 #include "FeatureIssues.h"
 #include "Features/CSEditor.h"
+#include "Features/Upscaling.h"
 #include "Fonts.h"
 #include "Globals.h"
 #include "I18n/I18n.h"
