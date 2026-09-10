@@ -17,6 +17,7 @@
 #include "Features/FoliageLighting.h"
 #include "Features/GrassCollision.h"
 #include "Features/GrassLighting.h"
+#include "Features/GrassOptimizations.h"
 #include "Features/HDRDisplay.h"
 #include "Features/HairSpecular.h"
 #include "Features/HorizonFix.h"
@@ -242,6 +243,7 @@ namespace
 			&globals::features::volumetricShadows,
 			&globals::features::grassLighting,
 			&globals::features::grassCollision,
+			&globals::features::grassOptimizations,
 			&globals::features::screenSpaceShadows,
 			&globals::features::extendedMaterials,
 			&globals::features::wetnessEffects,
@@ -436,7 +438,7 @@ bool Feature::ToggleAtBootSetting()
 	auto state = globals::state;
 	const std::string featureName = GetShortName();
 	auto disabled = state->IsFeatureDisabled(featureName);
-	state->SetFeatureDisabled(featureName, !disabled);
+	state->SetFeatureBootEnabled(featureName, disabled);
 
 	return state->IsFeatureDisabled(featureName);  // Return the new state
 }
@@ -557,7 +559,7 @@ std::string Feature::GetDisplayCategory() const
 	if (category == FeatureCategories::kSky)
 		return T("feature.category.sky", "Sky");
 	if (category == FeatureCategories::kUtility)
-		return T("feature.category.utility", "Utility");
+		return T("feature.category.utility", "Utilities");
 	if (category == FeatureCategories::kWater)
 		return T("feature.category.water", "Water");
 

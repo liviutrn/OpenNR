@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.31)
+cmake_minimum_required(VERSION 4.2)
 cmake_policy(SET CMP0116 NEW)
 set(CMAKE_POLICY_WARNING_CMP0116 OFF)
 
@@ -25,7 +25,7 @@ option(
 project(
     # gersemi: ignore
     CommunityShaders
-    VERSION 0.5.5
+    VERSION 2.12.0
     LANGUAGES CXX
 )
 
@@ -131,8 +131,8 @@ if(NOT ENABLE_EFFECTS11)
 endif()
 
 # OpenNR Capture is a local-only feature. Keep its shared no-op surface in the
-# public build so the renderer remains source-compatible, but do not compile
-# the capture implementation into a distributable DLL.
+# public build so the renderer remains source-compatible, but do not compile the
+# capture implementation into a distributable DLL.
 if(NOT BUILD_OPENNR_CAPTURE)
     get_target_property(_cs_all_sources_no_opennr "${PROJECT_NAME}" SOURCES)
     list(FILTER _cs_all_sources_no_opennr EXCLUDE REGEX "/src/Features/OpenNRCapture\\.cpp$")
@@ -176,12 +176,6 @@ add_subdirectory(${CMAKE_SOURCE_DIR}/cmake/NVAPI)
 find_path(DETOURS_INCLUDE_DIRS "detours/detours.h")
 find_library(DETOURS_LIBRARY detours REQUIRED)
 include(FidelityFX-SDK)
-
-# The SDK's component targets are emitted as plain library names (for example
-# ffx_fsr3upscaler_x64.lib) rather than imported targets on the VS generator.
-# Keep the SDK output directory on the link search path so multi-config builds
-# resolve those libraries without relying on a machine-specific CMake cache.
-target_link_directories(${PROJECT_NAME} PRIVATE "${CMAKE_SOURCE_DIR}/bin/ffx_sdk")
 
 target_compile_definitions(
     ${PROJECT_NAME}
@@ -246,7 +240,8 @@ set_source_files_properties(
     "${STB_IMAGE_WRITE_IMPL}"
     PROPERTIES
         SKIP_PRECOMPILE_HEADERS ON
-        COMPILE_OPTIONS "$<$<C_COMPILER_ID:MSVC>:/W0>"
+        COMPILE_OPTIONS
+            "$<$<OR:$<C_COMPILER_ID:MSVC>,$<C_COMPILER_ID:Clang>>:/W0>"
 )
 
 target_link_libraries(
@@ -635,7 +630,7 @@ list(REMOVE_DUPLICATES AIO_EXCLUDED_STAGE_RELPATHS)
 
 if(_aio_out_count GREATER 0)
     message(
-        "\tAIO features excluded from release archive by partition options: ${_aio_out_count}"
+        "\tAIO features excluded from release archive (autoupload != true, set AIO_INCLUDE_NON_AUTOUPLOAD=ON to override): ${_aio_out_count}"
     )
     foreach(_fname IN LISTS AIO_EXCLUDED_FEATURE_NAMES)
         message("\t\t- ${_fname}")
@@ -672,7 +667,24 @@ list(TRANSFORM FEATURE_PATHS_SLASH APPEND /)
 
 # Install logic for AIO package
 # To copy AIO package at a folder do `${CMAKE_COMMAND} --install ${CMAKE_BINARY_DIR} --prefix ${AIO_DIR}`
-install(CODE "file(REMOVE_RECURSE \${CMAKE_INSTALL_PREFIX})")
+# REMOVE_RECURSE below wipes the ENTIRE --prefix dir first, so it must only
+# ever target the isolated AIO_DIR staging folder, never a live game install
+# (e.g. --prefix pointed at Data/) -- the guard below enforces this.
+install(
+    CODE
+        "
+    if(NOT \"\${CMAKE_INSTALL_PREFIX}\" STREQUAL \"${AIO_DIR}\")
+        message(FATAL_ERROR
+            \"Refusing to install: --prefix must be \\\"${AIO_DIR}\\\" \"
+            \"(got \\\"\${CMAKE_INSTALL_PREFIX}\\\"). This target recursively \"
+            \"deletes its entire --prefix directory before staging the AIO \"
+            \"package, so it must never be pointed at a live game install. \"
+            \"Use BuildRelease.bat <PRESET>-WITH-AUTO-DEPLOYMENT or the \"
+            \"DEPLOY_ALL/COPY_SHADERS targets to deploy to a game folder.\")
+    endif()
+    file(REMOVE_RECURSE \"\${CMAKE_INSTALL_PREFIX}\")
+"
+)
 install(TARGETS ${PROJECT_NAME} RUNTIME DESTINATION SKSE/Plugins COMPONENT SKSE)
 install(
     FILES $<TARGET_PDB_FILE:${PROJECT_NAME}>
@@ -686,10 +698,8 @@ install(
     PATTERN "Tests" EXCLUDE
 )
 include(FeaturePackaging)
-if(NOT SKIP_RUNTIME_DOWNLOADS)
-    include(FidelityFX-Runtime)
-    include(Streamline-Runtime)
-endif()
+include(FidelityFX-Runtime)
+include(Streamline-Runtime)
 install(CODE "file(REMOVE \${CMAKE_INSTALL_PREFIX}/Core)" COMPONENT Shaders)
 
 # #######################################################################################################################

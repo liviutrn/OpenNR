@@ -6,6 +6,7 @@
 #include "GpuPass.h"
 #include "I18n/I18n.h"
 #include "Menu.h"
+#include "ScreenSpaceGI.h"
 #include "RE/M/MapMenu.h"
 #include "RE/S/StatsMenu.h"
 #include "State.h"
