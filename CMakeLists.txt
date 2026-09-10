@@ -1,4 +1,7 @@
-cmake_minimum_required(VERSION 4.2)
+# The upstream dev branch currently declares 4.2. This isolated Windows build
+# uses the Visual Studio 2022-bundled 3.31 generator; no 4.2-only command is
+# needed by the merged OpenNR package configuration.
+cmake_minimum_required(VERSION 3.31)
 cmake_policy(SET CMP0116 NEW)
 set(CMAKE_POLICY_WARNING_CMP0116 OFF)
 
@@ -25,7 +28,7 @@ option(
 project(
     # gersemi: ignore
     CommunityShaders
-    VERSION 2.12.0
+	VERSION 2.12.1
     LANGUAGES CXX
 )
 

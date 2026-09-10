@@ -478,7 +478,7 @@ namespace FoveatedRenderImpl::Ops
 		return true;
 	}
 
-	void StretchDRSToFullEye(
+	bool StretchDRSToFullEye(
 		ID3D11ShaderResourceView* renderSBSSRV,
 		ID3D11UnorderedAccessView* kMainUAV,
 		uint32_t dstOffsetX,
@@ -508,7 +508,7 @@ namespace FoveatedRenderImpl::Ops
 				// guard above stays false forever and Faster mode is dead for
 				// the rest of the session.
 				Core::vrSubrectStretchCS = nullptr;
-				return;
+				return false;
 			}
 			Util::SetResourceName(Core::vrSubrectStretchCB.get(), "FoveatedRender::SubrectStretchCB");
 
@@ -521,13 +521,13 @@ namespace FoveatedRenderImpl::Ops
 				logger::error("[FOVEATED] Failed to create SubrectStretch sampler");
 				Core::vrSubrectStretchCS = nullptr;
 				Core::vrSubrectStretchCB = nullptr;
-				return;
+				return false;
 			}
 			Util::SetResourceName(Core::vrSubrectStretchSampler.get(), "FoveatedRender::SubrectStretchSampler");
 		}
 
 		if (!Core::vrSubrectStretchCS || !Core::vrSubrectStretchCB || !Core::vrSubrectStretchSampler) {
-			return;
+			return false;
 		}
 
 		// Guard against a null destination UAV — CSSetUnorderedAccessViews +
@@ -536,7 +536,7 @@ namespace FoveatedRenderImpl::Ops
 		// fall back to standard DLSS so users still see output.
 		if (!kMainUAV) {
 			logger::error("[FOVEATED] StretchDRSToFullEye called with null kMainUAV");
-			return;
+			return false;
 		}
 
 		D3D11_MAPPED_SUBRESOURCE mapped{};
@@ -547,7 +547,7 @@ namespace FoveatedRenderImpl::Ops
 		// frame's output.
 		if (FAILED(context->Map(Core::vrSubrectStretchCB.get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped))) {
 			logger::error("[FOVEATED] StretchDRSToFullEye Map(vrSubrectStretchCB) failed; skipping dispatch");
-			return;
+			return false;
 		}
 		{
 			auto& enhSettings = globals::features::upscaling.foveatedRender.settings;
@@ -594,6 +594,7 @@ namespace FoveatedRenderImpl::Ops
 		context->CSSetConstantBuffers(0, 1, nullCB);
 		context->CSSetSamplers(0, 1, nullSampler);
 		context->CSSetShader(nullptr, nullptr, 0);
+		return true;
 	}
 
 	void EnsureVRRenderSBS(uint32_t renderW, uint32_t renderH, ID3D11Resource* colorSrc)
@@ -838,7 +839,7 @@ namespace FoveatedRenderImpl::Ops
 		context->CopySubresourceRegion(Core::vrRenderSBS->resource.get(), 0, 0, 0, 0, src, 0, &drsBox);
 	}
 
-	void StretchDRSBothEyes(ID3D11UnorderedAccessView* dstUAV, uint32_t eyeWidthOut, uint32_t eyeHeightOut,
+	bool StretchDRSBothEyes(ID3D11UnorderedAccessView* dstUAV, uint32_t eyeWidthOut, uint32_t eyeHeightOut,
 		uint32_t eyeWidthIn, uint32_t eyeHeightIn, uint32_t renderW, uint32_t renderH,
 		ID3D11ShaderResourceView* srcOverride)
 	{
@@ -848,20 +849,22 @@ namespace FoveatedRenderImpl::Ops
 		                          (Core::vrRenderSBS ? Core::vrRenderSBS->srv.get() : nullptr);
 		if (!src) {
 			logger::error("[FOVEATED] StretchDRSBothEyes missing source SRV");
-			return;
+			return false;
 		}
 		for (uint32_t i = 0; i < 2; ++i) {
 			uint32_t dstX = (i == 1) ? eyeWidthOut : 0;
 			uint32_t srcX = (i == 1) ? eyeWidthIn : 0;
-			StretchDRSToFullEye(
+			if (!StretchDRSToFullEye(
 				src, dstUAV,
 				dstX, eyeWidthOut, eyeHeightOut,
 				srcX, renderW, renderH,
-				eyeWidthIn, eyeHeightIn);
+				eyeWidthIn, eyeHeightIn))
+				return false;
 		}
+		return true;
 	}
 
-	void BlendSubrectToOutput(ID3D11Resource* dlssSrc, ID3D11Resource* dst, ID3D11UnorderedAccessView* dstUAV,
+	bool BlendSubrectToOutput(ID3D11Resource* dlssSrc, ID3D11Resource* dst, ID3D11UnorderedAccessView* dstUAV,
 		uint32_t dstOffsetX, uint32_t dstOffsetY, uint32_t subWidth, uint32_t subHeight, uint32_t srcOffsetX)
 	{
 		auto context = globals::d3d::context;
@@ -872,17 +875,21 @@ namespace FoveatedRenderImpl::Ops
 		if (blendMode == FoveatedRender::SubrectBlendMode::kHardCopy) {
 			D3D11_BOX srcBox = { srcOffsetX, 0, 0, srcOffsetX + subWidth, subHeight, 1 };
 			context->CopySubresourceRegion(dst, 0, dstOffsetX, dstOffsetY, 0, dlssSrc, 0, &srcBox);
-			return;
+			return true;
 		}
 
 		if (!dstUAV) {
 			// No UAV available — fall back to hard copy
 			D3D11_BOX srcBox = { srcOffsetX, 0, 0, srcOffsetX + subWidth, subHeight, 1 };
 			context->CopySubresourceRegion(dst, 0, dstOffsetX, dstOffsetY, 0, dlssSrc, 0, &srcBox);
-			return;
+			return true;
 		}
 
 		auto device = globals::d3d::device;
+		if (!device) {
+			logger::error("[FOVEATED] BlendSubrectToOutput missing D3D11 device");
+			return false;
+		}
 
 		// Lazy-create CS resources
 		if (!Core::vrSubrectBlendCS) {
@@ -901,13 +908,13 @@ namespace FoveatedRenderImpl::Ops
 				Core::vrSubrectBlendCS = nullptr;
 				D3D11_BOX srcBox = { srcOffsetX, 0, 0, srcOffsetX + subWidth, subHeight, 1 };
 				context->CopySubresourceRegion(dst, 0, dstOffsetX, dstOffsetY, 0, dlssSrc, 0, &srcBox);
-				return;
+				return true;
 			}
 			Util::SetResourceName(Core::vrSubrectBlendCB.get(), "FoveatedRender::SubrectBlendCB");
 		}
 
 		if (!Core::vrSubrectBlendCS || !Core::vrSubrectBlendCB)
-			return;
+			return false;
 
 		// Get or create cached SRV on the DLSS output
 		if (Core::vrBlendSrcSRVOwner != dlssSrc) {
@@ -916,7 +923,7 @@ namespace FoveatedRenderImpl::Ops
 			if (FAILED(dlssSrc->QueryInterface(IID_PPV_ARGS(dlssTex.put())))) {
 				D3D11_BOX srcBox = { srcOffsetX, 0, 0, srcOffsetX + subWidth, subHeight, 1 };
 				context->CopySubresourceRegion(dst, 0, dstOffsetX, dstOffsetY, 0, dlssSrc, 0, &srcBox);
-				return;
+				return true;
 			}
 			D3D11_TEXTURE2D_DESC desc;
 			dlssTex->GetDesc(&desc);
@@ -928,7 +935,7 @@ namespace FoveatedRenderImpl::Ops
 			if (FAILED(device->CreateShaderResourceView(dlssSrc, &srvDesc, Core::vrBlendSrcSRV.put()))) {
 				D3D11_BOX srcBox = { srcOffsetX, 0, 0, srcOffsetX + subWidth, subHeight, 1 };
 				context->CopySubresourceRegion(dst, 0, dstOffsetX, dstOffsetY, 0, dlssSrc, 0, &srcBox);
-				return;
+				return true;
 			}
 			Util::SetResourceName(Core::vrBlendSrcSRV.get(), "FoveatedRender::BlendSrcSRV");
 			Core::vrBlendSrcSRVOwner = dlssSrc;
@@ -938,7 +945,7 @@ namespace FoveatedRenderImpl::Ops
 			D3D11_MAPPED_SUBRESOURCE mapped;
 			if (FAILED(context->Map(Core::vrSubrectBlendCB.get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped))) {
 				logger::error("[FOVEATED] BlendSubrectToOutput Map(vrSubrectBlendCB) failed; skipping dispatch");
-				return;
+				return false;
 			}
 			BlendCB* cb = reinterpret_cast<BlendCB*>(mapped.pData);
 			cb->DstOffsetX = dstOffsetX;
@@ -983,6 +990,7 @@ namespace FoveatedRenderImpl::Ops
 		context->CSSetUnorderedAccessViews(0, 1, nullUAV, nullptr);
 		context->CSSetConstantBuffers(0, 1, nullCB);
 		context->CSSetShader(nullptr, nullptr, 0);
+		return true;
 	}
 
 }  // namespace FoveatedRenderImpl::Ops
