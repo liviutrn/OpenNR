@@ -118,7 +118,7 @@ void MessageHandler(SKSE::MessagingInterface::Message* message)
 		{
 			for (auto it = errors.begin(); it != errors.end(); ++it) {
 				auto& errorMessage = *it;
-				RE::DebugMessageBox(std::format("Open Shaders\n{}\nAll hooks and features are disabled.", errorMessage).c_str());
+	RE::DebugMessageBox(std::format("OpenNR\n{}\nAll hooks and features are disabled.", errorMessage).c_str());
 			}
 
 			if (errors.empty()) {
@@ -200,15 +200,15 @@ bool Load()
 		if (LoadLibrary(plugin.dll)) {
 			auto dllName = stl::utf16_to_utf8(plugin.dll).value_or("<unicode conversion error>"s);
 			auto errorMessage = plugin.reason.empty() ?
-			                        std::format("Incompatible DLL {} detected. Remove it to use Open Shaders.", dllName) :
-			                        std::format("Incompatible DLL {} detected ({}). Remove it to use Open Shaders.", dllName, plugin.reason);
+		std::format("Incompatible DLL {} detected. Remove it to use OpenNR.", dllName) :
+		std::format("Incompatible DLL {} detected ({}). Remove it to use OpenNR.", dllName, plugin.reason);
 			logger::error("{}", errorMessage);
 			errors.push_back(errorMessage);
 		}
 	}
 
 	auto pushMissingDllError = [&](std::string_view dllName) {
-		auto errorMessage = std::format("Required DLL {} was missing. Install it to use Open Shaders.", dllName);
+		auto errorMessage = std::format("Required DLL {} was missing. Install it to use OpenNR.", dllName);
 		logger::error("{}", errorMessage);
 		errors.push_back(errorMessage);
 	};

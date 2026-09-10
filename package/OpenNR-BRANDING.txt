@@ -1,0 +1,15 @@
+OpenNR
+======
+
+A Neural Rendering-focused Open Shaders fork with future support for custom Neural Rendering DLSS models.
+
+This package uses the upstream-compatible CommunityShaders.dll filename and
+SKSE/Plugins/CommunityShaders/ directory intentionally. Do not remove those
+names when installing: they are part of the compatibility contract shared by
+Community Shaders, Open Shaders, and OpenNR.
+
+OpenNR Capture is a separate but related capture mechanism. Capture files are
+diagnostic artifacts and are not a replacement for live-game VR acceptance.
+
+Fork lineage and attribution: see BRANDING_AND_ATTRIBUTIONS.md in the source
+repository. Preserve the license files shipped beside third-party runtimes.

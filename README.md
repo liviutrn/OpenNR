@@ -1,38 +1,40 @@
-[![Latest Release](https://img.shields.io/github/v/release/alandtse/open-shaders)](https://github.com/alandtse/open-shaders/releases)
-[![License](https://img.shields.io/github/license/alandtse/open-shaders)](./COPYING)
-[![Last Commit](https://img.shields.io/github/last-commit/alandtse/open-shaders)](https://github.com/alandtse/open-shaders/commits/dev)
-[![Build Status](https://img.shields.io/github/actions/workflow/status/alandtse/open-shaders/release-build.yaml)](https://github.com/alandtse/open-shaders/actions/workflows/release-build.yaml)
-[![Open Issues](https://img.shields.io/github/issues/alandtse/open-shaders)](https://github.com/alandtse/open-shaders/issues)
-[![Contributors](https://img.shields.io/github/contributors/alandtse/open-shaders)](https://github.com/alandtse/open-shaders/graphs/contributors)
-[![Stars](https://img.shields.io/github/stars/alandtse/open-shaders?style=social)](https://github.com/alandtse/open-shaders/stargazers)
+[![Latest Release](https://img.shields.io/github/v/release/olekspa/OpenNR)](https://github.com/olekspa/OpenNR/releases)
+[![License](https://img.shields.io/github/license/olekspa/OpenNR)](./COPYING)
+[![Last Commit](https://img.shields.io/github/last-commit/olekspa/OpenNR)](https://github.com/olekspa/OpenNR/commits/dev)
+[![Build Status](https://img.shields.io/github/actions/workflow/status/olekspa/OpenNR/release-build.yaml)](https://github.com/olekspa/OpenNR/actions/workflows/release-build.yaml)
+[![Open Issues](https://img.shields.io/github/issues/olekspa/OpenNR)](https://github.com/olekspa/OpenNR/issues)
+[![Contributors](https://img.shields.io/github/contributors/olekspa/OpenNR)](https://github.com/olekspa/OpenNR/graphs/contributors)
+[![Stars](https://img.shields.io/github/stars/olekspa/OpenNR?style=social)](https://github.com/olekspa/OpenNR/stargazers)
 
-[![Pre-commit CI](https://results.pre-commit.ci/badge/github/alandtse/open-shaders/dev.svg)](https://results.pre-commit.ci/latest/github/alandtse/open-shaders/dev)
-![CodeRabbit Pull Request Reviews](https://img.shields.io/coderabbit/prs/github/alandtse/open-shaders?utm_source=oss&utm_medium=github&utm_campaign=alandtse%2Fopen-shaders&labelColor=171717&color=FF570A&link=https%3A%2F%2Fcoderabbit.ai&label=CodeRabbit+Reviews)
-[![Translation status](https://hosted.weblate.org/widget/open-shaders/svg-badge.svg)](https://hosted.weblate.org/engage/open-shaders/)
+[![Pre-commit CI](https://results.pre-commit.ci/badge/github/olekspa/OpenNR/dev.svg)](https://results.pre-commit.ci/latest/github/olekspa/OpenNR/dev)
+![CodeRabbit Pull Request Reviews](https://img.shields.io/coderabbit/prs/github/olekspa/OpenNR?utm_source=oss&utm_medium=github&utm_campaign=olekspa%2FOpenNR&labelColor=171717&color=FF570A&link=https%3A%2F%2Fcoderabbit.ai&label=CodeRabbit+Reviews)
 
 [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/alandtse/open-shaders)
 
-# Open Shaders
+# OpenNR
 
-SKSE core plugin for advanced graphics modifications for Skyrim and fork of Community Shaders.
+**A Neural Rendering-focused Open Shaders fork with future support for custom Neural Rendering DLSS models.**
 
-[Open Shaders developer wiki](https://github.com/alandtse/open-shaders/wiki) · [Upstream Community Shaders on Nexus](https://www.nexusmods.com/skyrimspecialedition/mods/86492) · [Upstream source](https://github.com/community-shaders/skyrim-community-shaders) · [Upstream developer wiki](https://github.com/community-shaders/skyrim-community-shaders/wiki)
+OpenNR is the public name for this Open Shaders fork and its DLSSNR-focused Skyrim VR distribution. The related **OpenNR Capture** feature/package remains a separate capture mechanism that shares the runtime compatibility layer; it is not the name of the core fork.
+
+[OpenNR repository](https://github.com/olekspa/OpenNR) · [GitLab group](https://gitlab.com/groups/opennr) · [Upstream Open Shaders](https://github.com/alandtse/open-shaders) · [Upstream Community Shaders](https://github.com/community-shaders/skyrim-community-shaders)
 
 ## About this fork
 
-**Open Shaders is a fork of [Community Shaders](https://github.com/community-shaders/skyrim-community-shaders).** All of the architecture, the shader pipeline, the feature framework, and the vast majority of the code in this repository originated upstream and is the work of the upstream Community Shaders authors and contributors. Copyrights and authorship are preserved unchanged. See the upstream [contributors page](https://github.com/community-shaders/skyrim-community-shaders/graphs/contributors) for the team behind the project.
+**OpenNR is a downstream fork of [Open Shaders](https://github.com/alandtse/open-shaders), which itself is a fork of [Community Shaders](https://github.com/community-shaders/skyrim-community-shaders).** The architecture, shader pipeline, feature framework, and most inherited code originated in those upstream projects. Copyright notices, authorship, GPL terms, and third-party licenses remain in force; see [BRANDING_AND_ATTRIBUTIONS.md](./BRANDING_AND_ATTRIBUTIONS.md) for the complete lineage and distribution policy.
 
 **Naming convention used throughout this repo and the in-game UI:**
 
 | Term                                                             | Refers to                                                                                                                                 |
 | ---------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
 | Community Shaders                                                | The upstream project (`community-shaders/skyrim-community-shaders`, Nexus mod 86492)                                                      |
-| Open Shaders                                                     | This fork (`alandtse/open-shaders`, Nexus mod 180419)                                                                                     |
+| Open Shaders                                                     | The immediate upstream fork (`alandtse/open-shaders`)                                                                                     |
+| OpenNR                                                           | This project (`olekspa/OpenNR`), focused on neural rendering and VR                                                                        |
 | `CommunityShaders` (as a path / filename / identifier in source) | Runtime-compat identifier; intentionally kept identical to upstream so settings, themes, and SKSE plugin discovery work without migration |
 
-The upstream branding (logo, Nexus icon, typography) is non-GPL and not redistributed by this fork — see the "Icons" section under [License](#license) below.
+OpenNR does not reuse the upstream Open Shaders or Community Shaders logos. Its original wordmark is distributed under the separate policy in [`.github/assets/logo/LICENSE`](./.github/assets/logo/LICENSE). Runtime compatibility names remain unchanged intentionally.
 
-Install from the [Open Shaders Nexus page](https://www.nexusmods.com/skyrimspecialedition/mods/180419), from [GitHub releases](https://github.com/alandtse/open-shaders/releases), or build from source.
+Install from [OpenNR GitHub releases](https://github.com/olekspa/OpenNR/releases) or build from source.
 
 ## Requirements
 
@@ -75,11 +77,11 @@ Install them manually only if you want them in everywhere.
 To clone the repository with all submodules, run the following command in your terminal:
 
 ```bash
-git clone https://github.com/alandtse/open-shaders.git --recursive
-cd open-shaders
+git clone https://github.com/olekspa/OpenNR.git --recursive
+cd OpenNR
 ```
 
-> The DLL filename is `CommunityShaders.dll` and the SKSE plugin directory is `SKSE/Plugins/CommunityShaders/` — identical to upstream Community Shaders, so user settings, themes, and mod-manager profiles are drop-in compatible. Only the public name and in-game branding are "Open Shaders".
+> The DLL filename is `CommunityShaders.dll` and the SKSE plugin directory is `SKSE/Plugins/CommunityShaders/` — identical to both upstream projects, so user settings, themes, and mod-manager profiles remain drop-in compatible. The public and in-game branding is OpenNR.
 
 ### Visual Studio build
 

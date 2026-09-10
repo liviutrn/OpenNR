@@ -70,8 +70,8 @@ void HomePageRenderer::RenderWelcomeSection()
 	auto versionStr = Util::GetFormattedVersion(Plugin::VERSION);
 	auto expectedTag = std::format("v{}", versionStr);
 	std::string titleWithVersion = Plugin::BUILD_DESCRIBE == expectedTag ?
-	                                   I18n::GetSingleton()->Format("menu.home.welcome", { { "version", std::string(versionStr) } }, "Welcome to Open Shaders {version}") :
-	                                   I18n::GetSingleton()->Format("menu.home.welcome_dev", { { "version", std::string(versionStr) }, { "build", std::string(Plugin::BUILD_DESCRIBE) } }, "Welcome to Open Shaders {version} [{build}]");
+	                                   I18n::GetSingleton()->Format("menu.home.welcome", { { "version", std::string(versionStr) } }, "Welcome to OpenNR {version}") :
+	                                   I18n::GetSingleton()->Format("menu.home.welcome_dev", { { "version", std::string(versionStr) }, { "build", std::string(Plugin::BUILD_DESCRIBE) } }, "Welcome to OpenNR {version} [{build}]");
 	ImVec2 titleSize = ImGui::CalcTextSize(titleWithVersion.c_str());
 	ImGui::SetCursorPosX((windowSize.x - titleSize.x) * 0.5f);
 	ImGui::Text("%s", titleWithVersion.c_str());
@@ -88,9 +88,9 @@ void HomePageRenderer::RenderWelcomeSection()
 
 	// Intro text - centered
 	const char* introText = T("menu.home.intro",
-		"Open Shaders is a fork of Community Shaders providing advanced graphics enhancements for Skyrim.\n"
-		"This comprehensive collection of features brings modern rendering techniques\n"
-		"to enhance your visual experience.");
+		"OpenNR is a Neural Rendering-focused fork of Open Shaders and Community Shaders.\n"
+		"It brings modern rendering techniques and VR-focused DLSSNR work to Skyrim\n"
+		"while preserving the upstream runtime compatibility layout.");
 	ImVec2 introSize = ImGui::CalcTextSize(introText);
 	ImGui::SetCursorPosX((windowSize.x - introSize.x) * 0.5f);
 	ImGui::TextWrapped("%s", introText);
@@ -122,14 +122,14 @@ void HomePageRenderer::RenderQuickLinksSection()
 	ImGui::SetCursorPosX((windowSize.x - titleSize.x) * 0.5f);
 	ImGui::Text("%s", quickLinksTitle);
 
-	// Nexus button → the Open Shaders fork page (mod 180419).
+	// Distribution button → the OpenNR release page.
 	ImGui::Columns(4, nullptr, false);
 
-	if (ImGui::Button(T("menu.home.nexus_mods", "Nexus Mods"), ImVec2(-1, 0))) {
-		ShellExecuteA(NULL, "open", "https://www.nexusmods.com/skyrimspecialedition/mods/180419", NULL, NULL, SW_SHOWNORMAL);
+	if (ImGui::Button(T("menu.home.nexus_mods", "OpenNR Releases"), ImVec2(-1, 0))) {
+		ShellExecuteA(NULL, "open", "https://github.com/olekspa/OpenNR/releases", NULL, NULL, SW_SHOWNORMAL);
 	}
 
-	// Discord button → the Open Shaders fork's own server invite.
+	// Community button → the existing project community invite.
 	ImGui::NextColumn();
 	if (ImGui::Button(T("menu.home.join_discord", "Join Discord"), ImVec2(-1, 0))) {
 		ShellExecuteA(NULL, "open", "https://discord.gg/V6qa82Spxw", NULL, NULL, SW_SHOWNORMAL);
@@ -137,12 +137,12 @@ void HomePageRenderer::RenderQuickLinksSection()
 
 	ImGui::NextColumn();
 	if (ImGui::Button(T("menu.home.github", "GitHub"), ImVec2(-1, 0))) {
-		ShellExecuteA(NULL, "open", "https://github.com/alandtse/open-shaders", NULL, NULL, SW_SHOWNORMAL);
+		ShellExecuteA(NULL, "open", "https://github.com/olekspa/OpenNR", NULL, NULL, SW_SHOWNORMAL);
 	}
 
 	ImGui::NextColumn();
 	if (ImGui::Button(T("menu.home.dev_wiki", "Developer Wiki"), ImVec2(-1, 0))) {
-		ShellExecuteA(NULL, "open", "https://github.com/alandtse/open-shaders/wiki", NULL, NULL, SW_SHOWNORMAL);
+		ShellExecuteA(NULL, "open", "https://github.com/olekspa/OpenNR/wiki", NULL, NULL, SW_SHOWNORMAL);
 	}
 
 	ImGui::Columns(1);
@@ -159,14 +159,11 @@ void HomePageRenderer::RenderFAQSection()
 	ImGui::Separator();
 
 	// FAQ items with collapsible headers
-	if (ImGui::CollapsingHeader(T("menu.faq.q1", "What is Open Shaders?"))) {
+	if (ImGui::CollapsingHeader(T("menu.faq.q1", "What is OpenNR?"))) {
 		ImGui::TextWrapped("%s", T("menu.faq.a1",
-									 "Open Shaders is a fork of Community Shaders that ships features the upstream project "
-									 "has not yet released. Both projects are comprehensive graphics enhancement frameworks "
-									 "for Skyrim that provide advanced lighting, materials, and visual effects. They're "
-									 "designed to be modular, letting you enable only the features you want while "
-									 "maintaining good performance. This fork preserves the upstream runtime layout so user "
-									 "settings and themes are compatible."));
+									 "OpenNR is a Neural Rendering-focused fork of Open Shaders, itself derived from "
+									 "Community Shaders. It preserves the upstream runtime layout while adding DLSSNR, VR, "
+									 "and experimental neural-rendering work."));
 	}
 
 	if (ImGui::CollapsingHeader(T("menu.faq.q2", "How do I configure features?"))) {
@@ -197,31 +194,31 @@ void HomePageRenderer::RenderFAQSection()
 									 "tab also includes upscaling options that can improve performance."));
 	}
 
-	if (ImGui::CollapsingHeader(T("menu.faq.q6", "Is Open Shaders compatible with ENB?"))) {
+	if (ImGui::CollapsingHeader(T("menu.faq.q6", "Is OpenNR compatible with ENB?"))) {
 		ImGui::TextWrapped("%s", T("menu.faq.a6",
-									 "No, Open Shaders (like upstream Community Shaders) is not compatible with ENB. The "
+									 "No, OpenNR (like upstream Community Shaders) is not compatible with ENB. The "
 									 "plugin will automatically disable itself if ENB is detected."));
 	}
 
 	if (ImGui::CollapsingHeader(T("menu.faq.q7", "The menu hotkey isn't working!"))) {
 		ImGui::TextWrapped("%s", T("menu.faq.a7",
-									 "By default, Open Shaders uses the END key to open this menu. If your keyboard "
+									 "By default, OpenNR uses the END key to open this menu. If your keyboard "
 									 "doesn't have an END key or it's not working, you can change it in the General > Keybindings tab. "
 									 "You can also edit the hotkey in the JSON configuration files."));
 	}
 
-	if (ImGui::CollapsingHeader(T("menu.faq.q8", "I would like to help develop Open Shaders."))) {
+	if (ImGui::CollapsingHeader(T("menu.faq.q8", "I would like to help develop OpenNR."))) {
 		ImGui::TextWrapped("%s", T("menu.faq.a8",
-									 "Open Shaders is open source. Check out the upstream GitHub wiki for contribution "
+									 "OpenNR is open source. Check out the upstream GitHub wiki for contribution "
 									 "guidelines on the shared architecture; open issues and PRs against this repository for "
 									 "fork-specific work, or against upstream Community Shaders for changes that benefit both "
 									 "projects. Whether you're interested in shader programming, C++ development, or "
 									 "documentation, there's always something to contribute."));
 	}
 
-	if (ImGui::CollapsingHeader(T("menu.faq.q9", "Is Open Shaders open source?"))) {
+	if (ImGui::CollapsingHeader(T("menu.faq.q9", "Is OpenNR open source?"))) {
 		ImGui::TextWrapped("%s", T("menu.faq.a9",
-									 "Yes! Open Shaders is completely open source and available on GitHub, as is upstream "
+									 "Yes! OpenNR is completely open source and available on GitHub, as is upstream "
 									 "Community Shaders. You can view the source code, report issues, suggest features, and "
 									 "contribute to either project. Both are licensed under GPL, ensuring they remain free and "
 									 "open for everyone. Branding materials and assets (icons, Nexus branding, typography, etc.) "
@@ -614,7 +611,7 @@ void HomePageRenderer::RenderFirstTimeSetupDialog()
 
 	// Version text - two lines, both centered (reduced spacing between lines)
 	const char* versionLine1 = T("menu.setup.new_install_line1", "This appears to be a new install, update, or");
-	const char* versionLine2 = T("menu.setup.new_install_line2", "reinstallation of Open Shaders.");
+	const char* versionLine2 = T("menu.setup.new_install_line2", "reinstallation of OpenNR.");
 
 	centerText(versionLine1);
 	ImGui::Text("%s", versionLine1);

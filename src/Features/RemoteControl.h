@@ -23,7 +23,7 @@ public:
 	std::pair<std::string, std::vector<std::string>> GetFeatureSummary() override
 	{
 		return {
-			"Expose Open Shaders to AI assistants through the external devbench host.",
+"Expose OpenNR to AI assistants through the external devbench host.",
 			{
 				"Registers feature, inspect, shadercache, capture, and settings tools",
 				"Drivable over MCP and REST from the shared devbench bench",

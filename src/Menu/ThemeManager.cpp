@@ -1020,9 +1020,9 @@ void ThemeManager::CreateDefaultThemeFiles()
 
 		file << R"({
 	"DisplayName": "Default Theme",
-	"Description": "Default Open Shaders theme",
+"Description": "Default OpenNR theme",
 	"Version": "1.0",
-	"Author": "Open Shaders",
+"Author": "OpenNR Contributors",
 	"Theme": {
 		"UseSimplePalette": true,
 		"Palette": {

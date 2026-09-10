@@ -1,8 +1,12 @@
-The Open Shaders logo (open-shaders-logo.png) is Copyright (c) Open
-Shaders Contributors. All rights reserved.
+The OpenNR logos in this directory are project-specific branding assets.
+They are not part of the GPL-covered source code in this repository and
+must not be presented as the logo or official branding of Open Shaders or
+Community Shaders.
 
-Unlike the rest of this repository, this logo is NOT licensed under the
-GNU General Public License (see /COPYING) and is not trademark-licensed.
-It may only be used in unmodified form to refer to this project. It may
-not be used to represent a fork or derivative of this project without
-permission.
+The OpenNR wordmark and icon may be redistributed unchanged with an OpenNR
+source checkout or binary package to identify this project. Do not use it to
+endorse, impersonate, or rebrand either upstream project.
+
+The upstream Open Shaders logo is intentionally not included in OpenNR.
+See /BRANDING_AND_ATTRIBUTIONS.md for the fork lineage and third-party
+attribution policy.

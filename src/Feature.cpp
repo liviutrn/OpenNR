@@ -106,7 +106,7 @@ void Feature::Load(json& o_json)
 				hasError = true;
 				errorVersion = value;
 				errorType = FeatureIssues::FeatureIssueInfo::IssueType::UNKNOWN;
-				failedLoadedMessage = std::format("{} {} is an unknown feature not supported by this Open Shaders version. This may be a feature from a development branch.", GetDisplayName(), value);
+				failedLoadedMessage = std::format("{} {} is an unknown feature not supported by this OpenNR version. This may be a feature from a development branch.", GetDisplayName(), value);
 			} else {
 				// Version compatibility check
 				bool oldFeature = featureVersion.compare(minimalFeatureVersion) == std::strong_ordering::less;
@@ -123,7 +123,7 @@ void Feature::Load(json& o_json)
 					std::string minimalVersionString = Util::GetFormattedVersion(minimalFeatureVersion);
 
 					if (IsCore()) {
-						failedLoadedMessage = std::format("This feature is already included as part of the core Open Shaders installation. Uninstall this feature with your mod manager.");
+						failedLoadedMessage = std::format("This feature is already included as part of the core OpenNR installation. Uninstall this feature with your mod manager.");
 					} else if (majorVersionMismatch) {
 						failedLoadedMessage = std::format("{} {} is too old, major version incompatibility detected. Required: {}", GetDisplayName(), value, minimalVersionString);
 					} else {

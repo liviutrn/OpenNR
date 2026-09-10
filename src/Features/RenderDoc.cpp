@@ -167,7 +167,7 @@ void RenderDoc::DrawSettings()
 	// pending banner below it -- the previous ordering drew the banner between
 	// the checkbox and the tooltip, so a pending banner would steal the hover.
 	Util::UI::RestartGatedAnnotate(bootSnapshot, settings, &Settings::enableCapture, [] {
-		ImGui::TextUnformatted(T(TKEY("enable_capture_tooltip"), "Enable RenderDoc frame capture for providing debug captures to the Open Shaders team."));
+	ImGui::TextUnformatted(T(TKEY("enable_capture_tooltip"), "Enable OpenNR Capture / RenderDoc frame capture for providing debug captures to the OpenNR team."));
 		ImGui::TextUnformatted(T(TKEY("enable_capture_tooltip2"), "Enabling capture will force-enable frame annotations for easier debugging and will restore the previous setting when disabled."));
 	});
 
@@ -264,7 +264,7 @@ void RenderDoc::DrawSettings()
 					}
 				}
 
-				ImGui::TextDisabled("%s", T(TKEY("capture_dir"), "Open Shaders Capture Directory"));
+	ImGui::TextDisabled("%s", T(TKEY("capture_dir"), "OpenNR Capture Directory"));
 				Util::AddTooltip(T(TKEY("capture_dir_tooltip"), "Right-click to copy the directory path."));
 
 				if (ImGui::BeginPopupContextItem()) {
@@ -436,7 +436,7 @@ void RenderDoc::DrawSettings()
 								// Calculate time ago dynamically for tooltip
 								std::string currentTimeAgo = Util::FormatTimeAgo(file.lastWriteTime);
 								std::string tooltip = std::format("File: {}\nSize: {}\nCreated: {}",
-									std::format("Open Shaders Captures/{}", file.filename), file.sizeStr, currentTimeAgo);
+			std::format("OpenNR Capture/{}", file.filename), file.sizeStr, currentTimeAgo);
 
 								// Add deletion error message if applicable
 								if (file.deletionFailed && !file.deletionErrorMessage.empty()) {
@@ -446,10 +446,10 @@ void RenderDoc::DrawSettings()
 											displayError.replace(position, from.size(), to);
 										}
 									};
-									replaceAll(file.fullPath.string(), std::format("Open Shaders Captures/{}", file.filename));
-									replaceAll(file.fullPath.parent_path().string(), "Open Shaders Captures");
-									replaceAll("Community Shaders", "Open Shaders");
-									replaceAll("CommunityShaders", "Open Shaders data");
+		replaceAll(file.fullPath.string(), std::format("OpenNR Capture/{}", file.filename));
+		replaceAll(file.fullPath.parent_path().string(), "OpenNR Capture");
+		replaceAll("Community Shaders", "OpenNR");
+		replaceAll("CommunityShaders", "OpenNR data");
 									tooltip += std::format("\n\nDeletion Failed: {}", displayError);
 								}
 
@@ -903,7 +903,7 @@ std::string RenderDoc::BuildAutomaticCaptureComments(const std::string& userComm
 
 	// Plugin version
 	auto pluginVersion = Util::GetFormattedVersion(Plugin::VERSION);
-	comments += std::format("Open Shaders {}\n", pluginVersion);
+	comments += std::format("OpenNR {}\n", pluginVersion);
 
 	// Enabled features
 	const auto& features = Feature::GetFeatureList();
