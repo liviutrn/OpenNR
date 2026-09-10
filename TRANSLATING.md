@@ -1,6 +1,6 @@
-# Translating Open Shaders
+# Translating OpenNR
 
-Open Shaders supports multiple languages through a JSON-based translation system.
+OpenNR supports multiple languages through a JSON-based translation system.
 This document explains how to contribute translations.
 
 ## For Translators (No Coding Required)
@@ -39,8 +39,8 @@ Weblate provides:
         "version": "1.0.0",
         "authors": ["Your Name"]
     },
-    "menu.home.welcome": "欢迎使用 Open Shaders {version}",
-    "menu.faq.q1": "什么是 Open Shaders？",
+    "menu.home.welcome": "欢迎使用 OpenNR {version}",
+    "menu.faq.q1": "什么是 OpenNR？",
     ...
 }
 ```
@@ -135,4 +135,4 @@ weather_editor.<item>           — Weather editor
 ## CJK Font Support
 
 CJK languages (Chinese, Japanese, Korean) require fonts with appropriate glyph coverage.
-Open Shaders uses system CJK fonts by default.
+OpenNR uses system CJK fonts by default.

@@ -1,6 +1,6 @@
 # Release Process and Branch Model
 
-This document describes the branching model, semantic release workflow, patch flows, manual packaging targets, and release stages (Alpha / Beta) used in Open Shaders.
+This document describes the branching model, semantic release workflow, patch flows, manual packaging targets, and release stages (Alpha / Beta) used in OpenNR.
 
 ## Conventional Commit Version Impact
 

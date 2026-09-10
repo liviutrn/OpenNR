@@ -186,7 +186,7 @@ jobs:
               uses: ./.github/actions/publish-release
               with:
                   token: ${{ secrets.GITHUB_TOKEN }}
-                  name: "Open Shaders ${{ needs.build.outputs.version }} PR #${{ github.event.pull_request.number }}"
+ name: "OpenNR ${{ needs.build.outputs.version }} PR #${{ github.event.pull_request.number }}"
                   tag: v${{ needs.build.outputs.version }}-pr${{ github.event.pull_request.number }}
                   # Anchor the preview tag to the PR head, not the base tip.
                   # Without this, pull_request_target makes GITHUB_SHA the base
@@ -205,7 +205,7 @@ jobs:
               uses: ./.github/actions/publish-release
               with:
                   token: ${{ secrets.GITHUB_TOKEN }}
-                  name: "Open Shaders ${{ needs.build.outputs.version }} PR #${{ github.event.pull_request.number }}"
+ name: "OpenNR ${{ needs.build.outputs.version }} PR #${{ github.event.pull_request.number }}"
                   tag: v${{ needs.build.outputs.version }}-pr${{ github.event.pull_request.number }}
                   # Anchor to the PR head, not the base tip — see the custom-notes
                   # step above for why dev-reachable preview tags break releases.

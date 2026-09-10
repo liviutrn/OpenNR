@@ -4,7 +4,7 @@
 
 -   **[VSCode Setup](./vscode-setup.md)** - IDE configuration, extensions, and auto-deploy
 -   **[Shader Workflow](./shader-workflow.md)** - Fast shader iteration and deployment
--   **[Upstream Sync](./upstream-sync.md)** - How Open Shaders merges with upstream community-shaders
+-   **[Upstream Sync](./upstream-sync.md)** - How OpenNR merges with upstream Open Shaders and Community Shaders
 -   **[Repository Architecture](./architecture.md)** - Codebase layout, global systems, and multi-runtime targeting
 -   **[Release Process](./release-process.md)** - Branch model, semantic version bumps, release stages, and manual packaging
 

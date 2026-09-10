@@ -168,7 +168,7 @@ jobs:
               run: |
                   set -euo pipefail
                   # Last stable (non-prerelease) tag; fall back to v1.5.2 since
-                  # Open Shaders has no official release yet — v1.5.2 is the
+# OpenNR has no official release yet — v1.5.2 is the
                   # inherited upstream baseline and the changelog floor.
                   BASE=$(git tag --list 'v*.*.*' --sort=-v:refname | grep -v -- '-' | head -1 || true)
                   BASE=${BASE:-v1.5.2}
@@ -226,7 +226,7 @@ jobs:
                   # First-publish only (ncipollo ignores this on update); the
                   # Roll step above keeps the existing tag tracking dev-HEAD.
                   commit: ${{ github.sha }}
-                  name: "Open Shaders (dev) — latest build ${{ needs.build.outputs.version }}"
+ name: "OpenNR (dev) — latest build ${{ needs.build.outputs.version }}"
                   prerelease: "true"
                   artifacts: "${{ github.workspace }}/dist/CommunityShaders_AIO-*.7z"
                   body-file: ${{ steps.changelog.outputs.body-file }}
