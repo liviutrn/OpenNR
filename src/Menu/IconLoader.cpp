@@ -102,7 +102,7 @@ namespace Util::IconLoader
 		const bool useMonochrome = menu->GetSettings().Theme.UseMonochromeIcons;
 		const bool useMonochromeLogo = menu->GetSettings().Theme.UseMonochromeLogo;
 		const char* iconFolder = useMonochrome ? "Action Icons\\Monochrome" : "Action Icons";
-		const char* logoPath = useMonochromeLogo ? "Community Shaders Logo\\Monochrome\\cs-logo.png" : "Community Shaders Logo\\cs-logo.png";
+		const char* logoPath = useMonochromeLogo ? "OpenNR Logo\\Monochrome\\opennr-logo.png" : "OpenNR Logo\\opennr-logo.png";
 
 		return {
 			{ std::string(iconFolder) + "\\sidebar.png", &menu->uiIcons.sidebar.texture, &menu->uiIcons.sidebar.size, true },

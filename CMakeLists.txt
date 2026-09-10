@@ -28,7 +28,7 @@ option(
 project(
     # gersemi: ignore
     CommunityShaders
-	VERSION 2.12.1
+	VERSION 2.13.0
     LANGUAGES CXX
 )
 
@@ -1725,7 +1725,7 @@ if(BUILD_SHADER_TESTS)
 endif()
 
 message("*************************************************************")
-message("Open Shaders configuration complete (fork of Community Shaders)")
+message("OpenNR configuration complete (a Neural Rendering-focused Open Shaders fork with future support for custom Neural Rendering DLSS models)")
 message(
     "To prepare a package of AIO (.7z when 7-Zip is found), Core, or Features"
 )
