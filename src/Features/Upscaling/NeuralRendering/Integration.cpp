@@ -36,6 +36,8 @@ namespace NeuralRendering
 		bool blendFallbackLogged = false;
 		std::atomic_bool historyResetRequested{ false };
 		bool temporalSuppressed = false;
+		bool menuStateObserved = false;
+		bool menuWasOpen = false;
 		std::uint32_t preUpscaleAppliedFrame = UINT32_MAX;
 		bool preUpscaleModeObserved = false;
 		bool preUpscaleMode = false;
@@ -43,12 +45,21 @@ namespace NeuralRendering
 		bool preUpscaleSuccessLogged = false;
 		bool preUpscaleExecutionFailed = false;
 
+		bool IsGameMenuOpen()
+		{
+			auto* state = globals::state;
+			return state && state->IsPausedOrMenuOpen(globals::game::ui);
+		}
+
 		bool IsTemporalOverlayOpen()
 		{
 			auto* state = globals::state;
 			auto* ui = globals::game::ui;
 			const bool consoleOpen = ui && ui->IsMenuOpen(RE::Console::MENU_NAME);
-			return consoleOpen || (state && state->IsPausedOrMenuOpen(ui));
+			// Ordinary pause/map/stats menus have a guarded camera-MV path below and
+			// are safe to keep on NR. Loading and console overlays still have no
+			// stable scene contract, so they remain fail-closed and reset history.
+			return consoleOpen || (state && state->isLoadingMenuOpen);
 		}
 
 		ID3D11Texture2D* ResolveRenderTargetTexture(
@@ -256,10 +267,19 @@ namespace NeuralRendering
 
 	void UpdateFrameState()
 	{
+		const bool menuOpen = IsGameMenuOpen();
 		const bool overlayOpen = IsTemporalOverlayOpen();
 		const bool requested = historyResetRequested.exchange(false, std::memory_order_acq_rel);
 		const bool requestedPreUpscale = globals::features::upscaling.foveatedRender.settings.neuralRenderingPreUpscale != 0;
 		bool stageChanged = false;
+		bool menuChanged = false;
+		if (!menuStateObserved) {
+			menuStateObserved = true;
+			menuWasOpen = menuOpen;
+		} else if (menuWasOpen != menuOpen) {
+			menuWasOpen = menuOpen;
+			menuChanged = true;
+		}
 		if (!preUpscaleModeObserved) {
 			preUpscaleModeObserved = true;
 			preUpscaleMode = requestedPreUpscale;
@@ -271,19 +291,32 @@ namespace NeuralRendering
 			preUpscaleBlockLogged = false;
 			preUpscaleExecutionFailed = false;
 		}
-		if (!requested && overlayOpen == temporalSuppressed && !stageChanged)
+		if (!requested && overlayOpen == temporalSuppressed && !stageChanged && !menuChanged)
 			return;
 
 		temporalSuppressed = overlayOpen;
-		ResetHistory();
+		if (menuChanged) {
+			// Menu entry/exit changes the motion-vector contract. Invalidate both
+			// the neural history and the foveated periphery history, but do not
+			// suppress the ordinary menu route itself.
+			FoveatedRenderImpl::Core::InvalidateTemporalState();
+		} else {
+			ResetHistory();
+		}
+		const char* resetReason = stageChanged ? "NR stage changed" :
+			menuChanged ? (menuOpen ? "menu open" : "menu closed") :
+			requested ? "event" : (overlayOpen ? "overlay open" : "overlay closed");
 		logger::debug("[DLSSNR] Temporal history reset ({})",
-			stageChanged ? "NR stage changed" : (requested ? "event" : (overlayOpen ? "overlay open" : "overlay closed")));
+			resetReason);
 	}
 
 	bool ApplyPreUpscale()
 	{
 		UpdateFrameState();
-		if (temporalSuppressed)
+		// The pre-upscale hook runs before Upscale() has installed the guarded
+		// menu motion-vector fallback. Keep this experimental stage out of menus;
+		// post-upscale NR is allowed once those inputs have been prepared.
+		if (temporalSuppressed || IsGameMenuOpen())
 			return false;
 
 		auto& upscaling = globals::features::upscaling;
@@ -586,6 +619,8 @@ namespace NeuralRendering
 		stereoBlendFormat = DXGI_FORMAT_UNKNOWN;
 		lastAppliedFrame = UINT32_MAX;
 		preUpscaleAppliedFrame = UINT32_MAX;
+		menuStateObserved = false;
+		menuWasOpen = false;
 		preUpscaleModeObserved = false;
 		preUpscaleMode = false;
 		preUpscaleBlockLogged = false;

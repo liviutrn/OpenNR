@@ -91,10 +91,11 @@ public:
 		// hardware-reported DLSSGState::numFramesToGenerateMax.
 		uint dlssgFramesToGenerate = 1;
 		uint streamlineLogLevel = 0;  // 0=Off, 1=Default, 2=Verbose
-		// Both default to 0.8, matching AMD's own FSR3 sample default.
+		// FSR keeps the AMD sample default; DLSS RCAS is explicitly disabled by
+		// default so the neural/DLSS resolve is not followed by extra sharpening.
 		float sharpnessFSR = 0.8f;
 		bool sharpnessEnabledDLSS = false;
-		float sharpnessDLSS = 0.8f;
+		float sharpnessDLSS = 0.0f;
 		uint presetDLSS = 0;  // 0=Default, 1=J, 2=K, 3=L, 4=M
 		bool reflexLowLatencyMode = false;
 		bool reflexLowLatencyBoost = false;

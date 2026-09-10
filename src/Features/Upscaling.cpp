@@ -2900,15 +2900,19 @@ void Upscaling::Upscale()
 		CS_GPU_PASS("Upscaling::Upscale");
 
 		// Opt-in FoveatedRender route, shared by kDLSS/kFSR; falls through to the
-		// standard path on failure. Menu-skip is required: in menus the world stops
-		// producing fresh motion vectors/depth while kMAIN keeps changing (UI
-		// composites), so the subrect route would accumulate history against stale data.
+		// standard path on failure. Ordinary menus stay on the route when their
+		// guide contract is valid: static backdrops use the camera-derived MVs
+		// prepared above, while a live VR backdrop can use the engine's current
+		// vectors. Loading and console overlays remain fail-closed.
 		auto tryFoveatedRoute = [&](ID3D11Resource* a_depth, const char* a_methodLabel) -> bool {
 			auto* ui = globals::game::ui;
 			auto* st = globals::state;
 			const bool consoleOpen = ui && ui->IsMenuOpen(RE::Console::MENU_NAME);
 			const bool menuOpen = consoleOpen || (st && st->IsPausedOrMenuOpen(ui));
-			if (!(FoveatedRenderImpl::Bridge::IsRouteActive() && globals::game::isVR && !menuOpen))
+			const bool temporalOverlayOpen = consoleOpen || (st && st->isLoadingMenuOpen);
+			const bool menuGuidesReady = !menuOpen || menuCameraMVsValid || (st && st->worldRenderedThisFrame);
+			if (!(FoveatedRenderImpl::Bridge::IsRouteActive() && globals::game::isVR &&
+				!temporalOverlayOpen && menuGuidesReady))
 				return false;
 			if (!FoveatedRenderImpl::Preprocess::EncodeUpscalingTextures(*this))
 				return false;
