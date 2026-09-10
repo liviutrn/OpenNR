@@ -639,7 +639,7 @@ void FoveatedRender::DrawSettings(bool showSharedPanelNote, bool vrControlsFirst
 			ImGui::TextUnformatted(T(TKEY("neural_rendering_visual_style"), "Visual Style"));
 			if (auto _tt = Util::HoverTooltipWrapper())
 				ImGui::TextUnformatted(T(TKEY("neural_rendering_visual_style_tooltip"),
-					"Choose the DLSS 5 NR style directly. These buttons select the underlying Style 0-3 value; intensity, tone, structure, and skin-detail strength remain in Advanced Tuning below."));
+		"Choose the Neural Rendering style directly. These buttons select the underlying Style 0-3 value; intensity, tone, structure, and skin-detail strength remain in Advanced Tuning below."));
 
 			const float minimumStyleCardWidth = 150.0f * Util::GetUIScale();
 			const int styleColumnCount = std::clamp(

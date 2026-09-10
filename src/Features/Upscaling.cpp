@@ -337,7 +337,7 @@ void Upscaling::DrawDLSSNRSharedControls()
 {
 	// These are the same settings used by the main Upscaling page. They are
 	// intentionally rendered here as a second entry point so a user can tune
-	// the complete DLSS 5 NR route without navigating between pages.
+	// the complete Neural Rendering route without navigating between pages.
 	ImGui::PushID("DLSS5NRSharedUpscaling");
 	ApplyOpenCompositeUpscalingBlocker();
 	const auto& openCompositeBlocker = GetOpenCompositeUpscalingBlocker();
@@ -365,7 +365,7 @@ void Upscaling::DrawDLSSNRSharedControls()
 		if (openCompositeBlocksUpscaling)
 			ImGui::Text(T(TKEY("method_locked_opencomposite"), "Locked to None while OpenComposite has %s=true."), openCompositeBlocker.settingName.c_str());
 		else
-			ImGui::TextUnformatted(T(TKEY("method_tooltip"), "Selects the upscaling backend. DLSS 5 NR requires NVIDIA DLSS as the active method."));
+		ImGui::TextUnformatted(T(TKEY("method_tooltip"), "Selects the upscaling backend. Neural Rendering requires NVIDIA DLSS as the active method."));
 	}
 	*currentUpscaleMode = std::min(availableModes, *currentUpscaleMode);
 
@@ -426,13 +426,13 @@ void Upscaling::DrawDLSSNRSharedControls()
 			DrawPerfModeToggle();
 	} else {
 		Util::Text::WrappedWarning(T(TKEY("dlssnr_requires_dlss"),
-			"DLSS 5 NR is inactive because NVIDIA DLSS is not the selected upscaler. Select NVIDIA DLSS above, then enable the NR route below."));
+			"Neural Rendering is inactive because NVIDIA DLSS is not the selected upscaler. Select NVIDIA DLSS above, then enable the NR route below."));
 	}
 	ImGui::PopID();
 }
 
 // FoveatedRender: foveated subrect DLSS, VR-only, opt-in. Enable lives at the top level
-// for discoverability; the dedicated DLSS 5 NR page can keep the full tuning body open
+// for discoverability; the dedicated Neural Rendering page can keep the full tuning body open
 // so first-time VR users see the primary coverage controls immediately.
 void Upscaling::DrawFoveationControls(bool showTuning, bool showSharedPanelNote, bool tuningDefaultOpen)
 {
@@ -458,17 +458,17 @@ void Upscaling::DrawFoveationControls(bool showTuning, bool showSharedPanelNote,
 void Upscaling::DrawDLSSNRPage()
 {
 	ImGui::PushID("DLSS5NRPage");
-	ImGui::TextUnformatted(T("menu.dlssnr.title", "DLSS 5 NR"));
+	ImGui::TextUnformatted(T("menu.dlssnr.title", "Neural Rendering"));
 	ImGui::TextWrapped("%s", T("menu.dlssnr.description",
-		"Dedicated controls for DLSS 5 Neural Rendering, foveated coverage, and the oval edge blend. Shared Upscaling values below write to the same settings used by the Upscaling page."));
+		"Dedicated controls for Neural Rendering, foveated coverage, and the oval edge blend. Shared Upscaling values below write to the same settings used by the Upscaling page."));
 	Util::Text::WrappedInfo(T("menu.dlssnr.route_info",
-		"Recommended VR route: NVIDIA DLSS + PerfMode active + Foveated Default mode. Foveated Rendering is the primary VR control: enable it first, choose your coverage preset, then tune DLSS 5 NR below. Settings that show a restart marker are staged until the next game launch."));
+		"Recommended VR route: NVIDIA DLSS + PerfMode active + Foveated Default mode. Foveated Rendering is the primary VR control: enable it first, choose your coverage preset, then tune Neural Rendering below. Settings that show a restart marker are staged until the next game launch."));
 	if (globals::game::isVR) {
 		ImGui::TextUnformatted(T("menu.dlssnr.foveation_header", "Foveated Rendering"));
 		ImGui::TextWrapped("%s", T("menu.dlssnr.foveation_description",
 			"Start here for VR. Enable the foveated route, then choose the Nasal Convergence 70% oval preset or adjust the region, periphery fill, edge blend, and falloff. The full panel is opened by default so the primary coverage controls are visible."));
 		Util::Text::WrappedInfo(T("menu.dlssnr.foveation_recommended",
-			"Recommended first install: Enable Foveated Rendering, use Nasal Convergence 70%, keep Edge Shape on Oval, and start with Feather blending. DLSS 5 NR controls and shared upscaler settings are below."));
+			"Recommended first install: Enable Foveated Rendering, use Nasal Convergence 70%, keep Edge Shape on Oval, and start with Feather blending. Neural Rendering controls and shared upscaler settings are below."));
 		DrawFoveationControls(true, false, true);
 		ImGui::Separator();
 		ImGui::TextUnformatted(T("menu.dlssnr.shared_header", "DLSS and Upscaling"));
@@ -478,7 +478,7 @@ void Upscaling::DrawDLSSNRPage()
 	} else {
 		DrawDLSSNRSharedControls();
 		ImGui::Separator();
-		ImGui::TextUnformatted(T("menu.dlssnr.neural_header", "DLSS Neural Rendering"));
+		ImGui::TextUnformatted(T("menu.dlssnr.neural_header", "Neural Rendering"));
 		ImGui::TextWrapped("%s", T("menu.dlssnr.flat_description",
 			"Flat mode exposes the same Feature 18 tuning without the VR-only crop and periphery controls."));
 		foveatedRender.DrawSettings(false);
@@ -679,7 +679,7 @@ void Upscaling::RegisterUxActions()
 			foveatedRender.subrectController.ApplyPresetByName(args.value("name", std::string{}));
 		});
 	FEATURE_COMMAND("applyNeuralRenderingPreset",
-		"Apply a DLSS 5 Neural Rendering tuning preset from the dedicated DLSS 5 NR page. Params: name (string): Default, Balanced, Fabric Detail, Natural, Strong, or Custom.",
+		"Apply a Neural Rendering tuning preset from the dedicated Neural Rendering page. Params: name (string): Default, Balanced, Fabric Detail, Natural, Strong, or Custom.",
 		[](Feature*, const json& args) {
 			foveatedRender.ApplyNeuralRenderingPreset(args.value("name", std::string("Default")));
 		});
@@ -1035,10 +1035,10 @@ void Upscaling::DrawSettings()
 		ImGui::TreePop();
 	}
 
-	// Foveated and neural controls live on the dedicated page beside Upscaling.
+	// Foveated and neural controls live on the dedicated Neural Rendering page beside Upscaling.
 	// Keep this handoff visible here so existing users can find the new surface.
 	if (globals::game::isVR || upscaleMethod == UpscaleMethod::kDLSS)
-		Util::Text::WrappedInfo(T("menu.dlssnr.open_dedicated", "DLSS 5 NR controls are available on the dedicated DLSS 5 NR page beside Upscaling."));
+		Util::Text::WrappedInfo(T("menu.dlssnr.open_dedicated", "Neural Rendering controls are available on the dedicated Neural Rendering page beside Upscaling."));
 
 	if (ImGui::TreeNodeEx(T(TKEY("backend_diagnostics"), "Backend Diagnostics"))) {
 		// Streamline log level selection

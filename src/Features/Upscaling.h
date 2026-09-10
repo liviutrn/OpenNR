@@ -255,9 +255,9 @@ public:
 	/// (shown disabled off-VR rather than hidden).
 	void DrawFoveationControls(bool showTuning = true, bool showSharedPanelNote = true, bool tuningDefaultOpen = false);
 	/// @brief Draws the method, preset, sharpening and DLSS model controls shared by
-	/// Upscaling and the dedicated DLSS 5 NR page.
+/// Upscaling and the dedicated Neural Rendering page.
 	void DrawDLSSNRSharedControls();
-	/// @brief Renders the dedicated DLSS 5 NR page, including shared upscaler controls.
+/// @brief Renders the dedicated Neural Rendering page, including shared upscaler controls.
 	void DrawDLSSNRPage();
 	const char* GetQualityModeName(uint qualityMode) const;
 	virtual void SaveSettings(json& o_json) override;

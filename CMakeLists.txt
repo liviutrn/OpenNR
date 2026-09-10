@@ -28,7 +28,7 @@ option(
 project(
     # gersemi: ignore
     CommunityShaders
-	VERSION 2.13.0
+	VERSION 2.14.0
     LANGUAGES CXX
 )
 
@@ -74,12 +74,12 @@ option(
 )
 option(
     AIO_INCLUDE_OPENNR_CAPTURE
-    "Include the opt-in OpenNR Capture feature registration in the AIO archive. Keep OFF for distributable packages; local test installs can add the feature registration separately."
-    OFF
+    "Include the OpenNR Capture feature registration in the unified OpenNR AIO. The feature is shipped for explicit opt-in use and remains disabled by default."
+    ON
 )
 option(
     BUILD_OPENNR_CAPTURE
-    "Compile the local-only OpenNR Capture feature into CommunityShaders.dll. Turn OFF for a distributable DLL with no OpenNR implementation."
+    "Compile the OpenNR Capture implementation into CommunityShaders.dll. The feature remains disabled by default until enabled in its menu/settings."
     ON
 )
 option(
@@ -133,9 +133,10 @@ if(NOT ENABLE_EFFECTS11)
     unset(_cs_all_sources)
 endif()
 
-# OpenNR Capture is a local-only feature. Keep its shared no-op surface in the
-# public build so the renderer remains source-compatible, but do not compile the
-# capture implementation into a distributable DLL.
+# OpenNR Capture is part of the unified OpenNR build. Keep its shared no-op
+# surface available for explicitly configured source-only builds, but compile
+# the implementation into the normal package so the menu can expose it while
+# the persisted master gate remains disabled by default.
 if(NOT BUILD_OPENNR_CAPTURE)
     get_target_property(_cs_all_sources_no_opennr "${PROJECT_NAME}" SOURCES)
     list(FILTER _cs_all_sources_no_opennr EXCLUDE REGEX "/src/Features/OpenNRCapture\\.cpp$")

@@ -15,7 +15,7 @@
 
 **A Neural Rendering-focused Open Shaders fork with future support for custom Neural Rendering DLSS models.**
 
-OpenNR is the public name for this Open Shaders fork and its DLSSNR-focused Skyrim VR distribution. The related **OpenNR Capture** feature/package remains a separate capture mechanism that shares the runtime compatibility layer; it is not the name of the core fork.
+OpenNR is the public name for this Open Shaders fork and its Neural Rendering-focused Skyrim VR distribution. **OpenNR Capture** is a related capture feature integrated into the same package; it remains fully disabled by default and is enabled only from its own settings page.
 
 [OpenNR repository](https://github.com/olekspa/OpenNR) · [GitLab group](https://gitlab.com/groups/opennr) · [Upstream Open Shaders](https://github.com/alandtse/open-shaders) · [Upstream Community Shaders](https://github.com/community-shaders/skyrim-community-shaders)
 

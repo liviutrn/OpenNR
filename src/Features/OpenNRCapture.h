@@ -168,9 +168,10 @@ struct OpenNRCaptureFeature final : Feature
 	/** @brief Returns true when the current sample includes complete per-eye artifacts. */
 	bool IsFullFrameValidationFrame() const;
 #else
-	// The distributable DLL keeps a tiny source-compatible no-op surface for
-	// renderer call sites, but does not contain the capture implementation. The
-	// OpenNRCapture.ini registration is excluded from that package as well.
+	// A developer can still compile a no-op surface for fast source-only builds by
+	// explicitly disabling BUILD_OPENNR_CAPTURE. The unified OpenNR package uses
+	// the implementation above and ships the registration while keeping it off by
+	// default through settings.enableCapture.
 	void DrawSettings() override {}
 	void LoadSettings(json&) override {}
 	void SaveSettings(json&) override {}

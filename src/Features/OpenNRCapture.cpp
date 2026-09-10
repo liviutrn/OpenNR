@@ -1219,20 +1219,39 @@ void OpenNRCaptureFeature::SaveSettings(json& a_json)
 
 void OpenNRCaptureFeature::DrawSettings()
 {
-	ImGui::TextWrapped("Captures GPU render textures around Feature 18. It never captures the desktop or presented swap chain.");
+	ImGui::SeparatorText("OpenNR Capture: purpose and safety");
+	ImGui::TextWrapped("OpenNR Capture records aligned training and validation data at the native Feature 18 render boundary. It is intended for neural-rendering dataset collection and route validation, not screenshots or desktop recording.");
+	ImGui::TextWrapped("The capture path reads GPU render textures only: pre-NR input, Feature 18 guides, and post-NR teacher output. It never captures the desktop, headset compositor, or presented swap chain. When disabled, no capture hotkeys are polled and no capture readback work is scheduled.");
+	ImGui::TextDisabled("Default state: OFF. Enable this feature only when you deliberately want to write data to the configured output directory.");
+
+	ImGui::SeparatorText("Capture stages");
 	ImGui::Checkbox("Enable capture", &settings.enableCapture);
+	ImGui::TextDisabled("Master gate. This must be enabled before the hotkeys, buttons, or render-thread capture path can do anything.");
 	ImGui::Checkbox("Capture pre-NR input", &settings.capturePreNR);
+	ImGui::TextDisabled("Stores the low-resolution color input that is sent toward the neural-rendering route.");
 	ImGui::Checkbox("Capture post-NR teacher", &settings.capturePostNR);
+	ImGui::TextDisabled("Stores the reconstructed teacher output after Feature 18 has completed.");
 	ImGui::Checkbox("Write raw teacher readback", &settings.captureRawTeacher);
+	ImGui::TextDisabled("Adds the native-resolution teacher tensor for validation when the normal sample is cropped.");
 	ImGui::Checkbox("Capture Feature 18 depth", &settings.captureDepth);
+	ImGui::TextDisabled("Stores the exact engine depth guide paired with each eye and frame.");
 	ImGui::Checkbox("Capture Feature 18 motion vectors", &settings.captureMotionVectors);
+	ImGui::TextDisabled("Stores the exact engine motion-vector guide; OpenNR does not synthesize a replacement optical-flow guide.");
+
+	ImGui::SeparatorText("Dataset shape and output");
 	ImGui::Checkbox("Write color PNG previews", &settings.writeColorPreviews);
+	ImGui::TextDisabled("Human-readable previews for inspection. Disable this to reduce I/O; typed raw tensors and JSONL metadata remain authoritative.");
 	ImGui::Checkbox("Capture full-frame artifacts", &settings.captureFullFrame);
+	ImGui::TextDisabled("Writes a complete per-eye artifact at the configured validation cadence in addition to training crops.");
 	ImGui::Checkbox("Full-resolution master sequence (every sample)", &settings.captureFullFrameSequence);
 	if (settings.captureFullFrameSequence)
-		ImGui::TextWrapped("Master mode writes complete per-eye color and native guide resources for every sampled frame, while keeping the configured training crops.");
+		ImGui::TextWrapped("Master mode writes complete per-eye color and native guide resources for every sampled frame, while keeping the configured training crops. This is intentionally expensive and can consume substantial disk space.");
+	else
+		ImGui::TextDisabled("Normal mode writes crops on each sample and periodic full-frame validation artifacts.");
 	ImGui::Checkbox("Left eye", &settings.captureLeftEye);
+	ImGui::TextDisabled("Include the left-eye half of the stereo pair.");
 	ImGui::Checkbox("Right eye", &settings.captureRightEye);
+	ImGui::TextDisabled("Include the right-eye half of the stereo pair. Keeping both eyes enabled preserves stereo-pair validation.");
 	ImGui::SliderFloat("Capture rate (frames/s)", &settings.captureRateFps, 0.0f, 120.0f, "%.1f");
 	int cropSize = static_cast<int>(settings.cropSize);
 	if (ImGui::SliderInt("Crop size", &cropSize, static_cast<int>(kMinCropSize), static_cast<int>(kMaxCropSize)))
@@ -1250,6 +1269,7 @@ void OpenNRCaptureFeature::DrawSettings()
 	if (ImGui::InputInt("Burst frames", &burstFrames))
 		settings.burstFrames = std::clamp(burstFrames, 1, static_cast<int>(kMaxBurstFrames));
 	ImGui::InputText("Output directory", &settings.outputDirectory);
+	ImGui::TextDisabled("Each sequence contains typed tensors plus frames.jsonl metadata. Use a dedicated directory and audit the sequence before training.");
 	for (std::size_t cropIndex = 0; cropIndex < settings.cropCount && cropIndex < settings.crops.size(); ++cropIndex) {
 		auto& crop = settings.crops[cropIndex];
 		ImGui::PushID(static_cast<int>(cropIndex));

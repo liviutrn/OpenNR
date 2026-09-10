@@ -450,7 +450,7 @@ std::vector<FeatureListRenderer::MenuFuncInfo> FeatureListRenderer::BuildMenuLis
 		BuiltInMenu{ T("menu.features.general", "General"), "General", drawGeneralSettings },
 		BuiltInMenu{ T("menu.features.performance", "Performance"), "Performance", []() { PerformanceRenderer::Render(); } },
 		BuiltInMenu{ T("menu.features.advanced", "Advanced"), "Advanced", drawAdvancedSettings },
-		BuiltInMenu{ T("menu.features.dlssnr", "DLSS 5 NR"), "DLSSNR", []() { globals::features::upscaling.DrawDLSSNRPage(); } }
+		BuiltInMenu{ T("menu.features.dlssnr", "Neural Rendering"), "DLSSNR", []() { globals::features::upscaling.DrawDLSSNRPage(); } }
 	};
 
 	const auto isFavorite = [](Feature* feature) {

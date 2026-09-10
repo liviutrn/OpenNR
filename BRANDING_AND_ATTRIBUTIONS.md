@@ -8,7 +8,7 @@ OpenNR is the public name of this repository and its DLSSNR-focused Skyrim VR di
 
 OpenNR is a downstream fork of [Open Shaders](https://github.com/alandtse/open-shaders). Open Shaders is itself a fork of [Community Shaders](https://github.com/community-shaders/skyrim-community-shaders). The inherited architecture, shader pipeline, feature framework, APIs, and much of the source remain attributable to those projects and their contributors.
 
-OpenNR adds and maintains neural-rendering and VR work, including the DLSSNR integration, VR grass-culling improvements, foveated-render fallback safety, and isolated beta/alpha experiment branches. The related feature/package named **OpenNR Capture** is a separate capture mechanism; it is related to this fork but is not the name of the core runtime.
+OpenNR adds and maintains neural-rendering and VR work, including the DLSSNR integration, VR grass-culling improvements, foveated-render fallback safety, and isolated beta/alpha experiment branches. The related feature named **OpenNR Capture** is integrated into the main runtime/package as an explicitly opt-in capture mechanism; it is not the name of the core runtime.
 
 ## Compatibility identity
 
