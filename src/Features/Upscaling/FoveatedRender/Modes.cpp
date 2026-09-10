@@ -140,7 +140,10 @@ namespace FoveatedRenderImpl
 		// Snapshot + clear HMD hidden-area ring before cropping into subrect inputs.
 		SnapshotSBS(p.colorSrc, p.renderW, p.renderH);
 		ClearHMDMaskOnSnapshot(p);
-		StretchDRSBothEyes(p.colorDstUAV, p.eyeWidthOut, p.eyeHeightOut, p.eyeWidthIn, p.eyeHeightIn, p.renderW, p.renderH, MaybeTemporalSmooth(p));
+		if (!StretchDRSBothEyes(p.colorDstUAV, p.eyeWidthOut, p.eyeHeightOut, p.eyeWidthIn, p.eyeHeightIn, p.renderW, p.renderH, MaybeTemporalSmooth(p))) {
+			logger::error("[FOVEATED] ExecuteDefaultMode periphery stretch failed — falling back");
+			return false;
+		}
 
 		// Crop subrect per-eye from mask-cleared snapshot (not kMAIN which was overwritten by stretch)
 		auto context = globals::d3d::context;
@@ -192,8 +195,11 @@ namespace FoveatedRenderImpl
 			uint32_t dstCropX = (uint32_t)(uv.x * p.eyeWidthOut);
 			uint32_t dstCropY = (uint32_t)(uv.y * p.eyeHeightOut);
 			uint32_t dstX = (i == 1 ? p.eyeWidthOut : 0) + dstCropX;
-			BlendSubrectToOutput(Core::vrSubrectColorOut[i]->resource.get(), p.colorDst, p.colorDstUAV,
-				dstX, dstCropY, subOutW, subOutH);
+			if (!BlendSubrectToOutput(Core::vrSubrectColorOut[i]->resource.get(), p.colorDst, p.colorDstUAV,
+					dstX, dstCropY, subOutW, subOutH)) {
+				logger::error("[FOVEATED] ExecuteDefaultMode subrect blend failed for eye {} — falling back", i);
+				return false;
+			}
 		}
 
 		return true;
@@ -266,7 +272,10 @@ namespace FoveatedRenderImpl
 
 		// Step 3: Stretch DRS → kMAIN (subrect only) — snapshot reused from Step 2a.
 		if (!p.isFullEye) {
-			StretchDRSBothEyes(p.colorDstUAV, p.eyeWidthOut, p.eyeHeightOut, p.eyeWidthIn, p.eyeHeightIn, p.renderW, p.renderH, MaybeTemporalSmooth(p));
+			if (!StretchDRSBothEyes(p.colorDstUAV, p.eyeWidthOut, p.eyeHeightOut, p.eyeWidthIn, p.eyeHeightIn, p.renderW, p.renderH, MaybeTemporalSmooth(p))) {
+				logger::error("[FOVEATED] ExecuteFasterMode periphery stretch failed — falling back");
+				return false;
+			}
 		}
 
 		// Step 4: Copy DLSS output back (with optional blend)
@@ -279,8 +288,11 @@ namespace FoveatedRenderImpl
 			uint32_t dstCropX = p.isFullEye ? 0 : (uint32_t)(uv.x * p.eyeWidthOut);
 			uint32_t dstCropY = p.isFullEye ? 0 : (uint32_t)(uv.y * p.eyeHeightOut);
 			uint32_t dstX = (i == 1 ? p.eyeWidthOut : 0) + dstCropX;
-			BlendSubrectToOutput(Core::vrFasterColorOut[i]->resource.get(), p.colorDst, p.colorDstUAV,
-				dstX, dstCropY, subOutW, subOutH);
+			if (!BlendSubrectToOutput(Core::vrFasterColorOut[i]->resource.get(), p.colorDst, p.colorDstUAV,
+					dstX, dstCropY, subOutW, subOutH)) {
+				logger::error("[FOVEATED] ExecuteFasterMode subrect blend failed for eye {} — falling back", i);
+				return false;
+			}
 		}
 
 		return true;
