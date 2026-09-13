@@ -24,3 +24,24 @@ __pycache__/
 *.py[cod]
 Thumbs.db
 Desktop.ini
+
+# External payloads and machine configuration
+/artifacts/
+/.out.relocation-staging-*/
+/_*report_app*/
+/config/paths.local.json
+*.obj
+*.pch
+*.lib
+*.exp
+*.cso
+*.pt
+*.pth
+*.onnx
+*.engine
+*.safetensors
+*.npy
+*.npz
+node_modules/
+.pytest_cache/
+.venv/

@@ -4,6 +4,7 @@
 
 #include "Globals.h"
 #include "Utils/D3D.h"
+#include "Utils/ExternalOutput.h"
 #include "Utils/DevBenchUx.h"
 #include "Features/Upscaling/NeuralRendering/Integration.h"
 
@@ -85,10 +86,15 @@ namespace
 
 	std::filesystem::path ResolveOutputRoot(const std::string& a_configuredPath)
 	{
-		std::filesystem::path path = a_configuredPath.empty() ? "OpenNR_Captures" : a_configuredPath;
-		if (path.is_absolute())
-			return path;
-		return GameRoot() / path;
+		std::filesystem::path path = a_configuredPath.empty() ? "C:/OpenNR/Captures" : a_configuredPath;
+		if (!path.is_absolute())
+			path = GameRoot() / path;
+		try {
+			return OpenNRStorage::ResolveExternalOutput(path);
+		} catch (const std::exception& error) {
+			logger::error("OpenNR Capture output rejected: {} ({})", path.string(), error.what());
+			return {};
+		}
 	}
 
 	std::string FormatName(DXGI_FORMAT a_format)
@@ -404,6 +410,9 @@ public:
 		}
 		if (recording)
 			return;
+		const auto outputRoot = ResolveOutputRoot(owner.settings.outputDirectory);
+		if (outputRoot.empty())
+			return;
 		// A new sequence must begin from a known Feature 18 temporal state.  The
 		// request is consumed on the render thread before the first eligible sample,
 		// so the first frame's history_reset metadata describes the actual teacher
@@ -411,7 +420,6 @@ public:
 		NeuralRendering::RequestHistoryReset();
 		const auto timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(
 			std::chrono::system_clock::now().time_since_epoch()).count();
-		const auto outputRoot = ResolveOutputRoot(owner.settings.outputDirectory);
 		std::error_code existsError;
 		do {
 			sequenceId = std::format("seq-{}-{}", timestamp, g_sequenceSerial.fetch_add(1, std::memory_order_relaxed));

@@ -66,6 +66,8 @@ def evaluate(model,loader,device):
 
 def main():
     p=argparse.ArgumentParser();p.add_argument('--cache',type=Path,required=True);p.add_argument('--output',type=Path,required=True);p.add_argument('--name',default='guided');p.add_argument('--width',type=int,default=32);p.add_argument('--blocks',type=int,default=2);p.add_argument('--steps',type=int,default=2000);p.add_argument('--batch',type=int,default=8);p.add_argument('--eval-every',type=int,default=250);p.add_argument('--lr',type=float,default=.0003);p.add_argument('--resume',type=Path);p.add_argument('--seed',type=int,default=42);p.add_argument('--workers',type=int,default=0);a=p.parse_args()
+    from opennr_paths import require_external_output
+    a.output=require_external_output(a.output)
     torch.set_num_threads(4);torch.manual_seed(a.seed);np.random.seed(a.seed);random.seed(a.seed)
     if not torch.cuda.is_available():raise RuntimeError('CUDA required for this training run')
     torch.backends.cudnn.benchmark=True;device='cuda';a.output.mkdir(parents=True,exist_ok=True)

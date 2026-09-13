@@ -978,7 +978,7 @@ const char* FoveatedRender::SubrectMaskModeName(SubrectMaskMode mode)
 					"The display stays full resolution. Only the NR model area changes; 70% is the supported floor."));
 
 			ImGui::SeparatorText("Adaptive Neural Rendering");
-			ImGui::Checkbox("Enable adaptive NR resolution (experimental)", &settings.neuralRenderingAdaptiveEnabled);
+			ImGui::Checkbox("Enable adaptive NR resolution", &settings.neuralRenderingAdaptiveEnabled);
 			if (auto _tt = Util::HoverTooltipWrapper())
 				drawWrapped("Moves one NR tier at a time after sustained pressure. Handoffs are blended; headset refresh and display resolution are unchanged.");
 			if (settings.neuralRenderingAdaptiveEnabled) {
@@ -1038,7 +1038,7 @@ const char* FoveatedRender::SubrectMaskModeName(SubrectMaskMode mode)
 					adaptiveController.HandoffAlpha(), adaptiveController.SmoothedFrameTimeMs(),
 					adaptiveController.ApplicationDeadlineMs());
 				drawDisabledWrapped("Pressure order with crop: Crop, then NR, then Crop. NR alone is used when crop is unavailable or at its 60% floor.");
-				drawWarningWrapped("Experimental. Resource setup may cause a one-time hitch.");
+				drawWarningWrapped("Resource setup may cause a one-time hitch.");
 				ImGui::Checkbox("Show handoff diagnostics", &settings.neuralRenderingAdaptiveDiagnostics);
 			}
 
@@ -1046,7 +1046,7 @@ const char* FoveatedRender::SubrectMaskModeName(SubrectMaskMode mode)
 			const bool adaptiveCropParentEnabled = settings.neuralRenderingAdaptiveEnabled;
 			if (!adaptiveCropParentEnabled)
 				ImGui::BeginDisabled();
-			ImGui::Checkbox("Enable adaptive crop (experimental)", &settings.neuralRenderingAdaptiveCropEnabled);
+			ImGui::Checkbox("Enable adaptive crop", &settings.neuralRenderingAdaptiveCropEnabled);
 			if (!adaptiveCropParentEnabled)
 				ImGui::EndDisabled();
 			if (auto _tt = Util::HoverTooltipWrapper())

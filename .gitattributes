@@ -1,0 +1,2 @@
+# Preserve historical Markdown hard breaks and original archive whitespace.
+experiments/legacy/** whitespace=-blank-at-eol,-blank-at-eof

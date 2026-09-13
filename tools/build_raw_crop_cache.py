@@ -626,6 +626,8 @@ def main() -> int:
     )
     parser.add_argument("--metadata-only", action="store_true", help="validate and print the planned rows without allocating the cache")
     args = parser.parse_args()
+    from opennr_paths import require_external_output
+    args.output = require_external_output(args.output)
     if args.workers < 1:
         parser.error("--workers must be positive")
     if args.all_crops and args.crop_index:

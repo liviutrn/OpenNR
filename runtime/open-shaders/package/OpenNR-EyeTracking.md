@@ -1,7 +1,7 @@
 # OpenNR native OpenVR eye-tracking experiment
 
-This package contains the isolated, opt-in native OpenVR gaze experiment for
-OpenNR 2.14.8. The provider is compiled into `SKSE/Plugins/CommunityShaders.dll`
+This package contains the opt-in native OpenVR gaze experiment within
+OpenNR 2.15.0. The provider is compiled into `SKSE/Plugins/CommunityShaders.dll`
 and reads the already-loaded game's OpenVR `IVRSystem_026` interface. It does
 not initialize or shut down OpenVR, replace the Streamline/Feature 18 ownership
 path, ship an OpenVR runtime, or install an OpenXR API layer.
@@ -27,6 +27,6 @@ when a discontinuity is detected. Diagnostics in the same settings page report
 the interface, sample sequence, age, filtered gaze, active/fallback state, and
 history-reset state.
 
-This is an experimental build. A compatible eye-tracking headset and OpenVR
+The gaze provider remains experimental. A compatible eye-tracking headset and OpenVR
 runtime are required for live validation; no headset acceptance was performed
 as part of packaging.

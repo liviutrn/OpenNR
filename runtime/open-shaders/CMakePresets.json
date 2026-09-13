@@ -112,7 +112,7 @@
         },
         {
             "name": "OpenNR-Package",
-            "description": "Release-oriented OpenNR 2.14.8 package with the verified upstream feature chain, temporal residual reuse, native OpenVR eye tracking, capture metadata, Skylighting shader validation, and lean archive validation.",
+            "description": "Release-oriented OpenNR 2.15.0 package with the verified upstream feature chain, temporal residual reuse, native OpenVR eye tracking, capture metadata, Skylighting shader validation, and lean archive validation.",
             "cacheVariables": {
                 "ENABLE_SKYRIM_AE": "ON",
                 "ENABLE_SKYRIM_SE": "ON",
@@ -239,7 +239,7 @@
         },
         {
             "name": "Package",
-            "description": "Build preset to generate the validated OpenNR 2.14.8 AIO package in <SRC>/dist folder",
+            "description": "Build preset to generate the validated OpenNR 2.15.0 AIO package in <SRC>/dist folder",
             "configurePreset": "OpenNR-Package",
             "configuration": "Release",
             "targets": ["CommunityShaders", "Package-AIO-Manual"]

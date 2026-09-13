@@ -1,0 +1,85 @@
+{
+  "id": "1b0a60b0-10f1-4a4c-9a0c-2f1e0f6b9f31",
+  "surface": "report",
+  "title": "DLSS 5 community developments for SkyrimVR / MGO",
+  "asOf": "2026-08-31",
+  "generatedAt": "2026-08-31T21:00:00Z",
+  "status": "reviewed",
+  "filters": [],
+  "queries": {
+    "developments": {
+      "rows": [
+        {"project":"YtzyFvra Open Shaders fork","version":"3d6748f","date":"2026-08-30","area":"VR scheduling","change":"Batches VR Feature 18 evaluation with a D3D12 command-context ring and GPU fence dependencies; CPU waits only under backpressure.","mgoRelevance":"High","performanceSignal":"Strongest SkyrimVR-specific performance candidate; no FPS delta published.","evidence":"Source commit","source":"https://github.com/YtzyFvra/skyrim-community-shaders/commit/3d6748f165f8f3f1966f79f6a31eb2af6c22294e"},
+        {"project":"YtzyFvra Open Shaders fork","version":"89b54db","date":"2026-08-29","area":"VR integration","change":"Runs Feature 18 on tonemapped LDR before UI; VR uses two foveated eye regions and requires PerfMode plus Foveated Default; frame generation is disabled.","mgoRelevance":"High","performanceSignal":"Correctness and coverage prerequisite for a VR path.","evidence":"Source commit","source":"https://github.com/YtzyFvra/skyrim-community-shaders/commit/89b54dbafe447cf7b8ee4af4094386223b86c44e"},
+        {"project":"YtzyFvra Open Shaders fork","version":"96fcc69","date":"2026-08-30","area":"VR evidence","change":"Captures the final SBS composite submitted to the HMD for screenshots, improving eye-correct A/B evidence.","mgoRelevance":"High","performanceSignal":"Measurement / QA improvement, not a rendering optimization.","evidence":"Source commit","source":"https://github.com/YtzyFvra/skyrim-community-shaders/commit/96fcc697379702e668a42119f1755da8e0d3db1e"},
+        {"project":"DLSS5-Feeder","version":"0.6.1","date":"2026-08-31","area":"D3D11 work resolution","change":"Adds a working 50–100% work-resolution slider for 64-bit and 32-bit paths, plus fence/TDR and format fixes. Release notes verify several non-Skyrim test values, but give no FPS deltas.","mgoRelevance":"Medium","performanceSignal":"Potential GPU reduction after native stability; still a 1:1 DLAA contract, not true DLSS SR.","evidence":"Author release notes","source":"https://github.com/jlrouzies-fr/DLSS5-Feeder/releases/tag/v0.6.1"},
+        {"project":"DLSS5-Feeder","version":"0.7.0","date":"2026-08-31","area":"API coverage","change":"Adds end-to-end OpenGL support for both bitnesses; otherwise unchanged from 0.6.1. The published 0.13 ms/frame CPU figure is from Worms OpenGL at 4K.","mgoRelevance":"Low","performanceSignal":"Useful transport precedent, not a SkyrimVR result.","evidence":"Author release notes","source":"https://github.com/jlrouzies-fr/DLSS5-Feeder/releases/tag/v0.7.0"},
+        {"project":"RenoDX direct add-on path","version":"v4.6 support in main","date":"2026-08-31","area":"64-bit D3D11 architecture","change":"Feeder documentation says 64-bit D3D9/D3D11/D3D12 users can use the in-process RenoDX add-on directly, with same-adapter D3D12 interop and shared depth / motion-vector resources. v4.6 support is explicitly unverified; released Feeder builds remain pinned to v4.55.","mgoRelevance":"High","performanceSignal":"May remove a separate bridge / IPC failure surface; no VR measurement published.","evidence":"Author commit","source":"https://github.com/jlrouzies-fr/DLSS5-Feeder/commit/d38ca530293aa0e555f0d4fa8d0d0ef1c7b53a64"},
+        {"project":"RenoDX dlss5-bridge","version":"v1.3.0","date":"2026-08-31","area":"NGX synchronization","change":"Serializes concurrent NGX evaluations after a race fix; the author reports 5,400 fault-free Vulkan frames after the fix. The tested path is Vulkan, not SkyrimVR's D3D11 renderer.","mgoRelevance":"Low for SkyrimVR D3D11","performanceSignal":"Stability pattern worth borrowing, not an FPS improvement.","evidence":"Author release notes","source":"https://github.com/NIGos/dlss5-bridge/releases"},
+        {"project":"Open Shaders mainline","version":"current Nexus page","date":"2026-08-31","area":"VR baseline","change":"Maintains VR stereo optimizations, foveated rendering compatible with DLSS/FSR, shader-cache and performance fixes. This is the underlying VR framework, not DLSS 5 itself.","mgoRelevance":"Medium","performanceSignal":"Dependency / baseline improvement; not a DLSS5 benchmark.","evidence":"Project page","source":"https://www.nexusmods.com/skyrimspecialedition/mods/180419"}
+      ],
+      "source": {
+        "label":"Web review of primary community repositories and release notes, checked 2026-08-31",
+        "sql":"SELECT reviewed community release and commit rows for the DLSS5 / SkyrimVR applicability review",
+        "tables":["DLSS5-Feeder releases and commits","YtzyFvra skyrim-community-shaders feature/dlssnr-vr commits","NIGos dlss5-bridge releases","Open Shaders Nexus project page"],
+        "filters":["Primary author repositories / project pages only","Checked through 2026-08-31","No social posts or third-party benchmark claims used as acceptance evidence"],
+        "links":[
+          {"label":"DLSS5-Feeder README","url":"https://github.com/jlrouzies-fr/DLSS5-Feeder/blob/main/README.md"},
+          {"label":"DLSS5-Feeder v0.6.1","url":"https://github.com/jlrouzies-fr/DLSS5-Feeder/releases/tag/v0.6.1"},
+          {"label":"DLSS5-Feeder v0.7.0","url":"https://github.com/jlrouzies-fr/DLSS5-Feeder/releases/tag/v0.7.0"},
+          {"label":"Feeder direct D3D11 commit","url":"https://github.com/jlrouzies-fr/DLSS5-Feeder/commit/d38ca530293aa0e555f0d4fa8d0d0ef1c7b53a64"},
+          {"label":"Ytzy VR batching commit","url":"https://github.com/YtzyFvra/skyrim-community-shaders/commit/3d6748f165f8f3f1966f79f6a31eb2af6c22294e"},
+          {"label":"Ytzy VR renderer commit","url":"https://github.com/YtzyFvra/skyrim-community-shaders/commit/89b54dbafe447cf7b8ee4af4094386223b86c44e"},
+          {"label":"RenoDX bridge releases","url":"https://github.com/NIGos/dlss5-bridge/releases"},
+          {"label":"Open Shaders project page","url":"https://www.nexusmods.com/skyrimspecialedition/mods/180419"}
+        ],
+        "metricDefinitions":[
+          {"label":"MGO relevance","definition":"Qualitative applicability to SkyrimVR x64/D3D11, SBS stereo, and the protected MGO prototype boundary; it is not a compatibility guarantee.","componentIds":["development-table"],"sourceLineage":[{"tables":["DLSS5-Feeder releases and commits","YtzyFvra skyrim-community-shaders feature/dlssnr-vr commits"]}]},
+          {"label":"Performance signal","definition":"The performance or scheduling implication explicitly documented by the project author. Missing FPS deltas are intentional and should not be filled by inference.","componentIds":["development-table","performance-table"],"sourceLineage":[{"tables":["DLSS5-Feeder releases and commits","YtzyFvra skyrim-community-shaders feature/dlssnr-vr commits"]}]}
+        ]
+      }
+    },
+    "performance_signals": {
+      "rows": [
+        {"mechanism":"VR evaluation batching / fence ring","publishedResult":"No FPS number","whatItChanges":"Moves per-frame dependency handling to GPU fences and only applies CPU backpressure when the command ring is saturated.","MGOValue":"First candidate to benchmark in the SkyrimVR branch.","confidence":"High code evidence; unbenchmarked"},
+        {"mechanism":"D3D11 work-resolution slider","publishedResult":"Verified at 50/67/73/90% in non-Skyrim tests","whatItChanges":"Builds an owned lower-resolution SRV frame, samples depth / motion vectors / masks, then expands to native output.","MGOValue":"Potential GPU saving once native Feature 18 is stable; start at 100% and step down.","confidence":"Medium mechanism; no Skyrim FPS"},
+        {"mechanism":"Direct x64 D3D11 add-on interop","publishedResult":"No FPS number","whatItChanges":"Uses same-adapter device-only D3D12 interop and shares bit-exact RG32F motion vectors plus R32_FLOAT depth.","MGOValue":"Could remove the separate bridge / IPC failure surface; requires isolated A/B.","confidence":"Medium architecture evidence; unverified in VR"},
+        {"mechanism":"Driver optical flow","publishedResult":"0.18 ms/frame at 3840×1600","whatItChanges":"Uses NVIDIA driver motion vectors instead of a third-party shader in the Vulkan bridge.","MGOValue":"Not a first move for SkyrimVR D3D11; retain as a future Vulkan / synthetic-contract option.","confidence":"High author measurement; wrong API / flat test"},
+        {"mechanism":"Feeder host transport","publishedResult":"0.13 ms/frame CPU in Worms OpenGL at 4K","whatItChanges":"Measures host-side Feeder CPU overhead in a flat OpenGL game after v0.7.0.","MGOValue":"Useful ceiling for transport discussion only; cannot predict VR frame time.","confidence":"High author measurement; not transferable"}
+      ],
+      "source": {
+        "label":"Published performance signals from community author notes; no SkyrimVR FPS benchmark found",
+        "sql":"SELECT documented performance mechanisms and measurements, retaining API and test-scope caveats",
+        "tables":["DLSS5-Feeder v0.6.1 / v0.7.0 release notes","YtzyFvra 3d6748f source commit","NIGos dlss5-bridge v1.1/v1.3 releases"],
+        "filters":["Performance claims kept with original API, game, resolution, and measurement scope","No extrapolated SkyrimVR FPS"],
+        "links":[
+          {"label":"Feeder v0.6.1 work resolution","url":"https://github.com/jlrouzies-fr/DLSS5-Feeder/releases/tag/v0.6.1"},
+          {"label":"Feeder v0.7.0 CPU note","url":"https://github.com/jlrouzies-fr/DLSS5-Feeder/releases/tag/v0.7.0"},
+          {"label":"Ytzy VR batching source","url":"https://github.com/YtzyFvra/skyrim-community-shaders/commit/3d6748f165f0f3f1966f79f6a31eb2af6c22294e"},
+          {"label":"RenoDX bridge optical flow note","url":"https://github.com/NIGos/dlss5-bridge/releases"}
+        ],
+        "metricDefinitions":[
+          {"label":"Published result","definition":"A number or explicit verification statement published by the upstream community project; blank or qualitative values are preserved as such.","componentIds":["performance-table"],"sourceLineage":[{"tables":["DLSS5-Feeder v0.6.1 / v0.7.0 release notes","YtzyFvra 3d6748f source commit","NIGos dlss5-bridge v1.1/v1.3 releases"]}]}
+        ]
+      }
+    },
+    "local_acceptance": {
+      "rows": [
+        {"gate":"Native contract / loader","status":"Partial pass","localEvidence":"Native DLAA Feature 18 created and evaluated for 60 frames at 2496×2688→2496×2688 in the isolated prototype.","whatRemains":"This is native-size DLAA evidence, not proof of a reduced-resolution or VR neural output path."},
+        {"gate":"Reduced-resolution neural output","status":"Blocked","localEvidence":"Quality/upscale attempt returned 0xBAD00005 and latched to native fallback; the later fork run had no confirmed nvngx_dlssnr.dll evaluation.","whatRemains":"Repair the resource / contract boundary before measuring performance."},
+        {"gate":"Stereo / HMD correctness","status":"Not accepted","localEvidence":"The live fork process reached loader / save-load and loaded relevant modules, but no eye-correct neural output or SBS acceptance was proven.","whatRemains":"Verify both eyes, head motion, final SBS composite, and compositor stability."},
+        {"gate":"Performance","status":"Not measured","localEvidence":"No accepted DLSS5 neural frame delivery exists against which GPU frame time, CPU frame time, VRAM, or compositor behavior can be compared.","whatRemains":"Only compare matched vanilla, conventional DLSS/DLAA, and experimental runs after output acceptance."},
+        {"gate":"Rollback / scope","status":"Protected","localEvidence":"Prototype work is isolated from the known-good MGO installation and active profile.","whatRemains":"Keep the current MGO profile unchanged during community-version retests."}
+      ],
+      "source": {
+        "label":"Local project acceptance matrix and implementation-gap notes, checked 2026-08-31",
+        "sql":"SELECT current prototype acceptance gates and evidence from local DLSS5 SkyrimVR project notes",
+        "tables":["docs/ACCEPTANCE_MATRIX.md","docs/IMPLEMENTATION_GAPS.md","docs/PROJECT.md"],
+        "filters":["Local evidence is separated from external community claims","No runtime acceptance inferred from compile, injection, or module presence alone"],
+        "metricDefinitions":[
+          {"label":"Status","definition":"Current local acceptance state for each gate; Partial pass is intentionally weaker than runtime acceptance.","componentIds":["local-table"],"sourceLineage":[{"tables":["docs/ACCEPTANCE_MATRIX.md","docs/IMPLEMENTATION_GAPS.md","docs/PROJECT.md"]}]}
+        ]
+      }
+    }
+  }
+}

@@ -32,6 +32,8 @@ def extend_manifest(base, supplemental):
 
 def main():
     p=argparse.ArgumentParser();p.add_argument('--manifest',type=Path,required=True);p.add_argument('--supplemental',type=Path);p.add_argument('--output',type=Path,required=True);p.add_argument('--workers',type=int,default=3);p.add_argument('--training-role',default='spatial_only_auxiliary');a=p.parse_args()
+    from opennr_paths import require_external_output
+    a.output=require_external_output(a.output)
     torch.set_num_threads(1)
     a.output.mkdir(parents=True,exist_ok=True)
     if (a.output/'complete.json').exists(): print('Completed cache exists; use a new output to change data');return

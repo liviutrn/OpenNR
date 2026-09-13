@@ -8,6 +8,8 @@ from evaluate_student import load_eye,pil
 
 def main():
     p=argparse.ArgumentParser();p.add_argument('--checkpoint',type=Path,required=True);p.add_argument('--cache',type=Path,required=True);p.add_argument('--row',type=int,required=True);p.add_argument('--output',type=Path,required=True);a=p.parse_args()
+    from opennr_paths import require_external_output
+    a.output=require_external_output(a.output)
     torch.set_num_threads(4);rows=json.loads((a.cache/'rows.json').read_text());contexts=np.load(a.cache/'context.npy',mmap_mode='r');model,_=load_student(a.checkpoint,'cuda')
     with torch.inference_mode():
         rgb,_,guides,context=load_eye(rows[a.row],contexts[a.row])

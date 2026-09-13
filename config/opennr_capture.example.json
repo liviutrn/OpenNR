@@ -20,7 +20,7 @@
     "toggle_capture_key": 219,
     "single_capture_key": 221,
     "burst_capture_key": 220,
-    "output_directory": "OpenNR_Captures",
+    "output_directory": "C:/OpenNR/Captures",
     "crops": [
       { "center_x": 0.50, "center_y": 0.50 },
       { "center_x": 0.25, "center_y": 0.50 },

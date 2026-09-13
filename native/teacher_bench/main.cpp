@@ -13,6 +13,7 @@
 #include <string>
 #include <vector>
 #include "Runtime.h"
+#include "BenchmarkContract.h"
 
 using Microsoft::WRL::ComPtr;
 void Check(HRESULT value,const char* operation) { if (FAILED(value)) throw std::runtime_error(std::string(operation)+" HRESULT="+std::to_string(value)); }
@@ -124,6 +125,7 @@ int wmain(int argc,wchar_t** argv) {
         std::getline(config,output);
         std::getline(config,dll);
         std::getline(config,corePath);
+        output=CheckedBenchmarkOutput(output).string();
         std::filesystem::create_directories(output);
         Bench bench;bench.Initialize();std::array<Eye,2> eyes;
         for (auto& eye:eyes) {
@@ -148,7 +150,7 @@ int wmain(int argc,wchar_t** argv) {
             for (UINT eyeIndex=0;eyeIndex<2;++eyeIndex) {
                 auto& eye=eyes[eyeIndex];for (int j=0;j<4;++j) bench.Barrier(eye.textures[j].Get(),D3D12_RESOURCE_STATE_COMMON,j==3?D3D12_RESOURCE_STATE_UNORDERED_ACCESS:D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
                 bench.commands->EndQuery(queries.Get(),D3D12_QUERY_TYPE_TIMESTAMP,eyeIndex*2);
-                if (!runtime.Execute(bench.commands.Get(),eyeIndex,eye.textures[0].Get(),eye.textures[1].Get(),eye.textures[2].Get(),eye.textures[3].Get(),inputWidth,inputHeight,outputWidth,outputHeight,guideWidth,guideHeight,eye.mx,eye.my,tuning,iteration==0)) throw std::runtime_error(runtime.Detail());
+                if (!runtime.Execute(bench.commands.Get(),eyeIndex,eye.textures[0].Get(),eye.textures[1].Get(),eye.textures[2].Get(),eye.textures[3].Get(),MakeBenchmarkGuide(inputWidth,inputHeight,outputWidth,outputHeight,guideWidth,guideHeight,eye.mx,eye.my),tuning,iteration==0)) throw std::runtime_error(runtime.Detail());
                 bench.commands->EndQuery(queries.Get(),D3D12_QUERY_TYPE_TIMESTAMP,eyeIndex*2+1);
                 for (int j=0;j<4;++j) bench.Barrier(eye.textures[j].Get(),j==3?D3D12_RESOURCE_STATE_UNORDERED_ACCESS:D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,D3D12_RESOURCE_STATE_COMMON);
             }

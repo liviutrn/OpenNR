@@ -95,6 +95,8 @@ def main() -> None:
     )
     parser.add_argument("--resume", type=Path)
     args = parser.parse_args()
+    from opennr_paths import require_external_output
+    args.output = require_external_output(args.output)
 
     if not torch.cuda.is_available():
         raise RuntimeError("CUDA is required for FastStudent-v1 training")

@@ -1,5 +1,7 @@
 add_compile_definitions(SKYRIM)
-set(CommonLibPath "extern/CommonLibSSE-NG")
+set(OPENNR_COMMONLIB_SOURCE_DIR "${CMAKE_SOURCE_DIR}/extern/CommonLibSSE-NG"
+    CACHE PATH "CommonLib source checkout used by the OpenNR build")
+set(CommonLibPath "${OPENNR_COMMONLIB_SOURCE_DIR}")
 set(CommonLibName "CommonLibSSE")
 
 add_library("${PROJECT_NAME}" SHARED)

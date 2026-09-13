@@ -1,0 +1,378 @@
+{
+  "version": "2.15.0",
+  "inventory": {
+    "volumes": [
+      "C:",
+      "D:",
+      "E:",
+      "G:"
+    ],
+    "files": 2085758,
+    "directories": 253544,
+    "reparse_points": 283,
+    "exception_records": 419,
+    "database": "C:\\OpenNR\\ConsolidationBackups\\20260913\\inventory.sqlite"
+  },
+  "backed_up_source_files": 66853,
+  "exact_duplicate_groups": 6334,
+  "duplicate_copies_identified": 57984,
+  "historical_files_imported": 172,
+  "relocated_files": 106856,
+  "bytes_removed_from_d": 79182413035,
+  "moves": [
+    {
+      "source": "D:\\.CODEX_Projects\\OpenNR-VR\\.git\\objects",
+      "destination": "C:\\OpenNR\\Repositories\\OpenNR-VR.git\\objects",
+      "files": 2886,
+      "bytes": 1924449703,
+      "verifiedAt": "2026-09-13T22:01:57.0418615Z"
+    },
+    {
+      "source": "D:\\.CODEX_Projects\\OpenNR-VR\\_dlss5_amd_hip_linux_report_app_20260913",
+      "destination": "C:\\OpenNR\\Reports\\LegacyApps\\_dlss5_amd_hip_linux_report_app_20260913",
+      "files": 252,
+      "bytes": 4808450,
+      "verifiedAt": "2026-09-13T22:01:34.8140990Z"
+    },
+    {
+      "source": "D:\\.CODEX_Projects\\DLSS_5_SKYRIM\\dist",
+      "destination": "E:\\OpenNR_Builds\\Legacy-20260913\\dist",
+      "files": 2,
+      "bytes": 288574503,
+      "verifiedAt": "2026-09-13T22:02:46.6760646Z"
+    },
+    {
+      "source": "D:\\.CODEX_Projects\\DLSS_5_SKYRIM\\work\\open-nr-eye-tracking-experiment-20260912\\build",
+      "destination": "E:\\OpenNR_Builds\\Legacy-20260913\\work\\open-nr-eye-tracking-experiment-20260912\\build",
+      "files": 4988,
+      "bytes": 490095026,
+      "verifiedAt": "2026-09-13T21:47:35.4948826Z"
+    },
+    {
+      "source": "D:\\.CODEX_Projects\\OpenNR\\out",
+      "destination": "C:\\OpenNR\\Relocated\\OpenNR-legacy-output-20260913",
+      "files": 3,
+      "bytes": 49771165,
+      "verifiedAt": "2026-09-13T21:45:30.5308023Z"
+    },
+    {
+      "source": "D:\\.CODEX_Projects\\DLSS_5_SKYRIM\\vendor\\open-shaders-dlssnr-vr-091bfb4d\\dist",
+      "destination": "E:\\OpenNR_Builds\\Legacy-20260913\\vendor\\open-shaders-dlssnr-vr-091bfb4d\\dist",
+      "files": 3,
+      "bytes": 740676595,
+      "verifiedAt": "2026-09-13T21:56:19.8452561Z"
+    },
+    {
+      "source": "D:\\.CODEX_Projects\\DLSS_5_SKYRIM\\work\\open-nr-adaptive-handoff-2.14.8-fixed-20260913\\build",
+      "destination": "E:\\OpenNR_Builds\\Legacy-20260913\\work\\open-nr-adaptive-handoff-2.14.8-fixed-20260913\\build",
+      "files": 17460,
+      "bytes": 14580621763,
+      "verifiedAt": "2026-09-13T21:55:03.7561904Z"
+    },
+    {
+      "source": "D:\\.CODEX_Projects\\OpenNR-VR\\_opennr_gen_final_report_app2",
+      "destination": "C:\\OpenNR\\Reports\\LegacyApps\\_opennr_gen_final_report_app2",
+      "files": 255,
+      "bytes": 12329195,
+      "verifiedAt": "2026-09-13T22:01:33.1328292Z"
+    },
+    {
+      "source": "D:\\.CODEX_Projects\\DLSS_5_SKYRIM\\work\\open-nr-2.14.5-all-features-20260912\\dist",
+      "destination": "E:\\OpenNR_Builds\\Legacy-20260913\\work\\open-nr-2.14.5-all-features-20260912\\dist",
+      "files": 1,
+      "bytes": 228102246,
+      "verifiedAt": "2026-09-13T21:55:10.0578658Z"
+    },
+    {
+      "source": "D:\\.CODEX_Projects\\DLSS_5_SKYRIM\\work\\open-nr-eye-tracking-experiment-20260912\\dist",
+      "destination": "E:\\OpenNR_Builds\\Legacy-20260913\\work\\open-nr-eye-tracking-experiment-20260912\\dist",
+      "files": 1,
+      "bytes": 227933879,
+      "verifiedAt": "2026-09-13T21:47:07.0479515Z"
+    },
+    {
+      "source": "D:\\.CODEX_Projects\\DLSS_5_SKYRIM\\work\\open-nr-adaptive-handoff-2.14.8-fixed-20260913\\dist",
+      "destination": "E:\\OpenNR_Builds\\Legacy-20260913\\work\\open-nr-adaptive-handoff-2.14.8-fixed-20260913\\dist",
+      "files": 2,
+      "bytes": 518577570,
+      "verifiedAt": "2026-09-13T21:47:38.6155644Z"
+    },
+    {
+      "source": "D:\\.CODEX_Projects\\DLSS_5_SKYRIM\\work\\open-shaders-adaptive-nr-handoff-study-opennr-20260913\\build",
+      "destination": "E:\\OpenNR_Builds\\Legacy-20260913\\work\\open-shaders-adaptive-nr-handoff-study-opennr-20260913\\build",
+      "files": 19090,
+      "bytes": 7596698380,
+      "verifiedAt": "2026-09-13T21:43:54.7119148Z"
+    },
+    {
+      "source": "D:\\.CODEX_Projects\\DLSS_5_SKYRIM\\work\\open-shaders-2.12.0-open-nr\\build",
+      "destination": "E:\\OpenNR_Builds\\Legacy-20260913\\work\\open-shaders-2.12.0-open-nr\\build",
+      "files": 15509,
+      "bytes": 13043129285,
+      "verifiedAt": "2026-09-13T21:47:04.1776219Z"
+    },
+    {
+      "source": "D:\\.CODEX_Projects\\DLSS_5_SKYRIM\\work\\open-shaders-2.12.0-open-nr\\dist",
+      "destination": "E:\\OpenNR_Builds\\Legacy-20260913\\work\\open-shaders-2.12.0-open-nr\\dist",
+      "files": 1,
+      "bytes": 142469023,
+      "verifiedAt": "2026-09-13T21:43:59.3267371Z"
+    },
+    {
+      "source": "D:\\.CODEX_Projects\\DLSS_5_SKYRIM\\vendor\\open-shaders-dlssnr-vr-091bfb4d\\build",
+      "destination": "E:\\OpenNR_Builds\\Legacy-20260913\\vendor\\open-shaders-dlssnr-vr-091bfb4d\\build",
+      "files": 27592,
+      "bytes": 16576950253,
+      "verifiedAt": "2026-09-13T22:00:40.3304824Z"
+    },
+    {
+      "source": "D:\\.CODEX_Projects\\DLSS_5_SKYRIM\\staging",
+      "destination": "E:\\OpenNR_Builds\\Legacy-20260913\\staging",
+      "files": 3210,
+      "bytes": 3252452837,
+      "verifiedAt": "2026-09-13T22:01:19.7497320Z"
+    },
+    {
+      "source": "D:\\.CODEX_Projects\\OpenNR-VR\\_opennr_gen_final_report_app",
+      "destination": "C:\\OpenNR\\Reports\\LegacyApps\\_opennr_gen_final_report_app",
+      "files": 248,
+      "bytes": 1875304,
+      "verifiedAt": "2026-09-13T22:01:31.1058602Z"
+    },
+    {
+      "source": "D:\\OpenNR_TrainingInputs",
+      "destination": "C:\\OpenNR\\TrainingInputs\\Migrated-D-20260913",
+      "files": 13,
+      "bytes": 8943283631,
+      "verifiedAt": "2026-09-13T21:40:10.2868964Z"
+    },
+    {
+      "source": "D:\\.CODEX_Projects\\DLSS_5_SKYRIM\\work\\open-nr-2.14.5-all-features-20260912\\build",
+      "destination": "E:\\OpenNR_Builds\\Legacy-20260913\\work\\open-nr-2.14.5-all-features-20260912\\build",
+      "files": 5235,
+      "bytes": 5443937640,
+      "verifiedAt": "2026-09-13T21:56:16.0911450Z"
+    },
+    {
+      "source": "D:\\.CODEX_Projects\\DLSS_5_SKYRIM\\open-shaders-dlssnr-public-pr\\build",
+      "destination": "E:\\OpenNR_Builds\\Legacy-20260913\\open-shaders-dlssnr-public-pr\\build",
+      "files": 10105,
+      "bytes": 5115676587,
+      "verifiedAt": "2026-09-13T22:02:44.3501006Z"
+    }
+  ],
+  "legacy_reconciliation": [
+    {
+      "path": "D:\\.CODEX_Projects\\DLSS_5_SKYRIM\\open-shaders-dlssnr-public-pr",
+      "status": "committed recovery state",
+      "head": "fd74f0421dda6c431c500624b187a23cb41942aa",
+      "files": 12,
+      "remaining": "",
+      "error": "",
+      "canonical_ref": "refs/archive/legacy/open-shaders-dlssnr-public-pr",
+      "import_exit": 0,
+      "full_status_exit": 0,
+      "full_status": "",
+      "full_status_error": ""
+    },
+    {
+      "path": "D:\\.CODEX_Projects\\DLSS_5_SKYRIM\\vendor\\open-shaders-dlssnr-vr-091bfb4d",
+      "status": "committed recovery state",
+      "head": "96201c9da50d3c5507d2860239f590f2eb8a14eb",
+      "files": 93,
+      "remaining": "",
+      "error": "",
+      "canonical_ref": "refs/archive/legacy/open-shaders-dlssnr-vr-091bfb4d",
+      "import_exit": 0,
+      "full_status_exit": 0,
+      "full_status": "",
+      "full_status_error": ""
+    },
+    {
+      "path": "D:\\.CODEX_Projects\\DLSS_5_SKYRIM\\work\\open-nr-2.14.5-all-features-20260912",
+      "status": "committed recovery state",
+      "head": "e847a4049f539e749bda4b53008e5ff7db5957d5",
+      "files": 36,
+      "remaining": "",
+      "error": "",
+      "canonical_ref": "refs/archive/legacy/open-nr-2.14.5-all-features-20260912",
+      "import_exit": 0,
+      "full_status_exit": 0,
+      "full_status": "",
+      "full_status_error": ""
+    },
+    {
+      "path": "D:\\.CODEX_Projects\\DLSS_5_SKYRIM\\work\\open-nr-adaptive-handoff-2.14.8-fixed-20260913",
+      "status": "committed recovery state",
+      "head": "c6fc308fc43e29706f2ce63a871fcf9d0f79a460",
+      "files": 29,
+      "remaining": "",
+      "error": "",
+      "canonical_ref": "refs/archive/legacy/open-nr-adaptive-handoff-2.14.8-fixed-20260913",
+      "import_exit": 0,
+      "full_status_exit": 0,
+      "full_status": "",
+      "full_status_error": ""
+    },
+    {
+      "path": "D:\\.CODEX_Projects\\DLSS_5_SKYRIM\\work\\open-nr-eye-tracking-experiment-20260912",
+      "status": "committed recovery state",
+      "head": "9f7c058782ece80353df97f7be2316746d220651",
+      "files": 50,
+      "remaining": "",
+      "error": "",
+      "canonical_ref": "refs/archive/legacy/open-nr-eye-tracking-experiment-20260912",
+      "import_exit": 0,
+      "full_status_exit": 0,
+      "full_status": "",
+      "full_status_error": ""
+    },
+    {
+      "path": "D:\\.CODEX_Projects\\DLSS_5_SKYRIM\\work\\open-shaders-2.12.0-open-nr",
+      "status": "committed recovery state",
+      "head": "68faf242addd5b6fe5746ecf5fab9154b045c035",
+      "files": 7,
+      "remaining": "",
+      "error": "",
+      "canonical_ref": "refs/archive/legacy/open-shaders-2.12.0-open-nr",
+      "import_exit": 0,
+      "full_status_exit": 0,
+      "full_status": "",
+      "full_status_error": ""
+    },
+    {
+      "path": "D:\\.CODEX_Projects\\DLSS_5_SKYRIM\\work\\open-shaders-adaptive-nr-handoff-study-20260912",
+      "status": "committed recovery state",
+      "head": "b9dece3d2eced2f61ec51591d4685d4d19985288",
+      "files": 1,
+      "remaining": "",
+      "error": "",
+      "canonical_ref": "refs/archive/legacy/open-shaders-adaptive-nr-handoff-study-20260912",
+      "import_exit": 0,
+      "full_status_exit": 0,
+      "full_status": "",
+      "full_status_error": ""
+    },
+    {
+      "path": "D:\\.CODEX_Projects\\DLSS_5_SKYRIM\\work\\open-shaders-adaptive-nr-handoff-study-opennr-20260913",
+      "status": "committed recovery state",
+      "head": "5c29ea3758de25c5f8cb7257790bf7ba673a1bad",
+      "files": 1,
+      "remaining": "",
+      "error": "",
+      "canonical_ref": "refs/archive/legacy/open-shaders-adaptive-nr-handoff-study-opennr-20260913",
+      "import_exit": 0,
+      "full_status_exit": 0,
+      "full_status": "",
+      "full_status_error": ""
+    },
+    {
+      "path": "D:\\.CODEX_Projects\\DLSS_5_SKYRIM\\work\\open-shaders-pr630-test",
+      "status": "committed recovery state",
+      "head": "85969c599ab623494001f87799e33f222e2dd8e9",
+      "files": 13,
+      "remaining": "",
+      "error": "",
+      "canonical_ref": "refs/archive/legacy/open-shaders-pr630-test",
+      "import_exit": 0,
+      "full_status_exit": 0,
+      "full_status": "",
+      "full_status_error": ""
+    }
+  ],
+  "dependencies": [
+    {
+      "name": "catch2-src",
+      "path": "C:\\OpenNR\\Dependencies\\runtime-2.15.0\\catch2-src",
+      "files": 568,
+      "bytes": 9113797,
+      "tree_sha256": "6d2c2c1f26b4860a10d748140da9280263ca7bb135f09a8c536ffeaea945e9bf"
+    },
+    {
+      "name": "CommonLib-prebuilt",
+      "path": "C:\\OpenNR\\Dependencies\\runtime-2.15.0\\CommonLib-prebuilt",
+      "files": 2062,
+      "bytes": 662482493,
+      "tree_sha256": "9868445ec41a55fbe77ef455cb1b97af67b1d275de958a66fa947a12cd552b00"
+    },
+    {
+      "name": "CommonLibSSE-NG",
+      "path": "C:\\OpenNR\\Dependencies\\runtime-2.15.0\\CommonLibSSE-NG",
+      "files": 3243,
+      "bytes": 113740201,
+      "tree_sha256": "5f2e6e1f167e37bdc38db718e2a5e2a15a031a2d81f0a52221b2693e53320487"
+    },
+    {
+      "name": "cuda-include",
+      "path": "C:\\OpenNR\\Dependencies\\runtime-2.15.0\\cuda-include",
+      "files": 99,
+      "bytes": 4380591,
+      "tree_sha256": "c2ebb936ac72a300ef35741e6de4e3989f6a9d19597d28d467036cc75816f79f"
+    },
+    {
+      "name": "FidelityFX-SDK",
+      "path": "C:\\OpenNR\\Dependencies\\runtime-2.15.0\\FidelityFX-SDK",
+      "files": 1655,
+      "bytes": 176506746,
+      "tree_sha256": "ec2f24289273a3987e66e78fdd1c2b1edbb27a6243bb6c9379ed6af116f6e7be"
+    },
+    {
+      "name": "hde64-src",
+      "path": "C:\\OpenNR\\Dependencies\\runtime-2.15.0\\hde64-src",
+      "files": 57,
+      "bytes": 308332,
+      "tree_sha256": "f56d7f6c93b35c572bb4b9c5a4de13dfe40bd7b43ee9da1019da4c6e77616903"
+    },
+    {
+      "name": "imguivrhelper-src",
+      "path": "C:\\OpenNR\\Dependencies\\runtime-2.15.0\\imguivrhelper-src",
+      "files": 92,
+      "bytes": 722348,
+      "tree_sha256": "430e8742bf4b23604714079cc959ca521c4f3a25feb41bc889accc6a6c5e8603"
+    },
+    {
+      "name": "nvapi",
+      "path": "C:\\OpenNR\\Dependencies\\runtime-2.15.0\\nvapi",
+      "files": 34,
+      "bytes": 9894537,
+      "tree_sha256": "0347f76ea083d477306200d248364e19dbfb1bf4858ad92563e664a2aa8d4646"
+    },
+    {
+      "name": "private-runtime",
+      "path": "C:\\OpenNR\\Dependencies\\runtime-2.15.0\\private-runtime",
+      "files": 2,
+      "bytes": 167421552,
+      "tree_sha256": "beac3450eeb3ba048a62b551c31ffea5927ed1a0fc9facd8c0ef3d22c47c47c4"
+    },
+    {
+      "name": "Streamline-DX12",
+      "path": "C:\\OpenNR\\Dependencies\\runtime-2.15.0\\Streamline-DX12",
+      "files": 389,
+      "bytes": 102356768,
+      "tree_sha256": "a70a33dbe2d94bc17228ceb540dec0925aa0ac4b4fb06d0a410367064727b9f9"
+    },
+    {
+      "name": "vcpkg_installed",
+      "path": "C:\\OpenNR\\Dependencies\\runtime-2.15.0\\vcpkg_installed",
+      "files": 4976,
+      "bytes": 489897915,
+      "tree_sha256": "7a7a622effdb6a37e4d4351857d4e8478b8fb094077600c9e137893fa86559d9"
+    }
+  ],
+  "runtime_source": {
+    "original_head": "a39a25b5edb2bc8f139c06b8fb9efbd95fcdb5f5",
+    "snapshot_commit": "44bae628",
+    "import_commit": "987a9284277591b278ca90539e464aefc9926464"
+  },
+  "acceptance": {
+    "native_cpp_cases": 171,
+    "native_cpp_assertions": 2357,
+    "python_regression_suites": 8,
+    "python_storage_tests": 5,
+    "shader_compile_checks": 3,
+    "live_vr": "not performed",
+    "model_promotion": false,
+    "deployment": false,
+    "remote_push": false
+  }
+}

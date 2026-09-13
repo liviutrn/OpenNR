@@ -28,9 +28,15 @@ option(
 project(
     # gersemi: ignore
     CommunityShaders
-	VERSION 2.14.8
+	VERSION 2.15.0
     LANGUAGES CXX
 )
+
+set(OPENNR_IMGUI_HELPER_SOURCE "${CMAKE_SOURCE_DIR}/package/SKSE/Plugins/imgui-vr-helper.dll"
+    CACHE FILEPATH "Locally supplied ImGui VR helper included in the package")
+if(EXISTS "${OPENNR_IMGUI_HELPER_SOURCE}")
+    install(FILES "${OPENNR_IMGUI_HELPER_SOURCE}" DESTINATION "SKSE/Plugins")
+endif()
 
 # default install path
 if(CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
@@ -1593,6 +1599,8 @@ add_custom_target(
     COMMAND
         ${CMAKE_COMMAND}
         -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
+        -DOPENNR_DLSSNR_RUNTIME_SOURCE=${OPENNR_DLSSNR_RUNTIME_SOURCE}
+        -DOPENNR_IMGUI_HELPER_SOURCE=${OPENNR_IMGUI_HELPER_SOURCE}
         -P
         "${CMAKE_SOURCE_DIR}/cmake/ValidateOpenNRSourceContracts.cmake"
     WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}

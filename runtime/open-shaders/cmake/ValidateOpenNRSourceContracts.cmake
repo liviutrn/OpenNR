@@ -38,6 +38,12 @@ set(_streamline_runtime_path "${SOURCE_ROOT}/cmake/Streamline-Runtime.cmake")
 set(_temporal_shader_path "${SOURCE_ROOT}/features/Upscaling/Shaders/Upscaling/NeuralRendering/TemporalReuseCS.hlsl")
 set(_dlssnr_carrier_path "${SOURCE_ROOT}/package/Shaders/Upscaling/Streamline/nvngx_dlssnr.dll")
 set(_vr_helper_runtime_path "${SOURCE_ROOT}/package/SKSE/Plugins/imgui-vr-helper.dll")
+if(DEFINED OPENNR_DLSSNR_RUNTIME_SOURCE)
+    set(_dlssnr_carrier_path "${OPENNR_DLSSNR_RUNTIME_SOURCE}")
+endif()
+if(DEFINED OPENNR_IMGUI_HELPER_SOURCE)
+    set(_vr_helper_runtime_path "${OPENNR_IMGUI_HELPER_SOURCE}")
+endif()
 set(_vr_helper_config_path "${SOURCE_ROOT}/package/SKSE/Plugins/ImGuiVRHelper.toml")
 if(NOT EXISTS "${_icon_loader_path}" OR NOT EXISTS "${_branding_path}" OR
    NOT EXISTS "${_feature_list_path}" OR NOT EXISTS "${_upscaling_page_path}" OR
@@ -488,7 +494,7 @@ foreach(_contract IN ITEMS
 endforeach()
 
 foreach(_contract IN ITEMS
-    "VERSION 2.14.8"
+    "VERSION 2.15.0"
     "does not match OpenNR"
     "OPENNR_LEAN_PACKAGE"
 )

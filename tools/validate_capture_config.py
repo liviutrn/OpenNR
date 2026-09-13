@@ -81,6 +81,12 @@ def validate(document: Any) -> dict[str, Any]:
     output = settings.get("output_directory")
     if output is not None and (not isinstance(output, str) or not output.strip()):
         errors.append("output_directory must be a non-empty string")
+    elif isinstance(output, str) and Path(output).is_absolute():
+        from opennr_paths import require_external_output
+        try:
+            require_external_output(output)
+        except (OSError, ValueError) as error:
+            errors.append(str(error))
 
     crops = settings.get("crops")
     crop_count = settings.get("crop_count", 4)

@@ -13,6 +13,7 @@
 #include <string>
 
 #include "Runtime.h"
+#include "BenchmarkContract.h"
 
 using Microsoft::WRL::ComPtr;
 
@@ -316,7 +317,7 @@ int wmain(int argc, wchar_t** argv)
                 "output_width output_height guide_width guide_height");
         }
 
-        const std::filesystem::path outputRoot = ReadLine(config, "output root");
+        const std::filesystem::path outputRoot = CheckedBenchmarkOutput(ReadLine(config, "output root"));
         const std::filesystem::path dllPath = ReadLine(config, "DLSS-NR DLL");
         const std::filesystem::path corePath = ReadLine(config, "NGX core");
 
@@ -413,14 +414,8 @@ int wmain(int argc, wchar_t** argv)
                         item.depth.Get(),
                         item.motion.Get(),
                         item.output.Get(),
-                        inputWidth,
-                        inputHeight,
-                        outputWidth,
-                        outputHeight,
-                        guideWidth,
-                        guideHeight,
-                        spec.motionScaleX,
-                        spec.motionScaleY,
+                        MakeBenchmarkGuide(inputWidth, inputHeight, outputWidth, outputHeight,
+                            guideWidth, guideHeight, spec.motionScaleX, spec.motionScaleY),
                         tuning,
                         frameIndex == 0)) {
                     throw std::runtime_error(runtime.Detail());

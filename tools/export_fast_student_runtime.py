@@ -217,6 +217,8 @@ def main() -> None:
     parser.add_argument("--fp16-io", action="store_true")
     parser.add_argument("--export-only", action="store_true")
     args = parser.parse_args()
+    from opennr_paths import require_external_output
+    args.output = require_external_output(args.output)
     guide_height = args.guide_height or (args.height + 3) // 4
     guide_width = args.guide_width or (args.width + 3) // 4
     dimensions = (

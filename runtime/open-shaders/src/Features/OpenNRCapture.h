@@ -56,7 +56,7 @@ struct OpenNRCaptureFeature final : Feature
 		std::uint32_t toggleCaptureKey = 0xDB;  // '[' (VK_OEM_4)
 		std::uint32_t singleCaptureKey = 0xDD;  // ']' (VK_OEM_6)
 		std::uint32_t burstCaptureKey = 0xDC;  // '\' (VK_OEM_5)
-		std::string outputDirectory = "OpenNR_Captures";
+		std::string outputDirectory = "C:/OpenNR/Captures";
 		std::vector<CropPreset> crops{
 			{ 0.50f, 0.50f },
 			{ 0.25f, 0.50f },
