@@ -1,0 +1,38 @@
+{
+  "architecture": "fast_student_v1",
+  "purpose": "isolated guide-conditioned recurrent runtime candidate",
+  "model": {
+    "base_width": 32,
+    "mid_width": 64,
+    "temporal_hidden": 64,
+    "blocks": 2,
+    "model_scale": 4,
+    "temporal_downsample": 8,
+    "guide_channels": 5,
+    "context_channels": 8,
+    "residual_scale": 0.12
+  },
+  "runtime_contract": {
+    "rgb": "[1,3,H,W] float32/float16 in 0..1",
+    "guides": "[1,5,guide_height,guide_width] native Feature-18 depth/motion/validity bundle; binding dimensions are explicit and resized internally",
+    "context": "[1,8,context_height,context_width] whole-eye conditioning tensor",
+    "hidden": "[1,64,ceil(H/8),ceil(W/8)] recurrent state",
+    "previous": "[1,3,H,W] previous prediction",
+    "outputs": [
+      "prediction [1,3,H,W]",
+      "next_hidden [1,64,ceil(H/8),ceil(W/8)]",
+      "next_previous [1,3,H,W]"
+    ]
+  },
+  "precision_plan": [
+    "FP16 ONNX/TensorRT first",
+    "FP8 only after FP16 visual and temporal equivalence checks",
+    "NVFP4 is a later weight-only experiment, not the first live path"
+  ],
+  "isolation": {
+    "replaces_joint_model": false,
+    "changes_active_mgo_profile": false,
+    "changes_capture_contract": false,
+    "training_cache_must_be_strict_reset_qualified": true
+  }
+}

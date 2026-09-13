@@ -1,0 +1,320 @@
+{
+  "surface": "report",
+  "title": "The AMD HIP port is a valuable backend reference, not an OpenNR runtime candidate",
+  "generatedAt": "2026-09-13T18:00:00Z",
+  "status": "reviewed",
+  "report": {
+    "asOf": "2026-09-13"
+  },
+  "queries": {
+    "external_evidence": {
+      "rows": [
+        {
+          "evidence": "Complete graph execution",
+          "observed": "The public HIP source wires preblock, Swin encoder, eight 640-token x 1024-channel ViT blocks, decoder skips, postblock and RGB head; it reports 71 logical blocks.",
+          "interpretation": "Strong evidence that the repository is an explicit runnable graph scaffold, not only a README or a partial kernel demo.",
+          "confidence": "moderate-high"
+        },
+        {
+          "evidence": "Weight and layout provenance",
+          "observed": "The converter accepts only the SHA-pinned 310.8.0.0 DLL and records 223 tables, but C32/attention layouts and the ViT bridge are marked AMD-consumer-derived; strict conversion refuses incomplete maps.",
+          "interpretation": "The graph is useful for experiments, but it is not established NVIDIA numerical equivalence or a verified native teacher.",
+          "confidence": "high"
+        },
+        {
+          "evidence": "Per-block trace",
+          "observed": "DLSS5_HIP_TRACE adds one reduction launch per logical block and reports element count, nonfinite count, min, max, sum and a hash after each marked block.",
+          "interpretation": "Useful compact health and stage-identity telemetry; it does not currently dump intermediate activation tensors for feature distillation.",
+          "confidence": "high"
+        },
+        {
+          "evidence": "Temporal API versus live route",
+          "observed": "The V2 C API accepts reset, motion and history, but the live ReShade/vkd3d path calls the frame API with reset=1 and logs that it is not temporal.",
+          "interpretation": "The repository exposes a temporal experiment surface, not a temporally validated live implementation.",
+          "confidence": "high"
+        },
+        {
+          "evidence": "Runtime timing",
+          "observed": "The release reports about 210-216 ms GPU time per 1920x1080 inference on an RX 9070 XT/gfx1201 over three runs.",
+          "interpretation": "This is a network-only proof-of-concept timing, not in-game FPS, stereo frame time, or headset delivery evidence.",
+          "confidence": "moderate-high"
+        },
+        {
+          "evidence": "Release and licensing",
+          "observed": "The repository has one public commit and a v0.1.0-poc release; project code is marked MIT, modified vkd3d-proton is LGPL-2.1-or-later, and NVIDIA DLLs/weights are excluded.",
+          "interpretation": "Source review is feasible, but vendor-derived coefficient and binary terms remain a separate private-use boundary.",
+          "confidence": "high"
+        }
+      ],
+      "source": {
+        "label": "Read-only audit of the public repository and release",
+        "files": [
+          "C:\\OpenNR\\research\\dlss5-amd-hip-linux_20260913\\README.md",
+          "C:\\OpenNR\\research\\dlss5-amd-hip-linux_20260913\\hip\\README.md",
+          "C:\\OpenNR\\research\\dlss5-amd-hip-linux_20260913\\hip\\src\\network.hip",
+          "C:\\OpenNR\\research\\dlss5-amd-hip-linux_20260913\\hip\\src\\capi.hip",
+          "C:\\OpenNR\\research\\dlss5-amd-hip-linux_20260913\\hip\\include\\dlss5_capi.h",
+          "C:\\OpenNR\\research\\dlss5-amd-hip-linux_20260913\\linux\\dlssnr\\convert_dll.py",
+          "C:\\OpenNR\\research\\dlss5-amd-hip-linux_20260913\\hip\\Makefile"
+        ],
+        "urls": [
+          "https://github.com/guentra/dlss5-amd-hip-linux",
+          "https://github.com/guentra/dlss5-amd-hip-linux/releases/tag/v0.1.0-poc",
+          "https://github.com/guentra/dlss5-amd-hip-linux/blob/main/hip/README.md",
+          "https://github.com/guentra/dlss5-amd-hip-linux/blob/main/docs/BUILD.md",
+          "https://github.com/guentra/dlss5-amd-hip-linux/blob/main/linux/THIRD-PARTY.md"
+        ],
+        "filters": [
+          "Public main snapshot commit 2361caf52d1fd903c2aab0dcf8778d3b31981c8e",
+          "Release v0.1.0-poc published 2026-09-13",
+          "No external binary execution or game installation"
+        ],
+        "metricDefinitions": [
+          {
+            "label": "Moderate-high confidence",
+            "definition": "The implementation and stated behavior are directly inspectable, but the external performance and equivalence claims were not independently reproduced on this machine.",
+            "componentIds": [
+              "external-evidence-table",
+              "executive-summary"
+            ]
+          },
+          {
+            "label": "Intermediate activation trace",
+            "definition": "A serialized tensor or feature map at a selected graph boundary, not a scalar health summary such as min/max/hash.",
+            "componentIds": [
+              "external-evidence-table",
+              "recommendation-table"
+            ]
+          }
+        ],
+        "caveats": [
+          "The external source snapshot omits its local regression suites even though the Makefile references them.",
+          "No local AMD gfx1201 hardware or ROCm execution was available for independent reproduction.",
+          "A public software license does not grant redistribution rights for vendor-derived DLLs, weights or unrelated bundled components."
+        ]
+      }
+    },
+    "local_baseline": {
+      "rows": [
+        {
+          "local_evidence": "Native carrier inspection",
+          "result": "The local 310.8.0.0 carrier has six neural families, 218 entry points, readable PTX/SASS summaries and 71-block structural correspondence.",
+          "meaning": "Our current RTX branch already has a stronger hardware-local backend reference than an AMD port can provide for the Windows target."
+        },
+        {
+          "local_evidence": "Native-style fusion probes",
+          "result": "The local C32 feed-forward probe reduced a 127.633 ms eager control to 5.477 ms (23.30x); the complete C64 block measured 1.980 ms versus 35.823 ms (18.09x).",
+          "meaning": "The external HIP result reinforces the existing conclusion that fixed layouts, fused tensor-core kernels and workspace discipline matter more than weight-only conversion."
+        },
+        {
+          "local_evidence": "Whole-graph status",
+          "result": "The local recovered full graph remains offline-only; generic compile/export paths failed to produce a usable full runtime, and the representative block-core estimate is still optimistic.",
+          "meaning": "A 71-block explicit HIP graph does not remove the remaining schedule, parity, stereo, temporal and host-contract work."
+        },
+        {
+          "local_evidence": "Teacher parity",
+          "result": "The recovered MLX-DLSS teacher replay improved some RGB rows but failed the <=0.007 Gate-A requirement, with material per-sequence regressions.",
+          "meaning": "Neither the local recovered graph nor the AMD-derived layouts should become trusted distillation supervision without a source-matched native parity gate."
+        },
+        {
+          "local_evidence": "OpenNR runtime contract",
+          "result": "The primary target is Windows 11, Skyrim VR, Quest 3/OpenXR, RTX 5070 Ti and the exact Feature 18-bound per-eye color/depth/motion/reset path.",
+          "meaning": "The external Linux/Proton/FidelityFX hook and gfx1201-only bridge do not match the current production or capture ownership boundary."
+        }
+      ],
+      "source": {
+        "label": "Current OpenNR-VR reports and project baseline",
+        "files": [
+          "D:\\.CODEX_Projects\\OpenNR-VR\\docs\\WHITEBOX_NATIVE_KERNEL_INVESTIGATION_20260912.md",
+          "D:\\.CODEX_Projects\\OpenNR-VR\\docs\\WHITEBOX_NATIVE_STYLE_C32_PROBE_20260912.md",
+          "D:\\.CODEX_Projects\\OpenNR-VR\\docs\\WHITEBOX_DLSS5_DISTILLATION_ASSESSMENT_20260911.md",
+          "D:\\.CODEX_Projects\\OpenNR-VR\\README.md",
+          "D:\\.CODEX_Projects\\OpenNR-VR\\PHASE0_OPENNR_SKYRIMVR_CODEX_GUIDE.md"
+        ],
+        "filters": [
+          "Evidence available in the current dirty OpenNR-VR worktree as of 2026-09-13",
+          "Offline backend and teacher-parity results only",
+          "No live runtime or active profile mutation for this assessment"
+        ],
+        "metricDefinitions": [
+          {
+            "label": "Native teacher",
+            "definition": "The actual Skyrim/Open Shaders Feature 18 output from the pinned local 310.8 baseline.",
+            "componentIds": [
+              "local-baseline-table",
+              "gate-table",
+              "executive-summary"
+            ]
+          },
+          {
+            "label": "Offline backend timing",
+            "definition": "A model or subgraph measurement that excludes the full renderer, resource interop, compositor, headset and live temporal contract unless explicitly stated.",
+            "componentIds": [
+              "local-baseline-table",
+              "gate-table"
+            ]
+          }
+        ],
+        "caveats": [
+          "The local repository contains user-owned dirty changes; this report does not claim the worktree is clean.",
+          "Local fusion timings are backend-control measurements, not native NVIDIA bit identity or live VR acceptance."
+        ]
+      }
+    },
+    "gate_status": {
+      "rows": [
+        {
+          "gate": "Architecture / kernel research relevance",
+          "status": "pass as reference",
+          "evidence": "Explicit HIP source, full graph schedule, ROCm kernel families, strict table validation and a live boundary are inspectable.",
+          "decision": "Use as a design reference for fixed-layout fusion, block manifests, and ABI/host boundary review."
+        },
+        {
+          "gate": "Intermediate-feature distillation readiness",
+          "status": "conditional / not yet",
+          "evidence": "The current trace exports scalar reductions and hashes, not activation tensors; the layouts are partly derived and the graph has no training/autograd path.",
+          "decision": "Do a selected-stage feature probe only in an isolated research lineage, preferably after native first-frame parity improves."
+        },
+        {
+          "gate": "Native Feature 18 teacher replacement",
+          "status": "fail",
+          "evidence": "Derived C32/attention layouts and a derived ViT bridge are explicitly not NVIDIA-equivalent; live history is reset each frame.",
+          "decision": "Do not replace or relabel the native teacher. Keep promotion=false."
+        },
+        {
+          "gate": "OpenNR Windows/SkyrimVR runtime fit",
+          "status": "fail for current scope",
+          "evidence": "The release is Linux x86_64, ROCm/HIP 7, gfx1201 and Wine/Proton with an FSR hook; OpenNR's target is Windows SkyrimVR Feature 18 with exact per-eye resources.",
+          "decision": "Do not port the installer, modified vkd3d pair or ReShade bridge into the protected OpenNR/MGO route."
+        },
+        {
+          "gate": "Temporal/stereo/HMD acceptance",
+          "status": "not established",
+          "evidence": "The live route blocks on synchronous CPU staging, resets history each frame, and has no frame-generation support; no SkyrimVR headset test is supplied.",
+          "decision": "No temporal, stereo, headset, compositor or VR-budget claim follows from this repository."
+        },
+        {
+          "gate": "Legal/package readiness for OpenNR",
+          "status": "unresolved for vendor-derived artifacts",
+          "evidence": "Project source and third-party notices are published, but the workflow converts a privately obtained NVIDIA DLL into coefficient tables and bundles modified runtime components.",
+          "decision": "Keep source and locally derived artifacts private; do not redistribute or package them without a separate ownership/terms review."
+        }
+      ],
+      "source": {
+        "label": "Crosswalk from external claims to OpenNR acceptance gates",
+        "files": [
+          "D:\\.CODEX_Projects\\OpenNR-VR\\docs\\WHITEBOX_NATIVE_KERNEL_INVESTIGATION_20260912.md",
+          "D:\\.CODEX_Projects\\OpenNR-VR\\docs\\WHITEBOX_DLSS5_DISTILLATION_ASSESSMENT_20260911.md",
+          "C:\\OpenNR\\research\\dlss5-amd-hip-linux_20260913\\hip\\src\\network.hip",
+          "C:\\OpenNR\\research\\dlss5-amd-hip-linux_20260913\\src\\native_hip_live.h"
+        ],
+        "filters": [
+          "OpenNR promotion gates and protected Feature 18 route",
+          "External repository main snapshot and release v0.1.0-poc"
+        ],
+        "metricDefinitions": [
+          {
+            "label": "Promotion=false",
+            "definition": "The artifact may remain an isolated research reference but has not earned entry into the native teacher, student, runtime, package or deployment lineage.",
+            "componentIds": [
+              "gate-table",
+              "executive-summary"
+            ]
+          }
+        ]
+      }
+    },
+    "recommendations": {
+      "rows": [
+        {
+          "priority": "P0",
+          "action": "Keep the AMD HIP repository as a pinned read-only backend reference.",
+          "reason": "It validates the value of explicit family schedules, fused kernels, residual boundaries and strict provenance without requiring another data collection pass.",
+          "stop_condition": "Stop using it as evidence if a later revision removes its provenance caveats or changes the claimed graph without a matching source diff."
+        },
+        {
+          "priority": "P0",
+          "action": "Do not install or execute the Linux bridge on the protected MGO/OpenNR route.",
+          "reason": "The platform, hook ownership, GPU target, temporal behavior and resource contract do not match current SkyrimVR acceptance.",
+          "stop_condition": "No exception unless a separately authorized Linux/AMD target is added with its own backup, runtime and headset gates."
+        },
+        {
+          "priority": "P1",
+          "action": "Reuse the compact trace schema for selected local CUDA/recovered-graph boundaries.",
+          "reason": "Per-block counts, finiteness, range, sum and hash are useful low-volume health checks alongside the existing OpenNR stage traces.",
+          "stop_condition": "Do not call this feature distillation; add actual serialized activations only for explicitly selected stages."
+        },
+        {
+          "priority": "P1",
+          "action": "If feature distillation is pursued, add a small isolated activation-dump probe around the eight ViT blocks and one encoder/decoder boundary.",
+          "reason": "This can test whether internal supervision is more informative than final RGB matching, but only as an architecture probe against a named recovered lineage.",
+          "stop_condition": "Require source-matched native first-frame parity and sequence/eye/reset metadata before using outputs as teacher targets."
+        },
+        {
+          "priority": "P1",
+          "action": "Continue the existing native-style CUDA fusion and resolution study.",
+          "reason": "It is hardware-local to the RTX target and already has measured C32/C64/C128/C256/C512/global slices and native Feature 18 speed anchors.",
+          "stop_condition": "Require full-eye output parity, temporal state, stereo, Feature 18 ownership and live VR budget before any promotion."
+        },
+        {
+          "priority": "P2",
+          "action": "Do not collect broad new Skyrim data for this lead.",
+          "reason": "More images cannot repair derived layout uncertainty, absent activation dumps, an unfused runtime or a Linux/AMD platform mismatch.",
+          "stop_condition": "Collect only if a bounded feature probe or native-parity diagnosis identifies a specific missing visual regime."
+        }
+      ],
+      "source": {
+        "label": "Evidence-backed next-step recommendations",
+        "files": [
+          "D:\\.CODEX_Projects\\OpenNR-VR\\docs\\WHITEBOX_NATIVE_KERNEL_INVESTIGATION_20260912.md",
+          "D:\\.CODEX_Projects\\OpenNR-VR\\docs\\WHITEBOX_NATIVE_STYLE_C32_PROBE_20260912.md",
+          "D:\\.CODEX_Projects\\OpenNR-VR\\docs\\WHITEBOX_DLSS5_DISTILLATION_ASSESSMENT_20260911.md",
+          "C:\\OpenNR\\research\\dlss5-amd-hip-linux_20260913\\hip\\src\\network.hip"
+        ],
+        "filters": [
+          "No live route or training artifact was changed",
+          "Recommendations preserve protected native and student lineages"
+        ]
+      }
+    },
+    "artifact_index": {
+      "rows": [
+        {
+          "artifact": "External source snapshot",
+          "path": "C:\\OpenNR\\research\\dlss5-amd-hip-linux_20260913",
+          "disposition": "kept isolated",
+          "reason": "Read-only clone at commit 2361caf; no external binary was executed."
+        },
+        {
+          "artifact": "Decision report",
+          "path": "D:\\.CODEX_Projects\\OpenNR-VR\\docs\\DLSS5_AMD_HIP_LINUX_OPENNR_RECOMMENDATION_20260913.md",
+          "disposition": "created",
+          "reason": "Dated source-backed recommendation and gate crosswalk."
+        },
+        {
+          "artifact": "Report reviewed-data snapshot",
+          "path": "D:\\.CODEX_Projects\\OpenNR-VR\\docs\\DLSS5_AMD_HIP_LINUX_OPENNR_RECOMMENDATION_DATA_20260913.json",
+          "disposition": "created",
+          "reason": "Machine-readable evidence rows and provenance used to build the report surface."
+        },
+        {
+          "artifact": "Protected OpenNR/MGO runtime",
+          "path": "D:\\.CODEX_Projects\\DLSS_5_SKYRIM\\vendor\\open-shaders-dlssnr-vr-091bfb4d",
+          "disposition": "unchanged",
+          "reason": "No installation, profile edit, runtime replacement or live Skyrim test was performed."
+        }
+      ],
+      "source": {
+        "label": "Artifact disposition and safety boundary",
+        "files": [
+          "D:\\.CODEX_Projects\\OpenNR-VR\\README.md",
+          "C:\\OpenNR\\research\\dlss5-amd-hip-linux_20260913\\README.md"
+        ],
+        "filters": [
+          "Assessment actions completed on 2026-09-13"
+        ]
+      }
+    }
+  },
+  "buildStatus": "complete"
+}

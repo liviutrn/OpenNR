@@ -1,0 +1,217 @@
+#pragma once
+
+// ============================================================================
+// FoveatedRenderImpl::Core — GPU resource pool & mode-dispatch entry point
+// ============================================================================
+//
+// Owns all per-mode intermediate textures (Default / Faster),
+// compute-shader objects (stretch, temporal smooth, subrect blend), and the
+// public entry points consumed by Upscaling.cpp.
+//
+// ============================================================================
+
+#include "Buffer.h"
+#include <array>
+#include <cstdint>
+#include "Params.h"
+#include <d3d11_4.h>
+#include <winrt/base.h>
+
+class Streamline;
+
+namespace FoveatedRenderImpl
+{
+	class Core
+	{
+	public:
+		enum class SubrectResourceMode : std::uint8_t
+		{
+			ExactExtent,
+			FixedEnvelope
+		};
+
+		struct SubrectExactCacheEntry
+		{
+			eastl::unique_ptr<Texture2D> colorIn[2];
+			eastl::unique_ptr<Texture2D> colorOut[2];
+			eastl::unique_ptr<Texture2D> depth[2];
+			eastl::unique_ptr<Texture2D> motionVectors[2];
+			eastl::unique_ptr<Texture2D> reactiveMask[2];
+			eastl::unique_ptr<Texture2D> transparencyMask[2];
+			std::uint32_t inW = 0;
+			std::uint32_t inH = 0;
+			std::uint32_t outW = 0;
+			std::uint32_t outH = 0;
+			ID3D11Resource* colorSource = nullptr;
+			ID3D11Resource* motionSource = nullptr;
+			ID3D11Resource* reactiveSource = nullptr;
+			ID3D11Resource* transparencySource = nullptr;
+			std::uint64_t lastUsedFrame = 0;
+			bool valid = false;
+		};
+		// Resolves VRDlssParams and dispatches across Default / Faster modes;
+		// dispatches DLSS or FSR depending on Upscaling::GetUpscaleMethod().
+		static bool ExecuteFoveatedRoute(Streamline& streamline,
+			ID3D11Resource* upscalingTexture,
+			ID3D11Resource* depthTexture,
+			ID3D11Resource* reactiveMask,
+			ID3D11Resource* transparencyMask,
+			ID3D11Resource* motionVectors);
+
+		// Shared VR per-eye preprocessing/finalization for non-DLSS callers (e.g. FSR).
+		static bool PrepareVRPerEyeInputs(
+			ID3D11Resource* colorSrc,
+			ID3D11Resource* depthSrc,
+			ID3D11Resource* mvecSrc,
+			ID3D11Resource* reactiveSrc,
+			ID3D11Resource* transparencySrc,
+			uint32_t eyeWidthIn,
+			uint32_t eyeHeightIn,
+			uint32_t eyeWidthOut,
+			uint32_t eyeHeightOut);
+
+		static bool FinalizeVRPerEyeOutputs(
+			ID3D11Resource* colorDst,
+			uint32_t eyeWidthOut,
+			uint32_t eyeHeightOut);
+
+		// Display-space bridge used only while the adaptive regular crop changes.
+		// It keeps the existing foveated route and its per-eye guide contract
+		// intact, then hides the crop boundary/resource reset in a short history
+		// blend after the final SBS image is assembled.
+		static bool ApplyAdaptiveCropHandoff(
+			ID3D11Resource* color,
+			ID3D11Resource* depth,
+			ID3D11Resource* motionVectors);
+		static void ResetAdaptiveCropHandoff();
+
+		// Release all GPU resources owned by Core.
+		static void ClearResources();
+		// Drop crop-sensitive temporal state even when the replacement resources
+		// keep the same dimensions. A moved subrect must not inherit old guides
+		// or DLSSNR history from the previous eye region.
+		static void InvalidateTemporalState();
+		static void ClearShaderCache();
+
+		// ── Own VR resources (independent from Upscaling) ──
+
+		// Per-eye intermediate buffers (Default full-eye mode)
+		static inline eastl::unique_ptr<Texture2D> vrIntermediateColorIn[2];
+		static inline eastl::unique_ptr<Texture2D> vrIntermediateColorOut[2];
+		static inline eastl::unique_ptr<Texture2D> vrIntermediateDepth[2];
+		static inline eastl::unique_ptr<Texture2D> vrIntermediateMotionVectors[2];
+		static inline eastl::unique_ptr<Texture2D> vrIntermediateReactiveMask[2];
+		static inline eastl::unique_ptr<Texture2D> vrIntermediateTransparencyMask[2];
+
+		// Subrect-sized textures (Default/Faster subrect mode)
+		static inline eastl::unique_ptr<Texture2D> vrSubrectColorIn[2];
+		static inline eastl::unique_ptr<Texture2D> vrSubrectColorOut[2];
+		static inline eastl::unique_ptr<Texture2D> vrSubrectDepth[2];
+		static inline eastl::unique_ptr<Texture2D> vrSubrectMotionVectors[2];
+		static inline eastl::unique_ptr<Texture2D> vrSubrectReactiveMask[2];
+		static inline eastl::unique_ptr<Texture2D> vrSubrectTransparencyMask[2];
+		static inline uint32_t vrSubrectInW = 0, vrSubrectInH = 0, vrSubrectOutW = 0, vrSubrectOutH = 0;
+		// The active dimensions above are resource dimensions. During adaptive
+		// crop they are the stable envelope; these fields describe the current
+		// valid region submitted through sl::Extent/copy boxes.
+		static inline uint32_t vrSubrectValidInW = 0, vrSubrectValidInH = 0;
+		static inline uint32_t vrSubrectValidOutW = 0, vrSubrectValidOutH = 0;
+			static inline SubrectResourceMode vrSubrectResourceMode = SubrectResourceMode::ExactExtent;
+			static inline bool vrSubrectFixedEnvelopeRejected = false;
+			// Set when the active crop-resource identity changes. The foveated
+			// dispatcher consumes this after EnsureVRSubrectTextures so a genuine
+			// envelope/source change still invalidates Streamline handles, while a
+			// valid-extent-only handoff does not.
+			static inline bool vrSubrectResourceContractChanged = false;
+			// The NR renderer has its own native-resource contract. Keep its fixed
+			// envelope rejection separate from the Streamline crop fallback.
+			static inline bool vrSubrectNeuralFixedEnvelopeRejected = false;
+			static inline std::uint64_t vrSubrectNeuralFallbackEntries = 0;
+		static inline std::array<SubrectExactCacheEntry, 3> vrSubrectExactCache;
+		static inline ID3D11Resource* vrSubrectColorSourceOwner = nullptr;
+		static inline ID3D11Resource* vrSubrectMotionSourceOwner = nullptr;
+		static inline ID3D11Resource* vrSubrectReactiveSourceOwner = nullptr;
+		static inline ID3D11Resource* vrSubrectTransparencySourceOwner = nullptr;
+		static inline std::uint64_t vrSubrectResourceCreates = 0;
+		static inline std::uint64_t vrSubrectResourceReuses = 0;
+		static inline std::uint64_t vrSubrectResourceFrees = 0;
+		static inline std::uint64_t vrSubrectEnvelopeValidations = 0;
+		static inline std::uint64_t vrSubrectFallbackEntries = 0;
+		static inline std::uint64_t vrSubrectFallbackEvictions = 0;
+
+		// Faster mode per-eye output textures (subOutW × subOutH)
+		static inline eastl::unique_ptr<Texture2D> vrFasterColorOut[2];
+		static inline uint32_t vrFasterOutW = 0, vrFasterOutH = 0;
+
+		// DRS region copy (render-resolution SBS)
+		static inline eastl::unique_ptr<Texture2D> vrRenderSBS;
+		static inline uint32_t vrRenderSBSW = 0, vrRenderSBSH = 0;
+
+		// DRS stretch compute shader resources
+		static inline winrt::com_ptr<ID3D11ComputeShader> vrSubrectStretchCS;
+		static inline winrt::com_ptr<ID3D11Buffer> vrSubrectStretchCB;
+		static inline winrt::com_ptr<ID3D11SamplerState> vrSubrectStretchSampler;
+
+		// Native depth-stencil -> typed per-eye R32_FLOAT conversion
+		static inline winrt::com_ptr<ID3D11ComputeShader> vrDepthCopyCS;
+		static inline winrt::com_ptr<ID3D11Buffer> vrDepthCopyCB;
+
+		// Periphery temporal smooth (ping-pong history at render-res SBS)
+		static inline eastl::unique_ptr<Texture2D> vrTemporalHistory[2];   // SRV+UAV ping-pong
+		static inline winrt::com_ptr<ID3D11ShaderResourceView> vrMvecSRV;  // cached SRV on game's mvec resource
+		static inline ID3D11Resource* vrMvecSRVOwner = nullptr;            // track which resource the SRV was created from
+		static inline uint32_t vrTemporalHistoryW = 0, vrTemporalHistoryH = 0;
+		static inline uint32_t vrTemporalFrameIdx = 0;
+		static inline bool vrTemporalHistoryValid = false;
+
+		// Temporal smooth compute shader resources
+		static inline winrt::com_ptr<ID3D11ComputeShader> vrTemporalSmoothCS;
+		static inline winrt::com_ptr<ID3D11Buffer> vrTemporalSmoothCB;
+		static inline winrt::com_ptr<ID3D11SamplerState> vrTemporalSmoothSampler;
+
+		// Subrect blend compute shader resources (feather / dither copy-back)
+		static inline winrt::com_ptr<ID3D11ComputeShader> vrSubrectBlendCS;
+		static inline winrt::com_ptr<ID3D11Buffer> vrSubrectBlendCB;
+		static inline winrt::com_ptr<ID3D11ShaderResourceView> vrBlendSrcSRV;
+		static inline ID3D11Resource* vrBlendSrcSRVOwner = nullptr;
+
+		// Subrect UV hash for resource recreation detection
+		static inline uint64_t activeSubrectUVHash = 0;
+		static inline uint32_t neuralGuidesFrame = UINT32_MAX;
+
+		// Full-SBS history for the optional adaptive crop transition. These are
+		// allocated lazily and reused; steady-state crop frames use copies only.
+		static inline eastl::unique_ptr<Texture2D> vrAdaptiveCropHistory[2];
+		static inline eastl::unique_ptr<Texture2D> vrAdaptiveCropTarget;
+		static inline eastl::unique_ptr<Texture2D> vrAdaptiveCropDepthHistory[2];
+		static inline winrt::com_ptr<ID3D11ComputeShader> vrAdaptiveCropHandoffCS;
+		static inline winrt::com_ptr<ID3D11Buffer> vrAdaptiveCropHandoffCB;
+		static inline winrt::com_ptr<ID3D11SamplerState> vrAdaptiveCropHandoffSampler;
+		static inline winrt::com_ptr<ID3D11ShaderResourceView> vrAdaptiveCropColorSRV;
+		static inline ID3D11Resource* vrAdaptiveCropColorSRVOwner = nullptr;
+		static inline winrt::com_ptr<ID3D11ShaderResourceView> vrAdaptiveCropMotionSRV;
+		static inline ID3D11Resource* vrAdaptiveCropMotionSRVOwner = nullptr;
+		static inline uint32_t vrAdaptiveCropHistoryW = 0;
+		static inline uint32_t vrAdaptiveCropHistoryH = 0;
+		static inline uint32_t vrAdaptiveCropGuideW = 0;
+		static inline uint32_t vrAdaptiveCropGuideH = 0;
+		static inline uint32_t vrAdaptiveCropFrameIdx = 0;
+		static inline bool vrAdaptiveCropHistoryValid = false;
+		static inline ID3D11Resource* vrAdaptiveCropDepthSource = nullptr;
+		static inline ID3D11Resource* vrAdaptiveCropMotionSource = nullptr;
+
+	private:
+		static bool ExecuteDefaultMode(Streamline& streamline, const VRDlssParams& p);
+		static bool ExecuteFasterMode(Streamline& streamline, const VRDlssParams& p);
+
+		// Per-eye dispatch (DLSS or FSR) shared by full-eye and subrect paths.
+		// inW/inH/outW/outH are already-cropped extents. fullEyeWidthIn/HeightIn are
+		// the PRE-crop dims: mvec is a straight crop copy (stays normalized against
+		// the full eye), which FSR3's pixel-extent motionVectorScale needs to interpret it.
+		static bool DispatchUpscaleRegion(Streamline& streamline, uint32_t eyeIndex,
+			ID3D11Resource* colorIn, ID3D11Resource* colorOut, ID3D11Resource* depth, ID3D11Resource* mvec,
+			ID3D11Resource* reactiveMask, ID3D11Resource* transparencyMask,
+			uint32_t inW, uint32_t inH, uint32_t outW, uint32_t outH,
+			uint32_t fullEyeWidthIn, uint32_t fullEyeHeightIn);
+	};
+}

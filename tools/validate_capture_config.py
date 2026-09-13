@@ -25,9 +25,11 @@ BOOLEAN_KEYS = (
     "capture_pre_nr",
     "capture_post_nr",
     "capture_raw_teacher",
+    "capture_renderer_conditionings",
     "capture_depth",
     "capture_motion_vectors",
     "capture_full_frame",
+    "capture_full_frame_sequence",
     "capture_left_eye",
     "capture_right_eye",
 )
@@ -79,6 +81,12 @@ def validate(document: Any) -> dict[str, Any]:
     output = settings.get("output_directory")
     if output is not None and (not isinstance(output, str) or not output.strip()):
         errors.append("output_directory must be a non-empty string")
+    elif isinstance(output, str) and Path(output).is_absolute():
+        from opennr_paths import require_external_output
+        try:
+            require_external_output(output)
+        except (OSError, ValueError) as error:
+            errors.append(str(error))
 
     crops = settings.get("crops")
     crop_count = settings.get("crop_count", 4)
@@ -100,6 +108,12 @@ def validate(document: Any) -> dict[str, Any]:
                     value = _number(crop.get(axis), f"crops[{index}].{axis}", errors)
                     if value is not None and not 0.0 <= value <= 1.0:
                         errors.append(f"crops[{index}].{axis} must be in [0, 1]")
+
+    if settings.get("capture_full_frame_sequence", False) and not settings.get("capture_full_frame", True):
+        warnings.append(
+            "capture_full_frame_sequence is enabled while capture_full_frame is false; "
+            "the runtime will not write full-frame artifacts"
+        )
 
     return {"valid": not errors, "errors": errors, "warnings": warnings}
 

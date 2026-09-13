@@ -1,74 +1,43 @@
-# OpenNR-VR
+# OpenNR 2.15.0
 
-OpenNR-VR is a research project for learning an open-weight VR neural-rendering model from synchronized Skyrim VR frames. The initial teacher is the working Open Shaders DLSSNR integration, using the private Open Shaders 0.4.5 MGO developer package as the pinned baseline.
+OpenNR is a VR neural-rendering development project combining the native Open Shaders integration, synchronized capture, and separate model research. **Adaptive NR and adaptive Crop are part of the main development runtime in 2.15.0.** Both retain their existing opt-in defaults; saved user settings are not rewritten.
 
-## Current status
+The canonical source is this repository. Large data and environments live outside D:. The runtime retains the `CommunityShaders.dll` filename and asset paths for compatibility.
 
-Phase 0 color capture plus the first Phase 1 guide-capture extension are prepared for a
-build/test pass. The teacher checkout now contains an opt-in `OpenNRCaptureFeature`
-wired around the actual Feature 18 renderer boundary, including raw per-eye depth and
-motion-vector resources with scale/reset metadata. A live Skyrim VR/headset run has not
-been performed yet, so runtime delivery, tensor interpretation, visual quality, and
-sustained queue behavior remain acceptance gates.
+## Start here
 
-The authoritative project brief is [PHASE0_OPENNR_SKYRIMVR_CODEX_GUIDE.md](./PHASE0_OPENNR_SKYRIMVR_CODEX_GUIDE.md). The reconstruction findings are in [docs/PHASE0_RECON.md](./docs/PHASE0_RECON.md), and the exact teacher baseline is recorded in [docs/BASELINE_OPEN_SHADERS_0.4.5.md](./docs/BASELINE_OPEN_SHADERS_0.4.5.md) and [BASELINE_OPEN_SHADERS_0.4.5.json](./BASELINE_OPEN_SHADERS_0.4.5.json).
+- [Project map](docs/PROJECT_MAP.md): subsystem ownership and maintained entry points.
+- [Consolidation audit](docs/PROJECT_CONSOLIDATION_AUDIT.md): provenance, migration, tests, recovery and limitations.
+- [Setup and dependencies](docs/SETUP.md): external inputs and repeatable commands.
+- [2.15.0 changes](runtime/open-shaders/package/OPENNR-2.15.0-CHANGELOG.md).
+- [Historical research status](docs/RESEARCH_STATUS_PRE_CONSOLIDATION.md): prior experiments and model-quality evidence.
+- [Experiment index](experiments/README.md): archived and reproducible research.
 
-## Baseline boundary
+## Build and package
 
-OpenNR-VR references the existing teacher checkout instead of copying it into this repository:
-
-`D:\.CODEX_Projects\DLSS_5_SKYRIM\vendor\open-shaders-dlssnr-vr-091bfb4d`
-
-The checkout already contained user-owned changes; they were preserved, and the new capture feature is implemented there as a worktree-local integration rather than copied into this repository. The baseline package contains NVIDIA-signed runtime components, including `nvngx_dlssnr.dll`; those binaries are local/private inputs and are not vendored, redistributed, or committed here. The source checkout is also dirty, so the exact commit plus dirty-state flag are part of the baseline identity.
-
-The optional PixRestore reference implementation is tracked as the
-`_external/PixRestore` submodule and remains owned by its upstream authors. Clone
-with `--recurse-submodules` (or run `git submodule update --init --recursive`) when
-you need the offline model test code; review the upstream repository's license and
-terms separately from OpenNR-VR.
-
-## Capture implementation
-
-The implementation lives in the teacher checkout at
-`D:\.CODEX_Projects\DLSS_5_SKYRIM\vendor\open-shaders-dlssnr-vr-091bfb4d`:
-
-- `src/Features/OpenNRCapture.h/.cpp` provides F9 start/stop, F10 single, F11 burst,
-  sampled capture rate, 1–4 configurable GPU crops per stage/eye, periodic full per-eye
-  validation frames, bounded queue/drop behavior, staging readback, RGB PNG/raw output,
-  raw depth/motion tensors, and JSONL.
-- `src/Features/Upscaling/NeuralRendering/Renderer.cpp` taps isolated per-eye input
-  textures before Feature 18 and teacher/resolved textures after it, including the
-  reduced-resolution raw teacher path.
-- `features/OpenNRCapture/Shaders/Features/OpenNRCapture.ini` installs the feature as a
-  beta, opt-in utility without changing the normal screenshot feature.
-
-The portable dataset contract and offline checker are documented in
-[docs/OPENNR_CAPTURE_FORMAT.md](./docs/OPENNR_CAPTURE_FORMAT.md) and implemented by
-[tools/validate_capture.py](./tools/validate_capture.py).
-The example settings can be checked before launch with
-[tools/validate_capture_config.py](./tools/validate_capture_config.py).
-After capture, [tools/preview_capture.py](./tools/preview_capture.py) creates a
-dependency-free HTML contact sheet for visual inspection.
-
-## Test handoff
-
-The final local build was produced with `BuildRelease.bat Dev-Fast`; the DLL is in
-`D:\.CODEX_Projects\DLSS_5_SKYRIM\vendor\open-shaders-dlssnr-vr-091bfb4d\build\Dev-Fast\CommunityShaders.dll`.
-`Package-AIO-Manual` also completed and staged the feature INI at
-`build\Dev-Fast\aio\Shaders\Features\OpenNRCapture.ini`. Use that AIO output in an
-isolated MO2/test profile; it has not been copied into the active game installation.
-
-After enabling OpenNR Capture, use F10 for one sample, F9 to start/stop a sequence, or
-F11 for the configured burst. Validate the resulting directory with:
+From PowerShell at the repository root:
 
 ```powershell
-python D:\.CODEX_Projects\OpenNR-VR\tools\validate_capture_config.py D:\.CODEX_Projects\OpenNR-VR\config\opennr_capture.example.json
-python D:\.CODEX_Projects\OpenNR-VR\tools\validate_capture.py D:\OpenNR_Captures --json
-python D:\.CODEX_Projects\OpenNR-VR\tools\preview_capture.py D:\OpenNR_Captures --limit 20
+.\tools\Build-OpenNR.ps1
+.\tools\Build-OpenNR.ps1 -Targets @('CommunityShaders','cpp_tests','Package-AIO-Manual')
+& 'E:\OpenNR_Builds\2.15.0\tests\cpp\Release\cpp_tests.exe'
 ```
 
-## Phase boundary
+The standard local archive is `E:\OpenNR_Builds\2.15.0\dist\OpenNR 2.15.0.7z`.
+The build disables automatic deployment. It requires the declared external dependencies and local/private runtime inputs described in setup. This repository does not distribute NVIDIA's private carrier or recovered weights.
 
-The feature remains passive when disabled, preserves the known-good rendering path, uses
-asynchronous GPU readback, and writes explicit frame/eye/resource metadata. No training,
-model replacement, runtime bridge, or renderer redesign belongs in Phase 0.
+## Storage
+
+`config/paths.example.json` documents the external roots. Optional machine overrides belong in ignored `config/paths.local.json`. Python path precedence is explicit CLI argument, `OPENNR_<KIND>_ROOT`, machine configuration, then default. `python tools/opennr_paths.py output` prints the resolved location.
+
+Maintained training/cache/export writers reject destinations physically on D:, including junctions and drive aliases. Native capture and benchmark writers also resolve physical storage before recording. New capture configurations default to `C:/OpenNR/Captures`; existing saved paths remain selected and are validated before capture starts. Legacy experiment scripts are historical tools and require explicit external output paths.
+
+## Acceptance status
+
+2.15.0 has source/build/package validation. The adaptive resource-envelope fallback is retained: rejection holds further crop tier changes until restart; NR can continue adapting. Live stereo, transitions, temporal appearance, frame pacing and sustained headset performance remain separate acceptance checks.
+
+Consolidation does not promote a learned model, recovered teacher, generated target set, or historical experiment. Native Feature 18 resources and capture provenance remain authoritative. No game installation or remote repository was changed by this consolidation.
+
+## Attribution
+
+The runtime inherits Open Shaders and Community Shaders; see its [license](runtime/open-shaders/COPYING) and [branding and attributions](runtime/open-shaders/BRANDING_AND_ATTRIBUTIONS.md). Third-party source and private local artifacts retain their own ownership and terms. See [dependency boundaries](third_party/README.md).

@@ -266,9 +266,9 @@ Prefer configurable virtual-key bindings.
 Example configuration only:
 
 ```ini
-ToggleCaptureKey=F9
-SingleCaptureKey=F10
-BurstCaptureKey=F11
+ToggleCaptureKey=[
+SingleCaptureKey=]
+BurstCaptureKey=\
 ```
 
 ---
@@ -782,7 +782,7 @@ Acceptance:
 ## M0.2 — Single-frame capture (implemented; live acceptance pending)
 
 The teacher worktree now implements one-frame manual capture through `OpenNRCaptureFeature`
-(F10 or the `single` action), including paired per-eye input/teacher resources and
+(`]` or the `single` action), including paired per-eye input/teacher resources and
 metadata. A live Skyrim VR run still needs to confirm the four expected artifacts.
 
 Only:
@@ -816,7 +816,7 @@ Acceptance:
 
 ## M0.4 — Burst capture (implemented; live acceptance pending)
 
-F11 and the `burst` action implement the default eight-frame and configurable N-frame
+`\` and the `burst` action implement the default eight-frame and configurable N-frame
 bursts. Ordering and eye pairing remain runtime acceptance checks.
 
 Acceptance:

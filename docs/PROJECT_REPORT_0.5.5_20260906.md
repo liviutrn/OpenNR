@@ -1,6 +1,92 @@
-# OpenNR-VR project report — 2026-09-06
+# OpenNR-VR project report — 2026-09-06 (historical)
 
-## Current state
+> Latest completed full-model result: corrected native-guide training versus matched legacy-guide control, 1,200 local steps each. Corrected validation MAE prior/high-effect/latest: 0.019734763 / 0.017683441 / 0.015286623. New-cohort gains do not yet preserve the original parent on prior data, so no promotion or MAE 0.011 claim. See [completed alignment comparison](D:/.CODEX_Projects/OpenNR-VR/docs/ALIGNED_GUIDE_MULTICOHORT_TRAINING_20260907.md). No additional capture is needed to finish this comparison.
+
+> Latest September 7 afternoon result: fresh renderer-conditioning captures were validated and used in a completed local refiner/control experiment. Eleven accepted 64-frame clips; one GPU-query-failed clip excluded and preserved. Control test MAE 0.018983047 versus parent 0.021267248 and conditioned 0.021005986. No production promotion. See [renderer-conditioned pilot results](D:/.CODEX_Projects/OpenNR-VR/docs/RENDERER_CONDITIONED_TRAINING_PILOT_20260907.md).
+
+> Superseding status: the current 2026-09-07 capture, cache merge, storage
+> organization, and v72 training result are recorded in
+> [FRESH_CAPTURE_AUDIT_AND_MODEL_ITERATION_0.5.5_20260907.md](D:/.CODEX_Projects/OpenNR-VR/docs/FRESH_CAPTURE_AUDIT_AND_MODEL_ITERATION_0.5.5_20260907.md).
+> The capture, runtime and v8 sections below are the earlier
+> project-state record. The current fresh-capture audit and model lineage
+> supersede the v45-v48/v47 wording below and are documented in
+> [FRESH_CAPTURE_AUDIT_AND_MODEL_ITERATION_0.5.5_20260906.md](D:/.CODEX_Projects/OpenNR-VR/docs/FRESH_CAPTURE_AUDIT_AND_MODEL_ITERATION_0.5.5_20260906.md).
+
+## Latest next-grid training update — 2026-09-06
+
+The 105-sequence four-crop grid cohort is structurally and temporally valid.
+Its 92 clean sequences were materialized as a strict center-crop temporal
+cache, all 105 sequences were retained in a four-crop spatial-only auxiliary
+cache, and the 92 clean rows were merged with the accepted historical and
+prior-fresh cohorts into one 291-sequence strict cache. Full details,
+validator paths, crop exclusions, cache hashes, visual samples, and training
+results are in
+[NEXT_GRID_TRAINING_RESULT_0.5.5_20260906.md](D:/.CODEX_Projects/OpenNR-VR/docs/NEXT_GRID_TRAINING_RESULT_0.5.5_20260906.md).
+
+Controlled v68/v68b/v69 continuation probes regressed or stayed flat at their
+first checkpoints; the width-160 v70 arm reached the local GPU memory/cost
+limit before a productive post-update validation; and the completed v71
+all-non-test fit transferred worse on the untouched merged test (`0.021731749`
+versus v65 `0.021573284`). The v65 checkpoint remains the promoted offline
+candidate. The requested MAE `0.011` target remains open, and no new model was
+installed into the active SkyrimVR/MO2 runtime.
+
+## Current superseding state
+
+The fresh strict root was re-audited into 126 temporal-safe sequences plus 5
+spatial-only quarantined sequences. The combined strict cache contains 199
+sequences, 12,736 frames, and 25,472 eye rows with strict initial-reset
+provenance; all three relevant raw-crop cache validations pass under the pinned
+CUDA environment. The latest v65 update is recorded in
+`docs/MODEL_ITERATION_UPDATE_V65_FULLRES_OVERSAMPLE_20260906.md`: its selected
+step-200 checkpoint is the current minor research candidate at combined test
+MAE `0.018847388`, fresh MAE `0.014935002`, and historical MAE `0.025628855`.
+It is not a live runtime or headset acceptance result and remains above the
+`0.011` target.
+
+The v65 all-non-test offline research candidate is:
+
+- Checkpoint: `E:\OpenNR_Training\fullres_aux_oversample_v65_probe_0.5.5_20260906\best_mae.pt`
+- Fresh held-out MAE: `0.014935002` over 3,328 frames
+- Historical held-out MAE: `0.025628855` over 1,920 frames
+- Frame-weighted two-cohort MAE: `0.018847388`
+- Checkpoint SHA-256: `5672252b438669169d8b2fed9ffb16f20768270f01d79dc924f32b9318fbc3e3`
+
+The requested `0.011` target remains open. This is crop-space streaming
+evidence only; it is not live Feature 18 replacement, headset/stereo, or
+frame-time acceptance. v60 is the historical-leaning fallback, v62 is a
+fresh-specialist ablation, and v56 is the historical-test anchor. No candidate
+has been installed into the active SkyrimVR/MO2 runtime.
+
+## Next varied/high-effect capture setup — 2026-09-06
+
+The active local OpenNR profile is now prepared for a new environment- and
+motion-diverse capture pass. Future captures write to
+`C:\OpenNR_Captures_VariedHighEffect_0.5.5_20260907`. The existing both-eye,
+pre/post-NR, raw-teacher, native-depth, native-MV, four-crop, 64-frame Feature
+18 contract is unchanged; the future output path is on the fast C: NVMe and
+the bounded writer queue remains 64. The pre-edit settings backup is on G:.
+The exact collection protocol and the source
+audit of renderer-derived conditioning availability are in
+[NEXT_CAPTURE_SETUP_G_VARIATION_0.5.5_20260906.md](D:/.CODEX_Projects/OpenNR-VR/docs/NEXT_CAPTURE_SETUP_G_VARIATION_0.5.5_20260906.md).
+
+The current capture still cannot provide albedo, normals, illumination,
+semantic/material buffers, the teacher's internal mask texture, or the exact
+carried history tensor. The source currently exposes only the four Feature 18
+resources plus scalar tuning/reset metadata. Those channels require an isolated
+renderer diagnostic implementation and must not be approximated or injected
+into the known-good teacher route without provenance and alignment evidence.
+
+Storage was reorganized after this report's earlier inventory. The superseded
+C: archive and two historical derived E: caches now live in verified G: cold
+storage; they are existing artifacts and must not be counted as new training
+data. The active strict capture, self-contained combined cache, final spatial
+cache, training runs, and checkpoints remain on their fast paths. Exact source
+and destination paths, byte counts, SHA-256 reports, and final free-space
+readings are recorded in
+[STORAGE_RELOCATION_20260906.md](D:/.CODEX_Projects/OpenNR-VR/docs/STORAGE_RELOCATION_20260906.md).
+
+## Earlier baseline state (superseded)
 
 The active SkyrimVR installation is running the capture-reset build of Open Shaders DLSSNR VR 0.5.5 OpenNR. The installed CommunityShaders.dll is version 0.5.5.0, 43,745,792 bytes, SHA-256 751401C26DF6B9FCD7F6F3DD906EE6D57ED69D6F3C6EE6305D1C445C49E3FFD4. The source change is vendor commit 40631c3c and requests neural history reset before each OpenNR sequence. The previous active DLL is preserved in E:\MGO-RC3-fresh\_OpenNR_Pilot_Backups\pre-capture-reset-0.5.5-20260906_002040.
 
@@ -47,7 +133,7 @@ The previous spatial candidate, context_merged_style_v7_newcapture_0.5.5_2026090
 
 The FP8 experiment remains research-only. Full Conv and MatMul FP8 built an engine but failed the parity gate, so it was not promoted. MatMul-only FP8 calibration completed but its build was stopped to avoid contention with live capture. FP6 is not exposed by the installed TensorRT/modelopt stack, and NVFP4 would require a separate graph-aware block/dynamic quantization path. No low-bit engine has been installed or used as the active runtime.
 
-## Current training run
+## Historical training run (superseded)
 
 The run in progress is:
 
@@ -77,7 +163,7 @@ Checkpoint hashes:
 
 The portable export is architecture context_v4 with 2,005,139 parameters and exact_state true. No model or low-bit engine was installed into Skyrim. This training run is complete and no further training job was started.
 
-## Next steps after the run
+## Historical next steps (superseded)
 
 1. Validate the completed best-MAE and best-feature checkpoints on the held-out sequence test split and record the result beside the cache and capture hashes.
 2. Render a small broad A/B gallery against teacher and input for visual review; keep appearance resemblance separate from numerical metrics.

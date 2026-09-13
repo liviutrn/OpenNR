@@ -1,0 +1,43 @@
+# Fresh capture intake and training gate
+
+**September 8 reporting update:** Capture acceptance and immutable split details below remain valid. Training outcomes and current next steps are maintained in [latest findings](OPENNR_LATEST_FINDINGS_20260908.md): weak-conditioning endpoint evaluation is complete; the stronger-conditioning arm has matched step-400 evidence, essentially tied with control. Older launch or pause wording below is historical, not an instruction to restart or pause the live experiment.
+
+**Latest state:** After the documented pause, the user explicitly authorized joint
+training with new2xfootage toward MAE0.011. The immutable27clip cache is verified
+and included in joint session65149, which reached50optimizer updates including
+8draws from this batch. See TWOPASS_DATA_INTEGRATION_20260907.md. The earlier
+session58365 remains stopped; it was not resumed or overwritten.
+
+User authorized analysis, validation, training and project integration of new sequences. Located27 new sequences seq-1788829649017-1 through seq-1788830072321-27 in C:/OpenNR_Captures_RendererConditioningPilot_0.5.5_20260907. This is a separate session from the old12-clip pilot. Observed metadata requests64frames, both eyes, centered512crop and renderer conditioning; those settings are not acceptance evidence.
+
+Launched existing tools/audit_conditioning_batch.py with --after seq-1788803895392-12 and output out/conditioning_new_session_20260907_2114. Structural/path/byte gates and exact64frame/reset/contiguity gates precede decoded content audits. Inspect all six stage statistics, hashes/staleness, coordinate coverage, and representative input/teacher/albedo/normal/roughness sheets from both eyes before training. Failed sequences remain on disk and must be explicitly excluded. Outputs are separate from captures.
+
+Next: review completed audit/exclusions and actual visual alignment; build a separate immutable aligned cache and whole-sequence split with no reassignment of any earlier holdout. Preserve earlier cohort validation and verified broad5600 parent. Fresh data must not silently replace old cohorts or be trained on before acceptance. Training is authorized but not yet launched. No cloud rental, runtime changes, public-build changes or deletion.
+
+The data-quality skill governs acceptance, distinguishing structural validity from semantic/alignment checks and final model quality. Existing reusable validators and their JSON/HTML reports provide the inspectable audit trail. Audit session37872 is live at launch; no acceptance result yet.
+
+## Intake progress and fixed training plan
+
+All27 clips passed the structural and exact64-frame temporal gates; structural_gates.json has no exclusions. Decoded-content audit remains live. Inspected aligned sheets for clips1 and9 and six-channel sheet for5: scene/material boundaries correspond within each eye, including moving face versus barrel/background content. The centered crops differ substantially between eyes; this is not proof of matched binocular face coverage or headset acceptance. Full-stream finite/stale/coverage checks remain required before cache preparation.
+
+Prepared optional fourth-cohort support in train_spatial_tone.py and read-only renderer-cache support in AlignedCohort, retaining the original overlay path. Verification and full-training-fit evaluation now require explicit coverage of all recorded cohort labels instead of silently stopping after three. No new training launched yet.
+
+After acceptance, create a separate immutable cache with the existing deterministic chronological sequence split (with27 accepted:16train/5validation/6test). This is same-session held-out evidence, not independent-scene generalization. Preserve all earlier splits and prohibit frozen-test evaluation. Warm start the verified broad5600 U-Net with fresh AdamW1e-4, unchanged combined objective/BF16/window8/burn-in2, seed358, bounded1200updates. Uniform sequence sampling; cohort mixture prior/high-effect/old-renderer/new-session .375/.225/.15/.25, preserving the original relative mix for75% of updates. This is data integration, not a matched causal ablation. Replay the three original step0 validation cohorts before training; establish the fourth baseline; evaluate all four every400. Select only simultaneous MAE improvement across all four; preserve step0 fallback. Temporal and visual acceptance remain separate from selection.
+
+The cache preserves all17 renderer-feature channels, but this unchanged38.48M U-Net does not consume them; it uses RGB/parent output/aligned depth-motion/context. No claim of renderer-conditioned architecture training. Additional renderer-feature experiments remain separate from this bounded data continuation. No Runpod, game, runtime or public-build changes.
+
+Partial content review: completed reports1-16 each have zero nonfinite decoded values, zero uncovered conditioning crops and zero entire-stream constant hashes. Session37872 subsequently reported clips17-18 content complete; aggregate audit still pending. Also inspected clip15 aligned first/last both-eye sheet: dark indoor timber, jewelry and skin contours correspond across input/teacher/renderer planes. These are representative visual checks, not an exhaustive stereo proof. Loader synthetic test passes (including test-access denial, absent legacy-guide denial and changed-row rejection); two unchanged-loss tests pass. Windows test cleanup initially held memmaps open, corrected by closing the synthetic mappings before temporary-directory cleanup. Trainer/verifier/training-fit scripts compile. Frozen-test membership metadata is checked for overlap without evaluating test tensors.
+
+## Completed raw audit and cache build
+
+Audit session37872 completed exit0:27 accepted, zero excluded;1728 stereo frame records /3456 eye examples. Aggregate audit.json confirms zero nonfinite decoded values, zero uncovered renderer crops, zero entirely constant streams across all27. Additional first/last both-eye aligned sheets inspected for21,25 and27: indoor face/cloth/timber contours correspond;27 includes dark ceiling/animal-skin content. No claim that every crop contains a face or that scene identities are independent across clips. Same-eye edge correspondence exceeds opposite-eye correspondence in all first22 reports checked; this diagnostic alone cannot prove exact temporal/subpixel alignment.
+
+Launched prepare_conditioning_pilot.py into E:/OpenNR_TrainingInputs/RendererConditioningFreshSession_20260907_2114, session60247. All27 source/hash/structural rechecks returned no errors. Split and arrays have been allocated; cache completion is NOT established until complete.json is written and the process exits successfully. Source captures and earlier caches remain unchanged. Two-pass teacher clips are outside this one-pass batch and remain excluded by existing pass-count gates.
+
+## Cache accepted; continuation launched
+
+**Superseding user direction: PAUSED, data preparation only.** Session58365 was interrupted during step0 prior-cohort baseline evaluation and exited1. Process inspection confirmed no remaining matching Python processes. Only run.json/status.json exist, with no trained checkpoint or completed baseline history; zero optimizer updates occurred. Prepared cache remains intact. Do not launch/resume training until the user explicitly authorizes it after further collection. Earlier launch plan below is historical, not active authorization.
+
+Session60247 completed exit0 after3456/3456 eye examples. Completion manifest reports zero invalid native depth/motion pixels, zero exclusions, all17 renderer channels preserved. Audit SHA9ca8a365bcf68b12261d74ffbf068fbc1bc9db7929c635f948e6264ba871f2dc; complete.json SHA f1b791bdfd789ef694179312eda04e31ed8303f888bde9d436d7e243e72adadb. Reopening through AlignedCohort independently verified all four array hashes and rows identity,32train eye streams/10validation eye streams, exact64frame contracts and disjoint16/5sequence membership. Frozen-test tensors were not evaluated.
+
+Launched local continuation session58365 with train_spatial_tone.py, --run E:/OpenNR_Training/aligned_retention_20260907_seed352 --stable-unet --initial-head-run E:/OpenNR_Training/stable_unet_broad_20260907 --additional-cohort E:/OpenNR_TrainingInputs/RendererConditioningFreshSession_20260907_2114 --steps1200 --seed358. Output E:/OpenNR_Training/stable_unet_fresh_session_20260907_2114. Startup must verify all cache identities and reproduce original three-cohort baseline before any optimizer updates. Launch alone is not confirmed optimization; first successful updates and fresh-cohort draw counts remain pending.

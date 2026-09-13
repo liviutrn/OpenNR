@@ -49,6 +49,12 @@ The per-frame Feature 18 parameters include:
 - `DLSSNR.DepthInverted`, `DLSSNR.Enabled`, and `DLSSNR.Reset`
 - intensity, local tone, local structure, skin structure, automatic mask, style, and UI correction tuning
 
+The foveated composite is deliberately separate from that guide contract. The
+DLSS/Feature 18 crop remains a rectangular per-eye subrect, while cropped writeback
+can use an aspect-corrected oval feather/dither mask to remove the visible box corners.
+`Nasal Convergence 60%` is a new preset for the left/right nose-side overlap; the
+existing 50% preset remains available, and `Rectangle` remains the fallback mask.
+
 This is distinct from the earlier DLSS Super Resolution call in `src/Features/Upscaling/Streamline.cpp:634-721`; its `slEvaluateFeature(sl::kFeatureDLSS, ...)` call at `704` is not the Neural Rendering teacher call.
 
 ## 2. Stereo representation
