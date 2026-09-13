@@ -373,6 +373,32 @@
     "live_vr": "not performed",
     "model_promotion": false,
     "deployment": false,
-    "remote_push": false
+    "remote_push": false,
+    "clean_source_configuration_capture_on": true,
+    "clean_source_configuration_capture_off": true,
+    "clean_native_contracts": true,
+    "clean_cpu_workflow": true,
+    "second_clean_dll_build": false,
+    "capture_disabled_dll_build": false
+  },
+  "validated_source_commit": "caadbe82",
+  "package": {
+    "path": "E:\\OpenNR_Builds\\2.15.0\\dist\\OpenNR 2.15.0.7z",
+    "sha256": "D5374E8DD84609E201065593984E30496083AB936D00058AE9BE73BBC45F9A51",
+    "bytes": 228054772,
+    "files": 490,
+    "dll_version": "2.15.0.0",
+    "dll_sha256": "19DD7C92349CF33846DC5D9584D368C6C224AD870844539B5D700865DFB440D0"
+  },
+  "content_discovery": {
+    "eligible_files_scanned": 181257,
+    "hits": 972,
+    "errors": 24,
+    "additional_owned_source_to_import": 0
+  },
+  "final_d_payload_scan": {
+    "files": 199500,
+    "matching_training_payloads": 0,
+    "errors": 0
   }
 }

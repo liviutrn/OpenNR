@@ -96,7 +96,7 @@ Python maintained writers reject physical D: output. Native capture and benchmar
 - AIO manifest and exact manual-package-stage validation pass. Archive extraction is compared file-for-file and hash-for-hash with the validated stage.
 - Canonical Git connectivity and diff whitespace checks pass. No credentials or large model payloads were found in the reviewed staged source.
 
-Clean-checkout and capture-disabled configuration evidence is recorded in the final validation supplement. Capture-enabled 2.15.0 is the built/package artifact. Configuration-only evidence is not a second capture-disabled DLL build.
+Clean-checkout and capture-disabled configuration evidence is recorded in the [final validation supplement](CONSOLIDATION_VALIDATION_2.15.0.md). Capture-enabled 2.15.0 is the built/package artifact. Configuration-only evidence is not a second capture-disabled DLL build.
 
 ## Remaining acceptance boundaries and recovery
 
