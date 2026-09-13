@@ -85,16 +85,22 @@ void FoveatedRender::PostPostLoad()
 	subrectController.SetStereoEnabled(true);
 
 	// Seed sensible foveal presets. Empty-case only — user edits persist.
-	// "Center N%" presets are symmetric per eye (no rightUV → auto-mirror, which
-	// for centered UVs produces an identical right-eye UV). "Nasal Convergence"
-	// is asymmetric: left eye biased toward its right edge, right eye biased
-	// toward its left edge — both targeting the nose-side region where HMD
-	// binocular fusion is strongest, so DLSS reconstruction lands in the actual
-	// stereo overlap zone rather than diverging left/right fields.
+	// The regular centered sequence is the recommended starting point for the
+	// adaptive-crop experiment. Centered presets are symmetric per eye (no rightUV
+	// means auto-mirror, which produces an identical right-eye UV). Keep the older
+	// asymmetric Nasal Convergence presets available for existing users, but do not
+	// select one by default: changing crop ownership during a handoff is easier to
+	// reason about when both eyes use the same centered geometry.
 	subrectController.SeedDefaultPresets({
 		{ .name = kPresetFullEye, .uv = { 0.0f, 0.0f, 1.0f, 1.0f } },
+		{ .name = kPresetCenter90, .uv = { 0.05f, 0.05f, 0.90f, 0.90f } },
+		{ .name = kPresetCenter80, .uv = { 0.10f, 0.10f, 0.80f, 0.80f } },
 		{ .name = kPresetCenter75, .uv = { 0.125f, 0.125f, 0.75f, 0.75f } },
+		{ .name = kPresetCenter70, .uv = { 0.15f, 0.15f, 0.70f, 0.70f } },
+		{ .name = kPresetCenter60, .uv = { 0.20f, 0.20f, 0.60f, 0.60f } },
 		{ .name = kPresetCenter50, .uv = { 0.25f, 0.25f, 0.5f, 0.5f } },
+		{ .name = kPresetCenter40, .uv = { 0.30f, 0.30f, 0.4f, 0.4f } },
+		{ .name = kPresetCenter30, .uv = { 0.35f, 0.35f, 0.3f, 0.3f } },
 		{ .name = kPresetNasalConvergence50,
 			.uv = { 0.5f, 0.25f, 0.5f, 0.5f },
 			.rightUV = Util::Subrect::UVRegion{ 0.0f, 0.25f, 0.5f, 0.5f } },
@@ -104,7 +110,7 @@ void FoveatedRender::PostPostLoad()
 		{ .name = kPresetNasalConvergence70,
 			.uv = { 0.3f, 0.15f, 0.7f, 0.7f },
 			.rightUV = Util::Subrect::UVRegion{ 0.0f, 0.15f, 0.7f, 0.7f } },
-	}, kPresetNasalConvergence70);
+	}, kPresetCenter75);
 	// PostPostLoad runs after settings load, so a user with an older, shorter
 	// persisted preset list (from before these names existed) still sees every
 	// current preset in the DrawEditor dropdown, not just whichever ones they
@@ -231,6 +237,7 @@ void FoveatedRender::ClampSettings()
 		settings.neuralRenderingModelResolution != 50 &&
 		settings.neuralRenderingModelResolution != 60 &&
 		settings.neuralRenderingModelResolution != 67 &&
+		settings.neuralRenderingModelResolution != 70 &&
 		settings.neuralRenderingModelResolution != 75 &&
 		settings.neuralRenderingModelResolution != 80 &&
 		settings.neuralRenderingModelResolution != 85 &&
@@ -254,27 +261,58 @@ void FoveatedRender::ClampSettings()
 		settings.neuralRenderingTemporalReuseCadence = 0;
 	settings.neuralRenderingTemporalDepthThreshold = std::clamp(settings.neuralRenderingTemporalDepthThreshold, 0.0f, 0.25f);
 	settings.neuralRenderingTemporalColorTolerance = std::clamp(settings.neuralRenderingTemporalColorTolerance, 0.0f, 0.50f);
-	settings.neuralRenderingAdaptiveRefreshHz = settings.neuralRenderingAdaptiveRefreshHz == 90 ? 90 : 80;
-	if (settings.neuralRenderingAdaptiveMinimumResolution != 70 &&
-		settings.neuralRenderingAdaptiveMinimumResolution != 75 &&
-		settings.neuralRenderingAdaptiveMinimumResolution != 80 &&
-		settings.neuralRenderingAdaptiveMinimumResolution != 85 &&
-		settings.neuralRenderingAdaptiveMinimumResolution != 90 &&
-		settings.neuralRenderingAdaptiveMinimumResolution != 95 &&
-		settings.neuralRenderingAdaptiveMinimumResolution != 100)
+	switch (settings.neuralRenderingAdaptiveRefreshHz) {
+	case 70:
+	case 72:
+	case 80:
+	case 90:
+		break;
+	default:
+		settings.neuralRenderingAdaptiveRefreshHz = 80;
+		break;
+	}
+	switch (settings.neuralRenderingAdaptiveMinimumResolution) {
+	case 33:
+	case 50:
+	case 60:
+	case 67:
+	case 70:
+	case 75:
+	case 80:
+	case 85:
+	case 90:
+	case 95:
+	case 100:
+		break;
+	default:
 		settings.neuralRenderingAdaptiveMinimumResolution = 75;
+		break;
+	}
 	settings.neuralRenderingAdaptiveDownshiftFrames = std::clamp(settings.neuralRenderingAdaptiveDownshiftFrames, 1u, 16u);
 	settings.neuralRenderingAdaptiveUpshiftFrames = std::clamp(settings.neuralRenderingAdaptiveUpshiftFrames, 4u, 64u);
 	settings.neuralRenderingAdaptiveMinimumDwellFrames = std::clamp(settings.neuralRenderingAdaptiveMinimumDwellFrames, 4u, 240u);
 	settings.neuralRenderingAdaptiveGuardTimeMs = std::clamp(settings.neuralRenderingAdaptiveGuardTimeMs, 0.0f, 5.0f);
-	if (settings.neuralRenderingAdaptiveCropMinimumCoverage != 70 &&
-		settings.neuralRenderingAdaptiveCropMinimumCoverage != 75 &&
-		settings.neuralRenderingAdaptiveCropMinimumCoverage != 80 &&
-		settings.neuralRenderingAdaptiveCropMinimumCoverage != 85 &&
-		settings.neuralRenderingAdaptiveCropMinimumCoverage != 90 &&
-		settings.neuralRenderingAdaptiveCropMinimumCoverage != 95 &&
-		settings.neuralRenderingAdaptiveCropMinimumCoverage != 100)
+	switch (settings.neuralRenderingAdaptiveCropMinimumCoverage) {
+	case 30:
+	case 35:
+	case 40:
+	case 45:
+	case 50:
+	case 55:
+	case 60:
+	case 65:
+	case 70:
+	case 75:
+	case 80:
+	case 85:
+	case 90:
+	case 95:
+	case 100:
+		break;
+	default:
 		settings.neuralRenderingAdaptiveCropMinimumCoverage = 75;
+		break;
+	}
 	settings.neuralRenderingAdaptiveCropDownshiftFrames = std::clamp(settings.neuralRenderingAdaptiveCropDownshiftFrames, 1u, 16u);
 	settings.neuralRenderingAdaptiveCropUpshiftFrames = std::clamp(settings.neuralRenderingAdaptiveCropUpshiftFrames, 8u, 240u);
 	settings.neuralRenderingAdaptiveCropMinimumDwellFrames = std::clamp(settings.neuralRenderingAdaptiveCropMinimumDwellFrames, 8u, 600u);
@@ -780,6 +818,12 @@ void FoveatedRender::DrawSettings(bool showSharedPanelNote, bool vrControlsFirst
 		ImGui::Checkbox(T(TKEY("neural_rendering_enable"), "Enable DLSS Neural Rendering"), &settings.neuralRenderingEnabled);
 
 		if (settings.neuralRenderingEnabled) {
+			ImGui::SeparatorText("NR Overview");
+			ImGui::TextWrapped(
+				"Recommended VR starting point: DLSS + Foveated Default, single-pass, Full Eye, Model Resolution 100%, and Temporal Residual Reuse Off. Enable Adaptive Neural Rendering only after the fixed-resolution path is stable. Adaptive NR changes the Neural Rendering workload; it does not change headset refresh, reprojection, or display resolution.");
+			Util::Text::WrappedInfo(
+				"Adaptive test starting point: 80 Hz / 40 FPS application budget, 75% minimum NR tier, and Adaptive Foveated Crop off. If frame time remains above 25 ms at the floor, another CPU/GPU cost is limiting the scene.");
+
 			// The runtime still receives the stable numeric Style value (0-3), but
 			// expose the four choices as named cards so users do not have to guess
 			// what "Style 1" or "Style 2" means.  Keep the lower-level tuning
@@ -800,7 +844,7 @@ void FoveatedRender::DrawSettings(bool showSharedPanelNote, bool vrControlsFirst
 			const int activeStyle = static_cast<int>(std::min(settings.neuralRenderingStyle, 3u));
 			bool custom = false;
 
-			ImGui::TextUnformatted(T(TKEY("neural_rendering_visual_style"), "Visual Style"));
+			ImGui::SeparatorText(T(TKEY("neural_rendering_visual_style"), "Visual Style"));
 			if (auto _tt = Util::HoverTooltipWrapper())
 				ImGui::TextUnformatted(T(TKEY("neural_rendering_visual_style_tooltip"),
 		"Choose the Neural Rendering style directly. These buttons select the underlying Style 0-3 value; intensity, tone, structure, and skin-detail strength remain in Advanced Tuning below."));
@@ -837,8 +881,9 @@ void FoveatedRender::DrawSettings(bool showSharedPanelNote, bool vrControlsFirst
 			}
 			ImGui::TextDisabled("%s %s", T(TKEY("neural_rendering_active_style"), "Active style:"), styleLabels[activeStyle]);
 
-			static const char* modelResolutions[] = { "Full (100%)", "95%", "90%", "85%", "80%", "75%", "67%", "60%", "50%", "33%" };
-			static constexpr uint modelResolutionValues[] = { 100u, 95u, 90u, 85u, 80u, 75u, 67u, 60u, 50u, 33u };
+			ImGui::SeparatorText("NR Cost / Model Resolution");
+			static const char* modelResolutions[] = { "Full (100%)", "95%", "90%", "85%", "80%", "75%", "70%", "67%", "60%", "50%", "33%" };
+			static constexpr uint modelResolutionValues[] = { 100u, 95u, 90u, 85u, 80u, 75u, 70u, 67u, 60u, 50u, 33u };
 			int modelResolution = 0;
 			for (int index = 0; index < IM_ARRAYSIZE(modelResolutionValues); ++index) {
 				if (settings.neuralRenderingModelResolution == modelResolutionValues[index]) {
@@ -854,28 +899,62 @@ void FoveatedRender::DrawSettings(bool showSharedPanelNote, bool vrControlsFirst
 				ImGui::TextUnformatted(T(TKEY("neural_rendering_model_resolution_tooltip"),
 					"The display frame remains full resolution; only DLSS Neural Rendering runs at the selected actual resolution. The percentage applies to each axis, so model-pixel cost is approximately the square of this value. Higher stops preserve more detail; 50% and 33% are the aggressive performance modes."));
 
-			ImGui::SeparatorText("Adaptive NR 2.14.8 test");
+			ImGui::SeparatorText("Adaptive Neural Rendering");
 			ImGui::Checkbox("Enable adaptive NR resolution (experimental)", &settings.neuralRenderingAdaptiveEnabled);
 			if (auto _tt = Util::HoverTooltipWrapper())
 				ImGui::TextUnformatted(
-					"Uses the selected headset refresh rate to derive a 2:1 application budget, then moves one native NR tier at a time after sustained pressure. A short motion/depth-aware display-space handoff masks the tier change; display resolution and reprojection mode are not changed.");
+					"Uses the selected controller budget to move one native NR tier at a time after sustained pressure. The active and target tiers are cross-faded with motion/depth-aware history; headset refresh, reprojection mode, and display resolution are not changed.");
 			if (settings.neuralRenderingAdaptiveEnabled) {
+				static constexpr uint adaptiveRefreshValues[] = { 70u, 72u, 80u, 90u };
 				static const char* adaptiveRefreshRates[] = {
-					"80 Hz (40 FPS application budget)", "90 Hz (45 FPS application budget)" };
-				int refreshIndex = settings.neuralRenderingAdaptiveRefreshHz == 90 ? 1 : 0;
-				if (ImGui::Combo("Adaptive target refresh", &refreshIndex, adaptiveRefreshRates, IM_ARRAYSIZE(adaptiveRefreshRates)))
-					settings.neuralRenderingAdaptiveRefreshHz = refreshIndex == 1 ? 90u : 80u;
+					"70 Hz | 35 FPS budget", "72 Hz | 36 FPS budget", "80 Hz | 40 FPS budget", "90 Hz | 45 FPS budget" };
+				int refreshIndex = 2;
+				for (int index = 0; index < IM_ARRAYSIZE(adaptiveRefreshValues); ++index)
+					if (settings.neuralRenderingAdaptiveRefreshHz == adaptiveRefreshValues[index]) {
+						refreshIndex = index;
+						break;
+					}
 
-				static const char* adaptiveMinimums[] = { "95%", "90%", "85%", "80%", "75%", "70%" };
-				static constexpr uint adaptiveMinimumValues[] = { 95u, 90u, 85u, 80u, 75u, 70u };
-				int minimumIndex = 4;
+				ImGui::TextDisabled("Adaptive application budget");
+				if (ImGui::BeginTable("##neural_rendering_adaptive_refresh", IM_ARRAYSIZE(adaptiveRefreshValues),
+						ImGuiTableFlags_SizingStretchSame | ImGuiTableFlags_PadOuterX | ImGuiTableFlags_NoSavedSettings)) {
+					for (int index = 0; index < IM_ARRAYSIZE(adaptiveRefreshValues); ++index) {
+						ImGui::TableNextColumn();
+						const bool selected = index == refreshIndex;
+						if (selected)
+							ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
+						if (ImGui::Button(adaptiveRefreshRates[index], ImVec2(-1.0f, 32.0f * Util::GetUIScale())))
+							settings.neuralRenderingAdaptiveRefreshHz = adaptiveRefreshValues[index];
+						if (selected)
+							ImGui::PopStyleColor();
+					}
+					ImGui::EndTable();
+				}
+				ImGui::TextDisabled("These are controller budgets only; select the matching physical headset mode separately in SteamVR or the headset software.");
+
+				static const char* adaptiveMinimums[] = {
+					"100% | 100% model area", "95% | 90% model area", "90% | 81% model area", "85% | 72% model area",
+					"80% | 64% model area", "75% | 56% model area", "70% | 49% model area", "67% | 45% model area",
+					"60% | 36% model area", "50% | 25% model area", "33% | 11% model area" };
+				static constexpr uint adaptiveMinimumValues[] = { 100u, 95u, 90u, 85u, 80u, 75u, 70u, 67u, 60u, 50u, 33u };
+				int minimumIndex = 5;
 				for (int index = 0; index < IM_ARRAYSIZE(adaptiveMinimumValues); ++index)
 					if (settings.neuralRenderingAdaptiveMinimumResolution == adaptiveMinimumValues[index]) {
 						minimumIndex = index;
 						break;
 					}
-				if (ImGui::Combo("Adaptive minimum NR tier", &minimumIndex, adaptiveMinimums, IM_ARRAYSIZE(adaptiveMinimums)))
+				if (ImGui::Combo("Adaptive minimum NR cost", &minimumIndex, adaptiveMinimums, IM_ARRAYSIZE(adaptiveMinimums)))
 					settings.neuralRenderingAdaptiveMinimumResolution = adaptiveMinimumValues[minimumIndex];
+
+				int downshiftFrames = static_cast<int>(settings.neuralRenderingAdaptiveDownshiftFrames);
+				if (ImGui::SliderInt("NR downshift response", &downshiftFrames, 1, 16, "%d frames"))
+					settings.neuralRenderingAdaptiveDownshiftFrames = static_cast<uint>(downshiftFrames);
+				int upshiftFrames = static_cast<int>(settings.neuralRenderingAdaptiveUpshiftFrames);
+				if (ImGui::SliderInt("NR restore response", &upshiftFrames, 4, 64, "%d frames"))
+					settings.neuralRenderingAdaptiveUpshiftFrames = static_cast<uint>(upshiftFrames);
+				int minimumDwellFrames = static_cast<int>(settings.neuralRenderingAdaptiveMinimumDwellFrames);
+				if (ImGui::SliderInt("NR tier minimum dwell", &minimumDwellFrames, 4, 240, "%d frames"))
+					settings.neuralRenderingAdaptiveMinimumDwellFrames = static_cast<uint>(minimumDwellFrames);
 				ImGui::SliderFloat("Adaptive reserved headroom", &settings.neuralRenderingAdaptiveGuardTimeMs,
 					0.0f, 5.0f, "%.1f ms");
 				ImGui::TextDisabled("NR tier: %u%% -> %u%% | handoff %.2f | frame %.2f / %.2f ms",
@@ -883,17 +962,57 @@ void FoveatedRender::DrawSettings(bool showSharedPanelNote, bool vrControlsFirst
 					adaptiveController.HandoffAlpha(), adaptiveController.SmoothedFrameTimeMs(),
 					adaptiveController.ApplicationDeadlineMs());
 				Util::Text::Warning(
-					"Test-only: the first tier change can still allocate GPU resources. Compare 80 Hz with the overlay, watch for ghosting/stereo mismatch, and treat this as a feasibility prototype rather than a guaranteed cadence lock.");
-
-				ImGui::SeparatorText("Adaptive foveated crop companion");
-				ImGui::Checkbox("Enable adaptive crop (experimental)", &settings.neuralRenderingAdaptiveCropEnabled);
-				if (auto _tt = Util::HoverTooltipWrapper())
-					ImGui::TextUnformatted(
-						"After NR reaches its configured floor, reduce the regular centered crop one tier at a time. Restoration waits for NR to return first. This is disabled automatically when eye-tracked/gaze foveation owns the crop.");
-				if (IsEyeTrackedFoveationEnabled())
-					Util::Text::Warning("Adaptive crop is locked out because eye-tracked foveation is enabled.");
+					"Experimental: transitions are staged and cross-faded, but driver compilation or a new GPU allocation can still cause a one-time hitch. Start at 80 Hz and compare with the performance overlay. If the lowest NR tier still misses budget, the limiting cost is outside Neural Rendering.");
 			}
 
+			ImGui::SeparatorText("Adaptive Foveated Crop");
+			const bool adaptiveCropParentEnabled = settings.neuralRenderingAdaptiveEnabled;
+			if (!adaptiveCropParentEnabled)
+				ImGui::BeginDisabled();
+			ImGui::Checkbox("Enable adaptive crop (experimental)", &settings.neuralRenderingAdaptiveCropEnabled);
+			if (!adaptiveCropParentEnabled)
+				ImGui::EndDisabled();
+			if (auto _tt = Util::HoverTooltipWrapper())
+				ImGui::TextUnformatted(
+					"After NR reaches its configured floor, reduce the regular centered crop one 5% tier at a time. Restoration waits for NR to return first and is deliberately slower. Eye-tracked/gaze foveation owns the crop when enabled, so this controller fails closed in that mode.");
+			if (!adaptiveCropParentEnabled)
+				ImGui::TextDisabled("Enable Adaptive Neural Rendering before enabling its crop companion.");
+			if (settings.neuralRenderingAdaptiveCropEnabled && adaptiveCropParentEnabled) {
+				static const char* adaptiveCropMinimums[] = {
+					"100% | Full Eye", "95%", "90%", "85%", "80%", "75%", "70%", "65%",
+					"60%", "55%", "50%", "45%", "40%", "35%", "30%" };
+				static constexpr uint adaptiveCropMinimumValues[] = {
+					100u, 95u, 90u, 85u, 80u, 75u, 70u, 65u, 60u, 55u, 50u, 45u, 40u, 35u, 30u };
+				int cropMinimumIndex = 5;
+				for (int index = 0; index < IM_ARRAYSIZE(adaptiveCropMinimumValues); ++index)
+					if (settings.neuralRenderingAdaptiveCropMinimumCoverage == adaptiveCropMinimumValues[index]) {
+						cropMinimumIndex = index;
+						break;
+					}
+				if (ImGui::Combo("Adaptive minimum crop coverage", &cropMinimumIndex,
+					adaptiveCropMinimums, IM_ARRAYSIZE(adaptiveCropMinimums)))
+					settings.neuralRenderingAdaptiveCropMinimumCoverage = adaptiveCropMinimumValues[cropMinimumIndex];
+
+				int cropDownshiftFrames = static_cast<int>(settings.neuralRenderingAdaptiveCropDownshiftFrames);
+				if (ImGui::SliderInt("Crop downshift response", &cropDownshiftFrames, 1, 16, "%d frames"))
+					settings.neuralRenderingAdaptiveCropDownshiftFrames = static_cast<uint>(cropDownshiftFrames);
+				int cropUpshiftFrames = static_cast<int>(settings.neuralRenderingAdaptiveCropUpshiftFrames);
+				if (ImGui::SliderInt("Crop restore response", &cropUpshiftFrames, 8, 240, "%d frames"))
+					settings.neuralRenderingAdaptiveCropUpshiftFrames = static_cast<uint>(cropUpshiftFrames);
+				int cropMinimumDwellFrames = static_cast<int>(settings.neuralRenderingAdaptiveCropMinimumDwellFrames);
+				if (ImGui::SliderInt("Crop tier minimum dwell", &cropMinimumDwellFrames, 8, 600, "%d frames"))
+					settings.neuralRenderingAdaptiveCropMinimumDwellFrames = static_cast<uint>(cropMinimumDwellFrames);
+				int cropTransitionFrames = static_cast<int>(settings.neuralRenderingAdaptiveCropTransitionFrames);
+				if (ImGui::SliderInt("Crop handoff duration", &cropTransitionFrames, 2, 24, "%d frames"))
+					settings.neuralRenderingAdaptiveCropTransitionFrames = static_cast<uint>(cropTransitionFrames);
+				ImGui::TextDisabled("Crop coverage: %u%% -> %u%% | handoff %.2f",
+					adaptiveCropController.ActiveCoverage(), adaptiveCropController.TargetCoverage(),
+					adaptiveCropController.HandoffAlpha());
+			}
+			if (IsEyeTrackedFoveationEnabled())
+				Util::Text::Warning("Adaptive crop is locked out because eye-tracked foveation is enabled.");
+
+			ImGui::SeparatorText("Resolve and Pipeline");
 			static const char* resolveModes[] = { "Classic (bounded source)", "Matched Residual (experimental)" };
 			int resolveMode = static_cast<int>(std::min(settings.neuralRenderingResolveMode, 1u));
 			if (ImGui::Combo(T(TKEY("neural_rendering_resolve_mode"), "Reduced NR Resolve"), &resolveMode,
@@ -962,7 +1081,7 @@ void FoveatedRender::DrawSettings(bool showSharedPanelNote, bool vrControlsFirst
 					"Experimental: skipped frames are not valid native Feature 18 teacher captures. Watch for ghosting, cadence shimmer, and disocclusion errors in VR."));
 			}
 
-			ImGui::SeparatorText("Eye-tracked foveation (experimental)");
+			ImGui::SeparatorText("Eye-tracked Foveation");
 			bool eyeTrackedFoveation = settings.neuralRenderingEyeTrackedFoveation;
 			if (ImGui::Checkbox("Native OpenVR gaze provider", &eyeTrackedFoveation))
 				settings.neuralRenderingEyeTrackedFoveation = eyeTrackedFoveation;
@@ -994,6 +1113,9 @@ void FoveatedRender::DrawSettings(bool showSharedPanelNote, bool vrControlsFirst
 					static_cast<unsigned long long>(gaze.sampleSequence));
 			}
 
+			ImGui::SeparatorText("Advanced NR Tuning");
+			ImGui::TextWrapped(
+				"Recommended first pass: keep the Default preset and single-pass NR. Adjust intensity, tone, structure, and skin detail only after the selected resolution and adaptive handoff are free of ghosting and stereo mismatch.");
 			static const char* presets[] = { "Default", "Balanced", "Fabric Detail", "Natural", "Strong", "Custom" };
 			int preset = static_cast<int>(settings.neuralRenderingPreset);
 			if (ImGui::Combo(T(TKEY("neural_rendering_preset"), "Model Preset"), &preset, presets, IM_ARRAYSIZE(presets))) {

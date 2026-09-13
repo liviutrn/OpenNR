@@ -28,10 +28,12 @@ namespace NeuralRendering
 	{
 		constexpr std::uint32_t kEyeCount = 2;
 		constexpr std::uint32_t kCascadePassCount = 3;
-		constexpr std::uint32_t kAdaptiveTierCount = 7;
 		constexpr std::array<std::uint32_t, 11> kResolutionTiers{
 			100, 95, 90, 85, 80, 75, 70, 67, 60, 50, 33 };
 		constexpr std::uint32_t kResolutionTierCount = static_cast<std::uint32_t>(kResolutionTiers.size());
+		// Prewarm every supported adaptive tier so selecting the newly exposed
+		// 67/60/50/33% floors does not allocate an NGX feature during combat.
+		constexpr std::uint32_t kAdaptiveTierCount = kResolutionTierCount;
 		constexpr std::uint32_t kTemporalReuseMinCadence = 2;
 		constexpr std::uint32_t kTemporalReuseMaxCadence = 4;
 

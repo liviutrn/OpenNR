@@ -43,13 +43,17 @@ namespace NeuralRendering
 		[[nodiscard]] bool IsEyeTrackingBlocked() const { return eyeTrackingBlocked_; }
 		[[nodiscard]] bool IsGeometryBlocked() const { return geometryBlocked_; }
 
-		static constexpr const std::array<std::uint32_t, 7>& CoverageBuckets()
+		static constexpr const std::array<std::uint32_t, 15>& CoverageBuckets()
 		{
 			return kCoverageBuckets;
 		}
 
 	private:
-		static constexpr std::array<std::uint32_t, 7> kCoverageBuckets{ 100, 95, 90, 85, 80, 75, 70 };
+		// Keep the original five-percent handoff cadence and extend it to lower
+		// coverage. The UI exposes the useful ten-percent defaults while the
+		// controller retains small intermediate steps for smoother transitions.
+		static constexpr std::array<std::uint32_t, 15> kCoverageBuckets{
+			100, 95, 90, 85, 80, 75, 70, 65, 60, 55, 50, 45, 40, 35, 30 };
 
 		static std::uint32_t FindBucketAtOrBelow(std::uint32_t coverage);
 		static std::uint32_t FindBucketIndexAtOrBelow(std::uint32_t coverage);

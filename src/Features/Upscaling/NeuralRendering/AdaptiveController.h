@@ -42,14 +42,21 @@ namespace NeuralRendering
 		[[nodiscard]] bool IsAtMinimum() const { return activeBucket_ >= minimumBucket_; }
 		[[nodiscard]] bool IsAtMaximum() const { return activeBucket_ == 0; }
 
+		/** @brief Returns the supported controller refresh/budget targets. */
+		static constexpr const std::array<std::uint32_t, 4>& RefreshTargets()
+		{
+			return kRefreshTargets;
+		}
+
 		/** @brief Returns the native buckets used by the adaptive test. */
-		static constexpr const std::array<std::uint32_t, 7>& ResolutionBuckets()
+		static constexpr const std::array<std::uint32_t, 11>& ResolutionBuckets()
 		{
 			return kResolutionBuckets;
 		}
 
 	private:
-		static constexpr std::array<std::uint32_t, 7> kResolutionBuckets{ 100, 95, 90, 85, 80, 75, 70 };
+		static constexpr std::array<std::uint32_t, 4> kRefreshTargets{ 70, 72, 80, 90 };
+		static constexpr std::array<std::uint32_t, 11> kResolutionBuckets{ 100, 95, 90, 85, 80, 75, 70, 67, 60, 50, 33 };
 
 		static std::uint32_t NormalizeRefresh(std::uint32_t refreshHz);
 		static std::uint32_t FindNearestBucket(std::uint32_t resolution);

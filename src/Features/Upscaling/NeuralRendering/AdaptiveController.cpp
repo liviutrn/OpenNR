@@ -8,7 +8,10 @@ namespace NeuralRendering
 {
 	std::uint32_t AdaptiveController::NormalizeRefresh(std::uint32_t refreshHz)
 	{
-		return refreshHz == 90 ? 90 : 80;
+		for (const auto target : kRefreshTargets)
+			if (refreshHz == target)
+				return target;
+		return 80;
 	}
 
 	std::uint32_t AdaptiveController::FindNearestBucket(std::uint32_t resolution)

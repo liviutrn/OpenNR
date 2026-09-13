@@ -1,17 +1,20 @@
 # Adaptive NR resolution handoff study
 
-Date: 2026-09-12
-Branch: `codex/adaptive-nr-handoff-study`
-Baseline: `40631c3c360943ca4e463f25f696255fedefe8b5`
+Date: 2026-09-13
+Branch: `codex/adaptive-nr-handoff-study-opennr-2.14.8-fixed-20260913`
+Baseline: OpenNR 2.14.8 snapshot (`3c28bb8f`)
 Scope: isolated prototype branch plus an isolated MO2 test profile/mod. The
 active MGO profile, its overwrite settings, and the known-good source checkout
-remain unchanged. No live game or headset acceptance is claimed yet.
+remain unchanged. The earlier fixed handoff revision has a successful live MGO
+smoke test; the controls revision described below still requires a fresh live
+run after it is staged.
 
 Refresh targets: 80 Hz is the primary target requested for this study, with
-90 Hz retained as a comparison target. The calculations below assume stable
-2:1 reprojection. This worktree was created from the committed baseline; the
-separately dirty source checkout was not switched, edited, or folded into this
-branch.
+70 Hz and 72 Hz available as lower controller-budget choices and 90 Hz retained
+as a comparison target. The calculations below assume stable 2:1 reprojection;
+these controls do not change the physical headset refresh mode. This worktree
+was created from the committed OpenNR 2.14.8 baseline; the separately dirty
+source checkout was not switched, edited, or folded into this branch.
 
 ## Decision
 
@@ -26,15 +29,19 @@ design is:
 5. blend to the new bucket over several frames; and
 6. keep the active bucket stable for a minimum dwell time.
 
-The prototype ladder is `100, 95, 90, 85, 80, 75, 70`. One-percent values are
-useful only as small budget corrections. They are not a good first
-implementation because every distinct percentage currently creates a distinct
-resource/Feature 18 dimension state. Manual `50%` and `33%` modes remain
-available, but are deliberately not automatic fallback tiers in this first
-test.
+The current automatic ladder is `100, 95, 90, 85, 80, 75, 70, 67, 60, 50,
+33`. The UI shows the approximate model-pixel area beside each NR percentage;
+because the percentage applies to both axes, cost is approximately the square
+of the displayed scale. Arbitrary one-percent values are not currently native
+resource tiers: every distinct percentage creates a distinct resource/Feature
+18 dimension state. The 5% steps are the smoothness/performance compromise for
+this prototype, with the existing 67/60/50/33 native tiers retained for the
+aggressive end of the ladder.
 
 For the requested 80 Hz target, a stable 2:1 cadence means approximately 40
 new application frames per second and a 25.00 ms application deadline. At
+70 Hz the corresponding figures are approximately 35 FPS and 28.57 ms; at
+72 Hz they are approximately 36 FPS and 27.78 ms. At
 90 Hz the corresponding figures are approximately 45 FPS and 22.22 ms. The
 controller should therefore be calibrated from the selected display refresh
 rate, rather than treating 90 Hz as a universal constant. If the runtime is
@@ -99,12 +106,14 @@ into live Feature 18 or headset acceptance evidence.
 The branch now implements the proposed handoff in the renderer:
 
 * `AdaptiveController` derives an 80 Hz / 40 FPS application deadline by
-  default, retains a 90 Hz / 45 FPS option, and uses overrun/headroom
-  hysteresis, four-frame downshifts, slower upshifts, and minimum dwell time.
+  default, with 70 Hz / 35 FPS, 72 Hz / 36 FPS, and 90 Hz / 45 FPS choices. It
+  uses overrun/headroom hysteresis, configurable downshifts, slower upshifts,
+  and configurable minimum dwell time.
 * `Renderer` owns separate native tier resources and Feature 18 slots for both
-  eyes. It pre-warms the seven automatic tiers while the adaptive test is
+  eyes. It pre-warms all eleven automatic tiers while the adaptive test is
   active, so a tier switch does not synchronously replace the current tier's
-  resources.
+  resources. This reduces first-use allocation risk at the cost of additional
+  startup VRAM and initialization work.
 * `AdaptiveHandoffCS.hlsl` blends the previously displayed tier into the new
   tier over the transition window. It uses separate per-eye color/depth
   history, current exact guides, motion-aware rejection, and depth gating.
@@ -202,13 +211,14 @@ TransitionState[eye]
     handoff alpha
 ```
 
-The prototype pre-warms the seven automatic tiers (`100` through `70`) per eye
-when adaptive mode first enters the route. Keeping all one-percent buckets
-alive would duplicate too many resources and Feature 18 handles, so `50%` and
-`33%` remain manual-only in this build. The full-resolution input and guides
-are shared rather than copied once per bucket. The pre-warm itself can be a
-one-time VRAM/allocation event, and the first Feature 18 evaluation for a tier
-may still have driver/runtime work; this must be measured in the live run.
+The prototype pre-warms all eleven automatic tiers (`100, 95, 90, 85, 80, 75,
+70, 67, 60, 50, 33`) per eye when adaptive mode first enters the route. Keeping
+all one-percent buckets alive would duplicate too many resources and Feature 18
+handles, so arbitrary 99/98/etc. values remain outside this build. The
+full-resolution input and guides are shared rather than copied once per bucket.
+The pre-warm itself can be a one-time VRAM/allocation event, and the first
+Feature 18 evaluation for a tier may still have driver/runtime work; this must
+be measured in the live run.
 
 The controller should report both requested and effective state:
 
@@ -226,12 +236,13 @@ test. The upshift path should be slower—approximately eight to sixteen
 frames—after a sustained period of headroom. Both eyes must use the same
 alpha, while their histories remain separate.
 
-The controller exposes a selected refresh target (80 or 90), assumes
+The controller exposes a selected refresh target (70, 72, 80, or 90), assumes
 `appCadence = 2`, and uses a derived deadline of `2000 / displayRefreshHz` milliseconds. It
 should
 use frame-time hysteresis, an emergency downshift rule, and a minimum dwell
-time so that an 80 Hz combat trace does not oscillate around 40 FPS and a
-90 Hz trace does not oscillate around 45 FPS.
+time so that an 80 Hz combat trace does not oscillate around 40 FPS, a 70 Hz
+trace does not oscillate around 35 FPS, and a 90 Hz trace does not oscillate
+around 45 FPS.
 
 The handoff must be bypassed and reset when depth/motion history is invalid,
 including teleport/camera-cut/menu transitions or a rejected disocclusion.
@@ -258,21 +269,25 @@ the normal release route, the following evidence is required:
 
 ## Isolated test deployment
 
-The branch was built with the Visual Studio Release target. The new handoff
-shader also compiled independently with `fxc` (`cs_5_0`, entry point `main`).
-The resulting payload is staged as a minimal MO2 mod so it inherits the
-existing OpenNR runtime/model files instead of replacing that known-good
-runtime payload:
+The branch was built with the Visual Studio RelWithDebInfo target. The handoff
+shader is included in the inherited 2.14.8 asset tree, and the source-contract
+validator passed as part of the plugin build. The original live-tested payload
+remains available as a fallback; this controls revision is staged as a new MO2
+mod so it inherits the existing OpenNR runtime/model files instead of replacing
+the known-good runtime payload:
 
-* Profile: `MGO NSFW - Adaptive NR 80Hz Prototype 20260912`
-* Mod: `+OpenNR Adaptive NR Prototype 20260912`
+* Live-tested fallback profile: `MGO NSFW - Adaptive NR 80Hz FIXED 2.14.8 20260913`
+* Live-tested fallback mod: `OpenNR EXP FIXED - Adaptive NR + Crop Handoff 2.14.8 20260913`
+* Controls revision profile: `MGO NSFW - Adaptive NR 80Hz CONTROLS 2.14.8 20260913`
+* Controls revision mod: `OpenNR EXP CONTROLS - Adaptive NR + Crop Handoff 2.14.8 20260913`
 * Defaults: adaptive enabled, 80 Hz, 75% minimum tier, four-frame downshift,
   twelve-frame upshift, thirty-frame dwell, and 1.0 ms reserved headroom.
 
-Select the new profile in MO2, keep the existing OpenNR runtime mod enabled,
-and launch through the normal MGO/native-bridge route. The new profile owns a
-copied `SettingsUser.json`, so testing does not write the active profile's
-shared overwrite file.
+The controls revision is not selected automatically. After the current game
+session is finished, enable only the clearly named CONTROLS mod or create a
+separate profile from the existing fixed test profile, keep the normal MGO
+native-bridge route, and launch through MO2. The copied `SettingsUser.json`
+keeps the experiment from writing the active profile's shared overwrite file.
 
 No production promotion is implied by this branch, the offline numbers, or the
 package build. The decisive evidence is still a no-capture live MGO run with

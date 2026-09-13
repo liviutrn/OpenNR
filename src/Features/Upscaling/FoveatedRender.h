@@ -169,8 +169,14 @@ struct FoveatedRender
 	/** @brief Region-preset display names, shared by PostPostLoad's seed list, the
 	 *  top-level preset buttons, and Upscaling::ApplyPerformanceProfile. */
 	static constexpr const char* kPresetFullEye = "Full Eye";                          ///< No crop; full-eye DLSS coverage.
-	static constexpr const char* kPresetCenter75 = "Center 75%";                       ///< Centered crop covering 75% of the eye.
+	static constexpr const char* kPresetCenter90 = "Center 90%";                       ///< Centered crop covering 90% of the eye.
+	static constexpr const char* kPresetCenter80 = "Center 80%";                       ///< Centered crop covering 80% of the eye.
+	static constexpr const char* kPresetCenter75 = "Center 75%";                       ///< Legacy centered crop covering 75% of the eye.
+	static constexpr const char* kPresetCenter70 = "Center 70%";                       ///< Centered crop covering 70% of the eye.
+	static constexpr const char* kPresetCenter60 = "Center 60%";                       ///< Centered crop covering 60% of the eye.
 	static constexpr const char* kPresetCenter50 = "Center 50%";                       ///< Centered crop covering 50% of the eye.
+	static constexpr const char* kPresetCenter40 = "Center 40%";                       ///< Centered crop covering 40% of the eye.
+	static constexpr const char* kPresetCenter30 = "Center 30%";                       ///< Centered crop covering 30% of the eye.
 	static constexpr const char* kPresetNasalConvergence50 = "Nasal Convergence 50%";  ///< 50% crop biased toward nasal convergence.
 	static constexpr const char* kPresetNasalConvergence60 = "Nasal Convergence 60%";  ///< 60% crop biased toward nasal convergence.
 	static constexpr const char* kPresetNasalConvergence70 = "Nasal Convergence 70%";  ///< 70% crop biased toward nasal convergence.
