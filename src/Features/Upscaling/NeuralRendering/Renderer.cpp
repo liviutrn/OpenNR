@@ -1,7 +1,10 @@
 #include "Renderer.h"
 
 #include "D3D12Interop.h"
+#include "Deferred.h"
+#if defined(OPENNR_CAPTURE_ENABLED)
 #include "Features/OpenNRCapture.h"
+#endif
 #include "Features/Upscaling/FoveatedRender/Ops.h"
 #include "GpuPass.h"
 #include "Globals.h"
@@ -24,6 +27,25 @@ namespace NeuralRendering
 	{
 		constexpr std::uint32_t kEyeCount = 2;
 		constexpr std::uint32_t kCascadePassCount = 3;
+		constexpr std::uint32_t kTemporalReuseMinCadence = 2;
+		constexpr std::uint32_t kTemporalReuseMaxCadence = 4;
+
+	#if defined(OPENNR_CAPTURE_ENABLED)
+		struct RendererConditioningSource
+		{
+			RE::RENDER_TARGET target;
+			const char* stage;
+		};
+
+		constexpr std::array<RendererConditioningSource, 6> kRendererConditionings{
+			RendererConditioningSource{ ALBEDO, "gbuffer_albedo" },
+			RendererConditioningSource{ NORMALROUGHNESS, "gbuffer_normal_roughness" },
+			RendererConditioningSource{ MASKS, "gbuffer_masks" },
+			RendererConditioningSource{ MASKS2, "gbuffer_masks2" },
+			RendererConditioningSource{ SPECULAR, "gbuffer_specular" },
+			RendererConditioningSource{ REFLECTANCE, "gbuffer_reflectance" },
+		};
+	#endif
 
 		std::uint32_t FeatureSlot(std::uint32_t eyeIndex, std::uint32_t passIndex)
 		{
@@ -63,6 +85,102 @@ namespace NeuralRendering
 			return true;
 		}
 
+	#if defined(OPENNR_CAPTURE_ENABLED)
+		bool IsValidCaptureRect(ID3D11Resource* resource, std::uint32_t sourceX, std::uint32_t sourceY,
+			std::uint32_t sourceWidth, std::uint32_t sourceHeight)
+		{
+			D3D11_TEXTURE2D_DESC desc{};
+			return GetTextureDesc(resource, desc) &&
+				static_cast<std::uint64_t>(sourceX) + sourceWidth <= desc.Width &&
+				static_cast<std::uint64_t>(sourceY) + sourceHeight <= desc.Height;
+		}
+
+		bool MapConditioningRect(ID3D11Resource* color, std::uint32_t& x, std::uint32_t& y,
+			std::uint32_t& width, std::uint32_t& height)
+		{
+			if (!color)
+				return true;
+			D3D11_TEXTURE2D_DESC colorDesc{}, nativeDesc{};
+			if (!globals::game::renderer || !GetTextureDesc(color, colorDesc) ||
+				!GetTextureDesc(globals::game::renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN].texture, nativeDesc) ||
+				!colorDesc.Width || !colorDesc.Height || !nativeDesc.Width || !nativeDesc.Height ||
+				static_cast<std::uint64_t>(x) + width > colorDesc.Width ||
+				static_cast<std::uint64_t>(y) + height > colorDesc.Height)
+				return false;
+			// Map rectangle edges through the full stereo texture to preserve eye offsets and subrects.
+			const auto right = (static_cast<std::uint64_t>(x) + width) * nativeDesc.Width / colorDesc.Width;
+			const auto bottom = (static_cast<std::uint64_t>(y) + height) * nativeDesc.Height / colorDesc.Height;
+			x = static_cast<std::uint32_t>(static_cast<std::uint64_t>(x) * nativeDesc.Width / colorDesc.Width);
+			y = static_cast<std::uint32_t>(static_cast<std::uint64_t>(y) * nativeDesc.Height / colorDesc.Height);
+			width = static_cast<std::uint32_t>(right - x);
+			height = static_cast<std::uint32_t>(bottom - y);
+			return width && height;
+		}
+
+		void AppendRendererConditioningAvailability(OpenNRCaptureFeature::FrameInfo& info,
+			std::uint32_t sourceX, std::uint32_t sourceY, std::uint32_t sourceWidth, std::uint32_t sourceHeight,
+			ID3D11Resource* color = nullptr)
+		{
+			if (!globals::features::openNRCapture.settings.captureRendererConditionings || !globals::game::renderer)
+				return;
+			if (!MapConditioningRect(color, sourceX, sourceY, sourceWidth, sourceHeight))
+				return;
+
+			auto& targets = globals::game::renderer->GetRuntimeData().renderTargets;
+			for (const auto& source : kRendererConditionings) {
+				auto* texture = targets[source.target].texture;
+				if (!IsValidCaptureRect(texture, sourceX, sourceY, sourceWidth, sourceHeight))
+					continue;
+				if (std::find(info.rendererConditioningsAvailable.begin(), info.rendererConditioningsAvailable.end(), source.stage) ==
+					info.rendererConditioningsAvailable.end())
+					info.rendererConditioningsAvailable.emplace_back(source.stage);
+			}
+		}
+
+		void CaptureRendererConditionings(OpenNRCaptureFeature& capture, std::uint32_t sourceX, std::uint32_t sourceY,
+			std::uint32_t sourceWidth, std::uint32_t sourceHeight, std::uint32_t eyeIndex, ID3D11Resource* color = nullptr)
+		{
+			if (!capture.settings.captureRendererConditionings)
+				return;
+			if (!MapConditioningRect(color, sourceX, sourceY, sourceWidth, sourceHeight)) {
+				capture.RecordRendererConditioningDiagnostic({ { "eye", eyeIndex }, { "reason", "native_rect_mapping_failed" } });
+				return;
+			}
+			if (!globals::game::renderer) {
+				capture.RecordRendererConditioningDiagnostic({ { "eye", eyeIndex }, { "reason", "renderer_missing" } });
+				return;
+			}
+
+			auto& targets = globals::game::renderer->GetRuntimeData().renderTargets;
+			for (const auto& source : kRendererConditionings) {
+				auto* texture = targets[source.target].texture;
+				D3D11_TEXTURE2D_DESC desc{};
+				const bool hasDesc = GetTextureDesc(texture, desc);
+				const bool validRect = hasDesc && sourceWidth && sourceHeight &&
+					static_cast<std::uint64_t>(sourceX) + sourceWidth <= desc.Width &&
+					static_cast<std::uint64_t>(sourceY) + sourceHeight <= desc.Height;
+				const bool queued = validRect && capture.CaptureTexture(texture, sourceX, sourceY,
+					sourceWidth, sourceHeight, source.stage, eyeIndex, false, false);
+				const char* reason = !texture ? "texture_missing" : !hasDesc ? "not_texture2d" :
+					!validRect ? "source_rectangle_out_of_bounds" : !queued ? "copy_not_queued" : "copy_queued";
+				auto* deferred = Deferred::GetSingleton();
+				capture.RecordRendererConditioningDiagnostic({
+					{ "stage", source.stage }, { "eye", eyeIndex }, { "target_slot", static_cast<unsigned>(source.target) },
+					{ "texture_present", texture != nullptr }, { "reason", reason }, { "copy_queued", queued },
+					{ "source_rect", { sourceX, sourceY, sourceWidth, sourceHeight } },
+					{ "texture_desc", { { "width", desc.Width }, { "height", desc.Height },
+						{ "array_size", desc.ArraySize }, { "mips", desc.MipLevels },
+						{ "samples", desc.SampleDesc.Count }, { "format", static_cast<unsigned>(desc.Format) },
+						{ "bind_flags", desc.BindFlags } } },
+					{ "deferred_refresh_checks", deferred->conditioningRefreshChecks },
+					{ "deferred_refresh_count", deferred->conditioningRefreshCount },
+					{ "deferred_last_check_frame", deferred->conditioningLastCheckFrame },
+					{ "deferred_refresh_status", deferred->conditioningRefreshStatus }
+				});
+			}
+		}
+	#endif
+
 		bool Matches(const SharedTexture& texture, const D3D11_TEXTURE2D_DESC& desc)
 		{
 			return texture.resource11 && texture.desc.Width == desc.Width && texture.desc.Height == desc.Height &&
@@ -84,7 +202,8 @@ namespace NeuralRendering
 
 		std::uint32_t NormalizeModelResolution(std::uint32_t percent)
 		{
-			return percent == 33 || percent == 50 || percent == 75 || percent == 85 || percent == 90 ? percent : 100;
+			return percent == 33 || percent == 50 || percent == 60 || percent == 67 || percent == 75 ||
+				percent == 80 || percent == 85 || percent == 90 || percent == 95 ? percent : 100;
 		}
 
 		struct ModelResolveSettings
@@ -102,12 +221,20 @@ namespace NeuralRendering
 			// spatial support to carry a substantially larger contribution, while
 			// the aggressive 50%/33% modes stay conservative for artifact control.
 			switch (modelResolution) {
+			case 95:
+				return { 1.00f, 0.92f, 1.75f, 0.95f };
 			case 90:
 				return { 1.00f, 0.80f, 1.60f, 0.90f };
 			case 85:
 				return { 0.98f, 0.70f, 1.55f, 0.84f };
+			case 80:
+				return { 0.95f, 0.61f, 1.52f, 0.80f };
 			case 75:
 				return { 0.90f, 0.52f, 1.50f, 0.76f };
+			case 67:
+				return { 0.83f, 0.40f, 1.42f, 0.70f };
+			case 60:
+				return { 0.76f, 0.30f, 1.38f, 0.66f };
 			case 50:
 				return { 0.70f, 0.22f, 1.35f, 0.65f };
 			case 33:
@@ -146,6 +273,44 @@ namespace NeuralRendering
 	class Renderer::State
 	{
 	public:
+		struct TemporalTexture
+		{
+			Microsoft::WRL::ComPtr<ID3D11Texture2D> resource;
+			Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> srv;
+			Microsoft::WRL::ComPtr<ID3D11UnorderedAccessView> uav;
+		};
+
+		struct TemporalEyeState
+		{
+			TemporalTexture base;
+			TemporalTexture residual;
+			TemporalTexture depth;
+			std::array<TemporalTexture, 2> accumulatedMotion;
+			std::uint32_t width = 0;
+			std::uint32_t height = 0;
+			std::uint32_t guideWidth = 0;
+			std::uint32_t guideHeight = 0;
+			std::uint32_t accumulatedMotionIndex = 0;
+			bool valid = false;
+		};
+
+		struct alignas(16) TemporalReuseConstants
+		{
+			std::uint32_t colorWidth = 0;
+			std::uint32_t colorHeight = 0;
+			std::uint32_t guideWidth = 0;
+			std::uint32_t guideHeight = 0;
+			float motionScaleX = 1.0f;
+			float motionScaleY = 1.0f;
+			float depthThreshold = 0.05f;
+			float colorTolerance = 0.08f;
+			std::uint32_t useDepth = 1;
+			std::uint32_t useColor = 1;
+			std::uint32_t padding0 = 0;
+			std::uint32_t padding1 = 0;
+		};
+		static_assert(sizeof(TemporalReuseConstants) == 48);
+
 		struct EyeResources
 		{
 			SharedTexture color;
@@ -157,6 +322,7 @@ namespace NeuralRendering
 			Microsoft::WRL::ComPtr<ID3D11Texture2D> resolved;
 			Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> resolvedSRV;
 			Microsoft::WRL::ComPtr<ID3D11UnorderedAccessView> resolvedUAV;
+			TemporalEyeState temporal;
 			bool reducedResolution = false;
 			std::uint32_t passCount = 1;
 		};
@@ -181,6 +347,7 @@ namespace NeuralRendering
 			const std::uint32_t modelHeight = ScaleDimension(colorHeight, modelResolution);
 			const std::uint32_t passCount = GetPassCount(tuning);
 			const auto resolveSettings = GetModelResolveSettings(modelResolution);
+			SyncTemporalReuseConfig(tuning, modelResolution, passCount);
 			if (!EnsureResources(device, eyeIndex, color, depth, motionVectors, guideWidth, guideHeight,
 				colorWidth, colorHeight, modelWidth, modelHeight, passCount, modelResolution))
 				return LatchFailure("shared resource creation", interop.LastError());
@@ -194,6 +361,24 @@ namespace NeuralRendering
 				return LatchFailure("depth guide conversion", E_FAIL);
 			context->CopyResource(eye.motionVectors.resource11.Get(), motionVectors);
 
+			const bool temporalCandidate = IsTemporalReuseConfigured(tuning) &&
+				modelResolution == 100 && passCount == 1 &&
+				CanAttemptTemporalReuse(eye, colorWidth, colorHeight, guideWidth, guideHeight) &&
+				!resetPending[eyeIndex] &&
+				(temporalFrameIndex % tuning.temporalReuseCadence) != 0;
+			if (temporalCandidate && TryTemporalReuse(device, context, eye,
+				colorWidth, colorHeight, guideWidth, guideHeight,
+				motionVectorScaleX * static_cast<float>(modelWidth) / colorWidth,
+				motionVectorScaleY * static_cast<float>(modelHeight) / colorHeight, tuning)) {
+				context->CopyResource(color, eye.output.resource11.Get());
+				resetPending[eyeIndex] = false;
+				temporalSkippedSinceFull = true;
+				AdvanceTemporalFrame(tuning);
+				LogTemporalReuseActive(tuning.temporalReuseCadence);
+				return true;
+			}
+
+#if defined(OPENNR_CAPTURE_ENABLED)
 			bool captureFrame = false;
 			if (globals::features::openNRCapture.settings.enableCapture) {
 				OpenNRCaptureFeature::FrameInfo captureInfo;
@@ -215,8 +400,11 @@ namespace NeuralRendering
 				captureInfo.skinStructureStrength = tuning.skinStructureStrength;
 				captureInfo.style = tuning.style;
 				captureInfo.useAutoMask = tuning.useAutoMask;
-				captureInfo.uiCorrection = tuning.uiCorrection;
-				captureInfo.route = "feature18";
+			captureInfo.uiCorrection = tuning.uiCorrection;
+			captureInfo.route = "feature18";
+			#if defined(OPENNR_CAPTURE_ENABLED)
+			AppendRendererConditioningAvailability(captureInfo, 0, 0, colorWidth, colorHeight);
+			#endif
 				captureFrame = globals::features::openNRCapture.BeginFrame(captureInfo);
 			}
 			if (captureFrame && globals::features::openNRCapture.settings.capturePreNR) {
@@ -250,11 +438,18 @@ namespace NeuralRendering
 					globals::features::openNRCapture.CaptureTexture(eye.motionVectors.resource11.Get(), 0, 0,
 						guideWidth, guideHeight, "motion_vectors", eyeIndex, true, false);
 			}
+			#if defined(OPENNR_CAPTURE_ENABLED)
+			if (captureFrame)
+				CaptureRendererConditionings(globals::features::openNRCapture, 0, 0, colorWidth, colorHeight, eyeIndex);
+			#endif
+#endif
 
 			ID3D12GraphicsCommandList* commandList = nullptr;
 			if (!interop.BeginD3D12(&commandList)) {
+#if defined(OPENNR_CAPTURE_ENABLED)
 				if (captureFrame)
 					globals::features::openNRCapture.AbortFrame();
+#endif
 				return LatchFailure("BeginD3D12", interop.LastError());
 			}
 			const bool succeeded = ExecuteCascade(commandList, eyeIndex,
@@ -263,27 +458,42 @@ namespace NeuralRendering
 				std::array<ID3D12Resource*, kCascadePassCount - 1>{
 					eye.cascadeIntermediates[0].resource12.Get(), eye.cascadeIntermediates[1].resource12.Get() },
 				eye.output.resource12.Get(),
-				guideWidth, guideHeight, guideWidth, guideHeight, modelWidth, modelHeight,
+				eye.reducedResolution ? modelWidth : colorWidth,
+				eye.reducedResolution ? modelHeight : colorHeight,
+				guideWidth, guideHeight, modelWidth, modelHeight,
 				motionVectorScaleX * static_cast<float>(modelWidth) / colorWidth,
 				motionVectorScaleY * static_cast<float>(modelHeight) / colorHeight,
-				tuning, passCount, resetPending[eyeIndex]);
+				tuning, passCount, resetPending[eyeIndex] || temporalSkippedSinceFull);
 			if (!interop.EndD3D12()) {
+#if defined(OPENNR_CAPTURE_ENABLED)
 				if (captureFrame)
 					globals::features::openNRCapture.AbortFrame();
+#endif
 				return LatchFailure("EndD3D12", interop.LastError());
 			}
 			if (!succeeded) {
+#if defined(OPENNR_CAPTURE_ENABLED)
 				if (captureFrame)
 					globals::features::openNRCapture.AbortFrame();
+#endif
 				return LatchFailure("Feature 18", static_cast<HRESULT>(Runtime::Instance().NgxResult()));
 			}
 
 			if (eye.reducedResolution && !DispatchModelResolve(device, context, eye, colorWidth, colorHeight, resolveSettings,
-				 tuning.modelResolveMode == 1)) {
+					tuning.modelResolveMode == 1)) {
+#if defined(OPENNR_CAPTURE_ENABLED)
 				if (captureFrame)
 					globals::features::openNRCapture.AbortFrame();
+#endif
 				return LatchFailure("model output resolve", E_FAIL);
 			}
+			if (IsTemporalReuseConfigured(tuning) && modelResolution == 100 && passCount == 1) {
+				if (!RecordTemporalHistory(device, context, eye, colorWidth, colorHeight, guideWidth, guideHeight))
+					InvalidateTemporalHistory();
+			}
+			temporalSkippedSinceFull = false;
+			AdvanceTemporalFrame(tuning);
+#if defined(OPENNR_CAPTURE_ENABLED)
 			if (captureFrame) {
 				if (globals::features::openNRCapture.settings.capturePostNR) {
 					const bool writeColorPreview = globals::features::openNRCapture.settings.writeColorPreviews;
@@ -299,6 +509,7 @@ namespace NeuralRendering
 				}
 				globals::features::openNRCapture.EndFrame();
 			}
+#endif
 			context->CopyResource(color, eye.reducedResolution ? eye.resolved.Get() : eye.output.resource11.Get());
 			resetPending[eyeIndex] = false;
 			return true;
@@ -331,6 +542,7 @@ namespace NeuralRendering
 			const std::uint32_t modelHeight = ScaleDimension(colorHeight, modelResolution);
 			const std::uint32_t passCount = GetPassCount(tuning);
 			const auto resolveSettings = GetModelResolveSettings(modelResolution);
+			SyncTemporalReuseConfig(tuning, modelResolution, passCount);
 			for (std::uint32_t eyeIndex = 0; eyeIndex < inputs.size(); ++eyeIndex) {
 				const auto& input = inputs[eyeIndex];
 				if (!input.depth || !input.depthSRV || !input.motionVectors)
@@ -353,6 +565,46 @@ namespace NeuralRendering
 				context->CopyResource(eye.motionVectors.resource11.Get(), input.motionVectors);
 			}
 
+			const bool temporalCandidate = IsTemporalReuseConfigured(tuning) &&
+				modelResolution == 100 && passCount == 1 && !blendSubrect &&
+				IsFullEyeTemporalLayout(colorDesc, inputs, colorWidth, colorHeight) &&
+				CanAttemptTemporalReuse(eyes[0], colorWidth, colorHeight, guideWidth, guideHeight) &&
+				CanAttemptTemporalReuse(eyes[1], colorWidth, colorHeight, guideWidth, guideHeight) &&
+				!resetPending[0] && !resetPending[1] &&
+				(temporalFrameIndex % tuning.temporalReuseCadence) != 0;
+			if (temporalCandidate) {
+				bool reused = true;
+				for (std::uint32_t eyeIndex = 0; eyeIndex < inputs.size(); ++eyeIndex) {
+					const auto& input = inputs[eyeIndex];
+					if (!TryTemporalReuse(device, context, eyes[eyeIndex],
+						colorWidth, colorHeight, guideWidth, guideHeight,
+						input.motionVectorScaleX * static_cast<float>(modelWidth) / colorWidth,
+						input.motionVectorScaleY * static_cast<float>(modelHeight) / colorHeight, tuning)) {
+						reused = false;
+						break;
+					}
+				}
+				if (reused) {
+					const D3D11_BOX outputBox{ 0, 0, 0, colorWidth, colorHeight, 1 };
+					for (std::uint32_t eyeIndex = 0; eyeIndex < inputs.size(); ++eyeIndex) {
+						const auto& input = inputs[eyeIndex];
+						if (blendSubrect && destinationUAV) {
+							FoveatedRenderImpl::Ops::BlendSubrectToOutput(eyes[eyeIndex].output.resource11.Get(),
+								writeback, destinationUAV, input.sourceX, input.sourceY, colorWidth, colorHeight);
+						} else {
+							context->CopySubresourceRegion(writeback, 0, input.sourceX, input.sourceY, 0,
+								eyes[eyeIndex].output.resource11.Get(), 0, &outputBox);
+						}
+						resetPending[eyeIndex] = false;
+					}
+					temporalSkippedSinceFull = true;
+					AdvanceTemporalFrame(tuning);
+					LogTemporalReuseActive(tuning.temporalReuseCadence);
+					return true;
+				}
+			}
+
+#if defined(OPENNR_CAPTURE_ENABLED)
 			bool captureFrame = false;
 			if (globals::features::openNRCapture.settings.enableCapture) {
 				OpenNRCaptureFeature::FrameInfo captureInfo;
@@ -378,6 +630,11 @@ namespace NeuralRendering
 				captureInfo.useAutoMask = tuning.useAutoMask;
 				captureInfo.uiCorrection = tuning.uiCorrection;
 				captureInfo.route = "feature18_stereo";
+				#if defined(OPENNR_CAPTURE_ENABLED)
+				for (std::uint32_t eyeIndex = 0; eyeIndex < inputs.size(); ++eyeIndex)
+					AppendRendererConditioningAvailability(captureInfo, inputs[eyeIndex].sourceX, inputs[eyeIndex].sourceY,
+						colorWidth, colorHeight, color);
+				#endif
 				captureFrame = globals::features::openNRCapture.BeginFrame(captureInfo);
 			}
 			if (captureFrame && globals::features::openNRCapture.settings.capturePreNR) {
@@ -420,11 +677,21 @@ namespace NeuralRendering
 							guideWidth, guideHeight, "motion_vectors", eyeIndex, true, false);
 				}
 			}
+			#if defined(OPENNR_CAPTURE_ENABLED)
+			if (captureFrame && globals::features::openNRCapture.settings.captureRendererConditionings) {
+				for (std::uint32_t eyeIndex = 0; eyeIndex < inputs.size(); ++eyeIndex)
+					CaptureRendererConditionings(globals::features::openNRCapture, inputs[eyeIndex].sourceX,
+						inputs[eyeIndex].sourceY, colorWidth, colorHeight, eyeIndex, color);
+			}
+			#endif
+#endif
 
 			ID3D12GraphicsCommandList* commandList = nullptr;
 			if (!interop.BeginD3D12(&commandList)) {
+#if defined(OPENNR_CAPTURE_ENABLED)
 				if (captureFrame)
 					globals::features::openNRCapture.AbortFrame();
+#endif
 				return LatchFailure("BeginD3D12 stereo", interop.LastError());
 			}
 
@@ -438,10 +705,12 @@ namespace NeuralRendering
 					std::array<ID3D12Resource*, kCascadePassCount - 1>{
 						eye.cascadeIntermediates[0].resource12.Get(), eye.cascadeIntermediates[1].resource12.Get() },
 					eye.output.resource12.Get(),
-					guideWidth, guideHeight, guideWidth, guideHeight, modelWidth, modelHeight,
+					eye.reducedResolution ? modelWidth : colorWidth,
+					eye.reducedResolution ? modelHeight : colorHeight,
+					guideWidth, guideHeight, modelWidth, modelHeight,
 					input.motionVectorScaleX * static_cast<float>(modelWidth) / colorWidth,
 					input.motionVectorScaleY * static_cast<float>(modelHeight) / colorHeight,
-					tuning, passCount, resetPending[eyeIndex]);
+					tuning, passCount, resetPending[eyeIndex] || temporalSkippedSinceFull);
 				if (!eyeSucceeded) {
 					succeeded = false;
 					break;
@@ -449,13 +718,17 @@ namespace NeuralRendering
 			}
 
 			if (!interop.EndD3D12()) {
+#if defined(OPENNR_CAPTURE_ENABLED)
 				if (captureFrame)
 					globals::features::openNRCapture.AbortFrame();
+#endif
 				return LatchFailure("EndD3D12 stereo", interop.LastError());
 			}
 			if (!succeeded) {
+#if defined(OPENNR_CAPTURE_ENABLED)
 				if (captureFrame)
 					globals::features::openNRCapture.AbortFrame();
+#endif
 				return LatchFailure("Feature 18 stereo", static_cast<HRESULT>(Runtime::Instance().NgxResult()));
 			}
 
@@ -464,11 +737,14 @@ namespace NeuralRendering
 				const auto& input = inputs[eyeIndex];
 				auto& eye = eyes[eyeIndex];
 				if (eye.reducedResolution && !DispatchModelResolve(device, context, eye, colorWidth, colorHeight, resolveSettings,
-					 tuning.modelResolveMode == 1)) {
+						tuning.modelResolveMode == 1)) {
+#if defined(OPENNR_CAPTURE_ENABLED)
 					if (captureFrame)
 						globals::features::openNRCapture.AbortFrame();
+#endif
 					return LatchFailure("model output resolve stereo", E_FAIL);
 				}
+#if defined(OPENNR_CAPTURE_ENABLED)
 				if (captureFrame && globals::features::openNRCapture.settings.capturePostNR) {
 					const bool writeColorPreview = globals::features::openNRCapture.settings.writeColorPreviews;
 					ID3D11Resource* teacher = eye.reducedResolution ? eye.resolved.Get() : eye.output.resource11.Get();
@@ -481,6 +757,7 @@ namespace NeuralRendering
 						globals::features::openNRCapture.CaptureTexture(teacher, 0, 0, colorWidth, colorHeight,
 							"teacher", eyeIndex, true);
 				}
+#endif
 				ID3D11Resource* neuralOutput = eye.reducedResolution ? eye.resolved.Get() : eye.output.resource11.Get();
 				if (blendSubrect && destinationUAV) {
 					// Keep the original background in `writeback` and composite the NR
@@ -493,8 +770,20 @@ namespace NeuralRendering
 				}
 				resetPending[eyeIndex] = false;
 			}
+			if (IsTemporalReuseConfigured(tuning) && modelResolution == 100 && passCount == 1) {
+				bool recorded = true;
+				for (std::uint32_t eyeIndex = 0; eyeIndex < inputs.size(); ++eyeIndex)
+					recorded = RecordTemporalHistory(device, context, eyes[eyeIndex],
+						colorWidth, colorHeight, guideWidth, guideHeight) && recorded;
+				if (!recorded)
+					InvalidateTemporalHistory();
+			}
+			temporalSkippedSinceFull = false;
+			AdvanceTemporalFrame(tuning);
+#if defined(OPENNR_CAPTURE_ENABLED)
 			if (captureFrame)
 				globals::features::openNRCapture.EndFrame();
+#endif
 			return true;
 		}
 
@@ -508,8 +797,18 @@ namespace NeuralRendering
 			failureLatched = false;
 			copyDepthGuideCS.Reset();
 			modelResolutionCS.Reset();
+			temporalSnapshotCS.Reset();
+			temporalAccumulateCS.Reset();
+			temporalReprojectCS.Reset();
 			modelResolutionCB.Reset();
 			modelResolutionSampler.Reset();
+			temporalReuseCB.Reset();
+			temporalReuseSampler.Reset();
+			temporalConfigInitialized = false;
+			temporalFrameIndex = 0;
+			temporalSkippedSinceFull = false;
+			temporalReuseActiveLogged = false;
+			temporalReuseWarningLogged = false;
 		}
 
 		void ResetHistory()
@@ -517,17 +816,383 @@ namespace NeuralRendering
 			interop.WaitForIdle();
 			Runtime::Instance().ResetFeatures();
 			resetPending = { true, true };
+			InvalidateTemporalHistory();
 		}
 
 		void ClearShaderCache()
 		{
 			copyDepthGuideCS.Reset();
 			modelResolutionCS.Reset();
+			temporalSnapshotCS.Reset();
+			temporalAccumulateCS.Reset();
+			temporalReprojectCS.Reset();
 		}
 
 		[[nodiscard]] bool IsFailureLatched() const { return failureLatched; }
 
 	private:
+		bool IsTemporalReuseConfigured(const Tuning& tuning) const
+		{
+			return tuning.temporalReuseCadence >= kTemporalReuseMinCadence &&
+				tuning.temporalReuseCadence <= kTemporalReuseMaxCadence;
+		}
+
+		void SyncTemporalReuseConfig(const Tuning& tuning, std::uint32_t modelResolution, std::uint32_t passCount)
+		{
+			const bool changed = !temporalConfigInitialized ||
+				temporalConfigCadence != tuning.temporalReuseCadence ||
+				temporalConfigDepthThreshold != tuning.temporalReuseDepthThreshold ||
+				temporalConfigColorTolerance != tuning.temporalReuseColorTolerance ||
+				temporalConfigModelResolution != modelResolution ||
+				temporalConfigPassCount != passCount;
+			if (!changed)
+				return;
+
+			temporalConfigInitialized = true;
+			temporalConfigCadence = tuning.temporalReuseCadence;
+			temporalConfigDepthThreshold = tuning.temporalReuseDepthThreshold;
+			temporalConfigColorTolerance = tuning.temporalReuseColorTolerance;
+			temporalConfigModelResolution = modelResolution;
+			temporalConfigPassCount = passCount;
+			InvalidateTemporalHistory();
+		}
+
+		bool CanAttemptTemporalReuse(const EyeResources& eye,
+			std::uint32_t colorWidth, std::uint32_t colorHeight,
+			std::uint32_t guideWidth, std::uint32_t guideHeight) const
+		{
+			return !eye.reducedResolution && eye.passCount == 1 && eye.temporal.valid &&
+				eye.temporal.width == colorWidth && eye.temporal.height == colorHeight &&
+				eye.temporal.guideWidth == guideWidth && eye.temporal.guideHeight == guideHeight &&
+				eye.temporal.base.resource && eye.temporal.base.srv && eye.temporal.base.uav &&
+				eye.temporal.residual.resource && eye.temporal.residual.srv && eye.temporal.residual.uav &&
+				eye.temporal.depth.resource && eye.temporal.depth.srv &&
+				eye.temporal.accumulatedMotion[0].resource && eye.temporal.accumulatedMotion[0].srv &&
+				eye.temporal.accumulatedMotion[0].uav &&
+				eye.temporal.accumulatedMotion[1].resource && eye.temporal.accumulatedMotion[1].srv &&
+				eye.temporal.accumulatedMotion[1].uav;
+		}
+
+		bool IsFullEyeTemporalLayout(const D3D11_TEXTURE2D_DESC& colorDesc,
+			const std::array<StereoEyeInput, 2>& inputs,
+			std::uint32_t colorWidth, std::uint32_t colorHeight) const
+		{
+			if (!colorWidth || !colorHeight || colorDesc.Width != colorWidth * 2 || colorDesc.Height != colorHeight)
+				return false;
+			for (std::uint32_t eyeIndex = 0; eyeIndex < inputs.size(); ++eyeIndex) {
+				if (inputs[eyeIndex].sourceX != eyeIndex * colorWidth || inputs[eyeIndex].sourceY != 0)
+					return false;
+			}
+			return true;
+		}
+
+		bool EnsureTemporalTexture(ID3D11Device* device, std::uint32_t width, std::uint32_t height,
+			DXGI_FORMAT format, TemporalTexture& texture, const char* name)
+		{
+			if (!device || !width || !height || !name)
+				return false;
+
+			D3D11_TEXTURE2D_DESC desc{};
+			desc.Width = width;
+			desc.Height = height;
+			desc.MipLevels = 1;
+			desc.ArraySize = 1;
+			desc.Format = format;
+			desc.SampleDesc.Count = 1;
+			desc.Usage = D3D11_USAGE_DEFAULT;
+			desc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
+			if (FAILED(device->CreateTexture2D(&desc, nullptr, texture.resource.GetAddressOf())))
+				return false;
+
+			D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc{};
+			srvDesc.Format = format;
+			srvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+			srvDesc.Texture2D.MostDetailedMip = 0;
+			srvDesc.Texture2D.MipLevels = 1;
+			if (FAILED(device->CreateShaderResourceView(texture.resource.Get(), &srvDesc, texture.srv.GetAddressOf())))
+				return false;
+
+			D3D11_UNORDERED_ACCESS_VIEW_DESC uavDesc{};
+			uavDesc.Format = format;
+			uavDesc.ViewDimension = D3D11_UAV_DIMENSION_TEXTURE2D;
+			uavDesc.Texture2D.MipSlice = 0;
+			if (FAILED(device->CreateUnorderedAccessView(texture.resource.Get(), &uavDesc, texture.uav.GetAddressOf())))
+				return false;
+
+			Util::SetResourceName(texture.resource.Get(), name);
+			return true;
+		}
+
+		bool EnsureTemporalEyeResources(ID3D11Device* device, EyeResources& eye,
+			std::uint32_t colorWidth, std::uint32_t colorHeight,
+			std::uint32_t guideWidth, std::uint32_t guideHeight)
+		{
+			if (!device || !colorWidth || !colorHeight || !guideWidth || !guideHeight)
+				return false;
+			if (eye.temporal.width == colorWidth && eye.temporal.height == colorHeight &&
+				eye.temporal.guideWidth == guideWidth && eye.temporal.guideHeight == guideHeight &&
+				eye.temporal.base.resource && eye.temporal.residual.resource &&
+				eye.temporal.depth.resource && eye.temporal.accumulatedMotion[0].resource &&
+				eye.temporal.accumulatedMotion[1].resource)
+				return true;
+
+			eye.temporal = {};
+			eye.temporal.width = colorWidth;
+			eye.temporal.height = colorHeight;
+			eye.temporal.guideWidth = guideWidth;
+			eye.temporal.guideHeight = guideHeight;
+			return EnsureTemporalTexture(device, colorWidth, colorHeight, DXGI_FORMAT_R16G16B16A16_FLOAT,
+				eye.temporal.base, "NeuralRendering::TemporalBase") &&
+			EnsureTemporalTexture(device, colorWidth, colorHeight, DXGI_FORMAT_R16G16B16A16_FLOAT,
+				eye.temporal.residual, "NeuralRendering::TemporalResidual") &&
+			EnsureTemporalTexture(device, guideWidth, guideHeight, DXGI_FORMAT_R32_FLOAT,
+				eye.temporal.depth, "NeuralRendering::TemporalDepth") &&
+			EnsureTemporalTexture(device, colorWidth, colorHeight, DXGI_FORMAT_R16G16_FLOAT,
+				eye.temporal.accumulatedMotion[0], "NeuralRendering::TemporalAccumulatedMotion0") &&
+			EnsureTemporalTexture(device, colorWidth, colorHeight, DXGI_FORMAT_R16G16_FLOAT,
+				eye.temporal.accumulatedMotion[1], "NeuralRendering::TemporalAccumulatedMotion1");
+		}
+
+		bool EnsureTemporalReuseShaders(ID3D11Device* device)
+		{
+			if (!device)
+				return false;
+			const wchar_t* shaderPath = L"Data\\Shaders\\Upscaling\\NeuralRendering\\TemporalReuseCS.hlsl";
+			if (!temporalSnapshotCS.Get(shaderPath, {}, "cs_5_0", "Snapshot", "NeuralRendering::TemporalReuseSnapshotCS") ||
+				!temporalAccumulateCS.Get(shaderPath, {}, "cs_5_0", "Accumulate", "NeuralRendering::TemporalReuseAccumulateCS") ||
+				!temporalReprojectCS.Get(shaderPath, {}, "cs_5_0", "Reproject", "NeuralRendering::TemporalReuseReprojectCS"))
+				return false;
+
+			if (!temporalReuseCB) {
+				D3D11_BUFFER_DESC bufferDesc{};
+				bufferDesc.ByteWidth = sizeof(TemporalReuseConstants);
+				bufferDesc.Usage = D3D11_USAGE_DEFAULT;
+				bufferDesc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+				if (FAILED(device->CreateBuffer(&bufferDesc, nullptr, temporalReuseCB.GetAddressOf())))
+					return false;
+				Util::SetResourceName(temporalReuseCB.Get(), "NeuralRendering::TemporalReuseCB");
+			}
+
+			if (!temporalReuseSampler) {
+				D3D11_SAMPLER_DESC samplerDesc{};
+				samplerDesc.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
+				samplerDesc.AddressU = D3D11_TEXTURE_ADDRESS_CLAMP;
+				samplerDesc.AddressV = D3D11_TEXTURE_ADDRESS_CLAMP;
+				samplerDesc.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
+				samplerDesc.MinLOD = 0.0f;
+				samplerDesc.MaxLOD = std::numeric_limits<float>::max();
+				if (FAILED(device->CreateSamplerState(&samplerDesc, temporalReuseSampler.GetAddressOf())))
+					return false;
+				Util::SetResourceName(temporalReuseSampler.Get(), "NeuralRendering::TemporalReuseSampler");
+			}
+			return true;
+		}
+
+		void ClearTemporalReuseBindings(ID3D11DeviceContext* context)
+		{
+			if (!context)
+				return;
+			std::array<ID3D11ShaderResourceView*, 8> nullSources{};
+			std::array<ID3D11UnorderedAccessView*, 4> nullTargets{};
+			ID3D11Buffer* nullBuffer = nullptr;
+			ID3D11SamplerState* nullSampler = nullptr;
+			context->CSSetShaderResources(0, static_cast<UINT>(nullSources.size()), nullSources.data());
+			context->CSSetUnorderedAccessViews(0, static_cast<UINT>(nullTargets.size()), nullTargets.data(), nullptr);
+			context->CSSetConstantBuffers(0, 1, &nullBuffer);
+			context->CSSetSamplers(0, 1, &nullSampler);
+			context->CSSetShader(nullptr, nullptr, 0);
+		}
+
+		bool DispatchTemporalSnapshot(ID3D11Device* device, ID3D11DeviceContext* context,
+			const EyeResources& eye, std::uint32_t colorWidth, std::uint32_t colorHeight,
+			std::uint32_t guideWidth, std::uint32_t guideHeight)
+		{
+			if (!EnsureTemporalReuseShaders(device) || !context || !eye.color.srv11 || !eye.output.srv11 ||
+				!eye.temporal.base.uav || !eye.temporal.residual.uav)
+				return false;
+			CS_GPU_PASS("NeuralRendering::TemporalReuseSnapshot");
+			const TemporalReuseConstants constants{
+				.colorWidth = colorWidth,
+				.colorHeight = colorHeight,
+				.guideWidth = guideWidth,
+				.guideHeight = guideHeight,
+			};
+			context->UpdateSubresource(temporalReuseCB.Get(), 0, nullptr, &constants, 0, 0);
+			std::array<ID3D11ShaderResourceView*, 8> sources{};
+			sources[0] = eye.color.srv11.Get();
+			sources[1] = eye.output.srv11.Get();
+			std::array<ID3D11UnorderedAccessView*, 4> targets{};
+			targets[0] = eye.temporal.base.uav.Get();
+			targets[1] = eye.temporal.residual.uav.Get();
+			ID3D11Buffer* constantBuffer = temporalReuseCB.Get();
+			ID3D11SamplerState* sampler = temporalReuseSampler.Get();
+			context->CSSetShader(temporalSnapshotCS.get(), nullptr, 0);
+			context->CSSetConstantBuffers(0, 1, &constantBuffer);
+			context->CSSetShaderResources(0, static_cast<UINT>(sources.size()), sources.data());
+			context->CSSetUnorderedAccessViews(0, static_cast<UINT>(targets.size()), targets.data(), nullptr);
+			context->CSSetSamplers(0, 1, &sampler);
+			context->Dispatch((colorWidth + 7) / 8, (colorHeight + 7) / 8, 1);
+			ClearTemporalReuseBindings(context);
+			return true;
+		}
+
+		bool DispatchTemporalAccumulation(ID3D11Device* device, ID3D11DeviceContext* context,
+			const EyeResources& eye, const TemporalTexture& previousAccumulated,
+			const TemporalTexture& nextAccumulated, std::uint32_t colorWidth, std::uint32_t colorHeight,
+			std::uint32_t guideWidth, std::uint32_t guideHeight,
+			float motionScaleX, float motionScaleY)
+		{
+			if (!EnsureTemporalReuseShaders(device) || !context || !eye.motionVectors.srv11 ||
+				!previousAccumulated.srv || !nextAccumulated.uav)
+				return false;
+			CS_GPU_PASS("NeuralRendering::TemporalReuseAccumulate");
+			const TemporalReuseConstants constants{
+				.colorWidth = colorWidth,
+				.colorHeight = colorHeight,
+				.guideWidth = guideWidth,
+				.guideHeight = guideHeight,
+				.motionScaleX = motionScaleX,
+				.motionScaleY = motionScaleY,
+			};
+			context->UpdateSubresource(temporalReuseCB.Get(), 0, nullptr, &constants, 0, 0);
+			std::array<ID3D11ShaderResourceView*, 8> sources{};
+			sources[6] = eye.motionVectors.srv11.Get();
+			sources[7] = previousAccumulated.srv.Get();
+			std::array<ID3D11UnorderedAccessView*, 4> targets{};
+			targets[2] = nextAccumulated.uav.Get();
+			ID3D11Buffer* constantBuffer = temporalReuseCB.Get();
+			ID3D11SamplerState* sampler = temporalReuseSampler.Get();
+			context->CSSetShader(temporalAccumulateCS.get(), nullptr, 0);
+			context->CSSetConstantBuffers(0, 1, &constantBuffer);
+			context->CSSetShaderResources(0, static_cast<UINT>(sources.size()), sources.data());
+			context->CSSetUnorderedAccessViews(0, static_cast<UINT>(targets.size()), targets.data(), nullptr);
+			context->CSSetSamplers(0, 1, &sampler);
+			context->Dispatch((colorWidth + 7) / 8, (colorHeight + 7) / 8, 1);
+			ClearTemporalReuseBindings(context);
+			return true;
+		}
+
+		bool DispatchTemporalReprojection(ID3D11Device* device, ID3D11DeviceContext* context,
+			const EyeResources& eye, const TemporalEyeState& temporal,
+			std::uint32_t colorWidth, std::uint32_t colorHeight,
+			std::uint32_t guideWidth, std::uint32_t guideHeight,
+			float depthThreshold, float colorTolerance)
+		{
+			if (!EnsureTemporalReuseShaders(device) || !context || !eye.color.srv11 || !eye.depth.srv11 ||
+				!eye.output.uav11 || !temporal.base.srv || !temporal.depth.srv || !temporal.residual.srv ||
+				!temporal.accumulatedMotion[temporal.accumulatedMotionIndex].srv)
+				return false;
+			CS_GPU_PASS("NeuralRendering::TemporalReuseReproject");
+			const TemporalReuseConstants constants{
+				.colorWidth = colorWidth,
+				.colorHeight = colorHeight,
+				.guideWidth = guideWidth,
+				.guideHeight = guideHeight,
+				.depthThreshold = depthThreshold,
+				.colorTolerance = colorTolerance,
+			};
+			context->UpdateSubresource(temporalReuseCB.Get(), 0, nullptr, &constants, 0, 0);
+			std::array<ID3D11ShaderResourceView*, 8> sources{};
+			sources[0] = eye.color.srv11.Get();
+			sources[2] = eye.depth.srv11.Get();
+			sources[3] = temporal.base.srv.Get();
+			sources[4] = temporal.depth.srv.Get();
+			sources[5] = temporal.residual.srv.Get();
+			sources[7] = temporal.accumulatedMotion[temporal.accumulatedMotionIndex].srv.Get();
+			std::array<ID3D11UnorderedAccessView*, 4> targets{};
+			targets[3] = eye.output.uav11.Get();
+			ID3D11Buffer* constantBuffer = temporalReuseCB.Get();
+			ID3D11SamplerState* sampler = temporalReuseSampler.Get();
+			context->CSSetShader(temporalReprojectCS.get(), nullptr, 0);
+			context->CSSetConstantBuffers(0, 1, &constantBuffer);
+			context->CSSetShaderResources(0, static_cast<UINT>(sources.size()), sources.data());
+			context->CSSetUnorderedAccessViews(0, static_cast<UINT>(targets.size()), targets.data(), nullptr);
+			context->CSSetSamplers(0, 1, &sampler);
+			context->Dispatch((colorWidth + 7) / 8, (colorHeight + 7) / 8, 1);
+			ClearTemporalReuseBindings(context);
+			return true;
+		}
+
+		bool RecordTemporalHistory(ID3D11Device* device, ID3D11DeviceContext* context, EyeResources& eye,
+			std::uint32_t colorWidth, std::uint32_t colorHeight,
+			std::uint32_t guideWidth, std::uint32_t guideHeight)
+		{
+			if (!EnsureTemporalEyeResources(device, eye, colorWidth, colorHeight, guideWidth, guideHeight) ||
+				!DispatchTemporalSnapshot(device, context, eye, colorWidth, colorHeight, guideWidth, guideHeight) ||
+				!eye.depth.resource11 || !eye.temporal.depth.resource)
+				return false;
+			context->CopyResource(eye.temporal.depth.resource.Get(), eye.depth.resource11.Get());
+			const float clearValue[4]{};
+			context->ClearUnorderedAccessViewFloat(eye.temporal.accumulatedMotion[0].uav.Get(), clearValue);
+			context->ClearUnorderedAccessViewFloat(eye.temporal.accumulatedMotion[1].uav.Get(), clearValue);
+			eye.temporal.accumulatedMotionIndex = 0;
+			eye.temporal.valid = true;
+			return true;
+		}
+
+		bool TryTemporalReuse(ID3D11Device* device, ID3D11DeviceContext* context, EyeResources& eye,
+			std::uint32_t colorWidth, std::uint32_t colorHeight,
+			std::uint32_t guideWidth, std::uint32_t guideHeight,
+			float motionScaleX, float motionScaleY, const Tuning& tuning)
+		{
+			if (!eye.temporal.valid || !EnsureTemporalEyeResources(device, eye, colorWidth, colorHeight, guideWidth, guideHeight))
+				return false;
+			const std::uint32_t previousIndex = eye.temporal.accumulatedMotionIndex;
+			const std::uint32_t nextIndex = previousIndex ^ 1u;
+			if (!DispatchTemporalAccumulation(device, context, eye,
+				eye.temporal.accumulatedMotion[previousIndex], eye.temporal.accumulatedMotion[nextIndex],
+				colorWidth, colorHeight, guideWidth, guideHeight, motionScaleX, motionScaleY)) {
+				LogTemporalReuseFailure("motion accumulation");
+				InvalidateTemporalHistory();
+				return false;
+			}
+			eye.temporal.accumulatedMotionIndex = nextIndex;
+			if (!DispatchTemporalReprojection(device, context, eye, eye.temporal,
+				colorWidth, colorHeight, guideWidth, guideHeight,
+				tuning.temporalReuseDepthThreshold, tuning.temporalReuseColorTolerance)) {
+				LogTemporalReuseFailure("residual reprojection");
+				InvalidateTemporalHistory();
+				return false;
+			}
+			return true;
+		}
+
+		void InvalidateTemporalHistory()
+		{
+			for (auto& eye : eyes) {
+				eye.temporal.valid = false;
+				eye.temporal.accumulatedMotionIndex = 0;
+			}
+			temporalFrameIndex = 0;
+			// Keep this marker separate from the private residual buffers. If a
+			// skipped-frame dispatch fails, the next native Feature 18 call still
+			// must reset NGX history before the renderer falls back to the full path.
+		}
+
+		void AdvanceTemporalFrame(const Tuning& tuning)
+		{
+			if (IsTemporalReuseConfigured(tuning))
+				++temporalFrameIndex;
+			else
+				temporalFrameIndex = 0;
+		}
+
+		void LogTemporalReuseFailure(const char* operation)
+		{
+			if (temporalReuseWarningLogged)
+				return;
+			temporalReuseWarningLogged = true;
+			logger::warn("[DLSSNR] temporal residual reuse unavailable during {}; falling back to full Feature 18", operation);
+		}
+
+		void LogTemporalReuseActive(std::uint32_t cadence)
+		{
+			if (temporalReuseActiveLogged)
+				return;
+			temporalReuseActiveLogged = true;
+			logger::info("[DLSSNR] experimental temporal residual reuse active cadence=N{}; full-eye exact-MV normal route only", cadence);
+		}
+
 		bool ExecuteCascade(ID3D12GraphicsCommandList* commandList, std::uint32_t eyeIndex,
 			ID3D12Resource* initialInput, ID3D12Resource* depth, ID3D12Resource* motionVectors,
 			const std::array<ID3D12Resource*, kCascadePassCount - 1>& intermediates,
@@ -555,12 +1220,24 @@ namespace NeuralRendering
 				CS_GPU_PASS_SELECT3(passIndex,
 					"NeuralRendering::EvaluatePass0", "NeuralRendering::EvaluatePass1", "NeuralRendering::EvaluatePass2");
 				TransitionEvaluationResources(commandList, input, depth, motionVectors, output, true);
+				Feature18GuideContract guide{};
+				guide.colorWidth = passIndex == 0 ? firstInputWidth : outputWidth;
+				guide.colorHeight = passIndex == 0 ? firstInputHeight : outputHeight;
+				guide.depthWidth = guideWidth;
+				guide.depthHeight = guideHeight;
+				guide.motionWidth = guideWidth;
+				guide.motionHeight = guideHeight;
+				guide.outputWidth = outputWidth;
+				guide.outputHeight = outputHeight;
+				guide.motionVectorScaleX = motionVectorScaleX;
+				guide.motionVectorScaleY = motionVectorScaleY;
+				// Per-eye resources are isolated before this D3D12 bridge. Their
+				// subrect bases therefore remain zero; only the valid extents and
+				// motion-vector scale vary by route.
+				guide.motionVectorsLowResolution =
+					guide.motionWidth <= guide.colorWidth && guide.motionHeight <= guide.colorHeight;
 				const bool succeeded = Runtime::Instance().Execute(commandList, FeatureSlot(eyeIndex, passIndex),
-					input, depth, motionVectors, output,
-					passIndex == 0 ? firstInputWidth : outputWidth,
-					passIndex == 0 ? firstInputHeight : outputHeight,
-					outputWidth, outputHeight, guideWidth, guideHeight,
-					motionVectorScaleX, motionVectorScaleY, tuning, reset);
+					input, depth, motionVectors, output, guide, tuning, reset);
 				TransitionEvaluationResources(commandList, input, depth, motionVectors, output, false);
 				if (!succeeded) {
 					logger::warn("[DLSSNR] cascade pass failed eye={} pass={} of {}", eyeIndex, passIndex + 1, passCount);
@@ -778,6 +1455,7 @@ namespace NeuralRendering
 				return false;
 			for (std::uint32_t passIndex = 0; passIndex < kCascadePassCount; ++passIndex)
 				Runtime::Instance().ResetFeature(FeatureSlot(eyeIndex, passIndex));
+			InvalidateTemporalHistory();
 			eye = {};
 			const std::string suffix = eyeIndex == 0 ? "Left" : "Right";
 			if (!interop.CreateSharedTexture(colorDesc, eye.color, ("NeuralRendering::Color" + suffix).c_str()) ||
@@ -822,10 +1500,25 @@ namespace NeuralRendering
 		D3D12Interop interop;
 		Util::LazyShader<ID3D11ComputeShader> copyDepthGuideCS;
 		Util::LazyShader<ID3D11ComputeShader> modelResolutionCS;
+		Util::LazyShader<ID3D11ComputeShader> temporalSnapshotCS;
+		Util::LazyShader<ID3D11ComputeShader> temporalAccumulateCS;
+		Util::LazyShader<ID3D11ComputeShader> temporalReprojectCS;
 		Microsoft::WRL::ComPtr<ID3D11Buffer> modelResolutionCB;
 		Microsoft::WRL::ComPtr<ID3D11SamplerState> modelResolutionSampler;
+		Microsoft::WRL::ComPtr<ID3D11Buffer> temporalReuseCB;
+		Microsoft::WRL::ComPtr<ID3D11SamplerState> temporalReuseSampler;
 		std::array<EyeResources, 2> eyes;
 		std::array<bool, 2> resetPending{ true, true };
+		bool temporalConfigInitialized = false;
+		std::uint32_t temporalConfigCadence = 0;
+		float temporalConfigDepthThreshold = 0.05f;
+		float temporalConfigColorTolerance = 0.08f;
+		std::uint32_t temporalConfigModelResolution = 100;
+		std::uint32_t temporalConfigPassCount = 1;
+		std::uint64_t temporalFrameIndex = 0;
+		bool temporalSkippedSinceFull = false;
+		bool temporalReuseActiveLogged = false;
+		bool temporalReuseWarningLogged = false;
 		bool failureLatched = false;
 	};
 

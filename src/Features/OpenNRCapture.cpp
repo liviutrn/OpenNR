@@ -120,6 +120,10 @@ namespace
 			return "R10G10B10A2_TYPELESS";
 		case DXGI_FORMAT_R10G10B10A2_UNORM:
 			return "R10G10B10A2_UNORM";
+		case DXGI_FORMAT_R11G11B10_FLOAT:
+			return "R11G11B10_FLOAT";
+		case DXGI_FORMAT_R16_UNORM:
+			return "R16_UNORM";
 		case DXGI_FORMAT_R16G16_TYPELESS:
 			return "R16G16_TYPELESS";
 		case DXGI_FORMAT_R16G16_FLOAT:
@@ -152,12 +156,15 @@ namespace
 		case DXGI_FORMAT_B8G8R8X8_UNORM:
 		case DXGI_FORMAT_R10G10B10A2_TYPELESS:
 		case DXGI_FORMAT_R10G10B10A2_UNORM:
+		case DXGI_FORMAT_R11G11B10_FLOAT:
+			return 4;
+		case DXGI_FORMAT_R16_UNORM:
 		case DXGI_FORMAT_R16G16_TYPELESS:
 		case DXGI_FORMAT_R16G16_FLOAT:
 		case DXGI_FORMAT_R16G16_SNORM:
 		case DXGI_FORMAT_R32_TYPELESS:
 		case DXGI_FORMAT_R32_FLOAT:
-			return 4;
+			return a_format == DXGI_FORMAT_R16_UNORM ? 2 : 4;
 		case DXGI_FORMAT_R16G16B16A16_TYPELESS:
 		case DXGI_FORMAT_R16G16B16A16_FLOAT:
 		case DXGI_FORMAT_R16G16B16A16_UNORM:
@@ -339,7 +346,7 @@ public:
 			{ "sequence_id", sequenceId },
 			{ "created_utc", std::chrono::duration_cast<std::chrono::milliseconds>(
 				std::chrono::system_clock::now().time_since_epoch()).count() },
-			{ "source", "Open Shaders DLSSNR Feature 18 render textures" },
+			{ "source", "OpenNR DLSSNR Feature 18 render textures" },
 			{ "desktop_capture", false },
 			{ "capture_full_frame", owner.settings.captureFullFrame },
 			{ "capture_full_frame_sequence", owner.settings.captureFullFrameSequence },
@@ -360,6 +367,24 @@ public:
 			{ "raw_teacher", owner.settings.captureRawTeacher },
 			{ "depth", owner.settings.captureDepth },
 			{ "motion_vectors", owner.settings.captureMotionVectors },
+			{ "renderer_conditionings", {
+				{ "enabled", owner.settings.captureRendererConditionings },
+				{ "source", "Skyrim deferred G-buffer render targets at the Neural Rendering call boundary" },
+				{ "alignment", "native renderer coordinates; stereo color rectangle scaled to main-target dimensions; crop_rect is native pixels, not color pixels" },
+				{ "channels", {
+					{ "gbuffer_albedo", "ALBEDO / kINDIRECT; base-color G-buffer" },
+					{ "gbuffer_normal_roughness", "NORMALROUGHNESS / kRAWINDIRECT_DOWNSCALED; encoded view-space normal and glossiness" },
+					{ "gbuffer_masks", "MASKS / kRAWINDIRECT_PREVIOUS; engine-defined material/lighting mask channels" },
+					{ "gbuffer_masks2", "MASKS2 / kRAWINDIRECT_PREVIOUS_DOWNSCALED; vertex-AO mask channel" },
+					{ "gbuffer_specular", "SPECULAR / kINDIRECT_DOWNSCALED; deferred specular accumulation" },
+					{ "gbuffer_reflectance", "REFLECTANCE / kRAWINDIRECT; reflectance contribution when populated" }
+				} },
+				{ "not_exposed", {
+					{ "illumination", "No single verified lighting-only tensor is exposed at this boundary" },
+					{ "material_object_semantics", "No object/material ID or semantic label buffer is exposed" },
+					{ "teacher_history", "The carried history inside nvngx_dlssnr.dll is opaque; only reset metadata is recorded" }
+				} }
+			} },
 			{ "write_color_previews", owner.settings.writeColorPreviews },
 			{ "left_eye", owner.settings.captureLeftEye },
 			{ "right_eye", owner.settings.captureRightEye },
@@ -596,6 +621,8 @@ public:
 			{ "motion_vector_scale_y", a_info.motionVectorScaleY },
 			{ "motion_vector_contract", "exact_feature18_bound_resource" },
 			{ "history_reset", a_info.historyReset },
+			{ "renderer_conditionings_requested", owner.settings.captureRendererConditionings },
+			{ "renderer_conditionings_available", a_info.rendererConditioningsAvailable },
 			{ "teacher_settings", {
 				{ "intensity", a_info.intensity },
 				{ "local_tone_strength", a_info.localToneStrength },
@@ -1138,6 +1165,15 @@ bool OpenNRCaptureFeature::CaptureTexture(ID3D11Resource* a_source, std::uint32_
 	return impl_->Capture(a_source, a_sourceX, a_sourceY, a_sourceWidth, a_sourceHeight, a_stage, a_eyeIndex, a_fullFrame, a_writePreview);
 }
 void OpenNRCaptureFeature::EndFrame() { impl_->End(); }
+void OpenNRCaptureFeature::RecordRendererConditioningDiagnostic(const json& a_diagnostic)
+{
+	if (!impl_->activeFrame)
+		return;
+	impl_->activeMetadata["renderer_conditioning_diagnostics"].push_back(a_diagnostic);
+	if (impl_->activeSampleIndex == 1)
+		logger::info("[OpenNR Conditioning] sequence={} host_frame={} {}", impl_->sequenceId,
+			impl_->activeInfo.hostFrame, a_diagnostic.dump());
+}
 void OpenNRCaptureFeature::AbortFrame() { impl_->Abort(); }
 bool OpenNRCaptureFeature::IsCapturing() const { return impl_->IsCapturing(); }
 bool OpenNRCaptureFeature::IsFullFrameValidationFrame() const { return impl_->IsFullFrame(); }
@@ -1155,6 +1191,7 @@ void OpenNRCaptureFeature::LoadSettings(json& a_json)
 	settings.captureRawTeacher = a_json.value("capture_raw_teacher", settings.captureRawTeacher);
 	settings.captureDepth = a_json.value("capture_depth", settings.captureDepth);
 	settings.captureMotionVectors = a_json.value("capture_motion_vectors", settings.captureMotionVectors);
+	settings.captureRendererConditionings = a_json.value("capture_renderer_conditionings", settings.captureRendererConditionings);
 	settings.writeColorPreviews = a_json.value("write_color_previews", settings.writeColorPreviews);
 	settings.captureFullFrame = a_json.value("capture_full_frame", settings.captureFullFrame);
 	settings.captureFullFrameSequence = a_json.value("capture_full_frame_sequence", settings.captureFullFrameSequence);
@@ -1196,6 +1233,7 @@ void OpenNRCaptureFeature::SaveSettings(json& a_json)
 	a_json["capture_raw_teacher"] = settings.captureRawTeacher;
 	a_json["capture_depth"] = settings.captureDepth;
 	a_json["capture_motion_vectors"] = settings.captureMotionVectors;
+	a_json["capture_renderer_conditionings"] = settings.captureRendererConditionings;
 	a_json["write_color_previews"] = settings.writeColorPreviews;
 	a_json["capture_full_frame"] = settings.captureFullFrame;
 	a_json["capture_full_frame_sequence"] = settings.captureFullFrameSequence;
@@ -1219,39 +1257,23 @@ void OpenNRCaptureFeature::SaveSettings(json& a_json)
 
 void OpenNRCaptureFeature::DrawSettings()
 {
-	ImGui::SeparatorText("OpenNR Capture: purpose and safety");
-	ImGui::TextWrapped("OpenNR Capture records aligned training and validation data at the native Feature 18 render boundary. It is intended for neural-rendering dataset collection and route validation, not screenshots or desktop recording.");
-	ImGui::TextWrapped("The capture path reads GPU render textures only: pre-NR input, Feature 18 guides, and post-NR teacher output. It never captures the desktop, headset compositor, or presented swap chain. When disabled, no capture hotkeys are polled and no capture readback work is scheduled.");
-	ImGui::TextDisabled("Default state: OFF. Enable this feature only when you deliberately want to write data to the configured output directory.");
-
-	ImGui::SeparatorText("Capture stages");
+	ImGui::TextWrapped("Captures GPU render textures around Feature 18. It never captures the desktop or presented swap chain.");
 	ImGui::Checkbox("Enable capture", &settings.enableCapture);
-	ImGui::TextDisabled("Master gate. This must be enabled before the hotkeys, buttons, or render-thread capture path can do anything.");
 	ImGui::Checkbox("Capture pre-NR input", &settings.capturePreNR);
-	ImGui::TextDisabled("Stores the low-resolution color input that is sent toward the neural-rendering route.");
 	ImGui::Checkbox("Capture post-NR teacher", &settings.capturePostNR);
-	ImGui::TextDisabled("Stores the reconstructed teacher output after Feature 18 has completed.");
 	ImGui::Checkbox("Write raw teacher readback", &settings.captureRawTeacher);
-	ImGui::TextDisabled("Adds the native-resolution teacher tensor for validation when the normal sample is cropped.");
 	ImGui::Checkbox("Capture Feature 18 depth", &settings.captureDepth);
-	ImGui::TextDisabled("Stores the exact engine depth guide paired with each eye and frame.");
 	ImGui::Checkbox("Capture Feature 18 motion vectors", &settings.captureMotionVectors);
-	ImGui::TextDisabled("Stores the exact engine motion-vector guide; OpenNR does not synthesize a replacement optical-flow guide.");
-
-	ImGui::SeparatorText("Dataset shape and output");
+	ImGui::Checkbox("Capture renderer G-buffer conditionings", &settings.captureRendererConditionings);
+	if (settings.captureRendererConditionings)
+		ImGui::TextWrapped("Opt-in: captures aligned albedo, normal/roughness, engine masks, specular, and reflectance. Illumination, semantic IDs, and exact teacher history are not exposed by this path.");
 	ImGui::Checkbox("Write color PNG previews", &settings.writeColorPreviews);
-	ImGui::TextDisabled("Human-readable previews for inspection. Disable this to reduce I/O; typed raw tensors and JSONL metadata remain authoritative.");
 	ImGui::Checkbox("Capture full-frame artifacts", &settings.captureFullFrame);
-	ImGui::TextDisabled("Writes a complete per-eye artifact at the configured validation cadence in addition to training crops.");
 	ImGui::Checkbox("Full-resolution master sequence (every sample)", &settings.captureFullFrameSequence);
 	if (settings.captureFullFrameSequence)
-		ImGui::TextWrapped("Master mode writes complete per-eye color and native guide resources for every sampled frame, while keeping the configured training crops. This is intentionally expensive and can consume substantial disk space.");
-	else
-		ImGui::TextDisabled("Normal mode writes crops on each sample and periodic full-frame validation artifacts.");
+		ImGui::TextWrapped("Master mode writes complete per-eye color and native guide resources for every sampled frame, while keeping the configured training crops.");
 	ImGui::Checkbox("Left eye", &settings.captureLeftEye);
-	ImGui::TextDisabled("Include the left-eye half of the stereo pair.");
 	ImGui::Checkbox("Right eye", &settings.captureRightEye);
-	ImGui::TextDisabled("Include the right-eye half of the stereo pair. Keeping both eyes enabled preserves stereo-pair validation.");
 	ImGui::SliderFloat("Capture rate (frames/s)", &settings.captureRateFps, 0.0f, 120.0f, "%.1f");
 	int cropSize = static_cast<int>(settings.cropSize);
 	if (ImGui::SliderInt("Crop size", &cropSize, static_cast<int>(kMinCropSize), static_cast<int>(kMaxCropSize)))
@@ -1269,7 +1291,6 @@ void OpenNRCaptureFeature::DrawSettings()
 	if (ImGui::InputInt("Burst frames", &burstFrames))
 		settings.burstFrames = std::clamp(burstFrames, 1, static_cast<int>(kMaxBurstFrames));
 	ImGui::InputText("Output directory", &settings.outputDirectory);
-	ImGui::TextDisabled("Each sequence contains typed tensors plus frames.jsonl metadata. Use a dedicated directory and audit the sequence before training.");
 	for (std::size_t cropIndex = 0; cropIndex < settings.cropCount && cropIndex < settings.crops.size(); ++cropIndex) {
 		auto& crop = settings.crops[cropIndex];
 		ImGui::PushID(static_cast<int>(cropIndex));

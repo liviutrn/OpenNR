@@ -93,5 +93,6 @@ namespace FoveatedRenderImpl::Ops
 	// Convergence, where rightUV differs from leftUV — don't collide on a
 	// left-eye-only hash and skip SL recreation.
 	uint64_t ComputeSubrectUVHash(const Util::Subrect::UVRegion& leftUV,
-		const Util::Subrect::UVRegion& rightUV, uint32_t mode);
+		const Util::Subrect::UVRegion& rightUV, uint32_t mode,
+		bool includeOrigins = true);
 }

@@ -13,7 +13,7 @@ namespace NeuralRendering
 	struct Tuning
 	{
 		float intensity = 1.70f;
-		float localToneStrength = 1.70f;
+		float localToneStrength = 1.00f;
 		float localStructureStrength = 1.70f;
 		float skinStructureStrength = -1.0f;
 		std::uint32_t style = 0;
@@ -27,6 +27,57 @@ namespace NeuralRendering
 		// 2 = 3x sequential Feature 18 evaluations. Each stage has separate
 		// resources/history; the renderer gates this away from cropped VR paths.
 		std::uint32_t multiPass = 0;
+		// Experimental temporal reuse: 0 = disabled, otherwise run a full
+		// Feature 18 pass every Nth frame and reproject the saved residual on the
+		// intervening frames. The renderer only enables this for native-size,
+		// single-pass, full-eye layouts with exact game motion vectors.
+		std::uint32_t temporalReuseCadence = 0;
+		float temporalReuseDepthThreshold = 0.05f;
+		float temporalReuseColorTolerance = 0.08f;
+	};
+
+	/**
+	 * Describes the exact resource extents presented to native Feature 18.
+	 *
+	 * Feature 18 has separate color, depth, motion-vector, and output regions.
+	 * Keeping those regions together prevents the direct carrier path from
+	 * inferring one guide's extent from another (or from the output size), which
+	 * is especially important after per-eye VR isolation and for low-resolution
+	 * motion vectors.
+	 */
+	struct Feature18GuideContract
+	{
+		std::uint32_t colorBaseX = 0;
+		std::uint32_t colorBaseY = 0;
+		std::uint32_t colorWidth = 0;
+		std::uint32_t colorHeight = 0;
+
+		std::uint32_t depthBaseX = 0;
+		std::uint32_t depthBaseY = 0;
+		std::uint32_t depthWidth = 0;
+		std::uint32_t depthHeight = 0;
+
+		std::uint32_t motionBaseX = 0;
+		std::uint32_t motionBaseY = 0;
+		std::uint32_t motionWidth = 0;
+		std::uint32_t motionHeight = 0;
+
+		std::uint32_t outputBaseX = 0;
+		std::uint32_t outputBaseY = 0;
+		std::uint32_t outputWidth = 0;
+		std::uint32_t outputHeight = 0;
+
+		float motionVectorScaleX = 1.0f;
+		float motionVectorScaleY = 1.0f;
+		bool motionVectorsLowResolution = false;
+
+		[[nodiscard]] bool IsValid() const
+		{
+			return colorWidth != 0 && colorHeight != 0 &&
+				depthWidth != 0 && depthHeight != 0 &&
+				motionWidth != 0 && motionHeight != 0 &&
+				outputWidth != 0 && outputHeight != 0;
+		}
 	};
 
 	enum class RuntimeStatus
@@ -47,9 +98,7 @@ namespace NeuralRendering
 		bool Initialize(ID3D12Device* device, const std::filesystem::path& dataPath = {});
 		bool Execute(ID3D12GraphicsCommandList* commandList, std::uint32_t slot,
 			ID3D12Resource* color, ID3D12Resource* depth, ID3D12Resource* motionVectors, ID3D12Resource* output,
-			std::uint32_t inputWidth, std::uint32_t inputHeight, std::uint32_t outputWidth, std::uint32_t outputHeight,
-			std::uint32_t guideWidth, std::uint32_t guideHeight,
-			float motionVectorScaleX, float motionVectorScaleY, const Tuning& tuning, bool reset);
+			const Feature18GuideContract& guide, const Tuning& tuning, bool reset);
 		void ResetFeature(std::uint32_t slot);
 		void ResetFeatures();
 		void Shutdown();
@@ -72,6 +121,7 @@ namespace NeuralRendering
 		std::uint32_t featureInputHeight_[kFeatureSlotCount]{};
 		std::uint32_t featureOutputWidth_[kFeatureSlotCount]{};
 		std::uint32_t featureOutputHeight_[kFeatureSlotCount]{};
+		bool featureMotionVectorsLowResolution_[kFeatureSlotCount]{};
 		ID3D12Device* device_ = nullptr;
 		RuntimeStatus status_ = RuntimeStatus::NotProbed;
 		std::filesystem::path path_;

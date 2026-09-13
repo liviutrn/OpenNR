@@ -559,6 +559,7 @@ public:
 		bool SkipConstraintWarning = false;                                                                                  // Skip popup when a setting change creates new constraints
 		bool RequireShiftToDock = true;                                                                                      // Require holding Shift to dock windows
 		bool UseResolutionFont = true;                                                                                       // When true, runtime font size scales with screen resolution; when persisted to theme files, FontSize is zeroed for backward compatibility
+		float VRFontScale = ThemeManager::Constants::DEFAULT_VR_FONT_SCALE;                                                  // VR-only logical font multiplier; helper panel size/distance is configured separately
 		ThemeSettings Theme;
 		std::string SelectedThemePreset = "";  // Currently selected theme preset (empty = custom/user theme)
 	};

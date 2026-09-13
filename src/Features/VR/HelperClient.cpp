@@ -19,7 +19,7 @@
 namespace
 {
 	namespace API = ImGuiVRHelperPluginAPI;
-	constexpr auto kClientName = "Open Shaders";
+	constexpr auto kClientName = "OpenNR";
 
 	// One VR feature singleton, so a single client of each kind is file-local.
 	API::Client g_client;  // focus-driven menu client
@@ -135,9 +135,6 @@ void VR::UpdateHelper()
 	g_client.ReconcileFocus(menu->IsEnabled);
 	const bool focused = g_client.HasFocus();
 
-	// Automatic VR text entry: any focused ImGui text field pops the VR keyboard.
-	g_client.PumpKeyboard();
-
 	if (focused) {
 		if (g_client.Fired(g_overlayOpenCombo))
 			menu->overlayVisible = true;
@@ -149,8 +146,44 @@ void VR::UpdateHelper()
 		g_client.Fired(g_overlayCloseCombo);
 	}
 
-	float clampedDeadzone = std::clamp(settings.mouseDeadzone, 0.0f, 1.0f);
-	g_client.PumpInput(focused, clampedDeadzone);
+	// The active PumpKeyboard/PumpInput calls must happen after the DX11 and
+	// Win32 ImGui backends have started this frame. OverlayRenderer performs that
+	// late pump immediately before ImGui::NewFrame(). Keep only the helper's
+	// inactive release/parking path here when there is no focused panel, because
+	// closed overlays do not start an ImGui frame at all.
+	if (!focused && !menu->IsEnabled)
+		g_client.PumpInput(false);
+}
+
+void VR::PumpHelperInput(bool panelReady)
+{
+	if (!g_client.IsConnected())
+		return;
+
+	auto* menu = globals::menu;
+	if (!menu || !panelReady) {
+		g_client.PumpInput(false);
+		return;
+	}
+
+	const bool active = menu->IsEnabled || g_client.HasFocus();
+	if (!active) {
+		g_client.PumpInput(false);
+		return;
+	}
+
+	// Automatic VR text entry and wand/controller input are ImGui-IO operations.
+	// They intentionally run after ImGui_ImplWin32_NewFrame() has injected the
+	// desktop cursor. The helper owns the cursor only while the current wand ray
+	// is actually on the VR panel; when it is off-panel, PumpInput(false) preserves
+	// the desktop mouse position and buttons instead of parking the cursor.
+	float pointerU = 0.0f;
+	float pointerV = 0.0f;
+	const bool pointerInPanel = g_client.Helper() &&
+		g_client.Helper()->GetPointer(g_client.Id(), &pointerU, &pointerV, nullptr);
+	g_client.PumpKeyboard();
+	const float clampedDeadzone = std::clamp(settings.mouseDeadzone, 0.0f, 1.0f);
+	g_client.PumpInput(pointerInPanel, clampedDeadzone);
 }
 
 void VR::RenderStatusHud()

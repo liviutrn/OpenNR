@@ -111,6 +111,27 @@
             "inherits": ["common", "vcpkg-linux-clangcl", "linux-clangcl"]
         },
         {
+            "name": "OpenNR-Package",
+            "description": "Release-oriented OpenNR 2.14.8 package with the verified upstream feature chain, temporal residual reuse, native OpenVR eye tracking, capture metadata, Skylighting shader validation, and lean archive validation.",
+            "cacheVariables": {
+                "ENABLE_SKYRIM_AE": "ON",
+                "ENABLE_SKYRIM_SE": "ON",
+                "ENABLE_SKYRIM_VR": "ON",
+                "SKSE_SUPPORT_XBYAK": "ON",
+                "AUTO_PLUGIN_DEPLOYMENT": "OFF",
+                "AIO_INCLUDE_NON_AUTOUPLOAD": "OFF",
+                "AIO_INCLUDE_OPENNR_CAPTURE": "ON",
+                "BUILD_OPENNR_CAPTURE": "ON",
+                "OPENNR_LEAN_PACKAGE": "ON",
+                "BUILD_SHADER_TESTS": "OFF",
+                "COMMONLIB_PREBUILT_MULTICONFIG": "ON",
+                "VCPKG_APPLOCAL_DEPS": "OFF",
+                "ZIP_TO_DIST": "OFF",
+                "AIO_ZIP_TO_DIST": "OFF"
+            },
+            "inherits": "skyrim-ninja"
+        },
+        {
             "name": "ALL",
             "cacheVariables": {
                 "ENABLE_SKYRIM_AE": "ON",
@@ -218,8 +239,8 @@
         },
         {
             "name": "Package",
-            "description": "Build preset to generate an AIO package (.7z when 7-Zip is found, else .zip) in <SRC>/dist folder, mostly for CI",
-            "configurePreset": "ALL",
+            "description": "Build preset to generate the validated OpenNR 2.14.8 AIO package in <SRC>/dist folder",
+            "configurePreset": "OpenNR-Package",
             "configuration": "Release",
             "targets": ["CommunityShaders", "Package-AIO-Manual"]
         },

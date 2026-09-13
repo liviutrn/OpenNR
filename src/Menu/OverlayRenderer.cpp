@@ -4,10 +4,13 @@
 #include "ThemeManager.h"
 
 #include <dxgi.h>
+#include <algorithm>
+#include <cmath>
 #include <imgui.h>
 #include <imgui_impl_dx11.h>
 #include <imgui_impl_win32.h>
 #include <imgui_internal.h>
+#include <vector>
 #include <winrt/base.h>
 
 #include "CSEditor/EditorWindow.h"
@@ -32,6 +35,84 @@
 
 namespace
 {
+	// The helper panel and the desktop swapchain intentionally use different
+	// coordinate spaces in VR. ImGui is laid out once against the helper's
+	// logical panel, so rendering that draw data directly to a smaller desktop
+	// swapchain can clip the right/bottom edges. Keep the original data for the
+	// helper and render a short-lived, letterboxed clone to the desktop mirror.
+	struct DesktopMirrorDrawData
+	{
+		ImDrawData drawData{};
+		std::vector<ImDrawList*> clonedLists;
+
+		~DesktopMirrorDrawData()
+		{
+			for (auto* list : clonedLists)
+				IM_DELETE(list);
+		}
+
+		bool Build(const ImDrawData& source, const ImVec2 targetSize)
+		{
+			if (!source.Valid || source.CmdLists.Size <= 0 || source.DisplaySize.x <= 0.0f || source.DisplaySize.y <= 0.0f ||
+				targetSize.x <= 0.0f || targetSize.y <= 0.0f)
+				return false;
+
+			const float scale = std::min(targetSize.x / source.DisplaySize.x, targetSize.y / source.DisplaySize.y);
+			if (!std::isfinite(scale) || scale <= 0.0f)
+				return false;
+
+			const ImVec2 scaledDisplaySize(source.DisplaySize.x * scale, source.DisplaySize.y * scale);
+			const ImVec2 offset((targetSize.x - scaledDisplaySize.x) * 0.5f, (targetSize.y - scaledDisplaySize.y) * 0.5f);
+
+			clonedLists.reserve(static_cast<size_t>(source.CmdLists.Size));
+			for (int listIndex = 0; listIndex < source.CmdLists.Size; ++listIndex) {
+				const auto* sourceList = source.CmdLists[listIndex];
+				if (!sourceList)
+					continue;
+
+				auto* clone = sourceList->CloneOutput();
+				if (!clone)
+					return false;
+
+				for (int vertexIndex = 0; vertexIndex < clone->VtxBuffer.Size; ++vertexIndex) {
+					auto& position = clone->VtxBuffer[vertexIndex].pos;
+					position.x = offset.x + (position.x - source.DisplayPos.x) * scale;
+					position.y = offset.y + (position.y - source.DisplayPos.y) * scale;
+				}
+
+				for (int commandIndex = 0; commandIndex < clone->CmdBuffer.Size; ++commandIndex) {
+					auto& clipRect = clone->CmdBuffer[commandIndex].ClipRect;
+					clipRect.x = offset.x + (clipRect.x - source.DisplayPos.x) * scale;
+					clipRect.y = offset.y + (clipRect.y - source.DisplayPos.y) * scale;
+					clipRect.z = offset.x + (clipRect.z - source.DisplayPos.x) * scale;
+					clipRect.w = offset.y + (clipRect.w - source.DisplayPos.y) * scale;
+				}
+
+				clonedLists.push_back(clone);
+			}
+
+			if (clonedLists.empty())
+				return false;
+
+			drawData = source;
+			drawData.CmdLists.clear();
+			drawData.CmdLists.reserve(static_cast<int>(clonedLists.size()));
+			for (auto* list : clonedLists)
+				drawData.CmdLists.push_back(list);
+			drawData.CmdListsCount = drawData.CmdLists.Size;
+			drawData.TotalIdxCount = 0;
+			drawData.TotalVtxCount = 0;
+			for (const auto* list : clonedLists) {
+				drawData.TotalIdxCount += list->IdxBuffer.Size;
+				drawData.TotalVtxCount += list->VtxBuffer.Size;
+			}
+			drawData.DisplayPos = ImVec2(0.0f, 0.0f);
+			drawData.DisplaySize = targetSize;
+			drawData.FramebufferScale = ImVec2(1.0f, 1.0f);
+			return true;
+		}
+	};
+
 	void DrawShaderCompilationFailures(uint64_t failed, const Menu::ThemeSettings& themeSettings)
 	{
 		if (failed) {
@@ -75,9 +156,6 @@ void OverlayRenderer::RenderOverlay(
 {
 	BackgroundBlur::RestoreRetainedBuffers();
 
-	// Apply the VR panel size before pumping input: PumpInput reads
-	// io.DisplaySize to map wand UV to pixels for this frame.
-	ApplyVRPanelDisplaySize();
 	processInputEventQueue();
 
 	if (ShouldSkipRendering()) {
@@ -192,15 +270,31 @@ void OverlayRenderer::InitializeImGuiFrame(Menu& menu)
 	// ImGui_ImplWin32_NewFrame() above overwrites DisplaySize from the window
 	// rect, so the panel size must be re-applied here before ImGui::NewFrame.
 	const bool vrPanel = ApplyVRPanelDisplaySize();
-	if (!vrPanel) {
+	if (vrPanel) {
 		DXGI_SWAP_CHAIN_DESC desc{};
-		globals::d3d::swapChain->GetDesc(&desc);
-		const float displayW = static_cast<float>(desc.BufferDesc.Width);
-		const float displayH = static_cast<float>(desc.BufferDesc.Height);
-		Util::UpdateImGuiInput(desc.OutputWindow, displayW, displayH);
+		if (globals::d3d::swapChain && SUCCEEDED(globals::d3d::swapChain->GetDesc(&desc))) {
+			const ImVec2 panelCanvas = ImGui::GetIO().DisplaySize;
+			const float displayW = static_cast<float>(desc.BufferDesc.Width);
+			const float displayH = static_cast<float>(desc.BufferDesc.Height);
+			Util::UpdateImGuiInputLetterboxed(
+				desc.OutputWindow,
+				panelCanvas.x,
+				panelCanvas.y,
+				displayW,
+				displayH);
+		}
+		// Must run after both platform backends and the desktop cursor mapping,
+		// but still before ImGui::NewFrame().
+		globals::features::vr.PumpHelperInput(true);
+	} else {
+		DXGI_SWAP_CHAIN_DESC desc{};
+		if (globals::d3d::swapChain && SUCCEEDED(globals::d3d::swapChain->GetDesc(&desc))) {
+			const float displayW = static_cast<float>(desc.BufferDesc.Width);
+			const float displayH = static_cast<float>(desc.BufferDesc.Height);
+			Util::UpdateImGuiInput(desc.OutputWindow, displayW, displayH);
+		}
+		globals::features::vr.PumpHelperInput(false);
 	}
-	// The wand drives the cursor in VR (PumpInput), so skip the desktop
-	// cursor injection above for the panel case, since it would fight the wand position.
 
 	ImGui::NewFrame();
 
@@ -415,8 +509,27 @@ void OverlayRenderer::FinalizeImGuiFrame()
 
 	ImGui::Render();
 
-	if (!BackgroundBlur::RenderDrawData(ImGui::GetDrawData()))
-		ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
+	ImDrawData* drawData = ImGui::GetDrawData();
+	bool renderedDesktopMirror = false;
+	if (globals::game::isVR && drawData && globals::d3d::swapChain) {
+		DXGI_SWAP_CHAIN_DESC swapChainDesc{};
+		if (SUCCEEDED(globals::d3d::swapChain->GetDesc(&swapChainDesc))) {
+			const ImVec2 desktopSize(
+				static_cast<float>(swapChainDesc.BufferDesc.Width),
+				static_cast<float>(swapChainDesc.BufferDesc.Height));
+			const bool dimensionsDiffer = std::abs(desktopSize.x - drawData->DisplaySize.x) > 0.5f ||
+				std::abs(desktopSize.y - drawData->DisplaySize.y) > 0.5f;
+			if (dimensionsDiffer) {
+				DesktopMirrorDrawData mirror;
+				if (mirror.Build(*drawData, desktopSize)) {
+					ImGui_ImplDX11_RenderDrawData(&mirror.drawData);
+					renderedDesktopMirror = true;
+				}
+			}
+		}
+	}
+	if (!renderedDesktopMirror && !BackgroundBlur::RenderDrawData(drawData))
+		ImGui_ImplDX11_RenderDrawData(drawData);
 
 	// Render the same draw data into the ImGuiVRHelper's panel RTV so the
 	// helper can composite our menu as a 3D quad in the HMD. The helper owns

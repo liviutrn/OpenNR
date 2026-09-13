@@ -28,7 +28,7 @@ option(
 project(
     # gersemi: ignore
     CommunityShaders
-	VERSION 2.14.1
+	VERSION 2.14.8
     LANGUAGES CXX
 )
 
@@ -83,6 +83,11 @@ option(
     ON
 )
 option(
+    OPENNR_LEAN_PACKAGE
+    "Strip optional debug/development payloads from the OpenNR archive (RenderDoc, OpenXR layer, and PDB)."
+    OFF
+)
+option(
     SKIP_RUNTIME_DOWNLOADS
     "Skip redistributable runtime downloads for DLL-only development builds."
     OFF
@@ -95,6 +100,7 @@ message("\tShader tests: ${BUILD_SHADER_TESTS}")
 message("\tAIO include non-autoupload features: ${AIO_INCLUDE_NON_AUTOUPLOAD}")
 message("\tAIO include OpenNR Capture: ${AIO_INCLUDE_OPENNR_CAPTURE}")
 message("\tBuild OpenNR Capture: ${BUILD_OPENNR_CAPTURE}")
+message("\tOpenNR lean package: ${OPENNR_LEAN_PACKAGE}")
 message("\tSkip runtime downloads: ${SKIP_RUNTIME_DOWNLOADS}")
 message("\tEffects11: ${ENABLE_EFFECTS11}")
 
@@ -112,6 +118,14 @@ if(GIT_FOUND)
     )
 else()
     set(GIT_DESCRIBE "unknown")
+endif()
+# A worktree can legitimately be based on an older historical tag while the
+# package semantic version has been advanced for this fork. Do not expose that
+# old tag as the current OpenNR build identity; retain matching commit/dirty
+# suffixes, but fall back to the package version when the tag lineage differs.
+if(NOT GIT_DESCRIBE MATCHES "^v${PROJECT_VERSION}($|-)")
+    message(STATUS "Git describe '${GIT_DESCRIBE}' does not match OpenNR ${PROJECT_VERSION}; using v${PROJECT_VERSION} for user-facing build metadata")
+    set(GIT_DESCRIBE "v${PROJECT_VERSION}")
 endif()
 message("\tBuild version: ${GIT_DESCRIBE}")
 
@@ -630,6 +644,14 @@ foreach(_fpath IN LISTS AIO_EXCLUDED_FEATURE_PATHS)
         list(APPEND AIO_EXCLUDED_STAGE_RELPATHS "${_nf}")
     endforeach()
 endforeach()
+if(OPENNR_LEAN_PACKAGE)
+    list(APPEND AIO_EXCLUDED_STAGE_RELPATHS
+        "OpenXR"
+        "Renderdoc"
+        "Shaders/Features/RenderDoc.ini"
+        "SKSE/Plugins/CommunityShaders.pdb"
+    )
+endif()
 list(REMOVE_DUPLICATES AIO_EXCLUDED_STAGE_RELPATHS)
 
 if(_aio_out_count GREATER 0)
@@ -1344,14 +1366,13 @@ if(AIO_ZIP_TO_DIST)
         )
     endif()
 
-    # Create a stamp-producing custom command for the AIO archive so CMake
-    # only rebuilds the archive when its inputs change. The archive filename
-    # keeps the UTC timestamp as before, but the command writes a stable
-    # stamp file that CMake can track as OUTPUT.
-    if(SEVENZ_EXECUTABLE)
-        set(TARGET_AIO_ZIP "${PROJECT_NAME}_AIO-${UTC_NOW}.7z")
-    else()
-        set(TARGET_AIO_ZIP "${PROJECT_NAME}_AIO-${UTC_NOW}.zip")
+	# Create a stamp-producing custom command for the AIO archive so CMake
+	# only rebuilds the archive when its inputs change. Release AIO archives
+	# use the exact user-facing OpenNR version as their stable filename.
+	if(SEVENZ_EXECUTABLE)
+		set(TARGET_AIO_ZIP "OpenNR ${PROJECT_VERSION}.7z")
+	else()
+		set(TARGET_AIO_ZIP "OpenNR ${PROJECT_VERSION}.zip")
     endif()
     set(AIO_ARCHIVE "${CMAKE_SOURCE_DIR}/dist/${TARGET_AIO_ZIP}")
     set(AIO_ZIP_STAMP "${CMAKE_CURRENT_BINARY_DIR}/aio_package.stamp")
@@ -1372,7 +1393,7 @@ if(AIO_ZIP_TO_DIST)
         "${CMAKE_SOURCE_DIR}/dist"
     )
     set(_aio_archive_source_dir "${AIO_DIR}")
-    if(AIO_EXCLUDED_FEATURE_NAMES)
+    if(AIO_EXCLUDED_FEATURE_NAMES OR OPENNR_LEAN_PACKAGE)
         list(
             APPEND _aio_zip_cmds
             COMMAND
@@ -1470,8 +1491,12 @@ endif()
 # # Manual packaging targets (Package-XXX)
 # #######################################################################################################################
 
-set(DIST_PATH "${CMAKE_SOURCE_DIR}/dist")
-file(MAKE_DIRECTORY "${CMAKE_SOURCE_DIR}/dist")
+set(DIST_PATH
+    "${CMAKE_SOURCE_DIR}/dist"
+    CACHE PATH
+    "Directory for locally generated OpenNR package archives"
+)
+file(MAKE_DIRECTORY "${DIST_PATH}")
 
 set(CORE_PACKAGE "${DIST_PATH}/${PROJECT_NAME}-${UTC_NOW}.7z")
 
@@ -1559,14 +1584,62 @@ add_custom_command(
 )
 add_custom_target("AIO" DEPENDS ${AIO_DIR}/SKSE/Plugins/${PROJECT_NAME}.dll)
 
+# OpenNR package gates. The source gate prevents a release build from silently
+# losing the ordinary-menu safety path, the branded identity, or the documented
+# F6 Neural Rendering toggle. The AIO gate validates the actual staged payload,
+# including the native Feature 18 carrier and temporal-reuse shader.
+add_custom_target(
+    Validate-OpenNR-Source
+    COMMAND
+        ${CMAKE_COMMAND}
+        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
+        -P
+        "${CMAKE_SOURCE_DIR}/cmake/ValidateOpenNRSourceContracts.cmake"
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+    COMMENT "Validating OpenNR runtime source contracts"
+    VERBATIM
+)
+# Make the source-contract check part of every plugin build, not only the
+# AIO/package targets.  A direct DLL build must not be able to bypass the
+# release identity, Feature 18, menu-safety, or runtime-shader contracts.
+add_dependencies(${PROJECT_NAME} Validate-OpenNR-Source)
+
+set(_opennr_expect_capture OFF)
+if(BUILD_OPENNR_CAPTURE AND AIO_INCLUDE_OPENNR_CAPTURE)
+    set(_opennr_expect_capture ON)
+endif()
+set(_opennr_expect_lean OFF)
+if(OPENNR_LEAN_PACKAGE)
+    set(_opennr_expect_lean ON)
+endif()
+# This worktree is the isolated native-OpenVR eye-tracking package. The
+# provider is compiled into CommunityShaders.dll, and its readable manifest is
+# required in both the complete AIO tree and the exact release stage.
+set(_opennr_expect_native_eye_tracking ON)
+add_custom_target(
+    Validate-OpenNR-AIO
+    COMMAND
+        ${CMAKE_COMMAND}
+        -DPACKAGE_ROOT=${AIO_DIR}
+        -DEXPECT_OPENNR_CAPTURE=${_opennr_expect_capture}
+        -DEXPECT_NATIVE_EYE_TRACKING=${_opennr_expect_native_eye_tracking}
+        -DEXPECT_OPENNR_VERSION=${PROJECT_VERSION}
+        -P
+        "${CMAKE_SOURCE_DIR}/cmake/ValidateOpenNRPackage.cmake"
+    DEPENDS AIO
+    COMMENT "Validating the complete OpenNR AIO package manifest"
+    VERBATIM
+)
+add_dependencies(Validate-OpenNR-AIO Validate-OpenNR-Source)
+
 # Manual AIO package target. Strips non-autoupload features at archive
 # time (mirroring AIO_ZIP_PACKAGE) so the manual path produces the same
 # release-ready bundle as the automated path. Prefers a real 7z binary;
 # falls back to CMake's built-in tar-as-zip when 7z isn't installed.
 if(SEVENZ_EXECUTABLE)
-    set(AIO_PACKAGE "${DIST_PATH}/${PROJECT_NAME}_AIO-${UTC_NOW}.7z")
+	set(AIO_PACKAGE "${DIST_PATH}/OpenNR ${PROJECT_VERSION}.7z")
 else()
-    set(AIO_PACKAGE "${DIST_PATH}/${PROJECT_NAME}_AIO-${UTC_NOW}.zip")
+	set(AIO_PACKAGE "${DIST_PATH}/OpenNR ${PROJECT_VERSION}.zip")
 endif()
 set(AIO_MANUAL_STAGE_DIR "${CMAKE_CURRENT_BINARY_DIR}/aio_manual_stage")
 set(_aio_manual_cmds
@@ -1583,7 +1656,7 @@ set(_aio_manual_cmds
     ${AIO_DIR}
 )
 set(_aio_manual_source_dir "${AIO_DIR}")
-if(AIO_EXCLUDED_FEATURE_NAMES)
+if(AIO_EXCLUDED_FEATURE_NAMES OR OPENNR_LEAN_PACKAGE)
     list(
         APPEND _aio_manual_cmds
         COMMAND
@@ -1612,6 +1685,21 @@ if(AIO_EXCLUDED_FEATURE_NAMES)
     endforeach()
     set(_aio_manual_source_dir "${AIO_MANUAL_STAGE_DIR}")
 endif()
+# Validate the exact directory that will be archived, after optional feature and
+# lean-payload exclusions. This closes the old gap where the AIO directory could
+# pass validation while the release-ready manual stage had not been checked.
+list(
+    APPEND _aio_manual_cmds
+    COMMAND
+    ${CMAKE_COMMAND}
+    "-DPACKAGE_ROOT=${_aio_manual_source_dir}"
+    "-DEXPECT_OPENNR_CAPTURE=${_opennr_expect_capture}"
+    "-DEXPECT_NATIVE_EYE_TRACKING=${_opennr_expect_native_eye_tracking}"
+    "-DEXPECT_OPENNR_VERSION=${PROJECT_VERSION}"
+    "-DEXPECT_LEAN_PACKAGE=${_opennr_expect_lean}"
+    -P
+    "${CMAKE_SOURCE_DIR}/cmake/ValidateOpenNRPackage.cmake"
+)
 if(SEVENZ_EXECUTABLE)
     list(
         APPEND _aio_manual_cmds
@@ -1659,6 +1747,7 @@ add_custom_command(
     COMMENT "Creating AIO zip package (manual)"
 )
 add_custom_target("Package-AIO-Manual" DEPENDS ${AIO_PACKAGE})
+add_dependencies("Package-AIO-Manual" Validate-OpenNR-AIO)
 
 # #######################################################################################################################
 # # Shader Unit Tests

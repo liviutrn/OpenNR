@@ -815,19 +815,25 @@ namespace FoveatedRenderImpl::Ops
 	static_assert(sizeof(BlendCB) == 64);
 
 	uint64_t ComputeSubrectUVHash(const Util::Subrect::UVRegion& leftUV,
-		const Util::Subrect::UVRegion& rightUV, uint32_t mode)
+		const Util::Subrect::UVRegion& rightUV, uint32_t mode, bool includeOrigins)
 	{
 		uint64_t h = 0;
 		auto mix = [&](uint64_t v) { h ^= v + 0x9e3779b97f4a7c15ULL + (h << 12) + (h >> 4); };
 		auto mixUV = [&](const Util::Subrect::UVRegion& uv) {
-			mix(std::hash<float>{}(uv.x));
-			mix(std::hash<float>{}(uv.y));
+			if (includeOrigins) {
+				mix(std::hash<float>{}(uv.x));
+				mix(std::hash<float>{}(uv.y));
+			}
 			mix(std::hash<float>{}(uv.w));
 			mix(std::hash<float>{}(uv.h));
 		};
 		mixUV(leftUV);
 		mixUV(rightUV);
 		mix(std::hash<uint32_t>{}(mode));
+		// Keep the static and moving-crop contracts distinct even when their
+		// dimensions happen to match. Dynamic gaze must not silently inherit
+		// resources configured for a persisted static origin.
+		mix(std::hash<bool>{}(includeOrigins));
 		return h;
 	}
 

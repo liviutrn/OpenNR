@@ -5,6 +5,7 @@
 #include "Features/Upscaling.h"
 #include "Features/Upscaling/FoveatedRender/Bridge.h"
 #include "Features/Upscaling/FoveatedRender/Core.h"
+#include "Features/Upscaling/NativeOpenVRGaze.h"
 #include "Features/Upscaling/PerfMode.h"
 #include "Globals.h"
 #include "GpuPass.h"
@@ -145,6 +146,9 @@ namespace NeuralRendering
 				// Keep the two experimental stage-order features mutually exclusive:
 				// pre-upscale already adds a second NR route before the normal DLSS pass.
 				settings.neuralRenderingPreUpscale == 0 ? std::min(settings.neuralRenderingMultiPass, 2u) : 0u,
+				settings.neuralRenderingTemporalReuseCadence,
+				settings.neuralRenderingTemporalDepthThreshold,
+				settings.neuralRenderingTemporalColorTolerance,
 			};
 		}
 
@@ -383,14 +387,19 @@ namespace NeuralRendering
 		context->OMGetRenderTargets(D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT, savedRTVs, &savedDSV);
 		context->OMSetRenderTargets(0, nullptr, nullptr);
 
+		// Pre-upscale and the normal before-UI route share the renderer object but
+		// are different Feature 18 stages. Keep the temporal state on the normal
+		// route until the state is made stage-aware; otherwise equal-sized stages
+		// could reuse a residual from the wrong point in the frame.
+		Tuning tuning = GetTuning(foveated.settings);
+		tuning.temporalReuseCadence = 0;
 		bool succeeded = false;
 		if (!globals::game::isVR) {
 			CS_GPU_PASS("NeuralRendering::FlatPreUpscale");
 			succeeded = Renderer::Instance().Apply(globals::d3d::device, context, 0,
 				main.texture, depth.texture, depth.depthSRV, motionVector.texture,
 				motionDesc.Width, motionDesc.Height, colorDesc.Width, colorDesc.Height,
-				static_cast<float>(motionDesc.Width), static_cast<float>(motionDesc.Height),
-				GetTuning(foveated.settings));
+				static_cast<float>(motionDesc.Width), static_cast<float>(motionDesc.Height), tuning);
 		} else {
 			if (!FoveatedRenderImpl::Bridge::IsRouteActive()) {
 				LogPreUpscaleBlocked("VR foveated route is not active");
@@ -446,8 +455,7 @@ namespace NeuralRendering
 					} else {
 						CS_GPU_PASS("NeuralRendering::StereoPreUpscale");
 						succeeded = Renderer::Instance().ApplyStereo(globals::d3d::device, context,
-							main.texture, inputs, eyeWidth, eyeHeight, eyeWidth, eyeHeight,
-							GetTuning(foveated.settings));
+						main.texture, inputs, eyeWidth, eyeHeight, eyeWidth, eyeHeight, tuning);
 					}
 				}
 			}
@@ -499,23 +507,44 @@ namespace NeuralRendering
 		if (lastAppliedFrame == frame || (guideFrame != frame && !(frame > 0 && guideFrame == frame - 1)))
 			return false;
 
-		const auto& leftUV = foveated.subrectController.GetUV();
-		const auto& rightUV = foveated.subrectController.GetRightEyeUV();
-		const bool fullEye = leftUV.IsFullEye() && rightUV.IsFullEye();
 		auto* renderer = globals::game::renderer;
 		auto* context = globals::d3d::context;
-		const auto* depthLeft = fullEye ? FoveatedRenderImpl::Core::vrIntermediateDepth[0].get() : FoveatedRenderImpl::Core::vrSubrectDepth[0].get();
-		const auto* depthRight = fullEye ? FoveatedRenderImpl::Core::vrIntermediateDepth[1].get() : FoveatedRenderImpl::Core::vrSubrectDepth[1].get();
-		const auto* motionLeft = fullEye ? FoveatedRenderImpl::Core::vrIntermediateMotionVectors[0].get() : FoveatedRenderImpl::Core::vrSubrectMotionVectors[0].get();
-		const auto* motionRight = fullEye ? FoveatedRenderImpl::Core::vrIntermediateMotionVectors[1].get() : FoveatedRenderImpl::Core::vrSubrectMotionVectors[1].get();
-		if (!renderer || !context || !globals::d3d::device || !depthLeft || !depthRight || !motionLeft || !motionRight)
+		if (!renderer || !context || !globals::d3d::device)
 			return false;
 		auto& total = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kTOTAL];
 		if (!total.texture)
 			return false;
-
 		D3D11_TEXTURE2D_DESC totalDesc{};
 		total.texture->GetDesc(&totalDesc);
+
+		const FoveatedRenderImpl::NativeOpenVRGaze::Config gazeConfig{
+			.enabled = foveated.settings.neuralRenderingEyeTrackedFoveation,
+			.smoothingMs = foveated.settings.neuralRenderingEyeTrackedSmoothingMs,
+			.quantizationPixels = foveated.settings.neuralRenderingEyeTrackedQuantizationPixels,
+		};
+		const bool gazeRequested = gazeConfig.enabled && foveated.settings.neuralRenderingEnabled &&
+			foveated.GetDlssMode() == FoveatedRender::DlssMode::kDefault &&
+			upscaling.GetUpscaleMethod() == Upscaling::UpscaleMethod::kDLSS;
+		const auto& staticLeftUV = foveated.subrectController.GetUV();
+		const auto& staticRightUV = foveated.subrectController.GetRightEyeUV();
+		const auto gaze = FoveatedRenderImpl::NativeOpenVRGaze::ResolveForFrame(
+			gazeConfig, staticLeftUV, staticRightUV, totalDesc.Width / 2, totalDesc.Height, frame,
+			gazeRequested && FoveatedRenderImpl::NativeOpenVRGaze::IsDynamicGazeAllowed());
+		// If the DLSS route did not publish this frame's guides yet, a moving crop
+		// would make the previous frame's guides address the wrong source region.
+		// Keep the established one-frame static tolerance, but fail closed for the
+		// dynamic experiment until the current guides are available.
+		if (gaze.dynamic && guideFrame != frame)
+			return false;
+		const auto& leftUV = gaze.leftUV;
+		const auto& rightUV = gaze.rightUV;
+		const bool fullEye = leftUV.IsFullEye() && rightUV.IsFullEye();
+		const auto* depthLeft = fullEye ? FoveatedRenderImpl::Core::vrIntermediateDepth[0].get() : FoveatedRenderImpl::Core::vrSubrectDepth[0].get();
+		const auto* depthRight = fullEye ? FoveatedRenderImpl::Core::vrIntermediateDepth[1].get() : FoveatedRenderImpl::Core::vrSubrectDepth[1].get();
+		const auto* motionLeft = fullEye ? FoveatedRenderImpl::Core::vrIntermediateMotionVectors[0].get() : FoveatedRenderImpl::Core::vrSubrectMotionVectors[0].get();
+		const auto* motionRight = fullEye ? FoveatedRenderImpl::Core::vrIntermediateMotionVectors[1].get() : FoveatedRenderImpl::Core::vrSubrectMotionVectors[1].get();
+		if (!depthLeft || !depthRight || !motionLeft || !motionRight)
+			return false;
 		if (leftUV.w != rightUV.w || leftUV.h != rightUV.h)
 			return false;
 		const std::uint32_t eyeWidth = totalDesc.Width / 2;
@@ -580,7 +609,12 @@ namespace NeuralRendering
 		if (!fullEye)
 			// The cascade relies on full-eye dimensions and isolated stage history;
 			// keep cropped/foveated regions on the established single-pass route.
+		{
 			tuning.multiPass = 0;
+			// Temporal residuals are native full-eye state. A crop has a different
+			// coordinate origin/extent and must never consume or update that state.
+			tuning.temporalReuseCadence = 0;
+		}
 		const bool succeeded = Renderer::Instance().ApplyStereo(globals::d3d::device, context,
 			total.texture, inputs, guideWidth, guideHeight,
 			outWidth, outHeight, tuning, destination, destinationUAV, wantsEdgeBlend && destinationUAV != nullptr);
@@ -591,9 +625,9 @@ namespace NeuralRendering
 			if (!writebackLogged) {
 				const char* path = stagedBlendTarget ? "staged-uav" :
 					(destinationUAV ? "direct-uav" : "direct-copy");
-				logger::info("[DLSSNR] LDR output written before UI composite size={}x{} edgeBlend={} mode={} path={} batchedAsync=true",
+				logger::info("[DLSSNR] LDR output written before UI composite size={}x{} edgeBlend={} mode={} path={} gazeCrop={} batchedAsync=true",
 					outWidth, outHeight, wantsEdgeBlend && destinationUAV != nullptr,
-					FoveatedRender::SubrectBlendModeName(blendMode), path);
+					FoveatedRender::SubrectBlendModeName(blendMode), path, gaze.dynamic);
 				writebackLogged = true;
 			}
 		}
@@ -608,6 +642,7 @@ namespace NeuralRendering
 	void Reset()
 	{
 		Renderer::Instance().Reset();
+		FoveatedRenderImpl::NativeOpenVRGaze::Reset();
 		historyResetRequested.store(false, std::memory_order_release);
 		temporalSuppressed = false;
 		color[0].reset();

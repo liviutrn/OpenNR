@@ -983,6 +983,29 @@ void SettingsTabRenderer::RenderFontsTab()
 		float effectiveNow = ThemeManager::ResolveFontSize(*menuInstance);
 		ImGui::Text(T("menu.settings.effective_size", "Effective size: %.0f px"), std::round(effectiveNow));
 
+		if (globals::game::isVR) {
+			SeparatorTextWithFont(T("menu.settings.vr_readability", "VR Readability"), Menu::FontRole::Subheading);
+			float& vrFontScale = menuInstance->GetSettings().VRFontScale;
+			if (ImGui::SliderFloat(
+				T("menu.settings.vr_readability_scale", "VR readability scale"),
+				&vrFontScale,
+				ThemeManager::Constants::MIN_VR_FONT_SCALE,
+				ThemeManager::Constants::MAX_VR_FONT_SCALE,
+				"%.2fx")) {
+				vrFontScale = std::clamp(
+					vrFontScale,
+					ThemeManager::Constants::MIN_VR_FONT_SCALE,
+					ThemeManager::Constants::MAX_VR_FONT_SCALE);
+				menuInstance->pendingFontReload = true;
+			}
+			if (auto _tt = Util::HoverTooltipWrapper()) {
+				ImGui::TextUnformatted(T("menu.settings.vr_readability_scale_tooltip",
+					"Scales the logical VR font atlas for easier reading. This changes text and UI spacing inside the panel; it does not change the helper panel's physical size or distance."));
+			}
+			ImGui::TextDisabled("%s", T("menu.settings.vr_readability_helper_note",
+				"Physical VR panel size and distance are controlled by ImGuiVRHelper settings."));
+		}
+
 		static Util::Fonts::Catalog fontCatalog;
 		static bool catalogInitialized = false;
 		auto refreshFontCatalog = [&](bool forceRescan = false) {

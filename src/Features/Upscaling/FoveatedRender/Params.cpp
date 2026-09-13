@@ -4,6 +4,7 @@
 #include "../../../Utils/Game.h"
 #include "../../Upscaling.h"
 #include "../FoveatedRender.h"
+#include "../NativeOpenVRGaze.h"
 #include "../PerfMode.h"
 
 namespace FoveatedRenderImpl
@@ -55,13 +56,29 @@ namespace FoveatedRenderImpl
 		// UV (= left-eye in stereo mode); GetRightEyeUV() returns the
 		// mirrored right-eye UV.
 		auto& enhancer = globals::features::upscaling.foveatedRender;
+		auto& upscaling = globals::features::upscaling;
 		p.mode = enhancer.GetDlssMode();
 		p.leftUV = enhancer.subrectController.GetUV();
 		p.rightUV = enhancer.subrectController.GetRightEyeUV();
+		const NativeOpenVRGaze::Config gazeConfig{
+			.enabled = enhancer.settings.neuralRenderingEyeTrackedFoveation,
+			.smoothingMs = enhancer.settings.neuralRenderingEyeTrackedSmoothingMs,
+			.quantizationPixels = enhancer.settings.neuralRenderingEyeTrackedQuantizationPixels,
+		};
+		const bool gazeRequested = gazeConfig.enabled && enhancer.settings.neuralRenderingEnabled &&
+			p.mode == FoveatedRender::DlssMode::kDefault &&
+			upscaling.GetUpscaleMethod() == Upscaling::UpscaleMethod::kDLSS;
+		const std::uint32_t frame = globals::state ? globals::state->frameCount : 0;
+		const auto gaze = NativeOpenVRGaze::ResolveForFrame(
+			gazeConfig, p.leftUV, p.rightUV, p.eyeWidthIn, p.eyeHeightIn, frame,
+			gazeRequested && NativeOpenVRGaze::IsDynamicGazeAllowed());
+		p.leftUV = gaze.leftUV;
+		p.rightUV = gaze.rightUV;
+		p.eyeTrackedGazeActive = gaze.dynamic;
+		p.eyeTrackedGazeReset = gaze.historyReset;
 		p.isFullEye = p.leftUV.IsFullEye() && p.rightUV.IsFullEye();
 
 		// Jitter — ConfigureUpscaling already computed correct DLSS jitter.
-		auto& upscaling = globals::features::upscaling;
 		p.jitterX = upscaling.jitter.x;
 		p.jitterY = upscaling.jitter.y;
 

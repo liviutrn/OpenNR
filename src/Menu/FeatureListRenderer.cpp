@@ -450,11 +450,17 @@ std::vector<FeatureListRenderer::MenuFuncInfo> FeatureListRenderer::BuildMenuLis
 		BuiltInMenu{ T("menu.features.general", "General"), "General", drawGeneralSettings },
 		BuiltInMenu{ T("menu.features.performance", "Performance"), "Performance", []() { PerformanceRenderer::Render(); } },
 		BuiltInMenu{ T("menu.features.advanced", "Advanced"), "Advanced", drawAdvancedSettings },
-		BuiltInMenu{ T("menu.features.dlssnr", "Neural Rendering"), "DLSSNR", []() { globals::features::upscaling.DrawDLSSNRPage(); } }
+		// Neural Rendering and Upscaling are first-class peer pages. Keep them
+		// together and visually separated from the general feature list below.
+		BuiltInMenu{ T("menu.features.dlssnr", "Neural Rendering"), "DLSSNR", []() { globals::features::upscaling.DrawDLSSNRPage(); }, true },
+		BuiltInMenu{ T("menu.features.upscaling", "Upscaling"), "Upscaling", []() { globals::features::upscaling.DrawSettings(); } }
 	};
 
 	const auto isFavorite = [](Feature* feature) {
-		return feature != &globals::features::csEditor && globals::state->IsFeatureFavorite(feature->GetShortName());
+		// Upscaling has a dedicated peer page above and must not be duplicated in
+		// Favorites or the alphabetical feature list.
+		return feature != &globals::features::csEditor && feature != &globals::features::upscaling &&
+		       globals::state->IsFeatureFavorite(feature->GetShortName());
 	};
 
 	menuList.push_back(CategoryHeader{ "Utility" });
@@ -475,11 +481,13 @@ std::vector<FeatureListRenderer::MenuFuncInfo> FeatureListRenderer::BuildMenuLis
 	}
 
 	const auto featureCount = std::ranges::count_if(sortedFeatureList, [&isFavorite](Feature* feat) {
-		return feat->IsInMenu() && feat->loaded && feat->GetCategory() != FeatureCategories::kUtility && !isFavorite(feat);
+		return feat->IsInMenu() && feat->loaded && feat != &globals::features::upscaling &&
+		       feat->GetCategory() != FeatureCategories::kUtility && !isFavorite(feat);
 	});
 	menuList.push_back(CategoryHeader{ "Features", static_cast<int>(featureCount) });
 	for (Feature* feat : sortedFeatureList) {
-		if (feat->IsInMenu() && feat->loaded && feat->GetCategory() != FeatureCategories::kUtility && !isFavorite(feat))
+		if (feat->IsInMenu() && feat->loaded && feat != &globals::features::upscaling &&
+			feat->GetCategory() != FeatureCategories::kUtility && !isFavorite(feat))
 			menuList.push_back(feat);
 	}
 
@@ -581,6 +589,11 @@ void FeatureListRenderer::RenderRightColumn(
 void FeatureListRenderer::ListMenuVisitor::operator()(const BuiltInMenu& menu)
 {
 	MenuFonts::FontRoleGuard fontGuard(Menu::FontRole::Subheading);
+	if (menu.separatorBefore) {
+		ImGui::Spacing();
+		ImGui::Separator();
+		ImGui::Spacing();
+	}
 
 	// Use error color for Feature Issues menu item
 	bool isFeatureIssues = (menu.name == T("menu.features.feature_issues", "Feature Issues"));

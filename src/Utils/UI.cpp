@@ -93,6 +93,58 @@ namespace Util
 		}
 	}
 
+	void UpdateImGuiInputLetterboxed(
+		HWND hwnd,
+		float canvasWidth,
+		float canvasHeight,
+		float targetWidth,
+		float targetHeight)
+	{
+		auto& io = ImGui::GetIO();
+		io.DisplaySize = ImVec2(canvasWidth, canvasHeight);
+		io.DisplayFramebufferScale = ImVec2(1.0f, 1.0f);
+
+		RECT rect{};
+		if (!hwnd || !GetClientRect(hwnd, &rect) || rect.right <= 0 || rect.bottom <= 0 ||
+			canvasWidth <= 0.0f || canvasHeight <= 0.0f || targetWidth <= 0.0f || targetHeight <= 0.0f) {
+			io.AddMousePosEvent(-FLT_MAX, -FLT_MAX);
+			return;
+		}
+
+		POINT cursorPos{};
+		if (!GetCursorPos(&cursorPos) || !ScreenToClient(hwnd, &cursorPos)) {
+			io.AddMousePosEvent(-FLT_MAX, -FLT_MAX);
+			return;
+		}
+
+		// Convert client pixels to the actual swap-chain target first. This
+		// preserves the existing DPI/window scaling behavior even when the
+		// client rectangle and the swap-chain buffer have different sizes.
+		const float targetX = static_cast<float>(cursorPos.x) * targetWidth / static_cast<float>(rect.right);
+		const float targetY = static_cast<float>(cursorPos.y) * targetHeight / static_cast<float>(rect.bottom);
+
+		// DesktopMirrorDrawData uses this same centered uniform scale. Invert it
+		// so a click lands on the same logical widget that is visible on screen.
+		const float scale = std::min(targetWidth / canvasWidth, targetHeight / canvasHeight);
+		if (!std::isfinite(scale) || scale <= 0.0f) {
+			io.AddMousePosEvent(-FLT_MAX, -FLT_MAX);
+			return;
+		}
+
+		const float contentWidth = canvasWidth * scale;
+		const float contentHeight = canvasHeight * scale;
+		const float offsetX = (targetWidth - contentWidth) * 0.5f;
+		const float offsetY = (targetHeight - contentHeight) * 0.5f;
+		if (targetX < offsetX || targetY < offsetY || targetX >= offsetX + contentWidth || targetY >= offsetY + contentHeight) {
+			// The cursor is in the letterbox bars; do not let an old ImGui
+			// position keep a widget hovered or receive a click.
+			io.AddMousePosEvent(-FLT_MAX, -FLT_MAX);
+			return;
+		}
+
+		io.AddMousePosEvent((targetX - offsetX) / scale, (targetY - offsetY) / scale);
+	}
+
 	HoverTooltipWrapper::HoverTooltipWrapper() :
 		previousFont(nullptr)
 	{

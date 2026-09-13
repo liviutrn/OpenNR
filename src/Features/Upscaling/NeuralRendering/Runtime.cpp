@@ -285,12 +285,15 @@ namespace NeuralRendering
 
 	bool Runtime::Execute(ID3D12GraphicsCommandList* commandList, std::uint32_t slot,
 		ID3D12Resource* color, ID3D12Resource* depth, ID3D12Resource* motionVectors, ID3D12Resource* output,
-		std::uint32_t inputWidth, std::uint32_t inputHeight, std::uint32_t outputWidth, std::uint32_t outputHeight,
-		std::uint32_t guideWidth, std::uint32_t guideHeight,
-		float motionVectorScaleX, float motionVectorScaleY, const Tuning& tuning, bool reset)
+		const Feature18GuideContract& guide, const Tuning& tuning, bool reset)
 	{
-		if (status_ != RuntimeStatus::Initialized || !commandList || slot >= kFeatureSlotCount || !color || !depth || !motionVectors || !output)
+		if (status_ != RuntimeStatus::Initialized || !commandList || slot >= kFeatureSlotCount || !color || !depth || !motionVectors || !output || !guide.IsValid())
 			return false;
+
+		const auto inputWidth = guide.colorWidth;
+		const auto inputHeight = guide.colorHeight;
+		const auto outputWidth = guide.outputWidth;
+		const auto outputHeight = guide.outputHeight;
 		auto* parameters = static_cast<NVSDK_NGX_Parameter*>(parameters_);
 		auto create = reinterpret_cast<CreateFeature>(GetProcAddress(static_cast<HMODULE>(module_), "NVSDK_NGX_D3D12_CreateFeature"));
 		auto evaluate = reinterpret_cast<EvaluateFeature>(GetProcAddress(static_cast<HMODULE>(module_), "NVSDK_NGX_D3D12_EvaluateFeature"));
@@ -300,7 +303,8 @@ namespace NeuralRendering
 			return false;
 
 		const bool dimensionsChanged = featureInputWidth_[slot] != inputWidth || featureInputHeight_[slot] != inputHeight ||
-			featureOutputWidth_[slot] != outputWidth || featureOutputHeight_[slot] != outputHeight;
+			featureOutputWidth_[slot] != outputWidth || featureOutputHeight_[slot] != outputHeight ||
+			featureMotionVectorsLowResolution_[slot] != guide.motionVectorsLowResolution;
 		if (featureHandles_[slot] && dimensionsChanged) {
 			release(static_cast<NVSDK_NGX_Handle*>(featureHandles_[slot]));
 			featureHandles_[slot] = nullptr;
@@ -308,6 +312,9 @@ namespace NeuralRendering
 
 		if (!featureHandles_[slot]) {
 			parameters->Reset();
+			const auto createFlags = guide.motionVectorsLowResolution ?
+				static_cast<unsigned int>(NVSDK_NGX_DLSS_Feature_Flags_MVLowRes) : 0u;
+			parameters->Set(NVSDK_NGX_Parameter_DLSS_Feature_Create_Flags, createFlags);
 			parameters->Set("Width", outputWidth);
 			parameters->Set("Height", outputHeight);
 			parameters->Set("OutWidth", outputWidth);
@@ -335,6 +342,7 @@ namespace NeuralRendering
 			featureInputHeight_[slot] = inputHeight;
 			featureOutputWidth_[slot] = outputWidth;
 			featureOutputHeight_[slot] = outputHeight;
+			featureMotionVectorsLowResolution_[slot] = guide.motionVectorsLowResolution;
 			reset = true;
 		}
 
@@ -343,24 +351,39 @@ namespace NeuralRendering
 		parameters->Set("DLSSNR.Depth", depth);
 		parameters->Set("DLSSNR.MVec", motionVectors);
 		parameters->Set("DLSSNR.Output", output);
-		parameters->Set("DLSSNR.ColorSubrectBaseX", 0u);
-		parameters->Set("DLSSNR.ColorSubrectBaseY", 0u);
-		parameters->Set("DLSSNR.ColorSubrectWidth", outputWidth);
-		parameters->Set("DLSSNR.ColorSubrectHeight", outputHeight);
-		parameters->Set("DLSSNR.DepthSubrectBaseX", 0u);
-		parameters->Set("DLSSNR.DepthSubrectBaseY", 0u);
-		parameters->Set("DLSSNR.DepthSubrectWidth", guideWidth);
-		parameters->Set("DLSSNR.DepthSubrectHeight", guideHeight);
-		parameters->Set("DLSSNR.MVecSubrectBaseX", 0u);
-		parameters->Set("DLSSNR.MVecSubrectBaseY", 0u);
-		parameters->Set("DLSSNR.MVecSubrectWidth", guideWidth);
-		parameters->Set("DLSSNR.MVecSubrectHeight", guideHeight);
-		parameters->Set("DLSSNR.OutputSubrectBaseX", 0u);
-		parameters->Set("DLSSNR.OutputSubrectBaseY", 0u);
-		parameters->Set("DLSSNR.OutputSubrectWidth", outputWidth);
-		parameters->Set("DLSSNR.OutputSubrectHeight", outputHeight);
-		parameters->Set("DLSSNR.MVecScaleX", motionVectorScaleX);
-		parameters->Set("DLSSNR.MVecScaleY", motionVectorScaleY);
+		// Publish the standard NGX subrect contract as well as the carrier-specific
+		// DLSSNR names. The resources are isolated to zero-based per-eye textures,
+		// but keeping the bases explicit prevents a future caller from silently
+		// inheriting a stale SBS offset.
+		parameters->Set(NVSDK_NGX_Parameter_DLSS_Input_Color_Subrect_Base_X, guide.colorBaseX);
+		parameters->Set(NVSDK_NGX_Parameter_DLSS_Input_Color_Subrect_Base_Y, guide.colorBaseY);
+		parameters->Set(NVSDK_NGX_Parameter_DLSS_Input_Depth_Subrect_Base_X, guide.depthBaseX);
+		parameters->Set(NVSDK_NGX_Parameter_DLSS_Input_Depth_Subrect_Base_Y, guide.depthBaseY);
+		parameters->Set(NVSDK_NGX_Parameter_DLSS_Input_MV_SubrectBase_X, guide.motionBaseX);
+		parameters->Set(NVSDK_NGX_Parameter_DLSS_Input_MV_SubrectBase_Y, guide.motionBaseY);
+		parameters->Set(NVSDK_NGX_Parameter_DLSS_Output_Subrect_Base_X, guide.outputBaseX);
+		parameters->Set(NVSDK_NGX_Parameter_DLSS_Output_Subrect_Base_Y, guide.outputBaseY);
+		parameters->Set(NVSDK_NGX_Parameter_DLSS_Render_Subrect_Dimensions_Width, inputWidth);
+		parameters->Set(NVSDK_NGX_Parameter_DLSS_Render_Subrect_Dimensions_Height, inputHeight);
+		parameters->Set("DLSSNR.ColorSubrectBaseX", guide.colorBaseX);
+		parameters->Set("DLSSNR.ColorSubrectBaseY", guide.colorBaseY);
+		parameters->Set("DLSSNR.ColorSubrectWidth", guide.colorWidth);
+		parameters->Set("DLSSNR.ColorSubrectHeight", guide.colorHeight);
+		parameters->Set("DLSSNR.DepthSubrectBaseX", guide.depthBaseX);
+		parameters->Set("DLSSNR.DepthSubrectBaseY", guide.depthBaseY);
+		parameters->Set("DLSSNR.DepthSubrectWidth", guide.depthWidth);
+		parameters->Set("DLSSNR.DepthSubrectHeight", guide.depthHeight);
+		parameters->Set("DLSSNR.MVecSubrectBaseX", guide.motionBaseX);
+		parameters->Set("DLSSNR.MVecSubrectBaseY", guide.motionBaseY);
+		parameters->Set("DLSSNR.MVecSubrectWidth", guide.motionWidth);
+		parameters->Set("DLSSNR.MVecSubrectHeight", guide.motionHeight);
+		parameters->Set("DLSSNR.OutputSubrectBaseX", guide.outputBaseX);
+		parameters->Set("DLSSNR.OutputSubrectBaseY", guide.outputBaseY);
+		parameters->Set("DLSSNR.OutputSubrectWidth", guide.outputWidth);
+		parameters->Set("DLSSNR.OutputSubrectHeight", guide.outputHeight);
+		parameters->Set("DLSSNR.MVecScaleX", guide.motionVectorScaleX);
+		parameters->Set("DLSSNR.MVecScaleY", guide.motionVectorScaleY);
+		parameters->Set("DLSSNR.MVecLowRes", guide.motionVectorsLowResolution ? 1u : 0u);
 		parameters->Set("DLSSNR.DepthInverted", 0u);
 		parameters->Set("DLSSNR.Enabled", 1u);
 		parameters->Set("DLSSNR.Reset", reset ? 1u : 0u);
@@ -396,6 +419,7 @@ namespace NeuralRendering
 		featureHandles_[slot] = nullptr;
 		featureInputWidth_[slot] = featureInputHeight_[slot] = 0;
 		featureOutputWidth_[slot] = featureOutputHeight_[slot] = 0;
+		featureMotionVectorsLowResolution_[slot] = false;
 	}
 
 	void Runtime::ResetFeatures()

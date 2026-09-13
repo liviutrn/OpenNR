@@ -71,19 +71,30 @@ static const float3 noise3D[32] = {
 	const float fadeInThreshold = 15;
 	const static sh2 unitSH = Skylighting::UNIT_SH;
 	const SharedData::SkylightingSettings settings = SharedData::skylightingSettings;
-	uint3 cellID = ((uint3)dtid - settings.ArrayOrigin.xyz) % Skylighting::ARRAY_DIM;
+	const uint3 arrayDims = Skylighting::GetArrayDims(settings);
+	const uint sliceCount = max(1u, settings.ProbeUpdateSliceCount);
+	const uint probeSlice = settings.ProbeUpdateSliceStart + dtid.z;
+	if (dtid.z >= sliceCount || probeSlice >= arrayDims.z)
+		return;
+
+	const uint3 probeTexID = uint3(dtid.xy, probeSlice);
+	// ArrayOrigin is a wrapped uint coordinate. Preserve unsigned subtraction
+	// here so probes that cross the toroidal array boundary address the correct
+	// world cell. Clamping the signed difference to zero aliases the whole
+	// wrapped band to cell zero whenever ArrayOrigin is positive.
+	uint3 cellID = (probeTexID - settings.ArrayOrigin.xyz) % arrayDims;
 	uint3 validMin = (uint3)max(0, settings.ValidMargin.xyz);
-	uint3 validMax = Skylighting::ARRAY_DIM - 1 + (uint3)min(0, settings.ValidMargin.xyz);
+	uint3 validMax = arrayDims - 1 + (uint3)min(0, settings.ValidMargin.xyz);
 	bool isValid = all(cellID >= validMin) && all(cellID <= validMax);  // check if the cell is newly added
-	float3 cellCentreMS = cellID + 0.5 - Skylighting::ARRAY_DIM / 2;
-	cellCentreMS = cellCentreMS / Skylighting::ARRAY_DIM * Skylighting::ARRAY_SIZE + settings.PosOffset.xyz;
+	float3 cellCentreMS = cellID + 0.5 - arrayDims / 2;
+	cellCentreMS = cellCentreMS / arrayDims * Skylighting::GetArraySize(settings) + settings.PosOffset.xyz;
 
 	float3 cellCentreOS = mul(settings.OcclusionViewProj, float4(cellCentreMS, 1)).xyz;
 	cellCentreOS.y = -cellCentreOS.y;
 	float2 occlusionUV = cellCentreOS.xy * 0.5 + 0.5;
 
 	if (all(occlusionUV > 0) && all(occlusionUV < 1)) {
-		uint accumFrames = isValid ? (outAccumFramesArray[dtid] + 1) : 1;
+		uint accumFrames = isValid ? (outAccumFramesArray[probeTexID] + 1) : 1;
 		float visibility = srcOcclusionDepth.SampleCmpLevelZero(comparisonSampler, occlusionUV, cellCentreOS.z);
 
 		sh2 occlusionSH = SphericalHarmonics::Scale(SphericalHarmonics::Evaluate(settings.OcclusionDir.xyz), visibility * 4.0 * Math::PI);  // 4 pi from monte carlo
@@ -91,16 +102,16 @@ static const float3 noise3D[32] = {
 			float lerpFactor = rcp(accumFrames);
 			sh2 prevProbeSH = unitSH;
 			if (accumFrames > 1)
-				prevProbeSH += (outProbeArray[dtid] - unitSH) * fadeInThreshold / min(fadeInThreshold, accumFrames - 1);  // inverse confidence
+				prevProbeSH += (outProbeArray[probeTexID] - unitSH) * fadeInThreshold / min(fadeInThreshold, accumFrames - 1);  // inverse confidence
 			occlusionSH = lerp(prevProbeSH, occlusionSH, lerpFactor);
 		}
 		occlusionSH = lerp(unitSH, occlusionSH, min(fadeInThreshold, accumFrames) / fadeInThreshold);  // confidence fade in
 
-		outProbeArray[dtid] = occlusionSH;
-		outAccumFramesArray[dtid] = accumFrames;
+		outProbeArray[probeTexID] = occlusionSH;
+		outAccumFramesArray[probeTexID] = accumFrames;
 	} else if (!isValid) {
-		outProbeArray[dtid] = unitSH;
-		outAccumFramesArray[dtid] = 0;
+		outProbeArray[probeTexID] = unitSH;
+		outAccumFramesArray[probeTexID] = 0;
 	}
 
 	// Shadow cascade sampling with bitmask accumulation
@@ -137,18 +148,24 @@ static const float3 noise3D[32] = {
 			shadowSample = lerp(1.0, shadowSample, fadeFactor);
 		}
 
-		uint bitmask = isValid ? outShadowBitmask[dtid] : 0;
+		uint bitmask = isValid ? outShadowBitmask[probeTexID] : 0;
 		bitmask &= ~(1u << bitIndex);
 		if (shadowSample > 0.5)
 			bitmask |= (1u << bitIndex);
 
-		outShadowBitmask[dtid] = bitmask;
+		outShadowBitmask[probeTexID] = bitmask;
 
-		float shadow = float(countbits(bitmask)) / 32.0;
-		outShadowVisibility[dtid] = shadow;
+		// A cleared/new probe has fewer than 32 valid shadow samples. Treating the
+		// missing bits as shadowed causes a freshly reset field to fade from bright
+		// to progressively darker over the first 32 updates while the player is
+		// standing still. Normalize by the samples actually accumulated; after the
+		// history is full this is the original 32-sample estimator.
+		const uint shadowHistoryFrames = max(1u, min(outAccumFramesArray[probeTexID], 32u));
+		float shadow = float(countbits(bitmask)) / float(shadowHistoryFrames);
+		outShadowVisibility[probeTexID] = shadow;
 	} else if (!isValid) {
-		outShadowBitmask[dtid] = 0;
-		outShadowVisibility[dtid] = 1.0;
+		outShadowBitmask[probeTexID] = 0;
+		outShadowVisibility[probeTexID] = 1.0;
 	}
 #endif
 }

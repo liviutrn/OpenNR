@@ -247,7 +247,7 @@ private:
 	std::unordered_map<ID3D11BlendState*, winrt::com_ptr<ID3D11BlendState>> patchedBlendStateCache;
 
 	HRESULT PresentToSwapChain(IDXGISwapChain* swapChain, UINT syncInterval, UINT flags);
-	void DrawImGuiForPresent(bool frameGenActive, bool hdrReady);
+	void DrawImGuiForPresent(IDXGISwapChain* swapChain, bool frameGenActive, bool hdrReady);
 	void RunHDRBeforePresentChain(bool hdrReady);
 	HRESULT RunPresentChainWithHDR(
 		IDXGISwapChain* swapChain,

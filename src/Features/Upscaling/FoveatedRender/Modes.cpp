@@ -56,13 +56,18 @@ namespace FoveatedRenderImpl
 		// Detect UV/mode change → destroy DLSS resources so SL recreates them at
 		// the new size. Both eye UVs feed the hash; asymmetric presets (e.g.
 		// Nasal Convergence) can change rightUV while leftUV stays put.
-		uint64_t uvHash = ComputeSubrectUVHash(p.leftUV, p.rightUV, (uint32_t)p.mode);
+		uint64_t uvHash = ComputeSubrectUVHash(p.leftUV, p.rightUV, (uint32_t)p.mode, !p.eyeTrackedGazeActive);
 		if (uvHash != Core::activeSubrectUVHash) {
 			logger::info("[FOVEATED] Subrect UV or mode changed, recreating DLSS resources");
 			streamline.DestroyDLSSResources();
 			Core::InvalidateTemporalState();
 			logger::debug("[FOVEATED] Temporal state invalidated after subrect/mode change; waiting for fresh per-eye guides");
 			Core::activeSubrectUVHash = uvHash;
+		} else if (p.eyeTrackedGazeReset) {
+			// A reacquisition, large gaze jump, or static handoff changes the
+			// semantic crop/history contract without changing resource dimensions.
+			Core::InvalidateTemporalState();
+			logger::debug("[FOVEATED] Native OpenVR gaze history reset without resource resize");
 		}
 
 		Bridge::foveatedEvaluating = true;

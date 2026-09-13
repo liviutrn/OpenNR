@@ -37,6 +37,8 @@ struct OpenNRCaptureFeature final : Feature
 		bool captureRawTeacher = true;
 		bool captureDepth = true;
 		bool captureMotionVectors = true;
+		/** @brief Opt-in copies of stable deferred G-buffer resources at the NR boundary. */
+		bool captureRendererConditionings = false;
 		/** @brief Writes RGB8 PNG previews for color tensors in sampled frames. */
 		bool writeColorPreviews = true;
 		bool captureFullFrame = true;
@@ -86,6 +88,8 @@ struct OpenNRCaptureFeature final : Feature
 		bool useAutoMask = false;
 		bool uiCorrection = false;
 		std::string route = "feature18";
+		/** @brief G-buffer channels proven available for this frame's source rectangle. */
+		std::vector<std::string> rendererConditioningsAvailable;
 	};
 
 	/** @brief Stops the writer thread and releases pending GPU resources. */
@@ -161,6 +165,8 @@ struct OpenNRCaptureFeature final : Feature
 		std::uint32_t a_eyeIndex, bool a_fullFrame = false, bool a_writePreview = true);
 	/** @brief Completes the active sample with a GPU event query and enqueues it. */
 	void EndFrame();
+	/** @brief Records source rejection and copy submission evidence for the active sample. */
+	void RecordRendererConditioningDiagnostic(const json& a_diagnostic);
 	/** @brief Releases an active sample without writing metadata. */
 	void AbortFrame();
 	/** @brief Returns true while a capture sequence is recording. */
@@ -168,10 +174,9 @@ struct OpenNRCaptureFeature final : Feature
 	/** @brief Returns true when the current sample includes complete per-eye artifacts. */
 	bool IsFullFrameValidationFrame() const;
 #else
-	// A developer can still compile a no-op surface for fast source-only builds by
-	// explicitly disabling BUILD_OPENNR_CAPTURE. The unified OpenNR package uses
-	// the implementation above and ships the registration while keeping it off by
-	// default through settings.enableCapture.
+	// The distributable DLL keeps a tiny source-compatible no-op surface for
+	// renderer call sites, but does not contain the capture implementation. The
+	// OpenNRCapture.ini registration is excluded from that package as well.
 	void DrawSettings() override {}
 	void LoadSettings(json&) override {}
 	void SaveSettings(json&) override {}

@@ -81,6 +81,14 @@ public:
 	/** @brief Creates render targets, samplers, and the directional shadow structured buffer. */
 	void SetupResources();
 
+	// Optional diagnostics consumed by the OpenNR Capture conditioning metadata.
+	// The actual refresh path is owned by the current deferred implementation;
+	// these counters remain harmless when that path is not active.
+	std::uint64_t conditioningRefreshChecks = 0;
+	std::uint64_t conditioningRefreshCount = 0;
+	std::uint64_t conditioningLastCheckFrame = 0;
+	const char* conditioningRefreshStatus = "not_checked";
+
 	/** @brief Runs feature reflection prepasses with render targets unbound. */
 	void ReflectionsPrepasses();
 

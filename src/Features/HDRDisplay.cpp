@@ -7,6 +7,7 @@
 #if defined(ENABLE_EFFECTS11)
 #	include "Effects11.h"
 #endif
+#include "Features/VR.h"
 #include "Globals.h"
 #include "I18n/I18n.h"
 #include "LinearLighting.h"
@@ -970,6 +971,55 @@ namespace
 		}
 		static inline REL::Relocation<decltype(thunk)> func;
 	};
+
+	// In the VR-helper path the helper panel is the headset presentation target.
+	// At the swap-chain Present hook the desktop companion can still receive an
+	// ImGui copy, but it must be drawn into the swap-chain back buffer rather than
+	// Skyrim's kFRAMEBUFFER. Binding kFRAMEBUFFER here makes the same flat menu
+	// eligible for Skyrim's curved VR HUD path and produces the duplicate/sheared
+	// menu seen in the desktop/HMD mirror.
+	bool CanBindDesktopMirrorTarget(IDXGISwapChain* swapChain)
+	{
+		if (!swapChain || !globals::d3d::device)
+			return false;
+
+		winrt::com_ptr<ID3D11Texture2D> backBuffer;
+		if (FAILED(swapChain->GetBuffer(0, IID_PPV_ARGS(backBuffer.put()))))
+			return false;
+
+		winrt::com_ptr<ID3D11RenderTargetView> rtv;
+		return SUCCEEDED(globals::d3d::device->CreateRenderTargetView(backBuffer.get(), nullptr, rtv.put()));
+	}
+
+	bool BindDesktopMirrorTarget(IDXGISwapChain* swapChain)
+	{
+		if (!swapChain || !globals::d3d::device || !globals::d3d::context)
+			return false;
+
+		winrt::com_ptr<ID3D11Texture2D> backBuffer;
+		if (FAILED(swapChain->GetBuffer(0, IID_PPV_ARGS(backBuffer.put()))))
+			return false;
+
+		winrt::com_ptr<ID3D11RenderTargetView> rtv;
+		if (FAILED(globals::d3d::device->CreateRenderTargetView(backBuffer.get(), nullptr, rtv.put())))
+			return false;
+
+		D3D11_TEXTURE2D_DESC desc{};
+		backBuffer->GetDesc(&desc);
+		if (!desc.Width || !desc.Height)
+			return false;
+
+		ID3D11RenderTargetView* rawRTV = rtv.get();
+		globals::d3d::context->OMSetRenderTargets(1, &rawRTV, nullptr);
+
+		D3D11_VIEWPORT viewport{};
+		viewport.Width = static_cast<float>(desc.Width);
+		viewport.Height = static_cast<float>(desc.Height);
+		viewport.MinDepth = 0.0f;
+		viewport.MaxDepth = 1.0f;
+		globals::d3d::context->RSSetViewports(1, &viewport);
+		return true;
+	}
 }
 
 void HDRDisplay::InstallSwapChainPresentHooks(IDXGISwapChain* swapChain)
@@ -1034,11 +1084,16 @@ HRESULT HDRDisplay::PresentToSwapChain(IDXGISwapChain* swapChain, UINT syncInter
 	return SwapChainPresentBottom::func(swapChain, syncInterval, flags);
 }
 
-void HDRDisplay::DrawImGuiForPresent(bool frameGenActive, bool hdrReady)
+void HDRDisplay::DrawImGuiForPresent(IDXGISwapChain* swapChain, bool frameGenActive, bool hdrReady)
 {
 	if (frameGenActive) {
 		auto& data = globals::game::renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGET::kFRAMEBUFFER];
 		globals::d3d::context->OMSetRenderTargets(1, &data.RTV, nullptr);
+	} else if (globals::game::isVR && globals::features::vr.IsHelperRegistered() &&
+	           BindDesktopMirrorTarget(swapChain)) {
+		// The helper owns the HMD panel. This target is only the desktop companion
+		// copy and is mapped from the helper panel's logical canvas by
+		// OverlayRenderer::DesktopMirrorDrawData.
 	} else if (hdrReady && !globals::game::isVR && uiTexture && uiTexture->rtv && uiTexture->resource) {
 		ID3D11RenderTargetView* uiRTV = uiTexture->rtv.get();
 		D3D11_TEXTURE2D_DESC texDesc{};
@@ -1121,7 +1176,22 @@ HRESULT HDRDisplay::HandleSwapChainPresent(
 	UINT viewportCount = 1;
 	globals::d3d::context->RSGetViewports(&viewportCount, &savedViewport);
 
-	DrawImGuiForPresent(frameGenActive, hdrReady);
+	const bool vrDesktopMirror = globals::game::isVR && globals::features::vr.IsHelperRegistered() &&
+	                           !frameGenActive && CanBindDesktopMirrorTarget(swapChain);
+	if (vrDesktopMirror) {
+		// Finish the scene/HDR composite first. The menu is then drawn over the
+		// already-composited desktop back buffer and sent only to the companion
+		// window; the helper panel remains the sole HMD menu presentation.
+		RunHDRBeforePresentChain(hdrReady);
+		if (hdrReady)
+			ClearUIBuffer();
+		DrawImGuiForPresent(swapChain, frameGenActive, hdrReady);
+		globals::menu->DrawOverlay();
+		globals::d3d::context->RSSetViewports(1, &savedViewport);
+		return presentChain(swapChain, syncInterval, flags);
+	}
+
+	DrawImGuiForPresent(swapChain, frameGenActive, hdrReady);
 	globals::menu->DrawOverlay();
 	globals::d3d::context->RSSetViewports(1, &savedViewport);
 

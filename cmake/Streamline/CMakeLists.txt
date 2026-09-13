@@ -2,10 +2,22 @@ cmake_minimum_required(VERSION 3.21)
 
 add_library(Streamline INTERFACE)
 
+set(OPENNR_STREAMLINE_SOURCE_DIR
+    "${CMAKE_SOURCE_DIR}/extern/Streamline-DX12"
+    CACHE PATH
+    "Streamline-DX12 source checkout used by the OpenNR build"
+)
+if(NOT IS_DIRECTORY "${OPENNR_STREAMLINE_SOURCE_DIR}/include")
+  message(FATAL_ERROR
+    "Streamline-DX12 headers are missing from ${OPENNR_STREAMLINE_SOURCE_DIR}. "
+    "Initialize the submodule or point OPENNR_STREAMLINE_SOURCE_DIR at a verified checkout."
+  )
+endif()
+
 target_include_directories(
   Streamline INTERFACE
-  ${CMAKE_SOURCE_DIR}/extern/Streamline-DX12/include
-  ${CMAKE_SOURCE_DIR}/extern/Streamline-DX12/external/ngx-sdk/include)
+  "${OPENNR_STREAMLINE_SOURCE_DIR}/include"
+  "${OPENNR_STREAMLINE_SOURCE_DIR}/external/ngx-sdk/include")
 
 if(MSVC)
   target_compile_options(Streamline INTERFACE /wd5103)
@@ -14,7 +26,7 @@ endif()
 if(CMAKE_HOST_UNIX)
   # sl_pcl.h's __cplusplus==202302L check for std::to_underlying is unreliable under this
   # toolchain; patched here (NVIDIA's repo, not our fork) to always use the portable fallback.
-  set(_sl_pcl_h "${CMAKE_SOURCE_DIR}/extern/Streamline-DX12/include/sl_pcl.h")
+  set(_sl_pcl_h "${OPENNR_STREAMLINE_SOURCE_DIR}/include/sl_pcl.h")
   file(READ "${_sl_pcl_h}" _sl_pcl_h_content)
   # Normalize to LF first so the REPLACE below matches regardless of the file's checked-out line endings.
   string(REPLACE "\r\n" "\n" _sl_pcl_h_content "${_sl_pcl_h_content}")

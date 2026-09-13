@@ -25,8 +25,9 @@ void MenuHeaderRenderer::RenderHeader(bool isDocked, bool showLogo, bool canShow
 	}
 
 	auto versionStr = Util::GetFormattedVersion(Plugin::VERSION);
-	auto expectedTag = std::format("v{}", versionStr);
-	auto title = Plugin::BUILD_DESCRIBE == expectedTag ? std::format("OpenNR {}", versionStr) : std::format("OpenNR {} [{}]", versionStr, Plugin::BUILD_DESCRIBE);
+	// The visible product name is deliberately stable: build provenance belongs
+	// in logs and diagnostics, never in the user-facing OpenNR title.
+	auto title = std::format("OpenNR {}", versionStr);
 	auto actionIcons = BuildActionIcons(canShowIcons, uiIcons);
 	const char* sidebarTooltip = sidebarVisible ? T("menu.hide_sidebar", "Hide Sidebar") : T("menu.show_sidebar", "Show Sidebar");
 	const float sidebarIconSize = ImGui::GetFontSize() * ThemeManager::Constants::SIDEBAR_ICON_SIZE_MULTIPLIER * uiScale;

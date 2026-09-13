@@ -134,6 +134,36 @@ endfunction()
 
 set(STREAMLINE_RUNTIME_FILES "")
 stage_streamline_runtime(nvngx_dlss.dll "${STREAMLINE_RUNTIME_DIRECTORY}" STREAMLINE_RUNTIME_FILES)
+# Feature 18 / DLSSNR is not part of the public Streamline SDK archive. Keep
+# its native carrier as an explicit, locally supplied package input so a
+# successful SDK download can never produce an apparently complete but
+# non-initializing OpenNR build.
+set(OPENNR_DLSSNR_RUNTIME_SOURCE
+    "${CMAKE_SOURCE_DIR}/package/Shaders/Upscaling/Streamline/nvngx_dlssnr.dll"
+    CACHE FILEPATH
+    "Validated native Feature 18 carrier DLL staged into OpenNR packages"
+)
+if(NOT EXISTS "${OPENNR_DLSSNR_RUNTIME_SOURCE}")
+    message(FATAL_ERROR
+        "OpenNR Feature 18 carrier is missing: ${OPENNR_DLSSNR_RUNTIME_SOURCE}. "
+        "Supply the validated nvngx_dlssnr.dll before packaging."
+    )
+endif()
+file(SIZE "${OPENNR_DLSSNR_RUNTIME_SOURCE}" _opennr_dlssnr_runtime_size)
+if(_opennr_dlssnr_runtime_size LESS 1048576)
+    message(FATAL_ERROR
+        "OpenNR Feature 18 carrier is implausibly small: ${_opennr_dlssnr_runtime_size} bytes"
+    )
+endif()
+set(_opennr_dlssnr_runtime_destination
+    "${STREAMLINE_RUNTIME_DIRECTORY}/nvngx_dlssnr.dll"
+)
+file(COPY_FILE
+    "${OPENNR_DLSSNR_RUNTIME_SOURCE}"
+    "${_opennr_dlssnr_runtime_destination}"
+    ONLY_IF_DIFFERENT
+)
+list(APPEND STREAMLINE_RUNTIME_FILES "${_opennr_dlssnr_runtime_destination}")
 stage_streamline_runtime(sl.common.dll "${STREAMLINE_RUNTIME_DIRECTORY}" STREAMLINE_RUNTIME_FILES)
 stage_streamline_runtime(sl.dlss.dll "${STREAMLINE_RUNTIME_DIRECTORY}" STREAMLINE_RUNTIME_FILES)
 stage_streamline_runtime(sl.interposer.dll "${STREAMLINE_RUNTIME_DIRECTORY}" STREAMLINE_RUNTIME_FILES)

@@ -60,6 +60,18 @@ namespace Util
 {
 	void UpdateImGuiInput(HWND hwnd, float bufferWidth, float bufferHeight);
 	/**
+	 * Updates desktop mouse input when ImGui is laid out against a different
+	 * logical canvas than the desktop swap chain. The canvas is rendered into
+	 * the target with a uniform, centered letterbox, so the inverse mapping
+	 * keeps desktop clicks aligned with the visible VR-helper mirror.
+	 */
+	void UpdateImGuiInputLetterboxed(
+		HWND hwnd,
+		float canvasWidth,
+		float canvasHeight,
+		float targetWidth,
+		float targetHeight);
+	/**
 	 * Represents a single line and its color for any colored text rendering (tooltips, legends, etc.).
 	 */
 	struct ColoredTextLine

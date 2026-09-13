@@ -199,7 +199,8 @@ public:
 	// plugin; the VR feature is its client. CS glue (keybind<->combo mapping,
 	// rebind persistence, Menu::IsEnabled, status HUD) lives in that file.
 	void ConnectHelper();        ///< Connect as a client; called from PostPostLoad.
-	void UpdateHelper();         ///< Per-frame focus reconcile + wand input (from Menu).
+	void UpdateHelper();         ///< Per-frame focus reconcile + combo handling (from Menu).
+	void PumpHelperInput(bool panelReady); ///< Pump helper keyboard/wand input after ImGui backends (from OverlayRenderer).
 	void RenderHelperToPanel();  ///< Blit the menu into the helper's panel (from OverlayRenderer).
 	void RenderStatusHud();      ///< Always-on status overlays via a HUD-mode client (from Menu).
 	void FeedHelperEvent(uint32_t device, uint32_t key, bool pressed, float stickX, float stickY);

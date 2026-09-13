@@ -50,6 +50,7 @@
 #include "Features/PerformanceOverlay/ABTesting/ABTesting.h"
 #include "Features/SceneSelector.h"
 #include "Features/ScreenshotFeature.h"
+#include "Features/Upscaling/NeuralRendering/Integration.h"
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	Menu::ThemeSettings::PaletteColors,
@@ -193,6 +194,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	SkipConstraintWarning,
 	RequireShiftToDock,
 	UseResolutionFont,
+	VRFontScale,
 	Theme,
 	SelectedThemePreset)
 
@@ -408,6 +410,12 @@ void Menu::Load(json& o_json)
 	auto currentTheme = settings.Theme;
 
 	settings = o_json;
+	if (!std::isfinite(settings.VRFontScale))
+		settings.VRFontScale = ThemeManager::Constants::DEFAULT_VR_FONT_SCALE;
+	settings.VRFontScale = std::clamp(
+		settings.VRFontScale,
+		ThemeManager::Constants::MIN_VR_FONT_SCALE,
+		ThemeManager::Constants::MAX_VR_FONT_SCALE);
 
 	// Restore Theme - don't load it from config, only from theme preset files
 	settings.Theme = currentTheme;
@@ -785,9 +793,8 @@ void Menu::DrawSettings()
 	ImGui::SetNextWindowSize(Util::GetNativeViewportSizeScaled(0.8f), layoutCond);
 	resetLayout = false;
 	auto versionStr = Util::GetFormattedVersion(Plugin::VERSION);
-	auto expectedTag = std::format("v{}", versionStr);
-	auto displayTitle = Plugin::BUILD_DESCRIBE == expectedTag ? std::format("OpenNR {}", versionStr) : std::format("OpenNR {} [{}]", versionStr, Plugin::BUILD_DESCRIBE);
-	// Use ### to keep a stable window ID regardless of build suffix or display
+	auto displayTitle = std::format("OpenNR {}", versionStr);
+	// Use ### to keep a stable window ID regardless of display
 	// branding, preserving docking state. The literal "CommunityShaders" ID is
 	// load-bearing: changing it would discard users' existing docking layouts.
 	auto title = std::format("{}###CommunityShaders", displayTitle);
@@ -1141,11 +1148,10 @@ void Menu::ProcessInputEventQueue()
 		}
 	}
 
-	// Per-frame VR input pump (runs every frame, not just when there are events):
-	// polls helper combos to open/close the menu, syncs helper focus to
-	// Menu::IsEnabled, and feeds the wand pointer + controller buttons into ImGui
-	// IO. Must run before ImGui::NewFrame (InitializeImGuiFrame), which it does —
-	// ProcessInputEventQueue is called first in OverlayRenderer::RenderOverlay.
+	// Per-frame VR helper state pump (runs every frame, not just when there are
+	// events): polls helper combos and reconciles focus to Menu::IsEnabled. The
+	// active wand/keyboard IO pump is deliberately deferred until after the
+	// platform backends have started the ImGui frame in OverlayRenderer.
 	globals::features::vr.UpdateHelper();
 
 	// Process non-VR events in Menu
@@ -1181,7 +1187,7 @@ void Menu::ProcessInputEventQueue()
 
 			// Dispatch bound hotkey actions for `key`. Combo bindings (modifier + key)
 			// fire on key-down for responsiveness; single-key bindings fire on key-up.
-			auto dispatchHotkeyActions = [this, key](bool combosOnly) {
+				auto dispatchHotkeyActions = [this, key](bool combosOnly) {
 				struct KeyAction
 				{
 					std::vector<InputCombo>& settingKey;
@@ -1223,8 +1229,19 @@ void Menu::ProcessInputEventQueue()
 							 globals::features::effects11.ToggleEnabled();
 #endif
 					 } },
-				};
-				// RenderDoc's capture key is a single, unmodified key; only consider it on key-up.
+					};
+					// F6 is a stable OpenNR-only action. It is intentionally not part of
+					// the user-configurable key table so profile migrations cannot lose
+					// the Neural Rendering emergency toggle. Reset temporal history when
+					// the route changes.
+					if (!combosOnly && key == VK_F6 && !HomePageRenderer::ShouldShowFirstTimeSetup()) {
+						auto& neuralRendering = globals::features::upscaling.foveatedRender.settings.neuralRenderingEnabled;
+						neuralRendering = !neuralRendering;
+						NeuralRendering::RequestHistoryReset();
+						logger::info("[OpenNR] Neural Rendering {} via F6", neuralRendering ? "enabled" : "disabled");
+						return true;
+					}
+					// RenderDoc's capture key is a single, unmodified key; only consider it on key-up.
 				if (!combosOnly && globals::features::renderDoc.HandleCaptureHotkey(key))
 					return true;
 				for (const auto& ka : keyActions) {
@@ -1346,8 +1363,8 @@ void Menu::ProcessInputEventQueue()
 				&settings.ScreenshotKey,
 				&settings.Effects11ToggleKey
 			};
-			bool isHotkey = ShouldSwallowInput() && std::any_of(std::begin(hotkeys), std::end(hotkeys),
-														[key](const auto* combo) { return InputCombo::MatchesKeyboardCombo(*combo, key); });
+			bool isHotkey = key == VK_F6 || (ShouldSwallowInput() && std::any_of(std::begin(hotkeys), std::end(hotkeys),
+																	[key](const auto* combo) { return InputCombo::MatchesKeyboardCombo(*combo, key); }));
 
 			// Always forward key-up events. Suppress key-down during active hotkeys,
 			// and during hotkey capture except setup close keys (Enter/Escape).

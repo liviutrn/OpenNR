@@ -5,12 +5,29 @@ set(FFX_FSR3 ON)
 set(FFX_FSR ON)
 set(FFX_AUTO_COMPILE_SHADERS 1)
 
+# The source directory is overridable for isolated worktrees that share a
+# validated dependency checkout. This keeps the experiment independent from
+# the main source worktree without copying a large submodule onto a full disk.
+set(OPENNR_FFX_SOURCE_DIR
+    "${CMAKE_SOURCE_DIR}/extern/FidelityFX-SDK"
+    CACHE PATH
+    "FidelityFX-SDK source checkout used by the OpenNR build"
+)
+if(NOT IS_DIRECTORY "${OPENNR_FFX_SOURCE_DIR}/sdk")
+  message(FATAL_ERROR
+    "FidelityFX-SDK sdk directory is missing: ${OPENNR_FFX_SOURCE_DIR}/sdk"
+  )
+endif()
+
 # Note: extern/FidelityFX-SDK/sdk/CMakeLists.txt detects x64 via an exact
 # STREQUAL on CMAKE_EXE_LINKER_FLAGS == "/machine:x64" when
 # CMAKE_GENERATOR_PLATFORM is unset (Ninja). The ninja preset sets exactly
 # that value; appending anything else to the variable breaks the configure.
 
-add_subdirectory(${CMAKE_SOURCE_DIR}/extern/FidelityFX-SDK/sdk)
+add_subdirectory(
+  "${OPENNR_FFX_SOURCE_DIR}/sdk"
+  "${CMAKE_BINARY_DIR}/extern/FidelityFX-SDK/sdk"
+)
 
 # Upstream bug: the FFX dx11 backend's compile_shaders() leaks literal
 # out-variable names (e.g. "FSR2_PERMUTATION_OUTPUTS") into the dependency
@@ -41,15 +58,12 @@ endif()
 
 # The vendored SDK hardcodes its static libs' output to a single shared
 # ${CMAKE_HOME_DIRECTORY}/bin/ffx_sdk directory (see its CMakeLists.txt),
-# reused across every preset's separate build tree. Non-LTO presets
-# (Dev-Fast, PR) compile these objects without /GL, but Ninja's staleness
-# check only looks at its own object mtimes, not the flags baked into an
-# existing output; if a shipping preset (IPO ON, /GL) links to that shared
-# path afterward, a later non-LTO build can see its own (older) objects as
-# up to date and silently reuse the shipping /GL archive -> LNK4075
-# ("restarting link with /LTCG") -> LNK1218 under /WX. Give non-LTO presets
-# a build-tree-local output so they never share the shipping archive.
-if(MSVC AND NOT CMAKE_INTERPROCEDURAL_OPTIMIZATION)
+# reused across every preset's separate build tree. That is unsafe for both
+# reproducibility and disk-constrained worktrees: a package build can fill the
+# source volume before the actual plugin link, and a later preset can reuse an
+# archive made with incompatible /GL settings. Keep every MSVC preset's FFX
+# archive inside its own build tree instead.
+if(MSVC)
   foreach(
     _ffx_target
     ffx_backend_dx11_x64

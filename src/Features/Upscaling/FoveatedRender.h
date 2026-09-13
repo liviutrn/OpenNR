@@ -109,7 +109,7 @@ struct FoveatedRender
 		uint neuralRenderingModelResolution = 100;
 		uint neuralRenderingPreset = 0;  // 0 = Default; 5 = Custom
 		float neuralRenderingIntensity = 1.70f;
-		float neuralRenderingLocalTone = 1.70f;
+		float neuralRenderingLocalTone = 1.00f;
 		float neuralRenderingLocalStructure = 1.70f;
 		float neuralRenderingSkinStructure = -1.0f;
 		uint neuralRenderingStyle = 0;  // 0 = Natural, 1 = Fabric Detail, 2 = Cinematic, 3 = Strong
@@ -125,6 +125,19 @@ struct FoveatedRender
 		// 2 = three sequential Feature 18 evaluations. Runtime-gated away from
 		// pre-upscale and cropped VR paths.
 		uint neuralRenderingMultiPass = 0;
+		// Experimental Feature 18 temporal reuse. 0 = off; 2/3/4 means a full
+		// neural pass every Nth frame, with exact-MV residual reprojection between
+		// full passes. Runtime-gated to native-size single-pass full-eye layouts.
+		uint neuralRenderingTemporalReuseCadence = 0;
+		float neuralRenderingTemporalDepthThreshold = 0.05f;
+		float neuralRenderingTemporalColorTolerance = 0.08f;
+		// Isolated native OpenVR gaze-provider experiment. The provider moves a
+		// fixed-size crop around the per-eye gaze point; it is opt-in, NR-only,
+		// and falls back to the persisted static crop whenever the native API is
+		// unavailable, stale, unfocused, or in a menu/loading context.
+		bool neuralRenderingEyeTrackedFoveation = false;
+		float neuralRenderingEyeTrackedSmoothingMs = 20.0f;
+		uint neuralRenderingEyeTrackedQuantizationPixels = 8;
 	};
 
 	inline static constexpr Util::Settings::RestartTable<Settings, 1> kRestartFields{ {

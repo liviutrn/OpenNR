@@ -7,12 +7,18 @@
 #include "../FoveatedCommon.h"
 #include "../Upscaling.h"
 #include "FoveatedRender/Core.h"
+#include "NativeOpenVRGaze.h"
 #include "NeuralRendering/Integration.h"
+#include "NeuralRendering/FuturePipeline.h"
 #include "NeuralRendering/Renderer.h"
 
 #include <algorithm>
 
 #define I18N_KEY_PREFIX "feature.upscaling."
+
+static_assert(!NeuralRendering::Future::AsyncOwnershipContract::kRuntimeEnabled);
+static_assert(!NeuralRendering::Future::DepthMatchedResidualFillContract::kRuntimeEnabled);
+static_assert(!NeuralRendering::Future::PeripheralCompressionContract::kRuntimeEnabled);
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	FoveatedRender::Settings,
@@ -40,7 +46,13 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	neuralRenderingUICorrection,
 	neuralRenderingPreUpscale,
 	neuralRenderingResolveMode,
-	neuralRenderingMultiPass);
+	neuralRenderingMultiPass,
+	neuralRenderingTemporalReuseCadence,
+	neuralRenderingTemporalDepthThreshold,
+	neuralRenderingTemporalColorTolerance,
+	neuralRenderingEyeTrackedFoveation,
+	neuralRenderingEyeTrackedSmoothingMs,
+	neuralRenderingEyeTrackedQuantizationPixels);
 
 // ============================================================================
 // Lifecycle
@@ -196,11 +208,15 @@ void FoveatedRender::ClampSettings()
 	settings.subrectFeatherWidth = std::clamp(settings.subrectFeatherWidth, 2.0f, 128.0f);
 	settings.subrectFalloffCurve = std::clamp(settings.subrectFalloffCurve, 0.5f, 2.0f);
 	settings.subrectDitherStrength = std::clamp(settings.subrectDitherStrength, 0.0f, 2.0f);
-	if (settings.neuralRenderingModelResolution != 50 &&
+	if (settings.neuralRenderingModelResolution != 33 &&
+		settings.neuralRenderingModelResolution != 50 &&
+		settings.neuralRenderingModelResolution != 60 &&
+		settings.neuralRenderingModelResolution != 67 &&
 		settings.neuralRenderingModelResolution != 75 &&
+		settings.neuralRenderingModelResolution != 80 &&
 		settings.neuralRenderingModelResolution != 85 &&
 		settings.neuralRenderingModelResolution != 90 &&
-		settings.neuralRenderingModelResolution != 33 &&
+		settings.neuralRenderingModelResolution != 95 &&
 		settings.neuralRenderingModelResolution != 100)
 		settings.neuralRenderingModelResolution = 100;
 	settings.neuralRenderingPreset = std::min(settings.neuralRenderingPreset, 5u);
@@ -212,6 +228,15 @@ void FoveatedRender::ClampSettings()
 	settings.neuralRenderingPreUpscale = std::min(settings.neuralRenderingPreUpscale, 1u);
 	settings.neuralRenderingResolveMode = std::min(settings.neuralRenderingResolveMode, 1u);
 	settings.neuralRenderingMultiPass = std::min(settings.neuralRenderingMultiPass, 2u);
+	if (settings.neuralRenderingTemporalReuseCadence != 0 &&
+		settings.neuralRenderingTemporalReuseCadence != 2 &&
+		settings.neuralRenderingTemporalReuseCadence != 3 &&
+		settings.neuralRenderingTemporalReuseCadence != 4)
+		settings.neuralRenderingTemporalReuseCadence = 0;
+	settings.neuralRenderingTemporalDepthThreshold = std::clamp(settings.neuralRenderingTemporalDepthThreshold, 0.0f, 0.25f);
+	settings.neuralRenderingTemporalColorTolerance = std::clamp(settings.neuralRenderingTemporalColorTolerance, 0.0f, 0.50f);
+	settings.neuralRenderingEyeTrackedSmoothingMs = std::clamp(settings.neuralRenderingEyeTrackedSmoothingMs, 0.0f, 250.0f);
+	settings.neuralRenderingEyeTrackedQuantizationPixels = std::clamp(settings.neuralRenderingEyeTrackedQuantizationPixels, 0u, 64u);
 	// Preset clamping reads from Upscaling::Settings now.
 	auto& sharedPreset = globals::features::upscaling.settings.presetDLSS;
 	sharedPreset = std::min(sharedPreset, 5u);
@@ -673,8 +698,8 @@ void FoveatedRender::DrawSettings(bool showSharedPanelNote, bool vrControlsFirst
 			}
 			ImGui::TextDisabled("%s %s", T(TKEY("neural_rendering_active_style"), "Active style:"), styleLabels[activeStyle]);
 
-			static const char* modelResolutions[] = { "Full (100%)", "90%", "85%", "75%", "50%", "33%" };
-			static constexpr uint modelResolutionValues[] = { 100u, 90u, 85u, 75u, 50u, 33u };
+			static const char* modelResolutions[] = { "Full (100%)", "95%", "90%", "85%", "80%", "75%", "67%", "60%", "50%", "33%" };
+			static constexpr uint modelResolutionValues[] = { 100u, 95u, 90u, 85u, 80u, 75u, 67u, 60u, 50u, 33u };
 			int modelResolution = 0;
 			for (int index = 0; index < IM_ARRAYSIZE(modelResolutionValues); ++index) {
 				if (settings.neuralRenderingModelResolution == modelResolutionValues[index]) {
@@ -688,7 +713,7 @@ void FoveatedRender::DrawSettings(bool showSharedPanelNote, bool vrControlsFirst
 			}
 			if (auto _tt = Util::HoverTooltipWrapper())
 				ImGui::TextUnformatted(T(TKEY("neural_rendering_model_resolution_tooltip"),
-					"The display frame remains full resolution; only DLSS Neural Rendering runs at the selected model resolution. The percentage applies to each axis (90% is about 81% of model pixels). 90% and 85% keep a stronger reduced-resolution resolve; 50% and 33% stay conservative for artifact control."));
+					"The display frame remains full resolution; only DLSS Neural Rendering runs at the selected actual resolution. The percentage applies to each axis, so model-pixel cost is approximately the square of this value. Higher stops preserve more detail; 50% and 33% are the aggressive performance modes."));
 
 			static const char* resolveModes[] = { "Classic (bounded source)", "Matched Residual (experimental)" };
 			int resolveMode = static_cast<int>(std::min(settings.neuralRenderingResolveMode, 1u));
@@ -731,6 +756,63 @@ void FoveatedRender::DrawSettings(bool showSharedPanelNote, bool vrControlsFirst
 				if (globals::game::isVR && !(subrectController.GetUV().IsFullEye() && subrectController.GetRightEyeUV().IsFullEye()))
 					Util::Text::Warning(T(TKEY("neural_rendering_multi_pass_subrect_warning"),
 						"VR sequential NR is active only in Full Eye mode; cropped/foveated regions remain single-pass for resource and history safety."));
+			}
+
+			ImGui::SeparatorText(T(TKEY("neural_rendering_temporal_header"), "Temporal Stability"));
+			static const char* temporalReuseModes[] = { "Off", "Every 2nd frame", "Every 3rd frame", "Every 4th frame" };
+			static constexpr uint temporalReuseValues[] = { 0u, 2u, 3u, 4u };
+			int temporalReuseMode = 0;
+			for (int index = 0; index < IM_ARRAYSIZE(temporalReuseValues); ++index) {
+				if (settings.neuralRenderingTemporalReuseCadence == temporalReuseValues[index]) {
+					temporalReuseMode = index;
+					break;
+				}
+			}
+			if (ImGui::Combo(T(TKEY("neural_rendering_temporal_mode"), "Temporal residual reuse"),
+				&temporalReuseMode, temporalReuseModes, IM_ARRAYSIZE(temporalReuseModes)))
+				settings.neuralRenderingTemporalReuseCadence = temporalReuseValues[temporalReuseMode];
+			if (auto _tt = Util::HoverTooltipWrapper())
+				ImGui::TextUnformatted(T(TKEY("neural_rendering_temporal_mode_tooltip"),
+					"Runs a full Feature 18 pass every Nth frame and reuses the teacher residual between full passes with accumulated exact game motion vectors. Native full-eye, 100% model resolution, single-pass post-upscale only; pre-upscale and cropped/foveated layouts are excluded. Disabled by default."));
+			if (settings.neuralRenderingTemporalReuseCadence != 0) {
+				ImGui::SliderFloat(T(TKEY("neural_rendering_temporal_depth_threshold"), "Depth rejection threshold"),
+					&settings.neuralRenderingTemporalDepthThreshold, 0.0f, 0.25f, "%.3f");
+				ImGui::SliderFloat(T(TKEY("neural_rendering_temporal_color_tolerance"), "Color rejection tolerance"),
+					&settings.neuralRenderingTemporalColorTolerance, 0.0f, 0.50f, "%.3f");
+				Util::Text::Warning(T(TKEY("neural_rendering_temporal_warning"),
+					"Experimental: skipped frames are not valid native Feature 18 teacher captures. Watch for ghosting, cadence shimmer, and disocclusion errors in VR."));
+			}
+
+			ImGui::SeparatorText("Eye-tracked foveation (experimental)");
+			bool eyeTrackedFoveation = settings.neuralRenderingEyeTrackedFoveation;
+			if (ImGui::Checkbox("Native OpenVR gaze provider", &eyeTrackedFoveation))
+				settings.neuralRenderingEyeTrackedFoveation = eyeTrackedFoveation;
+			if (auto _tt = Util::HoverTooltipWrapper())
+				ImGui::TextUnformatted(
+					"Opt-in moving-crop experiment for native OpenVR eye tracking. Neural Rendering stays on the existing per-eye Feature 18 path; only the persisted crop center moves. It requires VR + Foveated Default + a cropped region, and fails closed to the static crop on unsupported or stale gaze.");
+			if (settings.neuralRenderingEyeTrackedFoveation) {
+				ImGui::SliderFloat("Gaze smoothing", &settings.neuralRenderingEyeTrackedSmoothingMs,
+					0.0f, 250.0f, "%.0f ms");
+				int quantizationPixels = static_cast<int>(std::min(settings.neuralRenderingEyeTrackedQuantizationPixels, 64u));
+				if (ImGui::SliderInt("Crop movement quantization", &quantizationPixels, 0, 64, quantizationPixels == 0 ? "Off" : "%d input px"))
+					settings.neuralRenderingEyeTrackedQuantizationPixels = static_cast<uint>(std::clamp(quantizationPixels, 0, 64));
+				if (!globals::game::isVR)
+					Util::Text::Warning("Native OpenVR gaze is available only in VR; the static crop remains active.");
+				else if (GetDlssMode() != DlssMode::kDefault)
+					Util::Text::Warning("Native OpenVR gaze currently requires Foveated DLSS Default mode; Faster mode remains static.");
+				else if (subrectController.GetUV().IsFullEye() && subrectController.GetRightEyeUV().IsFullEye())
+					Util::Text::Warning("Select Center 50%, Center 75%, or another cropped eye region before enabling a moving gaze crop.");
+
+				const auto gaze = FoveatedRenderImpl::NativeOpenVRGaze::GetDiagnostics();
+				ImGui::TextDisabled("Provider: %s | API: %s | Focus: %s | Native sample: %s",
+					FoveatedRenderImpl::NativeOpenVRGaze::StatusName(gaze.status), gaze.interfaceVersion.c_str(),
+					gaze.focused ? "yes" : "no", gaze.nativeQueryValid ? "valid" : "invalid");
+				ImGui::TextDisabled("Crop: %s | Fallback: %s | History reset: %s | Sample age: %.1f ms",
+					gaze.dynamic ? "dynamic" : "static", gaze.usingFallback ? "yes" : "no",
+					gaze.historyReset ? "yes" : "no", gaze.sampleAgeMs);
+				ImGui::TextDisabled("Filtered gaze L=(%.3f, %.3f) R=(%.3f, %.3f) | sequence=%llu",
+					gaze.filteredLeftUV[0], gaze.filteredLeftUV[1], gaze.filteredRightUV[0], gaze.filteredRightUV[1],
+					static_cast<unsigned long long>(gaze.sampleSequence));
 			}
 
 			static const char* presets[] = { "Default", "Balanced", "Fabric Detail", "Natural", "Strong", "Custom" };

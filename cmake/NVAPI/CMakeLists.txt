@@ -2,12 +2,24 @@ cmake_minimum_required(VERSION 3.21)
 
 add_library(NVAPI INTERFACE)
 
+set(OPENNR_NVAPI_SOURCE_DIR
+    "${CMAKE_SOURCE_DIR}/extern/nvapi"
+    CACHE PATH
+    "NVAPI source checkout used by the OpenNR build"
+)
+if(NOT EXISTS "${OPENNR_NVAPI_SOURCE_DIR}/nvapi.h" OR
+   NOT EXISTS "${OPENNR_NVAPI_SOURCE_DIR}/amd64/nvapi64.lib")
+    message(FATAL_ERROR
+        "NVAPI headers or amd64 import library are missing from ${OPENNR_NVAPI_SOURCE_DIR}"
+    )
+endif()
+
 target_include_directories(
-    NVAPI INTERFACE ${CMAKE_SOURCE_DIR}/extern/nvapi
+    NVAPI INTERFACE "${OPENNR_NVAPI_SOURCE_DIR}"
 )
 
 target_link_libraries(
-    NVAPI INTERFACE "${CMAKE_SOURCE_DIR}/extern/nvapi/amd64/nvapi64.lib"
+    NVAPI INTERFACE "${OPENNR_NVAPI_SOURCE_DIR}/amd64/nvapi64.lib"
 )
 
 if(MSVC)

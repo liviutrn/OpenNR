@@ -26,6 +26,10 @@ public:
 		// Untranslated identifier used for page navigation.
 		std::string canonicalId;
 		std::function<void()> func;
+		// Adds a visual rule before this page in the navigation column. This keeps
+		// the Neural Rendering pages distinct from the ordinary settings pages
+		// without changing the stable menu IDs or the two-column layout.
+		bool separatorBefore = false;
 	};
 
 	/** @brief Represents a section header in the feature list. */

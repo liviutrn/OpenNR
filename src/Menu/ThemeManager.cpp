@@ -1103,12 +1103,15 @@ bool ThemeManager::ValidateThemeData(const json& themeData) const
 float ThemeManager::ResolveFontSize(const Menu& menu)
 {
 	const auto& settings = menu.GetSettings();
+	const float vrFontScale = globals::game::isVR ?
+		std::clamp(settings.VRFontScale, Constants::MIN_VR_FONT_SCALE, Constants::MAX_VR_FONT_SCALE) :
+		1.0f;
 
 	// When resolution-based font is disabled, use the theme's fixed size directly
 	if (!settings.UseResolutionFont) {
 		float configured = settings.Theme.FontSize;
 		if (std::round(configured) > 0)
-			return std::clamp(configured, Constants::MIN_FONT_SIZE, Constants::MAX_FONT_SIZE);
+			return std::clamp(configured * vrFontScale, Constants::MIN_FONT_SIZE, Constants::MAX_FONT_SIZE);
 	}
 
 	// Compute dynamic size from screen resolution
@@ -1120,7 +1123,7 @@ float ThemeManager::ResolveFontSize(const Menu& menu)
 		const float canvasH = globals::features::vr.GetHelperPanelSize(panelW, panelH) ?
 		                          static_cast<float>(panelH) :
 		                          static_cast<float>(VR::Config::kOverlayHeight);
-		dynamicSize = canvasH * Constants::DEFAULT_FONT_RATIO;
+		dynamicSize = canvasH * Constants::DEFAULT_FONT_RATIO * vrFontScale;
 	} else if (globals::state && globals::state->screenSize.y > 0) {
 		// Non-VR: use current screen height
 		dynamicSize = globals::state->screenSize.y * Constants::DEFAULT_FONT_RATIO;

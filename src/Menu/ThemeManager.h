@@ -165,6 +165,11 @@ public:
 		static constexpr float MIN_FONT_SIZE = 16.0f;                 // ~1.5% @ 1080px height
 		static constexpr float MAX_FONT_SIZE = 108.0f;                // 5.0% @ 2160px height
 		static constexpr float DEFAULT_FONT_SIZE = 27.0f;
+		// VR readability is an interface preference, separate from the helper's
+		// physical panel scale/distance. It is applied to the logical font atlas.
+		static constexpr float DEFAULT_VR_FONT_SCALE = 1.25f;
+		static constexpr float MIN_VR_FONT_SCALE = 1.0f;
+		static constexpr float MAX_VR_FONT_SCALE = 1.75f;
 
 		// Global scale constants
 		static constexpr float DEFAULT_GLOBAL_SCALE = 0.0f;  // Default global scale for built-in themes
