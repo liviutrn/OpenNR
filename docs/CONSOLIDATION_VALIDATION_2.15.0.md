@@ -2,9 +2,9 @@
 
 Validated source commit: `caadbe82`. Later documentation and the local main merge preserve this source tree.
 
-The Release runtime and capture-enabled AIO package built successfully from the canonical runtime and declared C: dependencies. Automatic deployment was disabled. DLL version is 2.15.0.0. The archive at `E:/OpenNR_Builds/2.15.0/dist/OpenNR 2.15.0.7z` is 228,064,287 bytes and contains 490 files (440,835,682 uncompressed bytes). 7-Zip integrity testing passes; every extracted file matches the validated package stage by path, length and SHA-256. The archive was regenerated after the complete 2.15.0 changelog was added; no runtime source code changed in that package-refresh step.
+The Release runtime and capture-enabled AIO package built successfully from the canonical runtime and declared C: dependencies. Automatic deployment was disabled. DLL version is 2.15.0.0. The archive at `E:/OpenNR_Builds/2.15.0/dist/OpenNR 2.15.0.7z` is 228,064,393 bytes and contains 490 files (440,835,707 uncompressed bytes). 7-Zip integrity testing passes; every extracted file matches the validated package stage by path, length and SHA-256. The archive was regenerated after the complete 2.15.0 changelog was added; no runtime source code changed in that package-refresh step.
 
-- Archive SHA-256: `224B0E1B6EDFAD5EDE2DE4113E412CFC32DD695BA839D103ADB520CA9E2B695C`
+- Archive SHA-256: `D90BAFF47BE32C2AABC1F65A9ADDBD1A5D10BC3F961DB47FA6AA69A3A9E75C07`
 - CommunityShaders.dll SHA-256: `EB1933B89F612BECC80B405E76EB68298D213545E40748E29DCCB4A9C910C9B1`
 
 ## Clean source and supported workflows

@@ -346,9 +346,9 @@ the established user configuration and safe fallback route.
   junctions preserve older paths without keeping the payload physically on D:.
 - Removed temporary V:, W:, and X: SUBST aliases used during validation. No
   source directory was deleted as part of alias cleanup.
-- Added project map, setup instructions, experiment index, external-storage
-  registry, forensic audit, compact machine manifest, and final validation
-  record.
+- Added project map, setup instructions, indexed historical experiment
+  directories, external-storage registry, forensic audit, compact machine
+  manifest, and final validation record.
 
 ## Compatibility and defaults
 
