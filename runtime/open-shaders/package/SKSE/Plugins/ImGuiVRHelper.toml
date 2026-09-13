@@ -1,0 +1,12 @@
+# OpenNR VR-first defaults for ImGuiVRHelper v1.7.0.
+#
+# Fresh-install package default only. Preserve an existing user-owned
+# Data/SKSE/Plugins/ImGuiVRHelper.toml (including an MO2 overwrite file) unless
+# the user explicitly wants to restore these defaults.
+# FixedWorld keeps the menu anchored in the scene instead of following the HMD.
+menuScale = 1.25
+attachMode = 0
+positioningMethod = 1
+hmdOffsetX = 0.0
+hmdOffsetY = -0.20
+hmdOffsetZ = -0.95
