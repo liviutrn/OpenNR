@@ -11,6 +11,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <utility>
 
 namespace FoveatedRenderImpl::Ops
 {
@@ -311,7 +312,229 @@ namespace FoveatedRenderImpl::Ops
 		}
 	}
 
-	void EnsureVRSubrectTextures(
+	namespace
+	{
+		using SubrectCacheEntry = Core::SubrectExactCacheEntry;
+
+		bool HasAnyActiveSubrectResource()
+		{
+			return Core::vrSubrectColorIn[0] || Core::vrSubrectColorOut[0] || Core::vrSubrectDepth[0] ||
+				Core::vrSubrectMotionVectors[0] || Core::vrSubrectColorIn[1] || Core::vrSubrectColorOut[1] ||
+				Core::vrSubrectDepth[1] || Core::vrSubrectMotionVectors[1];
+		}
+
+		bool HasCompleteActiveSubrectResources()
+		{
+			for (std::uint32_t eye = 0; eye < 2; ++eye) {
+				if (!Core::vrSubrectColorIn[eye] || !Core::vrSubrectColorOut[eye] ||
+					!Core::vrSubrectDepth[eye] || !Core::vrSubrectMotionVectors[eye] ||
+					!Core::vrSubrectColorIn[eye]->resource || !Core::vrSubrectColorOut[eye]->resource ||
+					!Core::vrSubrectDepth[eye]->resource || !Core::vrSubrectDepth[eye]->srv ||
+					!Core::vrSubrectDepth[eye]->uav || !Core::vrSubrectMotionVectors[eye]->resource)
+					return false;
+			}
+			return true;
+		}
+
+		void ResetActiveSubrectResources(bool countFree)
+		{
+			if (countFree && HasAnyActiveSubrectResource())
+				++Core::vrSubrectResourceFrees;
+			for (std::uint32_t eye = 0; eye < 2; ++eye) {
+				Core::vrSubrectColorIn[eye].reset();
+				Core::vrSubrectColorOut[eye].reset();
+				Core::vrSubrectDepth[eye].reset();
+				Core::vrSubrectMotionVectors[eye].reset();
+				Core::vrSubrectReactiveMask[eye].reset();
+				Core::vrSubrectTransparencyMask[eye].reset();
+			}
+			Core::vrSubrectInW = Core::vrSubrectInH = Core::vrSubrectOutW = Core::vrSubrectOutH = 0;
+			Core::vrSubrectValidInW = Core::vrSubrectValidInH = Core::vrSubrectValidOutW = Core::vrSubrectValidOutH = 0;
+			Core::vrSubrectColorSourceOwner = nullptr;
+			Core::vrSubrectMotionSourceOwner = nullptr;
+			Core::vrSubrectReactiveSourceOwner = nullptr;
+			Core::vrSubrectTransparencySourceOwner = nullptr;
+		}
+
+		void ResetCacheEntry(SubrectCacheEntry& entry, bool countFree)
+		{
+			if (countFree && entry.valid)
+				++Core::vrSubrectResourceFrees;
+			for (std::uint32_t eye = 0; eye < 2; ++eye) {
+				entry.colorIn[eye].reset();
+				entry.colorOut[eye].reset();
+				entry.depth[eye].reset();
+				entry.motionVectors[eye].reset();
+				entry.reactiveMask[eye].reset();
+				entry.transparencyMask[eye].reset();
+			}
+			entry = {};
+		}
+
+		void ClearExactCache(bool countFree)
+		{
+			for (auto& entry : Core::vrSubrectExactCache)
+				ResetCacheEntry(entry, countFree);
+		}
+
+		void SwapActiveWithCache(SubrectCacheEntry& entry)
+		{
+			for (std::uint32_t eye = 0; eye < 2; ++eye) {
+				std::swap(Core::vrSubrectColorIn[eye], entry.colorIn[eye]);
+				std::swap(Core::vrSubrectColorOut[eye], entry.colorOut[eye]);
+				std::swap(Core::vrSubrectDepth[eye], entry.depth[eye]);
+				std::swap(Core::vrSubrectMotionVectors[eye], entry.motionVectors[eye]);
+				std::swap(Core::vrSubrectReactiveMask[eye], entry.reactiveMask[eye]);
+				std::swap(Core::vrSubrectTransparencyMask[eye], entry.transparencyMask[eye]);
+			}
+		}
+
+		void SetActiveSubrectMetadata(
+			std::uint32_t inW, std::uint32_t inH, std::uint32_t outW, std::uint32_t outH,
+			ID3D11Resource* colorSrc, ID3D11Resource* mvecSrc,
+			ID3D11Resource* reactiveSrc, ID3D11Resource* transparencySrc)
+		{
+			Core::vrSubrectInW = inW;
+			Core::vrSubrectInH = inH;
+			Core::vrSubrectOutW = outW;
+			Core::vrSubrectOutH = outH;
+			Core::vrSubrectColorSourceOwner = colorSrc;
+			Core::vrSubrectMotionSourceOwner = mvecSrc;
+			Core::vrSubrectReactiveSourceOwner = reactiveSrc;
+			Core::vrSubrectTransparencySourceOwner = transparencySrc;
+		}
+
+		void SetActiveValidExtent(std::uint32_t inW, std::uint32_t inH, std::uint32_t outW, std::uint32_t outH)
+		{
+			Core::vrSubrectValidInW = inW;
+			Core::vrSubrectValidInH = inH;
+			Core::vrSubrectValidOutW = outW;
+			Core::vrSubrectValidOutH = outH;
+		}
+
+		bool ActiveMatchesExact(
+			std::uint32_t inW, std::uint32_t inH, std::uint32_t outW, std::uint32_t outH,
+			ID3D11Resource* colorSrc, ID3D11Resource* mvecSrc,
+			ID3D11Resource* reactiveSrc, ID3D11Resource* transparencySrc)
+		{
+			return HasCompleteActiveSubrectResources() && Core::vrSubrectInW == inW && Core::vrSubrectInH == inH &&
+				Core::vrSubrectOutW == outW && Core::vrSubrectOutH == outH &&
+				Core::vrSubrectColorSourceOwner == colorSrc && Core::vrSubrectMotionSourceOwner == mvecSrc &&
+				Core::vrSubrectReactiveSourceOwner == reactiveSrc && Core::vrSubrectTransparencySourceOwner == transparencySrc &&
+				(!reactiveSrc || (Core::vrSubrectReactiveMask[0] && Core::vrSubrectReactiveMask[1])) &&
+				(!transparencySrc || (Core::vrSubrectTransparencyMask[0] && Core::vrSubrectTransparencyMask[1]));
+		}
+
+		bool CacheMatches(const SubrectCacheEntry& entry,
+			std::uint32_t inW, std::uint32_t inH, std::uint32_t outW, std::uint32_t outH,
+			ID3D11Resource* colorSrc, ID3D11Resource* mvecSrc,
+			ID3D11Resource* reactiveSrc, ID3D11Resource* transparencySrc)
+		{
+			return entry.valid && entry.inW == inW && entry.inH == inH && entry.outW == outW && entry.outH == outH &&
+				entry.colorSource == colorSrc && entry.motionSource == mvecSrc &&
+				entry.reactiveSource == reactiveSrc && entry.transparencySource == transparencySrc &&
+				entry.colorIn[0] && entry.colorIn[1] && entry.colorOut[0] && entry.colorOut[1] &&
+				entry.depth[0] && entry.depth[1] && entry.motionVectors[0] && entry.motionVectors[1] &&
+				(!reactiveSrc || (entry.reactiveMask[0] && entry.reactiveMask[1])) &&
+				(!transparencySrc || (entry.transparencyMask[0] && entry.transparencyMask[1]));
+		}
+
+		void SaveActiveIntoCacheEntry(SubrectCacheEntry& entry, std::uint64_t frame)
+		{
+			entry.inW = Core::vrSubrectInW;
+			entry.inH = Core::vrSubrectInH;
+			entry.outW = Core::vrSubrectOutW;
+			entry.outH = Core::vrSubrectOutH;
+			entry.colorSource = Core::vrSubrectColorSourceOwner;
+			entry.motionSource = Core::vrSubrectMotionSourceOwner;
+			entry.reactiveSource = Core::vrSubrectReactiveSourceOwner;
+			entry.transparencySource = Core::vrSubrectTransparencySourceOwner;
+			entry.lastUsedFrame = frame;
+			entry.valid = HasCompleteActiveSubrectResources();
+		}
+
+		bool CreateActiveSubrectResources(
+			std::uint32_t inW, std::uint32_t inH, std::uint32_t outW, std::uint32_t outH,
+			ID3D11Resource* colorSrc, ID3D11Resource* mvecSrc,
+			ID3D11Resource* reactiveSrc, ID3D11Resource* transparencySrc)
+		{
+			if (!colorSrc || !mvecSrc || !inW || !inH || !outW || !outH || !globals::d3d::device)
+				return false;
+
+			for (std::uint32_t eye = 0; eye < 2; ++eye) {
+				const std::string suffix = eye == 0 ? "Left" : "Right";
+				Core::vrSubrectColorIn[eye] = CreateTextureFromSource(colorSrc, inW, inH, false, true, true,
+					("FoveatedRender_Subrect_ColorIn_" + suffix).c_str());
+				Core::vrSubrectColorOut[eye] = CreateTextureFromSource(colorSrc, outW, outH, false, true, false,
+					("FoveatedRender_Subrect_ColorOut_" + suffix).c_str());
+
+				D3D11_TEXTURE2D_DESC depthDesc{};
+				depthDesc.Width = inW;
+				depthDesc.Height = inH;
+				depthDesc.MipLevels = 1;
+				depthDesc.ArraySize = 1;
+				depthDesc.Format = DXGI_FORMAT_R32_TYPELESS;
+				depthDesc.SampleDesc.Count = 1;
+				depthDesc.Usage = D3D11_USAGE_DEFAULT;
+				depthDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
+				Core::vrSubrectDepth[eye] = eastl::make_unique<Texture2D>(depthDesc);
+				if (Core::vrSubrectDepth[eye]) {
+					Core::vrSubrectDepth[eye]->CreateSRV(D3D11_SHADER_RESOURCE_VIEW_DESC{
+						.Format = DXGI_FORMAT_R32_FLOAT,
+						.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D,
+						.Texture2D = { .MostDetailedMip = 0, .MipLevels = 1 } });
+					Core::vrSubrectDepth[eye]->CreateUAV(D3D11_UNORDERED_ACCESS_VIEW_DESC{
+						.Format = DXGI_FORMAT_R32_FLOAT,
+						.ViewDimension = D3D11_UAV_DIMENSION_TEXTURE2D,
+						.Texture2D = { .MipSlice = 0 } });
+					Util::SetResourceName(Core::vrSubrectDepth[eye]->resource.get(),
+						("FoveatedRender_Subrect_Depth_" + suffix).c_str());
+				}
+
+				Core::vrSubrectMotionVectors[eye] = CreateTextureFromSource(mvecSrc, inW, inH, false, true, false,
+					("FoveatedRender_Subrect_MVec_" + suffix).c_str());
+				if (reactiveSrc)
+					Core::vrSubrectReactiveMask[eye] = CreateTextureFromSource(reactiveSrc, inW, inH, false, true, false,
+						("FoveatedRender_Subrect_Reactive_" + suffix).c_str());
+				if (transparencySrc)
+					Core::vrSubrectTransparencyMask[eye] = CreateTextureFromSource(transparencySrc, inW, inH, false, true, false,
+						("FoveatedRender_Subrect_Transparency_" + suffix).c_str());
+			}
+
+			if (!HasCompleteActiveSubrectResources() ||
+				(reactiveSrc && (!Core::vrSubrectReactiveMask[0] || !Core::vrSubrectReactiveMask[1])) ||
+				(transparencySrc && (!Core::vrSubrectTransparencyMask[0] || !Core::vrSubrectTransparencyMask[1]))) {
+				ResetActiveSubrectResources(false);
+				return false;
+			}
+			SetActiveSubrectMetadata(inW, inH, outW, outH, colorSrc, mvecSrc, reactiveSrc, transparencySrc);
+			SetActiveValidExtent(inW, inH, outW, outH);
+			return true;
+		}
+
+		bool ValidateFixedEnvelope(std::uint32_t validInW, std::uint32_t validInH,
+			std::uint32_t validOutW, std::uint32_t validOutH)
+		{
+			++Core::vrSubrectEnvelopeValidations;
+			if (!HasCompleteActiveSubrectResources())
+				return false;
+			if ((Core::vrSubrectReactiveSourceOwner &&
+					(!Core::vrSubrectReactiveMask[0] || !Core::vrSubrectReactiveMask[1])) ||
+				(Core::vrSubrectTransparencySourceOwner &&
+					(!Core::vrSubrectTransparencyMask[0] || !Core::vrSubrectTransparencyMask[1])))
+				return false;
+			for (std::uint32_t eye = 0; eye < 2; ++eye) {
+				if (Core::vrSubrectColorIn[eye]->desc.Width < validInW || Core::vrSubrectColorIn[eye]->desc.Height < validInH ||
+					Core::vrSubrectColorOut[eye]->desc.Width < validOutW || Core::vrSubrectColorOut[eye]->desc.Height < validOutH ||
+					Core::vrSubrectDepth[eye]->desc.Width < validInW || Core::vrSubrectDepth[eye]->desc.Height < validInH ||
+					Core::vrSubrectMotionVectors[eye]->desc.Width < validInW || Core::vrSubrectMotionVectors[eye]->desc.Height < validInH)
+					return false;
+			}
+			return true;
+		}
+	}
+
+	bool EnsureVRSubrectTextures(
 		uint32_t subInW,
 		uint32_t subInH,
 		uint32_t subOutW,
@@ -319,63 +542,156 @@ namespace FoveatedRenderImpl::Ops
 		ID3D11Resource* colorSrc,
 		ID3D11Resource* mvecSrc,
 		ID3D11Resource* reactiveSrc,
-		ID3D11Resource* transparencySrc)
+		ID3D11Resource* transparencySrc,
+		bool preferFixedEnvelope,
+		std::uint64_t frame)
 	{
-		bool needsRecreate = !Core::vrSubrectColorIn[0] ||
-		                     Core::vrSubrectInW != subInW || Core::vrSubrectInH != subInH ||
-		                     Core::vrSubrectOutW != subOutW || Core::vrSubrectOutH != subOutH;
-		// Recreate if reactive/transparency source appeared but intermediate is missing
-		if (!needsRecreate) {
-			needsRecreate = (reactiveSrc && !Core::vrSubrectReactiveMask[0]) ||
-			                (transparencySrc && !Core::vrSubrectTransparencyMask[0]);
-		}
+		if (!colorSrc || !mvecSrc || !subInW || !subInH || !subOutW || !subOutH)
+			return false;
 
-		if (needsRecreate) {
-			for (int i = 0; i < 2; i++) {
-				std::string suffix = (i == 0) ? "Left" : "Right";
-				Core::vrSubrectColorIn[i] = CreateTextureFromSource(colorSrc, subInW, subInH, false, true, true, ("FoveatedRender_Subrect_ColorIn_" + suffix).c_str());
-				Core::vrSubrectColorOut[i] = CreateTextureFromSource(colorSrc, subOutW, subOutH, false, true, false, ("FoveatedRender_Subrect_ColorOut_" + suffix).c_str());
+		// Fixed envelope is used only by adaptive regular crop. It deliberately
+		// ignores changing UV origins and keeps the largest compatible set alive;
+		// the current crop is carried by valid extents and copy regions.
+		if (preferFixedEnvelope && !Core::vrSubrectFixedEnvelopeRejected) {
+			const bool canReuse = Core::vrSubrectResourceMode == Core::SubrectResourceMode::FixedEnvelope &&
+				Core::vrSubrectColorSourceOwner == colorSrc && Core::vrSubrectMotionSourceOwner == mvecSrc &&
+				Core::vrSubrectReactiveSourceOwner == reactiveSrc && Core::vrSubrectTransparencySourceOwner == transparencySrc &&
+				Core::vrSubrectInW >= subInW && Core::vrSubrectInH >= subInH &&
+				Core::vrSubrectOutW >= subOutW && Core::vrSubrectOutH >= subOutH &&
+				ValidateFixedEnvelope(subInW, subInH, subOutW, subOutH);
+			if (canReuse) {
+				const bool validExtentChanged = Core::vrSubrectValidInW != subInW ||
+					Core::vrSubrectValidInH != subInH || Core::vrSubrectValidOutW != subOutW ||
+					Core::vrSubrectValidOutH != subOutH;
+				SetActiveValidExtent(subInW, subInH, subOutW, subOutH);
+				++Core::vrSubrectResourceReuses;
+				if (validExtentChanged)
+					logger::debug("[FOVEATED] fixed-envelope valid extent {}x{} -> {}x{} frame={} reuses={}",
+						subInW, subInH, subOutW, subOutH, frame, Core::vrSubrectResourceReuses);
+				return true;
+			}
+			Core::vrSubrectResourceContractChanged = true;
 
-				D3D11_TEXTURE2D_DESC depthDesc = {};
-				depthDesc.Width = subInW;
-				depthDesc.Height = subInH;
-				depthDesc.MipLevels = 1;
-				depthDesc.ArraySize = 1;
-				depthDesc.Format = DXGI_FORMAT_R32_TYPELESS;
-				depthDesc.SampleDesc.Count = 1;
-				depthDesc.Usage = D3D11_USAGE_DEFAULT;
-				depthDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
-				Core::vrSubrectDepth[i] = eastl::make_unique<Texture2D>(depthDesc);
-				Util::SetResourceName(Core::vrSubrectDepth[i]->resource.get(), ("FoveatedRender_Subrect_Depth_" + suffix).c_str());
-
-				D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
-				srvDesc.Format = DXGI_FORMAT_R32_FLOAT;
-				srvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
-				srvDesc.Texture2D.MipLevels = 1;
-				Core::vrSubrectDepth[i]->CreateSRV(srvDesc);
-
-				D3D11_UNORDERED_ACCESS_VIEW_DESC uavDesc = {};
-				uavDesc.Format = DXGI_FORMAT_R32_FLOAT;
-				uavDesc.ViewDimension = D3D11_UAV_DIMENSION_TEXTURE2D;
-				uavDesc.Texture2D.MipSlice = 0;
-				Core::vrSubrectDepth[i]->CreateUAV(uavDesc);
-
-				Core::vrSubrectMotionVectors[i] = CreateTextureFromSource(mvecSrc, subInW, subInH, false, true, false, ("FoveatedRender_Subrect_MVec_" + suffix).c_str());
-				if (reactiveSrc)
-					Core::vrSubrectReactiveMask[i] = CreateTextureFromSource(reactiveSrc, subInW, subInH, false, true, false, ("FoveatedRender_Subrect_Reactive_" + suffix).c_str());
-				else
-					Core::vrSubrectReactiveMask[i].reset();
-				if (transparencySrc)
-					Core::vrSubrectTransparencyMask[i] = CreateTextureFromSource(transparencySrc, subInW, subInH, false, true, false, ("FoveatedRender_Subrect_Transparency_" + suffix).c_str());
-				else
-					Core::vrSubrectTransparencyMask[i].reset();
+			if (Core::vrSubrectResourceMode != Core::SubrectResourceMode::FixedEnvelope) {
+				ResetActiveSubrectResources(true);
+				ClearExactCache(true);
+			} else {
+				ResetActiveSubrectResources(true);
+			}
+			Core::vrSubrectResourceMode = Core::SubrectResourceMode::FixedEnvelope;
+			if (CreateActiveSubrectResources(subInW, subInH, subOutW, subOutH,
+				colorSrc, mvecSrc, reactiveSrc, transparencySrc)) {
+				++Core::vrSubrectResourceCreates;
+				logger::info("[FOVEATED] subrect resource mode=fixed-envelope envelope={}x{} -> {}x{} frame={} creates={}",
+					subInW, subInH, subOutW, subOutH, frame, Core::vrSubrectResourceCreates);
+				return true;
 			}
 
-			Core::vrSubrectInW = subInW;
-			Core::vrSubrectInH = subInH;
-			Core::vrSubrectOutW = subOutW;
-			Core::vrSubrectOutH = subOutH;
+			// Allocation failure is safe to recover from: the exact path below is
+			// contract-conservative and will still keep a bounded cache.
+			++Core::vrSubrectFallbackEntries;
+			Core::vrSubrectFixedEnvelopeRejected = true;
+			Core::vrSubrectResourceMode = Core::SubrectResourceMode::ExactExtent;
+			logger::warn("[FOVEATED] fixed-envelope allocation/validation failed; entering exact-extent cache fallback frame={} entries={}",
+				frame, Core::vrSubrectFallbackEntries);
 		}
+
+		if (Core::vrSubrectResourceMode != Core::SubrectResourceMode::ExactExtent) {
+			Core::vrSubrectResourceContractChanged = true;
+			ResetActiveSubrectResources(true);
+			ClearExactCache(true);
+			Core::vrSubrectResourceMode = Core::SubrectResourceMode::ExactExtent;
+		}
+
+		if (ActiveMatchesExact(subInW, subInH, subOutW, subOutH,
+			colorSrc, mvecSrc, reactiveSrc, transparencySrc)) {
+			SetActiveValidExtent(subInW, subInH, subOutW, subOutH);
+			return true;
+		}
+
+		for (auto& entry : Core::vrSubrectExactCache) {
+			if (!CacheMatches(entry, subInW, subInH, subOutW, subOutH,
+				colorSrc, mvecSrc, reactiveSrc, transparencySrc))
+				continue;
+			const auto oldInW = Core::vrSubrectInW;
+			const auto oldInH = Core::vrSubrectInH;
+			const auto oldOutW = Core::vrSubrectOutW;
+			const auto oldOutH = Core::vrSubrectOutH;
+			const auto oldColorSource = Core::vrSubrectColorSourceOwner;
+			const auto oldMotionSource = Core::vrSubrectMotionSourceOwner;
+			const auto oldReactiveSource = Core::vrSubrectReactiveSourceOwner;
+			const auto oldTransparencySource = Core::vrSubrectTransparencySourceOwner;
+			const bool oldValid = HasCompleteActiveSubrectResources();
+			SwapActiveWithCache(entry);
+			Core::vrSubrectResourceContractChanged = true;
+			entry.inW = oldInW;
+			entry.inH = oldInH;
+			entry.outW = oldOutW;
+			entry.outH = oldOutH;
+			entry.colorSource = oldColorSource;
+			entry.motionSource = oldMotionSource;
+			entry.reactiveSource = oldReactiveSource;
+			entry.transparencySource = oldTransparencySource;
+			entry.valid = oldValid;
+			entry.lastUsedFrame = frame;
+			SetActiveSubrectMetadata(subInW, subInH, subOutW, subOutH,
+				colorSrc, mvecSrc, reactiveSrc, transparencySrc);
+			SetActiveValidExtent(subInW, subInH, subOutW, subOutH);
+			++Core::vrSubrectResourceReuses;
+			logger::info("[FOVEATED] exact-extent cache reuse {}x{} -> {}x{} frame={} reuses={}",
+				subInW, subInH, subOutW, subOutH, frame, Core::vrSubrectResourceReuses);
+			return true;
+		}
+
+		std::size_t selected = 0;
+		for (std::size_t i = 0; i < Core::vrSubrectExactCache.size(); ++i) {
+			if (!Core::vrSubrectExactCache[i].valid) {
+				selected = i;
+				break;
+			}
+			if (Core::vrSubrectExactCache[i].lastUsedFrame < Core::vrSubrectExactCache[selected].lastUsedFrame)
+				selected = i;
+		}
+		auto& entry = Core::vrSubrectExactCache[selected];
+		const bool evicting = entry.valid;
+		const auto oldInW = Core::vrSubrectInW;
+		const auto oldInH = Core::vrSubrectInH;
+		const auto oldOutW = Core::vrSubrectOutW;
+		const auto oldOutH = Core::vrSubrectOutH;
+		const auto oldColorSource = Core::vrSubrectColorSourceOwner;
+		const auto oldMotionSource = Core::vrSubrectMotionSourceOwner;
+		const auto oldReactiveSource = Core::vrSubrectReactiveSourceOwner;
+		const auto oldTransparencySource = Core::vrSubrectTransparencySourceOwner;
+		const bool oldValid = HasCompleteActiveSubrectResources();
+		SwapActiveWithCache(entry);
+		Core::vrSubrectResourceContractChanged = true;
+		entry.inW = oldInW;
+		entry.inH = oldInH;
+		entry.outW = oldOutW;
+		entry.outH = oldOutH;
+		entry.colorSource = oldColorSource;
+		entry.motionSource = oldMotionSource;
+		entry.reactiveSource = oldReactiveSource;
+		entry.transparencySource = oldTransparencySource;
+		entry.valid = oldValid;
+		entry.lastUsedFrame = frame;
+		if (evicting) {
+			++Core::vrSubrectFallbackEvictions;
+			logger::info("[FOVEATED] exact-extent cache eviction slot={} frame={} evictions={}",
+				selected, frame, Core::vrSubrectFallbackEvictions);
+		}
+		// The selected cache entry is now in the active slots. Reuse its memory
+		// only if it matched above; otherwise discard it and create the requested
+		// exact extent in-place. The old active set remains cached in entry.
+		ResetActiveSubrectResources(true);
+		Core::vrSubrectResourceContractChanged = true;
+		if (!CreateActiveSubrectResources(subInW, subInH, subOutW, subOutH,
+			colorSrc, mvecSrc, reactiveSrc, transparencySrc))
+			return false;
+		++Core::vrSubrectResourceCreates;
+		logger::info("[FOVEATED] exact-extent cache create {}x{} -> {}x{} frame={} creates={}",
+			subInW, subInH, subOutW, subOutH, frame, Core::vrSubrectResourceCreates);
+		return true;
 	}
 
 	bool PreparePerEyeInputs(
@@ -877,6 +1193,9 @@ namespace FoveatedRenderImpl::Ops
 		auto context = globals::d3d::context;
 		auto& foveated = globals::features::upscaling.foveatedRender;
 		auto blendMode = foveated.GetSubrectBlendMode();
+		const bool adaptiveMask = foveated.IsAdaptiveCropRuntimeActive();
+		if (adaptiveMask)
+			blendMode = FoveatedRender::SubrectBlendMode::kFeather;
 
 		// Fast path: hard copy (original behaviour)
 		if (blendMode == FoveatedRender::SubrectBlendMode::kHardCopy) {
@@ -976,7 +1295,13 @@ namespace FoveatedRenderImpl::Ops
 			cb->MaskCenterY = 0.5f * height;
 			cb->MaskRadiusX = std::max(0.5f, cb->MaskCenterX);
 			cb->MaskRadiusY = std::max(0.5f, cb->MaskCenterY);
-			cb->_pad0 = 0.0f;
+			const float maskScale = adaptiveMask ?
+				foveated.adaptiveCropController.VisibleCoverage() / foveated.adaptiveCropController.RenderCoverage() : 1.0f;
+			cb->MaskRadiusX *= maskScale;
+			cb->MaskRadiusY *= maskScale;
+			cb->_pad0 = maskScale;
+			if (adaptiveMask)
+				cb->FeatherWidth = std::max(cb->FeatherWidth, 32.0f);
 			context->Unmap(Core::vrSubrectBlendCB.get(), 0);
 		}
 
@@ -1345,8 +1670,29 @@ namespace FoveatedRenderImpl
 			vrAdaptiveCropHistory[i].reset();
 			vrAdaptiveCropDepthHistory[i].reset();
 		}
+		for (auto& entry : vrSubrectExactCache) {
+			for (int eye = 0; eye < 2; ++eye) {
+				entry.colorIn[eye].reset();
+				entry.colorOut[eye].reset();
+				entry.depth[eye].reset();
+				entry.motionVectors[eye].reset();
+				entry.reactiveMask[eye].reset();
+				entry.transparencyMask[eye].reset();
+			}
+			entry = {};
+		}
 		vrAdaptiveCropTarget.reset();
 		vrSubrectInW = vrSubrectInH = vrSubrectOutW = vrSubrectOutH = 0;
+		vrSubrectValidInW = vrSubrectValidInH = vrSubrectValidOutW = vrSubrectValidOutH = 0;
+		vrSubrectResourceMode = SubrectResourceMode::ExactExtent;
+		vrSubrectFixedEnvelopeRejected = false;
+		vrSubrectResourceContractChanged = false;
+		vrSubrectNeuralFixedEnvelopeRejected = false;
+		vrSubrectNeuralFallbackEntries = 0;
+		vrSubrectColorSourceOwner = nullptr;
+		vrSubrectMotionSourceOwner = nullptr;
+		vrSubrectReactiveSourceOwner = nullptr;
+		vrSubrectTransparencySourceOwner = nullptr;
 
 		vrRenderSBS.reset();
 		vrRenderSBSW = vrRenderSBSH = 0;

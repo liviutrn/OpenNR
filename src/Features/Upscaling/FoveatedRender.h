@@ -145,10 +145,11 @@ struct FoveatedRender
 		uint neuralRenderingAdaptiveUpshiftFrames = 12;
 		uint neuralRenderingAdaptiveMinimumDwellFrames = 30;
 		float neuralRenderingAdaptiveGuardTimeMs = 1.0f;
+		bool neuralRenderingAdaptiveDiagnostics = false;
 		// Optional companion for the shared foveated crop. It is coordinated with
 		// adaptive NR and is hard-disabled while eye-tracked foveation owns UVs.
 		bool neuralRenderingAdaptiveCropEnabled = false;
-		uint neuralRenderingAdaptiveCropMinimumCoverage = 50;
+		uint neuralRenderingAdaptiveCropMinimumCoverage = 60;
 		uint neuralRenderingAdaptiveCropDownshiftFrames = 2;
 		uint neuralRenderingAdaptiveCropUpshiftFrames = 24;
 		uint neuralRenderingAdaptiveCropMinimumDwellFrames = 60;
@@ -189,6 +190,7 @@ struct FoveatedRender
 	// Pressure alternates crop -> NR -> crop when both controllers can help.
 	// Restoration remains NR-first because crop is gated on NR maximum.
 	bool adaptiveNextDownshiftIsCrop = true;
+	std::uint64_t adaptiveCropDiagnosticGeneration = UINT64_MAX;
 
 	// Called from Upscaling::DrawSettings. DrawEnable renders the always-visible
 	// header + Enable checkbox at the parent's top level; DrawSettings renders
@@ -227,6 +229,7 @@ struct FoveatedRender
 	Util::Subrect::UVRegion GetEffectiveRightUV() const;
 	bool IsAdaptiveCropRuntimeActive() const { return adaptiveCropController.IsRuntimeActive(); }
 	bool IsAdaptiveCropTransitioning() const { return adaptiveCropController.IsTransitioning(); }
+	std::uint32_t GetAdaptiveCropMaximumCoverage() const { return adaptiveCropController.MaximumCoverage(); }
 
 	/** @brief True while drag-resizing the crop region, and for a few seconds after.
 	 *  Read by the stretch pass alongside settings.debugVisualize. */

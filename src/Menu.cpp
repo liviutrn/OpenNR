@@ -195,11 +195,93 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	RequireShiftToDock,
 	UseResolutionFont,
 	VRFontScale,
+	VRMenuPresentation,
 	Theme,
 	SelectedThemePreset)
 
 bool IsEnabled = false;
 std::unordered_map<std::string, int> Menu::categoryCounts;
+
+Menu::VRMenuPresentationDecision Menu::GetVRMenuPresentationDecision() const
+{
+	VRMenuPresentationDecision decision{};
+	decision.requested = static_cast<VRMenuPresentationMode>(std::min(
+		settings.VRMenuPresentation,
+		static_cast<std::uint32_t>(VRMenuPresentationMode::DesktopOnly)));
+	decision.effective = decision.requested;
+	decision.helperAvailable = globals::game::isVR && globals::features::vr.IsHelperRegistered();
+	if (decision.helperAvailable) {
+		// Registration can precede panel allocation. Treat a zero-sized panel as
+		// unavailable so VR-only mode cannot hide the desktop menu before the
+		// helper has somewhere to render it.
+		std::uint32_t panelWidth = 0;
+		std::uint32_t panelHeight = 0;
+		decision.helperAvailable = globals::features::vr.GetHelperPanelSize(panelWidth, panelHeight);
+	}
+
+	// Non-VR keeps the existing desktop presentation regardless of the stored
+	// VR preference. In VR, a missing helper safely falls back to desktop.
+	if (!globals::game::isVR) {
+		decision.effective = VRMenuPresentationMode::DesktopOnly;
+		decision.desktopDrawEnabled = true;
+		decision.vrDrawEnabled = false;
+		decision.inputOwner = "desktop";
+		return decision;
+	}
+
+	switch (decision.requested) {
+	case VRMenuPresentationMode::VRAndDesktop:
+		decision.desktopDrawEnabled = true;
+		decision.vrDrawEnabled = decision.helperAvailable;
+		decision.inputOwner = decision.helperAvailable ? "desktop + helper" : "desktop";
+		break;
+	case VRMenuPresentationMode::DesktopOnly:
+		decision.desktopDrawEnabled = true;
+		decision.vrDrawEnabled = false;
+		decision.inputOwner = "desktop";
+		break;
+	case VRMenuPresentationMode::VROnly:
+	default:
+		if (decision.helperAvailable) {
+			decision.desktopDrawEnabled = false;
+			decision.vrDrawEnabled = true;
+			decision.inputOwner = "helper";
+		} else {
+			decision.effective = VRMenuPresentationMode::DesktopOnly;
+			decision.desktopDrawEnabled = true;
+			decision.vrDrawEnabled = false;
+			decision.inputOwner = "desktop (helper unavailable)";
+		}
+		break;
+	}
+	return decision;
+}
+
+void Menu::LogVRMenuPresentationDecision()
+{
+	const auto decision = GetVRMenuPresentationDecision();
+	static bool decisionInitialized = false;
+	static VRMenuPresentationMode lastRequested = VRMenuPresentationMode::VROnly;
+	static VRMenuPresentationMode lastEffective = VRMenuPresentationMode::VROnly;
+	static bool lastHelperAvailable = false;
+	static bool lastDesktopDraw = true;
+	static bool lastVRDraw = false;
+	static std::string lastInputOwner;
+	if (decisionInitialized && decision.requested == lastRequested && decision.effective == lastEffective &&
+		decision.helperAvailable == lastHelperAvailable && decision.desktopDrawEnabled == lastDesktopDraw &&
+		decision.vrDrawEnabled == lastVRDraw && lastInputOwner == decision.inputOwner)
+		return;
+	decisionInitialized = true;
+	lastRequested = decision.requested;
+	lastEffective = decision.effective;
+	lastHelperAvailable = decision.helperAvailable;
+	lastDesktopDraw = decision.desktopDrawEnabled;
+	lastVRDraw = decision.vrDrawEnabled;
+	lastInputOwner = decision.inputOwner;
+	logger::info("[MENU] presentation mode requested={} effective={} helper={} desktop={} vr={} input={}",
+		static_cast<unsigned>(decision.requested), static_cast<unsigned>(decision.effective),
+		decision.helperAvailable, decision.desktopDrawEnabled, decision.vrDrawEnabled, decision.inputOwner);
+}
 
 namespace
 {
@@ -416,6 +498,9 @@ void Menu::Load(json& o_json)
 		settings.VRFontScale,
 		ThemeManager::Constants::MIN_VR_FONT_SCALE,
 		ThemeManager::Constants::MAX_VR_FONT_SCALE);
+	settings.VRMenuPresentation = std::min(
+		settings.VRMenuPresentation,
+		static_cast<std::uint32_t>(VRMenuPresentationMode::DesktopOnly));
 
 	// Restore Theme - don't load it from config, only from theme preset files
 	settings.Theme = currentTheme;
@@ -984,6 +1069,7 @@ void Menu::DrawFooter()
  */
 void Menu::DrawOverlay()
 {
+	LogVRMenuPresentationDecision();
 	// Only process reloads when ImGui is NOT in an active frame
 	ImGuiContext* ctx = ImGui::GetCurrentContext();
 	bool canReload = ctx && !ctx->WithinFrameScope && ctx->WithinEndChildID == 0;
@@ -1136,7 +1222,7 @@ void Menu::ProcessInputEventQueue()
 		// which owns wand pointing, combo matching, drag and overlay focus.
 		// Without the helper the events are dropped — VR menus are desktop-only
 		// (no built-in VR overlay fallback).
-		if (globals::features::vr.IsHelperRegistered()) {
+		if (globals::features::vr.IsHelperRegistered() && ShouldRenderVRMenu()) {
 			for (const auto& event : vrEvents) {
 				globals::features::vr.FeedHelperEvent(
 					static_cast<uint32_t>(event.device),

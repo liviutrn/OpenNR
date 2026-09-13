@@ -95,10 +95,12 @@ float FalloffAlpha(float normalizedDistance, float curve)
 		float2 radii = max(float2(MaskRadiusX, MaskRadiusY), float2(0.5, 0.5));
 		edgeDist = EllipseEdgeDistance(localPos - center, radii);
 	} else {
-		float distL = (float)tid.x;
-		float distR = (float)(SubWidth - 1 - tid.x);
-		float distT = (float)tid.y;
-		float distB = (float)(SubHeight - 1 - tid.y);
+		const float scale = _pad0 > 0.0 ? _pad0 : 1.0;
+		const float2 inset = float2(SubWidth, SubHeight) * (1.0 - scale) * 0.5;
+		float distL = (float)tid.x - inset.x;
+		float distR = (float)(SubWidth - 1 - tid.x) - inset.x;
+		float distT = (float)tid.y - inset.y;
+		float distB = (float)(SubHeight - 1 - tid.y) - inset.y;
 		edgeDist = min(min(distL, distR), min(distT, distB));
 	}
 

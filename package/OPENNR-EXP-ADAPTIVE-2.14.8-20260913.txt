@@ -1,0 +1,37 @@
+OpenNR EXP — Adaptive Crop / UI / Map Handoff Test
+====================================================
+
+This file marks the package as an isolated experimental build.
+
+Correction revision: 20260913-B, current-frame crop boundary handoff.
+Adaptive decisions use fresh SteamVR GPU/active-submit workload timings.
+Missing or repeated timing samples hold quality; paced FPS is not workload.
+Crop transitions render the union of the two tiers and animate the current-frame
+feather mask. The previous-frame full-display crop blend is disconnected.
+NR uses an elapsed-time fade with corrected recursive weights, neighborhood
+clamping, invalid-history rejection, and allocation-aware history sampling.
+70-percent NR has explicit resolve parameters.
+Resource contract rejection holds crop until restart; NR remains adaptive.
+This is a safe hold fallback, not proof of successful native feature caching.
+Reset diagnostics are emitted at normal log level; budget status every 300 frames.
+
+Build identity
+--------------
+Version: OpenNR 2.14.8
+Branch: codex/adaptive-nr-handoff-study-opennr-2.14.8-fixed-20260913
+Target: SkyrimVR, 80 Hz, approximately 40 FPS application budget
+
+Experimental defaults
+---------------------
+Adaptive NR minimum: 70 percent
+Adaptive crop: disabled for the first NR-only pass
+Adaptive crop ladder: 85, 80, 75, 70, 65, 60 percent
+Adaptive crop minimum: 60 percent
+Menu presentation: VR only
+Map test: 4096 UI targets and 1.25 map/model scale
+
+Safety boundary
+---------------
+Install only through the separately named experimental MO2 profile and mod.
+This package is not the normal OpenNR installation and is not a merge signal.
+Live HMD, stereo, temporal, frame-pacing, and map acceptance remain open.

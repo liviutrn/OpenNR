@@ -18,6 +18,7 @@
 #include "ShaderCache.h"
 #include "State.h"
 #include "ThemeManager.h"
+#include "Utils/UI.h"
 
 using json = nlohmann::json;
 
@@ -460,6 +461,32 @@ void SettingsTabRenderer::RenderBehaviorTab()
 		}
 
 		SeparatorTextWithFont(T("menu.settings.ui_behavior", "UI Behavior"), Menu::FontRole::Subheading);
+
+		if (globals::game::isVR) {
+			SeparatorTextWithFont("VR Menu Presentation", Menu::FontRole::Subheading);
+			static constexpr const char* presentationLabels[] = { "VR + Desktop", "VR only", "Desktop only" };
+			int presentationMode = static_cast<int>(std::min<std::uint32_t>(
+					globals::menu->GetSettings().VRMenuPresentation, 2u));
+			if (ImGui::BeginTable("##vr_menu_presentation", IM_ARRAYSIZE(presentationLabels),
+					ImGuiTableFlags_SizingStretchSame | ImGuiTableFlags_PadOuterX | ImGuiTableFlags_NoSavedSettings)) {
+				for (int index = 0; index < IM_ARRAYSIZE(presentationLabels); ++index) {
+					ImGui::TableNextColumn();
+					ImGui::PushID(index);
+					const bool selected = presentationMode == index;
+					if (selected)
+						ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
+					if (ImGui::Button(presentationLabels[index], ImVec2(-1.0f, 32.0f * Util::GetUIScale()))) {
+						globals::menu->GetSettings().VRMenuPresentation = static_cast<std::uint32_t>(index);
+						globals::menu->LogVRMenuPresentationDecision();
+					}
+					if (selected)
+						ImGui::PopStyleColor();
+					ImGui::PopID();
+				}
+				ImGui::EndTable();
+			}
+			Util::UI::DrawWrappedText("VR only removes the duplicate desktop copy. Desktop only keeps the menu on the monitor.");
+		}
 
 		ImGui::Checkbox(T("menu.settings.show_icon_buttons_in_header", "Show Icon Buttons in Header"), &themeSettings.ShowActionIcons);
 		if (auto _tt = Util::HoverTooltipWrapper()) {

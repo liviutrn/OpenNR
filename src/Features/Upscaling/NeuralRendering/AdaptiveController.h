@@ -19,6 +19,7 @@ namespace NeuralRendering
 		{
 			bool enabled = false;
 			bool allowDownshift = true;
+			bool allowUpshift = true;
 			std::uint32_t refreshHz = 80;
 			std::uint32_t minimumResolution = 70;
 			std::uint32_t downshiftFrames = 4;
@@ -28,7 +29,9 @@ namespace NeuralRendering
 		};
 
 		void Reset();
-		void Update(std::uint32_t frame, const Config& config, bool eligible);
+		/** @brief Negative workload means unavailable; paced frame intervals never drive quality. */
+		void Update(std::uint32_t frame, const Config& config, bool eligible, float workloadMs = -1.0f, float elapsedMs = -1.0f);
+		[[nodiscard]] const char* DecisionReason() const { return decisionReason_; }
 
 		[[nodiscard]] std::uint32_t ActiveResolution() const;
 		[[nodiscard]] std::uint32_t TargetResolution() const;
@@ -81,6 +84,10 @@ namespace NeuralRendering
 		std::uint32_t overrunFrames_ = 0;
 		std::uint32_t headroomFrames_ = 0;
 		float applicationDeadlineMs_ = 25.0f;
+		float transitionElapsedMs_ = 0.0f;
+		float previousTransitionMs_ = 0.0f;
+		float transitionDurationMs_ = 0.0f;
+		const char* decisionReason_ = "initial";
 		float lastFrameTimeMs_ = 0.0f;
 		float smoothedFrameTimeMs_ = 0.0f;
 		bool lastSampleOverBudget_ = false;

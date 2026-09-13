@@ -29,6 +29,7 @@ namespace
 	bool g_combosRegistered = false;
 	API::ComboId g_overlayOpenCombo = 0;
 	API::ComboId g_overlayCloseCombo = 0;
+	bool g_helperPanelWasRendered = false;
 
 	// ButtonCombo and API::InputCombo are layout-compatible but distinct types.
 	std::vector<API::InputCombo> ToApi(const std::vector<ButtonCombo>& binds)
@@ -92,9 +93,45 @@ void VR::ConnectHelper()
 }
 
 bool VR::IsHelperRegistered() const { return g_client.IsConnected(); }
-bool VR::HelperRequestsRender() const { return g_client.HasFocus(); }
+bool VR::HelperRequestsRender() const
+{
+	return g_client.IsConnected() && globals::menu && globals::menu->ShouldRenderVRMenu() && g_client.HasFocus();
+}
 
-void VR::RenderHelperToPanel() { g_client.RenderToPanel(); }
+void VR::RenderHelperToPanel()
+{
+	if (!g_client.IsConnected())
+		return;
+
+	auto* menu = globals::menu;
+	if (menu && menu->ShouldRenderVRMenu()) {
+		g_client.RenderToPanel();
+		g_helperPanelWasRendered = true;
+		return;
+	}
+
+	// RenderToPanel intentionally preserves the current ImGui draw data. In
+	// Desktop-only mode that data belongs to the desktop swapchain, so clear the
+	// helper RTV explicitly once on the ownership transition instead of copying a
+	// second menu into the headset.
+	if (g_helperPanelWasRendered) {
+		ClearHelperPanel();
+		g_client.ReleaseFocus();
+		g_helperPanelWasRendered = false;
+		logger::info("[MENU] helper panel cleared for desktop-only presentation");
+	}
+}
+
+void VR::ClearHelperPanel()
+{
+	if (!g_client.IsConnected() || !g_client.Helper() || !globals::d3d::context)
+		return;
+	API::PanelHandle panel{};
+	if (!g_client.Helper()->GetPanel(g_client.Id(), &panel) || !panel.rtv)
+		return;
+	const float clearColor[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+	globals::d3d::context->ClearRenderTargetView(panel.rtv, clearColor);
+}
 
 void VR::FeedHelperEvent(uint32_t device, uint32_t key, bool pressed, float stickX, float stickY)
 {
@@ -129,6 +166,19 @@ void VR::UpdateHelper()
 		g_client.PumpInput(false);
 		return;
 	}
+	menu->LogVRMenuPresentationDecision();
+	const auto presentation = menu->GetVRMenuPresentationDecision();
+	if (!presentation.vrDrawEnabled) {
+		// Desktop-only mode must not let the helper toggle the menu or retain
+		// focus. The desktop UI remains owned by Menu::IsEnabled.
+		g_client.ReleaseFocus();
+		g_client.PumpInput(false);
+		// Consume any edge-triggered helper latches while the helper is disabled;
+		// otherwise a mode switch can replay an old open/close gesture later.
+		g_client.Fired(g_overlayOpenCombo);
+		g_client.Fired(g_overlayCloseCombo);
+		return;
+	}
 
 	// Focus is the single source of truth for VR menu visibility; reconcile it with
 	// our menu-open flag both ways.
@@ -161,7 +211,7 @@ void VR::PumpHelperInput(bool panelReady)
 		return;
 
 	auto* menu = globals::menu;
-	if (!menu || !panelReady) {
+	if (!menu || !panelReady || !menu->ShouldRenderVRMenu()) {
 		g_client.PumpInput(false);
 		return;
 	}
@@ -214,7 +264,7 @@ void VR::RenderStatusHud()
 
 	// A dedicated HUD context is load-bearing: rendering these on the menu's own
 	// context would clear its input state each frame and break interaction.
-	const bool menuShown = g_client.HasFocus() || menu->IsEnabled;
+	const bool menuShown = menu->ShouldRenderVRMenu() && (g_client.HasFocus() || menu->IsEnabled);
 	const ImVec2 displaySize = ImGui::GetIO().DisplaySize;
 
 	g_hud.RenderHud(globals::d3d::device, globals::d3d::context, displaySize, [menuShown]() {

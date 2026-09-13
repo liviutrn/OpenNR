@@ -248,7 +248,9 @@ void OverlayRenderer::HandleFontReload(Menu& menu, float& cachedFontSize, float 
 bool OverlayRenderer::ApplyVRPanelDisplaySize()
 {
 	uint32_t panelW = 0, panelH = 0;
-	if (!globals::game::isVR || !globals::features::vr.GetHelperPanelSize(panelW, panelH))
+	auto* menu = Menu::GetSingleton();
+	if (!globals::game::isVR || !menu || !menu->ShouldRenderVRMenu() ||
+		!globals::features::vr.GetHelperPanelSize(panelW, panelH))
 		return false;
 
 	// VR: canvas must equal the helper panel's pixel size 1:1, or wand
@@ -263,6 +265,7 @@ bool OverlayRenderer::ApplyVRPanelDisplaySize()
 
 void OverlayRenderer::InitializeImGuiFrame(Menu& menu)
 {
+	menu.LogVRMenuPresentationDecision();
 	// Start the Dear ImGui frame
 	ImGui_ImplDX11_NewFrame();
 	ImGui_ImplWin32_NewFrame();
@@ -511,7 +514,9 @@ void OverlayRenderer::FinalizeImGuiFrame()
 
 	ImDrawData* drawData = ImGui::GetDrawData();
 	bool renderedDesktopMirror = false;
-	if (globals::game::isVR && drawData && globals::d3d::swapChain) {
+	auto* menu = Menu::GetSingleton();
+	const bool desktopMenuEnabled = !globals::game::isVR || !menu || menu->ShouldRenderDesktopMenu();
+	if (desktopMenuEnabled && globals::game::isVR && drawData && globals::d3d::swapChain) {
 		DXGI_SWAP_CHAIN_DESC swapChainDesc{};
 		if (SUCCEEDED(globals::d3d::swapChain->GetDesc(&swapChainDesc))) {
 			const ImVec2 desktopSize(
@@ -528,7 +533,7 @@ void OverlayRenderer::FinalizeImGuiFrame()
 			}
 		}
 	}
-	if (!renderedDesktopMirror && !BackgroundBlur::RenderDrawData(drawData))
+	if (desktopMenuEnabled && !renderedDesktopMirror && !BackgroundBlur::RenderDrawData(drawData))
 		ImGui_ImplDX11_RenderDrawData(drawData);
 
 	// Render the same draw data into the ImGuiVRHelper's panel RTV so the

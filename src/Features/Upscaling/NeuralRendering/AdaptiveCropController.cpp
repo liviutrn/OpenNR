@@ -4,6 +4,29 @@
 
 namespace NeuralRendering
 {
+	const char* AdaptiveCropController::ResetReasonName(ResetReason reason)
+	{
+		switch (reason) {
+		case ResetReason::Disabled:
+			return "disabled";
+		case ResetReason::EligibilityLoss:
+			return "eligibility-loss";
+		case ResetReason::EyeTrackingOwnership:
+			return "eye-tracking-ownership";
+		case ResetReason::GeometryChange:
+			return "geometry-change";
+		case ResetReason::InvalidCoverage:
+			return "invalid-coverage";
+		case ResetReason::ConfigurationChange:
+			return "configuration-change";
+		case ResetReason::ExplicitReset:
+			return "explicit-reset";
+		case ResetReason::None:
+		default:
+			return "none";
+		}
+	}
+
 	std::uint32_t AdaptiveCropController::FindBucketAtOrBelow(std::uint32_t coverage)
 	{
 		for (const auto bucket : kCoverageBuckets)
@@ -24,7 +47,7 @@ namespace NeuralRendering
 	AdaptiveCropController::Config AdaptiveCropController::NormalizeConfig(const Config& config)
 	{
 		Config normalized = config;
-		normalized.minimumCoverage = FindBucketAtOrBelow(normalized.minimumCoverage);
+		normalized.minimumCoverage = FindBucketAtOrBelow(std::max(normalized.minimumCoverage, 60u));
 		normalized.downshiftFrames = std::clamp(normalized.downshiftFrames, 1u, 16u);
 		normalized.upshiftFrames = std::clamp(normalized.upshiftFrames, 8u, 240u);
 		normalized.minimumDwellFrames = std::clamp(normalized.minimumDwellFrames, 8u, 600u);
@@ -52,6 +75,8 @@ namespace NeuralRendering
 		eyeTrackingBlocked_ = false;
 		geometryBlocked_ = false;
 		lastFrame_ = UINT32_MAX;
+		lastResetReason_ = ResetReason::ExplicitReset;
+		++generation_;
 		ResetDecisionState();
 	}
 
@@ -59,6 +84,7 @@ namespace NeuralRendering
 	{
 		if (targetIndex == activeBucket_)
 			return;
+		previousCoverage_ = ActiveCoverage();
 		activeBucket_ = targetIndex;
 		targetBucket_ = targetIndex;
 		transitionFrame_ = 0;
@@ -77,8 +103,13 @@ namespace NeuralRendering
 		lastFrame_ = frame;
 
 		const Config config = NormalizeConfig(requestedConfig);
-		const std::uint32_t maximumBucket = FindBucketIndexAtOrBelow(configuredCoverage);
-		const std::uint32_t minimumBucket = std::max(maximumBucket, FindBucketIndexAtOrBelow(config.minimumCoverage));
+		// Adaptive crop is deliberately a reduced-coverage companion. A 100%, 95%,
+		// or 90% manual crop enters at the top adaptive tier (85%), while a smaller
+		// manual crop remains an upper bound and is never enlarged by this controller.
+		const std::uint32_t effectiveConfiguredCoverage = std::min(configuredCoverage, 85u);
+		const std::uint32_t maximumBucket = FindBucketIndexAtOrBelow(effectiveConfiguredCoverage);
+		const std::uint32_t requestedFloorCoverage = std::min(config.minimumCoverage, configuredCoverage);
+		const std::uint32_t minimumBucket = std::max(maximumBucket, FindBucketIndexAtOrBelow(requestedFloorCoverage));
 		const bool configurationChanged = config.enabled != config_.enabled ||
 			config.minimumCoverage != config_.minimumCoverage ||
 			config.downshiftFrames != config_.downshiftFrames ||
@@ -89,23 +120,46 @@ namespace NeuralRendering
 		maximumBucket_ = maximumBucket;
 		minimumBucket_ = minimumBucket;
 
+		const bool wasEnabled = enabled_;
+		const bool wasEyeTrackingBlocked = eyeTrackingBlocked_;
+		const bool wasGeometryBlocked = geometryBlocked_;
 		eyeTrackingBlocked_ = eyeTrackingEnabled;
 		geometryBlocked_ = !geometryCompatible || configuredCoverage < kCoverageBuckets.back();
 		const bool shouldRun = eligible && config.enabled && !eyeTrackingBlocked_ && !geometryBlocked_;
 		if (!shouldRun) {
+			ResetReason reason = ResetReason::EligibilityLoss;
+			if (!config.enabled)
+				reason = ResetReason::Disabled;
+			else if (eyeTrackingBlocked_)
+				reason = ResetReason::EyeTrackingOwnership;
+			else if (configuredCoverage < kCoverageBuckets.back())
+				reason = ResetReason::InvalidCoverage;
+			else if (!geometryCompatible)
+				reason = ResetReason::GeometryChange;
+			if (wasEnabled || reason != lastResetReason_ || wasEyeTrackingBlocked != eyeTrackingBlocked_ || wasGeometryBlocked != geometryBlocked_)
+				++generation_;
+			lastResetReason_ = reason;
 			ResetDecisionState();
 			return;
 		}
 
 		enabled_ = true;
 		if (configurationChanged) {
-			activeBucket_ = maximumBucket_;
-			targetBucket_ = maximumBucket_;
+			// Settings edits are soft changes. Retain the current legal tier so a
+			// slider/combo edit cannot look like a quality restore to the maximum.
+			// Only the first enable, or a tier made illegal by the new bounds, is
+			// anchored to the nearest legal tier.
+			const bool activeWasLegal = wasEnabled && activeBucket_ >= maximumBucket && activeBucket_ <= minimumBucket;
+			if (!activeWasLegal)
+				activeBucket_ = std::clamp(activeBucket_, maximumBucket, minimumBucket);
+			targetBucket_ = activeBucket_;
 			transitionFrame_ = 0;
 			transitionFrameCount_ = 0;
 			dwellFrames_ = 0;
 			overrunFrames_ = 0;
 			headroomFrames_ = 0;
+			lastResetReason_ = ResetReason::ConfigurationChange;
+			++generation_;
 		}
 
 		// The user's configured crop is an upper bound. Never silently enlarge it.
@@ -122,7 +176,7 @@ namespace NeuralRendering
 		}
 
 		++dwellFrames_;
-		if (nrTransitioning) {
+		if (nrTransitioning || config.hold) {
 			overrunFrames_ = 0;
 			headroomFrames_ = 0;
 			return;
@@ -141,11 +195,13 @@ namespace NeuralRendering
 			headroomFrames_ = 0;
 		}
 
-		if (dwellFrames_ >= config.minimumDwellFrames && !nrTransitioning && allowDownshift &&
-			overrunFrames_ >= config.downshiftFrames && activeBucket_ < minimumBucket_)
+		if (dwellFrames_ >= config.minimumDwellFrames && transitionFrameCount_ == 0 &&
+			!nrTransitioning && allowDownshift &&
+				overrunFrames_ >= config.downshiftFrames && activeBucket_ < minimumBucket_)
 			StartTransition(activeBucket_ + 1, config.transitionFrames);
-		else if (dwellFrames_ >= config.minimumDwellFrames && !nrTransitioning && nrAtMaximum &&
-			headroomFrames_ >= config.upshiftFrames && activeBucket_ > maximumBucket_)
+		else if (dwellFrames_ >= config.minimumDwellFrames && transitionFrameCount_ == 0 &&
+			!nrTransitioning && nrAtMaximum &&
+				headroomFrames_ >= config.upshiftFrames && activeBucket_ > maximumBucket_)
 			StartTransition(activeBucket_ - 1, config.transitionFrames);
 	}
 
@@ -175,5 +231,19 @@ namespace NeuralRendering
 			return 1.0f;
 		return std::clamp(static_cast<float>(transitionFrame_ + 1) /
 			static_cast<float>(transitionFrameCount_), 0.05f, 1.0f);
+	}
+
+	std::uint32_t AdaptiveCropController::RenderCoverage() const
+	{
+		return IsTransitioning() ? std::max(previousCoverage_, ActiveCoverage()) : ActiveCoverage();
+	}
+
+	float AdaptiveCropController::VisibleCoverage() const
+	{
+		if (!IsTransitioning())
+			return static_cast<float>(ActiveCoverage());
+		const float t = HandoffAlpha();
+		const float smooth = t * t * (3.0f - 2.0f * t);
+		return previousCoverage_ + (static_cast<float>(ActiveCoverage()) - previousCoverage_) * smooth;
 	}
 }

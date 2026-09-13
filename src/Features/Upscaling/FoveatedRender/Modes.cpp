@@ -60,12 +60,19 @@ namespace FoveatedRenderImpl
 		Core::vrAdaptiveCropDepthSource = p.depthTexture;
 		Core::vrAdaptiveCropMotionSource = p.motionVectors;
 
-		// Detect UV/mode change → destroy DLSS resources so SL recreates them at
-		// the new size. Both eye UVs feed the hash; asymmetric presets (e.g.
-		// Nasal Convergence) can change rightUV while leftUV stays put.
-		uint64_t uvHash = ComputeSubrectUVHash(p.leftUV, p.rightUV, (uint32_t)p.mode, !p.eyeTrackedGazeActive);
+		// Adaptive regular crop uses a stable resource envelope. Its UVs are
+		// per-frame valid-region data, not a new Streamline resource identity.
+		// Static and gaze-owned crops retain the exact UV contract and therefore
+		// keep the conservative hash/recreate behavior.
+		const bool fixedEnvelopeCandidate = globals::features::upscaling.foveatedRender.IsAdaptiveCropRuntimeActive() &&
+			!p.eyeTrackedGazeActive && !Core::vrSubrectFixedEnvelopeRejected;
+		const Util::Subrect::UVRegion envelopeUV{ 0.0f, 0.0f, 1.0f, 1.0f };
+		uint64_t uvHash = fixedEnvelopeCandidate ?
+			ComputeSubrectUVHash(envelopeUV, envelopeUV, (uint32_t)p.mode, false) :
+			ComputeSubrectUVHash(p.leftUV, p.rightUV, (uint32_t)p.mode, !p.eyeTrackedGazeActive);
 		if (uvHash != Core::activeSubrectUVHash) {
-			logger::info("[FOVEATED] Subrect UV or mode changed, recreating DLSS resources");
+			logger::info("[FOVEATED] resource contract changed mode={} adaptiveEnvelope={} left={}x{} right={}x{}; recreating DLSS resources",
+				static_cast<uint32_t>(p.mode), fixedEnvelopeCandidate, p.leftUV.w, p.leftUV.h, p.rightUV.w, p.rightUV.h);
 			streamline.DestroyDLSSResources();
 			Core::InvalidateTemporalState();
 			logger::debug("[FOVEATED] Temporal state invalidated after subrect/mode change; waiting for fresh per-eye guides");
@@ -124,11 +131,12 @@ namespace FoveatedRenderImpl
 		}
 
 		// ── Subrect path: crop per-eye, DLSS at subrect size, stretch back ──
+		const bool fixedEnvelopeCandidate = globals::features::upscaling.foveatedRender.IsAdaptiveCropRuntimeActive() &&
+			!p.eyeTrackedGazeActive && !Core::vrSubrectFixedEnvelopeRejected;
 
-		// EnsureVRSubrectTextures below allocates from LEFT-eye dimensions only (see its
-		// own NOTE) -- a right eye sized larger than the left would overflow that shared
-		// resource. Fail closed rather than write out of bounds; the built-in presets
-		// (Nasal Convergence included) always keep w/h equal and only vary x/y offset.
+		// The shared resource path requires symmetric eye extents. Fail closed rather
+		// than write out of bounds; regular centered crop is the supported adaptive
+		// mode, while gaze-owned geometry remains on the conservative exact path.
 		if (p.leftUV.w != p.rightUV.w || p.leftUV.h != p.rightUV.h) {
 			logger::error("[FOVEATED] ExecuteDefaultMode: asymmetric-size stereo subrect (left {}x{}, right {}x{}) not supported — falling back",
 				p.leftUV.w, p.leftUV.h, p.rightUV.w, p.rightUV.h);
@@ -137,17 +145,54 @@ namespace FoveatedRenderImpl
 
 		const Util::Subrect::UVRegion* eyeUVs[2] = { &p.leftUV, &p.rightUV };
 
-		// NOTE: EnsureVRSubrectTextures allocates a single shared per-eye texture
-		// set sized to LEFT-eye subrect dimensions. Correct only while
-		// Util::Subrect's auto-mirror keeps leftUV.w/h == rightUV.w/h — the
-		// per-eye loop below uses the eye's own uv for the real extents.
+		// EnsureVRSubrectTextures allocates a shared per-eye envelope. The per-eye
+		// loop below still uses each eye's UV for the valid copy/dispatch extent.
 		uint32_t allocSubInW = std::max<uint32_t>(1, (uint32_t)(p.eyeWidthIn * p.leftUV.w));
 		uint32_t allocSubInH = std::max<uint32_t>(1, (uint32_t)(p.eyeHeightIn * p.leftUV.h));
 		uint32_t allocSubOutW = std::max<uint32_t>(1, (uint32_t)(p.eyeWidthOut * p.leftUV.w));
 		uint32_t allocSubOutH = std::max<uint32_t>(1, (uint32_t)(p.eyeHeightOut * p.leftUV.h));
+		const auto scaleDimension = [](std::uint32_t dimension, std::uint32_t percentage) {
+			return std::max<std::uint32_t>(1, static_cast<std::uint32_t>(
+				(static_cast<std::uint64_t>(dimension) * percentage + 50) / 100));
+		};
+		// Re-anchor the envelope to the configured adaptive maximum, not to the
+		// current tier. This matters after a route/device reset while the controller
+		// is already at a reduced tier: restoration must not grow the backing set one
+		// tier at a time and recreate resources again.
+		const std::uint32_t envelopeCoverage = std::clamp(
+			globals::features::upscaling.foveatedRender.GetAdaptiveCropMaximumCoverage(), 60u, 85u);
+		const uint32_t envelopeSubInW = fixedEnvelopeCandidate ? scaleDimension(p.eyeWidthIn, envelopeCoverage) : allocSubInW;
+		const uint32_t envelopeSubInH = fixedEnvelopeCandidate ? scaleDimension(p.eyeHeightIn, envelopeCoverage) : allocSubInH;
+		const uint32_t envelopeSubOutW = fixedEnvelopeCandidate ? scaleDimension(p.eyeWidthOut, envelopeCoverage) : allocSubOutW;
+		const uint32_t envelopeSubOutH = fixedEnvelopeCandidate ? scaleDimension(p.eyeHeightOut, envelopeCoverage) : allocSubOutH;
 
-		EnsureVRSubrectTextures(allocSubInW, allocSubInH, allocSubOutW, allocSubOutH,
-			p.colorSrc, p.motionVectors, p.reactiveMask, p.transparencyMask);
+		const auto frame = globals::state ? globals::state->frameCount : 0;
+		if (!EnsureVRSubrectTextures(envelopeSubInW, envelopeSubInH, envelopeSubOutW, envelopeSubOutH,
+			p.colorSrc, p.motionVectors, p.reactiveMask, p.transparencyMask,
+			fixedEnvelopeCandidate, frame)) {
+			logger::error("[FOVEATED] subrect resource contract could not be satisfied — falling back");
+			return false;
+		}
+		if (Core::vrSubrectResourceContractChanged) {
+			// A valid-extent-only handoff leaves the active envelope intact. Any
+			// actual resource identity/source/extent change, however, must release
+			// the old Streamline handles before they can observe the replacement.
+			Core::vrSubrectResourceContractChanged = false;
+			streamline.DestroyDLSSResources();
+			Core::InvalidateTemporalState();
+			logger::debug("[FOVEATED] Streamline handles invalidated after subrect resource contract change frame={}", frame);
+		}
+		const auto retryWithoutFixedEnvelope = [&]() -> bool {
+			if (!fixedEnvelopeCandidate || Core::vrSubrectFixedEnvelopeRejected)
+				return false;
+			Core::vrSubrectFixedEnvelopeRejected = true;
+			++Core::vrSubrectFallbackEntries;
+			logger::warn("[FOVEATED] fixed-envelope dispatch rejected; exact fallback and adaptive crop HOLD until restart frame={} entries={}",
+				frame, Core::vrSubrectFallbackEntries);
+			streamline.DestroyDLSSResources();
+			Core::InvalidateTemporalState();
+			return ExecuteDefaultMode(streamline, p);
+		};
 
 		// Snapshot + clear HMD hidden-area ring before cropping into subrect inputs.
 		SnapshotSBS(p.colorSrc, p.renderW, p.renderH);
@@ -192,9 +237,16 @@ namespace FoveatedRenderImpl
 					subInW, subInH, subOutW, subOutH,
 					p.eyeWidthIn, p.eyeHeightIn)) {
 				logger::error("[FOVEATED] ExecuteDefaultMode subrect dispatch failed for eye {} — falling back", i);
+				if (retryWithoutFixedEnvelope())
+					return true;
 				return false;
 			}
 		}
+		// Publish copied guide extents, never the larger backing allocation.
+		Core::vrSubrectValidInW = allocSubInW;
+		Core::vrSubrectValidInH = allocSubInH;
+		Core::vrSubrectValidOutW = allocSubOutW;
+		Core::vrSubrectValidOutH = allocSubOutH;
 		Core::neuralGuidesFrame = globals::state ? globals::state->frameCount : UINT32_MAX;
 
 		// Write DLSS output back at subrect position (with optional blend)

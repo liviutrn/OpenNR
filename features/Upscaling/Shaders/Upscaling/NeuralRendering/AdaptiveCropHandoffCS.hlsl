@@ -49,7 +49,7 @@ float2 MotionPixels(uint2 colorPixel)
 	const float2 guideToColor = float2(
 		(float)gColorWidth / max((float)gGuideWidth, 1.0),
 		(float)gColorHeight / max((float)gGuideHeight, 1.0));
-	return motion * float2(gMotionScaleX, gMotionScaleY) * guideToColor;
+	return motion * float2(gMotionScaleX, gMotionScaleY) * float2(gColorWidth, gColorHeight);
 }
 
 bool InBounds(float2 pixel)
@@ -69,23 +69,28 @@ void main(uint3 id : SV_DispatchThreadID)
 	const float2 motionPixels = MotionPixels(pixel);
 	const float2 outputSize = float2(max(gColorWidth, 1u), max(gColorHeight, 1u));
 	float2 previousPosition = float2(pixel) + 0.5 + motionPixels;
-	bool historyAccepted = gHistoryValid != 0 && InBounds(previousPosition);
+	bool historyAccepted = gHistoryValid != 0 && gUseMotion != 0 && gUseDepth != 0 &&
+		all(isfinite(motionPixels)) && InBounds(previousPosition);
 
 	// Do not let a per-eye motion vector sample across the SBS seam.
 	const float halfWidth = 0.5 * (float)gColorWidth;
 	const float eyeMinX = (float)pixel.x < halfWidth ? 0.0 : halfWidth;
 	const float eyeMaxX = eyeMinX + halfWidth;
+	historyAccepted = historyAccepted && previousPosition.x >= eyeMinX + 0.5 &&
+		previousPosition.x <= eyeMaxX - 0.5;
 	previousPosition.x = clamp(previousPosition.x, eyeMinX + 0.5, eyeMaxX - 0.5);
 	previousPosition.y = clamp(previousPosition.y, 0.5, (float)gColorHeight - 0.5);
 
 	if (historyAccepted && gUseDepth != 0)
 	{
 		const uint2 currentGuidePixel = GuidePixel(float2(pixel));
-		const uint2 previousGuidePixel = GuidePixel(previousPosition);
+		const uint2 previousGuidePixel = GuidePixel(previousPosition - 0.5);
 		const float currentDepth = gCurrentDepth.Load(int3(currentGuidePixel, 0));
 		const float previousDepth = gPreviousDepth.Load(int3(previousGuidePixel, 0));
 		const bool currentDepthValid = currentDepth > 0.00001;
 		const bool previousDepthValid = previousDepth > 0.00001;
+		historyAccepted = currentDepthValid && previousDepthValid &&
+			isfinite(currentDepth) && isfinite(previousDepth);
 		if (currentDepthValid && previousDepthValid)
 		{
 			const float depthScale = max(max(abs(currentDepth), abs(previousDepth)), 1.0);
@@ -97,5 +102,5 @@ void main(uint3 id : SV_DispatchThreadID)
 	const float normalizedMotion = length(motionPixels / max(outputSize, 1.0));
 	const float motionAlpha = saturate(normalizedMotion * 10.0);
 	const float alpha = historyAccepted ? max(saturate(gBlendAlpha), motionAlpha * motionAlpha) : 1.0;
-	gTarget[pixel] = lerp(previous, current, alpha);
+	gTarget[pixel] = historyAccepted && all(isfinite(previous)) ? lerp(previous, current, alpha) : current;
 }

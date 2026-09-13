@@ -35,8 +35,9 @@ namespace FoveatedRenderImpl::Ops
 	void EnsureVRIntermediateTextures(uint32_t inW, uint32_t inH, uint32_t outW, uint32_t outH,
 		ID3D11Resource* colorSrc, ID3D11Resource* mvecSrc, ID3D11Resource* reactiveSrc, ID3D11Resource* transparencySrc);
 
-	void EnsureVRSubrectTextures(uint32_t subInW, uint32_t subInH, uint32_t subOutW, uint32_t subOutH,
-		ID3D11Resource* colorSrc, ID3D11Resource* mvecSrc, ID3D11Resource* reactiveSrc, ID3D11Resource* transparencySrc);
+	bool EnsureVRSubrectTextures(uint32_t subInW, uint32_t subInH, uint32_t subOutW, uint32_t subOutH,
+		ID3D11Resource* colorSrc, ID3D11Resource* mvecSrc, ID3D11Resource* reactiveSrc, ID3D11Resource* transparencySrc,
+		bool preferFixedEnvelope, std::uint64_t frame);
 
 	void EnsureFasterOutputTextures(uint32_t subOutW, uint32_t subOutH, ID3D11Resource* colorSrc);
 

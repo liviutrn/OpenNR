@@ -1061,6 +1061,36 @@ namespace Util
 	// Restart-required settings UI helpers.
 	namespace UI
 	{
+		/**
+		 * Draw short user-facing prose against the current content column.
+		 *
+		 * ImGui's implicit wrap position is affected by the host window and by
+		 * nested tables/child regions. Compute the right edge from the current
+		 * cursor and content width so the same helper behaves correctly in both
+		 * the desktop mirror and the narrower VR helper panel.
+		 */
+		inline void DrawWrappedText(const char* text)
+		{
+			const float wrapPos = ImGui::GetCursorPosX() + std::max(0.0f, ImGui::GetContentRegionAvail().x);
+			ImGui::PushTextWrapPos(wrapPos);
+			ImGui::TextWrapped("%s", text ? text : "");
+			ImGui::PopTextWrapPos();
+		}
+
+		inline void DrawWrappedDisabledText(const char* text)
+		{
+			ImGui::PushStyleColor(ImGuiCol_Text, Colors::GetDisabled());
+			DrawWrappedText(text);
+			ImGui::PopStyleColor();
+		}
+
+		inline void DrawWrappedWarningText(const char* text)
+		{
+			ImGui::PushStyleColor(ImGuiCol_Text, Colors::GetWarning());
+			DrawWrappedText(text);
+			ImGui::PopStyleColor();
+		}
+
 		template <typename SettingsT, typename T>
 		inline void DrawSettingDiff(const Util::Settings::BootSnapshot<SettingsT>& snapshot, const SettingsT& live, T SettingsT::* field)
 		{

@@ -65,6 +65,26 @@ public:
 		Count        // Total number of roles
 	};
 
+	// Where the menu is presented while SkyrimVR and the helper panel are
+	// active. This is intentionally a persisted numeric setting for backwards
+	// compatible JSON loading; the UI exposes the names below.
+	enum class VRMenuPresentationMode : std::uint8_t
+	{
+		VRAndDesktop = 0,
+		VROnly = 1,
+		DesktopOnly = 2
+	};
+
+	struct VRMenuPresentationDecision
+	{
+		VRMenuPresentationMode requested = VRMenuPresentationMode::VROnly;
+		VRMenuPresentationMode effective = VRMenuPresentationMode::VROnly;
+		bool helperAvailable = false;
+		bool desktopDrawEnabled = true;
+		bool vrDrawEnabled = false;
+		const char* inputOwner = "desktop";
+	};
+
 	struct FontRoleDescriptor
 	{
 		std::string_view key;
@@ -560,6 +580,7 @@ public:
 		bool RequireShiftToDock = true;                                                                                      // Require holding Shift to dock windows
 		bool UseResolutionFont = true;                                                                                       // When true, runtime font size scales with screen resolution; when persisted to theme files, FontSize is zeroed for backward compatibility
 		float VRFontScale = ThemeManager::Constants::DEFAULT_VR_FONT_SCALE;                                                  // VR-only logical font multiplier; helper panel size/distance is configured separately
+		std::uint32_t VRMenuPresentation = static_cast<std::uint32_t>(Menu::VRMenuPresentationMode::VROnly);                 // 0=VR+Desktop, 1=VR only, 2=Desktop only
 		ThemeSettings Theme;
 		std::string SelectedThemePreset = "";  // Currently selected theme preset (empty = custom/user theme)
 	};
@@ -569,6 +590,14 @@ public:
 	Settings& GetSettings() { return settings; }
 	/** @brief Gets the menu settings */
 	const Settings& GetSettings() const { return settings; }
+	/** @brief Resolve the single presentation decision used by draw and input paths. */
+	VRMenuPresentationDecision GetVRMenuPresentationDecision() const;
+	/** @brief Log one transition when the requested/effective menu surface changes. */
+	void LogVRMenuPresentationDecision();
+	/** @brief True when the helper panel should receive the menu canvas. */
+	bool ShouldRenderVRMenu() const { return GetVRMenuPresentationDecision().vrDrawEnabled; }
+	/** @brief True when the desktop swapchain should receive the menu canvas. */
+	bool ShouldRenderDesktopMenu() const { return GetVRMenuPresentationDecision().desktopDrawEnabled; }
 	/** @brief Gets the DXGI adapter for GPU memory queries */
 	winrt::com_ptr<IDXGIAdapter3> GetDXGIAdapter3() const { return dxgiAdapter3; }
 	/** @brief Gets the mutable font role settings for the given role */

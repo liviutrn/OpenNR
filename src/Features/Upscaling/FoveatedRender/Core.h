@@ -11,6 +11,8 @@
 // ============================================================================
 
 #include "Buffer.h"
+#include <array>
+#include <cstdint>
 #include "Params.h"
 #include <d3d11_4.h>
 #include <winrt/base.h>
@@ -22,6 +24,31 @@ namespace FoveatedRenderImpl
 	class Core
 	{
 	public:
+		enum class SubrectResourceMode : std::uint8_t
+		{
+			ExactExtent,
+			FixedEnvelope
+		};
+
+		struct SubrectExactCacheEntry
+		{
+			eastl::unique_ptr<Texture2D> colorIn[2];
+			eastl::unique_ptr<Texture2D> colorOut[2];
+			eastl::unique_ptr<Texture2D> depth[2];
+			eastl::unique_ptr<Texture2D> motionVectors[2];
+			eastl::unique_ptr<Texture2D> reactiveMask[2];
+			eastl::unique_ptr<Texture2D> transparencyMask[2];
+			std::uint32_t inW = 0;
+			std::uint32_t inH = 0;
+			std::uint32_t outW = 0;
+			std::uint32_t outH = 0;
+			ID3D11Resource* colorSource = nullptr;
+			ID3D11Resource* motionSource = nullptr;
+			ID3D11Resource* reactiveSource = nullptr;
+			ID3D11Resource* transparencySource = nullptr;
+			std::uint64_t lastUsedFrame = 0;
+			bool valid = false;
+		};
 		// Resolves VRDlssParams and dispatches across Default / Faster modes;
 		// dispatches DLSS or FSR depending on Upscaling::GetUpscaleMethod().
 		static bool ExecuteFoveatedRoute(Streamline& streamline,
@@ -84,6 +111,33 @@ namespace FoveatedRenderImpl
 		static inline eastl::unique_ptr<Texture2D> vrSubrectReactiveMask[2];
 		static inline eastl::unique_ptr<Texture2D> vrSubrectTransparencyMask[2];
 		static inline uint32_t vrSubrectInW = 0, vrSubrectInH = 0, vrSubrectOutW = 0, vrSubrectOutH = 0;
+		// The active dimensions above are resource dimensions. During adaptive
+		// crop they are the stable envelope; these fields describe the current
+		// valid region submitted through sl::Extent/copy boxes.
+		static inline uint32_t vrSubrectValidInW = 0, vrSubrectValidInH = 0;
+		static inline uint32_t vrSubrectValidOutW = 0, vrSubrectValidOutH = 0;
+			static inline SubrectResourceMode vrSubrectResourceMode = SubrectResourceMode::ExactExtent;
+			static inline bool vrSubrectFixedEnvelopeRejected = false;
+			// Set when the active crop-resource identity changes. The foveated
+			// dispatcher consumes this after EnsureVRSubrectTextures so a genuine
+			// envelope/source change still invalidates Streamline handles, while a
+			// valid-extent-only handoff does not.
+			static inline bool vrSubrectResourceContractChanged = false;
+			// The NR renderer has its own native-resource contract. Keep its fixed
+			// envelope rejection separate from the Streamline crop fallback.
+			static inline bool vrSubrectNeuralFixedEnvelopeRejected = false;
+			static inline std::uint64_t vrSubrectNeuralFallbackEntries = 0;
+		static inline std::array<SubrectExactCacheEntry, 3> vrSubrectExactCache;
+		static inline ID3D11Resource* vrSubrectColorSourceOwner = nullptr;
+		static inline ID3D11Resource* vrSubrectMotionSourceOwner = nullptr;
+		static inline ID3D11Resource* vrSubrectReactiveSourceOwner = nullptr;
+		static inline ID3D11Resource* vrSubrectTransparencySourceOwner = nullptr;
+		static inline std::uint64_t vrSubrectResourceCreates = 0;
+		static inline std::uint64_t vrSubrectResourceReuses = 0;
+		static inline std::uint64_t vrSubrectResourceFrees = 0;
+		static inline std::uint64_t vrSubrectEnvelopeValidations = 0;
+		static inline std::uint64_t vrSubrectFallbackEntries = 0;
+		static inline std::uint64_t vrSubrectFallbackEvictions = 0;
 
 		// Faster mode per-eye output textures (subOutW × subOutH)
 		static inline eastl::unique_ptr<Texture2D> vrFasterColorOut[2];
