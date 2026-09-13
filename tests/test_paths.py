@@ -1,4 +1,4 @@
-import sys,unittest,os,tempfile,json
+import sys,unittest,os,tempfile,json,subprocess,re
 from pathlib import Path
 from unittest.mock import patch
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'tools'))
@@ -10,8 +10,13 @@ class StorageTests(unittest.TestCase):
   p=require_external_output(Path(__file__).resolve().parents[1]/'out'/'new-test-output')
   self.assertEqual(p.drive.lower(),'c:')
  def test_alias(self):
-  if Path('X:/').exists():
-   with self.assertRaises(ValueError):require_external_output('X:/new-test-output')
+  mappings=subprocess.check_output(['subst'],text=True)
+  aliases=[m.group(1) for line in mappings.splitlines()
+           if (m:=re.match(r'([A-Za-z]:)\\: => (.+)',line))
+           and Path(m.group(2)).resolve().drive.lower()=='d:']
+  if not aliases:self.skipTest('No existing SUBST alias resolving to D:; no persistent mapping created')
+  for alias in aliases:
+   with self.assertRaises(ValueError):require_external_output(alias+'/new-test-output')
  def test_environment_and_explicit(self):
   with patch.dict(os.environ,{'OPENNR_OUTPUT_ROOT':'C:/OpenNR/Outputs/env-test'}):
    self.assertEqual(external_path('output'),Path('C:/OpenNR/Outputs/env-test'))

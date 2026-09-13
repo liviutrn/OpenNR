@@ -28,3 +28,12 @@ Adaptive NR and Crop are main development features; both retain their existing d
 Recovery root: `C:/OpenNR/ConsolidationBackups/20260913`. The original research main is `b71f8313250b70af5bf4513d91596dbebae0bff8`; adaptive baseline is `a39a25b5edb2bc8f139c06b8fb9efbd95fcdb5f5`, stable correction snapshot `44bae628`, and original-source recovery commit `c6fc308f`. Inspect these through a separate external checkout for comparison or recovery. To undo the promotion on main, first preserve any later work, then revert the final merge with its mainline parent; do not reset away subsequent work. Use per-file migration manifests to copy and verify any storage rollback before replacing a junction. Keep the C: Git object store with all repository backups.
 
 Detailed logs, package file hashes, dependency hashes and legacy reconciliation records are under the recovery root. See [the full audit](PROJECT_CONSOLIDATION_AUDIT.md) and [the compact manifest](CONSOLIDATION_MANIFEST.json).
+
+## Drive alias cleanup follow-up
+
+The final handoff initially left V:, W: and X: SUBST mappings present. They have now been removed: V: mapped Visual Studio vcpkg, W: the September 12 adaptive study, and X: the fixed September 13 adaptive tree. Mapping text is preserved in the recovery root as removed-drive-aliases.txt. No referencing running process, scheduled task, or matching Run/DOS Devices registry persistence was found during cleanup. Removing these aliases does not delete their target folders.
+
+Tests no longer assume that an arbitrary X: drive belongs to OpenNR. The optional Python alias check discovers existing mappings that actually resolve to D: and explicitly skips when none exist. The native direct-D check remains. Earlier actual alias rejection evidence remains valid; no persistent drive is needed for routine testing. Intentional C:/E: storage junctions are retained because they keep generated data physically off D:.
+
+Post-removal checks: CMake configuration passes with physical C:/E: paths; Python storage checks pass (four executed, optional existing-alias case explicitly skipped); the native contract executable rebuilds and passes without V:/W:/X:.
+`CommunityShaders` and `cpp_tests` subsequently rebuilt successfully with no SUBST mappings. The C++ suite again passed 171 cases / 2,357 assertions. Build log: `C:/OpenNR/ConsolidationBackups/20260913/build-without-aliases.log`. The existing packaged archive remains the previously verified 2.15.0 artifact; this cleanup changes tests and audit documentation only.
