@@ -400,10 +400,12 @@ Passed source, build, and package gates include:
   update matches exactly and ONNX checker passes.
 - Source-contract, AIO manifest, lean-stage, 7-Zip archive, and extracted-file
   hash verification.
-- Final package: 490 files, 228,054,772 compressed bytes, 440,813,081
-  uncompressed bytes.
-- Package SHA-256:
-  `D5374E8DD84609E201065593984E30496083AB936D00058AE9BE73BBC45F9A51`.
+- Final package stage contains 490 files. The immutable archive byte count,
+  uncompressed byte count, and SHA-256 are recorded in
+  `docs/CONSOLIDATION_MANIFEST.json` and
+  `docs/CONSOLIDATION_VALIDATION_2.15.0.md`; they are intentionally kept out
+  of this packaged file because changing the file would change the archive
+  hash.
 
 The clean-source export also configured successfully with capture enabled and
 disabled, and generated projects contained no legacy Skyrim workspace source

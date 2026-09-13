@@ -90,7 +90,7 @@ Python maintained writers reject physical D: output. Native capture and benchmar
 - Three adaptive/crop compute shaders compile with FXC cs_5_0.
 - Eight Python suites passed: student identity/gradients, recurrent model, raw cache, temporal capture, native guide alignment, optimizer resume, master dataset and master audit.
 - Five Python storage tests pass, including D: rejection, alias/junction resolution and precedence.
-- Native contract test passes for dimensions/scales, invalid dimensions and D:/X: output rejection.
+- Native contract test passes for dimensions/scales, invalid dimensions and physical-D: output rejection.
 - Small CPU train/save/resume/evaluate/ONNX workflow passes; exact resumed optimizer update matches; ONNX checker passes. Synthetic fixture only, no model promotion.
 - Both native teacher executables and the CUDA texture bridge build. No-input CLI calls produce the expected usage error without running inference.
 - AIO manifest and exact manual-package-stage validation pass. Archive extraction is compared file-for-file and hash-for-hash with the validated stage.
