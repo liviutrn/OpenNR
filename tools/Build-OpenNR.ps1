@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
-    [string]$BuildRoot = 'E:\OpenNR_Builds\2.15.0',
-    [string]$Dependencies = 'C:\OpenNR\Dependencies\runtime-2.15.0',
+    [string]$BuildRoot,
+    [string]$Dependencies,
     [string]$SourceRoot,
     [string[]]$Targets = @('CommunityShaders', 'cpp_tests'),
     [bool]$CaptureEnabled = $true,
@@ -11,10 +11,17 @@ $ErrorActionPreference = 'Stop'
 $repo = Split-Path -Parent $PSScriptRoot
 if (-not $SourceRoot) { $SourceRoot = Join-Path $repo 'runtime\open-shaders' }
 $python = Get-Command python -ErrorAction Stop
-$BuildRoot = & $python.Source (Join-Path $PSScriptRoot 'opennr_paths.py') build --path $BuildRoot
+$pathTool = Join-Path $PSScriptRoot 'opennr_paths.py'
+$pathArguments = @($pathTool, 'build')
+if ($BuildRoot) { $pathArguments += @('--path', $BuildRoot) }
+$BuildRoot = & $python.Source @pathArguments
 if ($LASTEXITCODE -ne 0) { throw 'Invalid external build destination' }
+$pathArguments = @($pathTool, 'dependencies')
+if ($Dependencies) { $pathArguments += @('--path', $Dependencies) }
+$Dependencies = & $python.Source @pathArguments
+if ($LASTEXITCODE -ne 0) { throw 'Invalid external dependency destination' }
 $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
-$vs = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+$vs = & $vswhere -latest -version '[17.0,18.0)' -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
 if (-not $vs) { throw 'MSVC C++ tools are required' }
 $cmake = Join-Path $vs 'Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe'
 $vcvars = Join-Path $vs 'VC\Auxiliary\Build\vcvars64.bat'

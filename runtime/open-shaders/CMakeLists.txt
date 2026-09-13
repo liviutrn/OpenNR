@@ -1498,7 +1498,7 @@ endif()
 # #######################################################################################################################
 
 set(DIST_PATH
-    "${CMAKE_SOURCE_DIR}/dist"
+    "${CMAKE_BINARY_DIR}/dist"
     CACHE PATH
     "Directory for locally generated OpenNR package archives"
 )

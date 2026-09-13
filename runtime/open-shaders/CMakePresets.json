@@ -32,6 +32,7 @@
         {
             "name": "win64",
             "hidden": true,
+            "binaryDir": "E:/OpenNR_Builds/2.15.0/presets/${presetName}",
             "architecture": "x64",
             "cacheVariables": {
                 "CMAKE_MSVC_RUNTIME_LIBRARY": "MultiThreadedDLL"
@@ -56,6 +57,7 @@
         {
             "name": "ninja",
             "hidden": true,
+            "binaryDir": "E:/OpenNR_Builds/2.15.0/presets/${presetName}",
             "generator": "Ninja",
             "architecture": {
                 "value": "x64",
