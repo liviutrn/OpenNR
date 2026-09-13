@@ -546,7 +546,7 @@ namespace NeuralRendering
 		// would make the previous frame's guides address the wrong source region.
 		// Keep the established one-frame static tolerance, but fail closed for the
 		// dynamic experiment until the current guides are available.
-		if (gaze.dynamic && guideFrame != frame)
+		if ((gaze.dynamic || foveated.IsAdaptiveCropRuntimeActive()) && guideFrame != frame)
 			return false;
 		const auto& leftUV = gaze.leftUV;
 		const auto& rightUV = gaze.rightUV;
@@ -562,17 +562,39 @@ namespace NeuralRendering
 		const std::uint32_t eyeWidth = totalDesc.Width / 2;
 		const std::uint32_t outWidth = std::max<std::uint32_t>(1, static_cast<std::uint32_t>(eyeWidth * leftUV.w));
 		const std::uint32_t outHeight = std::max<std::uint32_t>(1, static_cast<std::uint32_t>(totalDesc.Height * leftUV.h));
-		const std::uint32_t guideWidth = fullEye ? FoveatedRenderImpl::Core::vrIntermediateDepth[0]->desc.Width : FoveatedRenderImpl::Core::vrSubrectInW;
-		const std::uint32_t guideHeight = fullEye ? FoveatedRenderImpl::Core::vrIntermediateDepth[0]->desc.Height : FoveatedRenderImpl::Core::vrSubrectInH;
-		if (guideWidth == 0 || guideHeight == 0)
-			return false;
+			// The fixed crop envelope is a backing-resource contract only. Feature
+			// 18 still receives the current valid native guide extent so a smaller
+			// crop never exposes stale tail data from the envelope.
+			const std::uint32_t guideWidth = fullEye ? FoveatedRenderImpl::Core::vrIntermediateDepth[0]->desc.Width : FoveatedRenderImpl::Core::vrSubrectValidInW;
+			const std::uint32_t guideHeight = fullEye ? FoveatedRenderImpl::Core::vrIntermediateDepth[0]->desc.Height : FoveatedRenderImpl::Core::vrSubrectValidInH;
+			if (guideWidth == 0 || guideHeight == 0)
+				return false;
+			Renderer::StereoResourceEnvelope resourceEnvelope{};
+			if (!fullEye && !gaze.dynamic &&
+				foveated.IsAdaptiveCropRuntimeActive() &&
+				FoveatedRenderImpl::Core::vrSubrectResourceMode == FoveatedRenderImpl::Core::SubrectResourceMode::FixedEnvelope &&
+				!FoveatedRenderImpl::Core::vrSubrectFixedEnvelopeRejected &&
+				!FoveatedRenderImpl::Core::vrSubrectNeuralFixedEnvelopeRejected &&
+				FoveatedRenderImpl::Core::vrSubrectInW >= guideWidth &&
+				FoveatedRenderImpl::Core::vrSubrectInH >= guideHeight &&
+				FoveatedRenderImpl::Core::vrSubrectOutW >= outWidth &&
+				FoveatedRenderImpl::Core::vrSubrectOutH >= outHeight) {
+				resourceEnvelope = {
+					.enabled = true,
+					.guideWidth = FoveatedRenderImpl::Core::vrSubrectInW,
+					.guideHeight = FoveatedRenderImpl::Core::vrSubrectInH,
+					.colorWidth = FoveatedRenderImpl::Core::vrSubrectOutW,
+					.colorHeight = FoveatedRenderImpl::Core::vrSubrectOutH,
+				};
+			}
 
 		// The normal foveated route blends the cropped upscaler result over the
 		// stretched/background image. NR used to bypass that step and hard-copy
 		// the crop, which made its rectangle visible even when Edge Blend was set
 		// to Feather or Dither.
 		const auto blendMode = foveated.GetSubrectBlendMode();
-		const bool wantsEdgeBlend = !fullEye && blendMode != FoveatedRender::SubrectBlendMode::kHardCopy;
+		const bool wantsEdgeBlend = !fullEye &&
+			(foveated.IsAdaptiveCropRuntimeActive() || blendMode != FoveatedRender::SubrectBlendMode::kHardCopy);
 		ID3D11Resource* destination = total.texture;
 		ID3D11UnorderedAccessView* destinationUAV = total.UAV;
 		bool stagedBlendTarget = false;
@@ -627,20 +649,31 @@ namespace NeuralRendering
 			// coordinate origin/extent and must never consume or update that state.
 			tuning.temporalReuseCadence = 0;
 		}
-		const bool succeeded = Renderer::Instance().ApplyStereo(globals::d3d::device, context,
-			total.texture, inputs, guideWidth, guideHeight,
-			outWidth, outHeight, tuning, destination, destinationUAV, wantsEdgeBlend && destinationUAV != nullptr);
+			bool succeeded = Renderer::Instance().ApplyStereo(globals::d3d::device, context,
+				total.texture, inputs, guideWidth, guideHeight,
+				outWidth, outHeight, tuning, destination, destinationUAV, wantsEdgeBlend && destinationUAV != nullptr,
+				resourceEnvelope);
+			if (!succeeded && resourceEnvelope.IsValid()) {
+				// A native Feature 18 failure is not allowed to leave the runtime
+				// latched on the experimental envelope. Drop only the NR renderer's
+				// state, remember the rejection for this route, and retry with exact
+				// current extents. The native depth/motion guide inputs stay unchanged.
+				FoveatedRenderImpl::Core::vrSubrectNeuralFixedEnvelopeRejected = true;
+				++FoveatedRenderImpl::Core::vrSubrectNeuralFallbackEntries;
+				logger::warn("[DLSSNR] fixed resource envelope rejected; retrying exact extents frame={} result=0x{:08X} fallbackEntries={}",
+					frame, Renderer::Instance().NgxResult(), FoveatedRenderImpl::Core::vrSubrectNeuralFallbackEntries);
+				Renderer::Instance().Reset();
+				FoveatedRenderImpl::Core::InvalidateTemporalState();
+				resourceEnvelope.enabled = false;
+				succeeded = Renderer::Instance().ApplyStereo(globals::d3d::device, context,
+					total.texture, inputs, guideWidth, guideHeight,
+					outWidth, outHeight, tuning, destination, destinationUAV, wantsEdgeBlend && destinationUAV != nullptr,
+					resourceEnvelope);
+			}
 		if (succeeded) {
 			if (stagedBlendTarget)
 				context->CopyResource(total.texture, destination);
-			// When the regular crop owner changes its extent, blend the already
-			// assembled SBS image in display space for a few frames. This keeps the
-			// DLSS/NR guide contract and the crop transition separate, and is never
-			// used for gaze-owned geometry.
-			if (foveated.IsAdaptiveCropRuntimeActive())
-				FoveatedRenderImpl::Core::ApplyAdaptiveCropHandoff(
-					total.texture, FoveatedRenderImpl::Core::vrAdaptiveCropDepthSource,
-					FoveatedRenderImpl::Core::vrAdaptiveCropMotionSource);
+			// Crop handoffs move the current-frame compositing mask; no prior SBS image is reused.
 			lastAppliedFrame = frame;
 			if (!writebackLogged) {
 				const char* path = stagedBlendTarget ? "staged-uav" :

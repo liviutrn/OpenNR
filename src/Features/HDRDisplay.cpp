@@ -1090,10 +1090,16 @@ void HDRDisplay::DrawImGuiForPresent(IDXGISwapChain* swapChain, bool frameGenAct
 		auto& data = globals::game::renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGET::kFRAMEBUFFER];
 		globals::d3d::context->OMSetRenderTargets(1, &data.RTV, nullptr);
 	} else if (globals::game::isVR && globals::features::vr.IsHelperRegistered() &&
+	           (!globals::menu || globals::menu->ShouldRenderDesktopMenu()) &&
 	           BindDesktopMirrorTarget(swapChain)) {
 		// The helper owns the HMD panel. This target is only the desktop companion
 		// copy and is mapped from the helper panel's logical canvas by
 		// OverlayRenderer::DesktopMirrorDrawData.
+	} else if (globals::game::isVR && globals::menu && !globals::menu->ShouldRenderDesktopMenu()) {
+		// VR-only presentation renders through ImGuiVRHelper. Leave no desktop
+		// RTV bound while Menu::DrawOverlay builds and submits the helper frame.
+		ID3D11RenderTargetView* nullRTV = nullptr;
+		globals::d3d::context->OMSetRenderTargets(1, &nullRTV, nullptr);
 	} else if (hdrReady && !globals::game::isVR && uiTexture && uiTexture->rtv && uiTexture->resource) {
 		ID3D11RenderTargetView* uiRTV = uiTexture->rtv.get();
 		D3D11_TEXTURE2D_DESC texDesc{};
@@ -1177,6 +1183,7 @@ HRESULT HDRDisplay::HandleSwapChainPresent(
 	globals::d3d::context->RSGetViewports(&viewportCount, &savedViewport);
 
 	const bool vrDesktopMirror = globals::game::isVR && globals::features::vr.IsHelperRegistered() &&
+	                           (!globals::menu || globals::menu->ShouldRenderDesktopMenu()) &&
 	                           !frameGenActive && CanBindDesktopMirrorTarget(swapChain);
 	if (vrDesktopMirror) {
 		// Finish the scene/HDR composite first. The menu is then drawn over the

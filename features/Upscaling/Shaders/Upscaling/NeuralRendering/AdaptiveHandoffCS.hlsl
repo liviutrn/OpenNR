@@ -62,16 +62,19 @@ void main(uint3 id : SV_DispatchThreadID)
 	const float4 current = gCurrent.Load(int3(pixel, 0));
 	const float2 motionPixels = MotionPixels(pixel);
 	const float2 previousPosition = float2(pixel) + 0.5 + motionPixels;
-	bool historyAccepted = gHistoryValid != 0 && InBounds(previousPosition);
+	bool historyAccepted = gHistoryValid != 0 && gUseDepth != 0 &&
+		all(isfinite(motionPixels)) && InBounds(previousPosition);
 
 	if (historyAccepted && gUseDepth != 0)
 	{
 		const uint2 currentGuidePixel = GuidePixel(float2(pixel));
-		const uint2 previousGuidePixel = GuidePixel(previousPosition);
+		const uint2 previousGuidePixel = GuidePixel(previousPosition - 0.5);
 		const float currentDepth = gCurrentDepth.Load(int3(currentGuidePixel, 0));
 		const float previousDepth = gPreviousDepth.Load(int3(previousGuidePixel, 0));
 		const bool currentDepthValid = currentDepth > 0.00001;
 		const bool previousDepthValid = previousDepth > 0.00001;
+		historyAccepted = currentDepthValid && previousDepthValid &&
+			isfinite(currentDepth) && isfinite(previousDepth);
 		if (currentDepthValid && previousDepthValid)
 		{
 			const float depthScale = max(max(abs(currentDepth), abs(previousDepth)), 1.0);
@@ -80,9 +83,23 @@ void main(uint3 id : SV_DispatchThreadID)
 	}
 
 	const float2 outputSize = float2(max(gColorWidth, 1u), max(gColorHeight, 1u));
-	const float4 previous = gPrevious.SampleLevel(gLinear, previousPosition / outputSize, 0);
+	uint allocationWidth, allocationHeight;
+	gPrevious.GetDimensions(allocationWidth, allocationHeight);
+	const float2 safePosition = all(isfinite(previousPosition)) ? previousPosition : float2(pixel) + 0.5;
+	float4 previous = gPrevious.SampleLevel(gLinear, safePosition / float2(allocationWidth, allocationHeight), 0);
+	float3 lo = current.rgb;
+	float3 hi = current.rgb;
+	[unroll] for (int y = -1; y <= 1; ++y)
+		[unroll] for (int x = -1; x <= 1; ++x) {
+			int2 p = clamp(int2(pixel) + int2(x, y), int2(0, 0), int2(gColorWidth, gColorHeight) - 1);
+			float3 sampleColor = gCurrent.Load(int3(p, 0)).rgb;
+			lo = min(lo, sampleColor);
+			hi = max(hi, sampleColor);
+		}
+	historyAccepted = historyAccepted && all(isfinite(previous));
+	previous.rgb = clamp(previous.rgb, lo, hi);
 	const float normalizedMotion = length(motionPixels / max(outputSize, 1.0));
 	const float motionAlpha = saturate(normalizedMotion * 10.0);
-	const float alpha = historyAccepted ? max(saturate(gBlendAlpha), motionAlpha * motionAlpha) : 1.0;
-	gTarget[pixel] = lerp(previous, current, alpha);
+	const float alpha = historyAccepted ? max(saturate(gBlendAlpha), saturate(length(motionPixels) / 8.0)) : 1.0;
+	gTarget[pixel] = historyAccepted ? lerp(previous, current, alpha) : current;
 }

@@ -84,12 +84,15 @@ namespace NeuralRendering
 		targetBucket_ = targetBucket;
 		transitionFrame_ = 0;
 		transitionFrameCount_ = std::max(frameCount, 1u);
+		transitionElapsedMs_ = 0.0f;
+		previousTransitionMs_ = 0.0f;
+		transitionDurationMs_ = std::clamp(frameCount * applicationDeadlineMs_, 120.0f, 800.0f);
 		dwellFrames_ = 0;
 		overrunFrames_ = 0;
 		headroomFrames_ = 0;
 	}
 
-	void AdaptiveController::Update(std::uint32_t frame, const Config& requestedConfig, bool eligible)
+	void AdaptiveController::Update(std::uint32_t frame, const Config& requestedConfig, bool eligible, float workloadMs, float elapsedMs)
 	{
 		const auto now = std::chrono::steady_clock::now();
 		if (lastFrame_ == frame)
@@ -105,6 +108,9 @@ namespace NeuralRendering
 		}
 		lastTimestamp_ = now;
 		hasTimestamp_ = true;
+		const float visualDeltaMs = std::clamp(std::isfinite(elapsedMs) && elapsedMs >= 0.0f ? elapsedMs : frameTimeMs, 0.0f, 50.0f);
+		frameTimeMs = std::isfinite(workloadMs) && workloadMs > 0.0f && workloadMs <= 250.0f ? workloadMs : 0.0f;
+		decisionReason_ = "hold";
 
 		const Config config = NormalizeConfig(requestedConfig);
 		const bool configurationChanged = config.enabled != config_.enabled ||
@@ -116,6 +122,7 @@ namespace NeuralRendering
 
 		const bool shouldRun = config.enabled && eligible;
 		if (!shouldRun) {
+			decisionReason_ = config.enabled ? "eligibility-loss" : "disabled";
 			ResetDecisionState();
 			// Do not carry an ineligible/capture/menu interval into the next
 			// adaptive sample as if it were a real application frame.
@@ -132,6 +139,7 @@ namespace NeuralRendering
 		if (targetBucket_ > minimumBucket_)
 			targetBucket_ = minimumBucket_;
 		if (configurationChanged) {
+			decisionReason_ = "configuration-change";
 			transitionFrame_ = 0;
 			transitionFrameCount_ = 0;
 			dwellFrames_ = 0;
@@ -146,7 +154,9 @@ namespace NeuralRendering
 		}
 
 		if (transitionFrameCount_ != 0) {
-			if (transitionFrame_ + 1 >= transitionFrameCount_) {
+			previousTransitionMs_ = transitionElapsedMs_;
+			transitionElapsedMs_ += visualDeltaMs;
+			if (transitionElapsedMs_ >= transitionDurationMs_) {
 				transitionFrame_ = 0;
 				transitionFrameCount_ = 0;
 			} else {
@@ -156,8 +166,11 @@ namespace NeuralRendering
 
 		++dwellFrames_;
 		if (frameTimeMs == 0.0f) {
+			decisionReason_ = "timing-unavailable";
 			lastSampleOverBudget_ = false;
 			lastSampleHadHeadroom_ = false;
+			overrunFrames_ = 0;
+			headroomFrames_ = 0;
 			return;
 		}
 
@@ -181,13 +194,17 @@ namespace NeuralRendering
 		if (!config.allowDownshift)
 			overrunFrames_ = 0;
 
+		if (IsTransitioning())
+			return;
 		if (dwellFrames_ >= config.minimumDwellFrames &&
 			config.allowDownshift && (overrunFrames_ >= 2 || emergencyOverrun) && activeBucket_ < minimumBucket_) {
+			decisionReason_ = "workload-pressure";
 			StartTransition(activeBucket_ + 1, config.downshiftFrames);
 			return;
 		}
 
-		if (dwellFrames_ >= config.minimumDwellFrames && headroomFrames_ >= config.upshiftFrames && activeBucket_ > 0) {
+		if (config.allowUpshift && dwellFrames_ >= config.minimumDwellFrames && headroomFrames_ >= config.upshiftFrames && activeBucket_ > 0) {
+			decisionReason_ = "workload-headroom";
 			StartTransition(activeBucket_ - 1, config.upshiftFrames);
 		}
 	}
@@ -206,7 +223,10 @@ namespace NeuralRendering
 	{
 		if (transitionFrameCount_ == 0)
 			return 1.0f;
-		return std::clamp(static_cast<float>(transitionFrame_ + 1) /
-			static_cast<float>(transitionFrameCount_), 0.05f, 1.0f);
+		const auto smooth = [](float t) { t = std::clamp(t, 0.0f, 1.0f); return t * t * (3.0f - 2.0f * t); };
+		const float previous = smooth(previousTransitionMs_ / transitionDurationMs_);
+		const float current = smooth(transitionElapsedMs_ / transitionDurationMs_);
+		// History already contains previous blends; incremental weight preserves the intended fade.
+		return std::clamp((current - previous) / std::max(1.0f - previous, 0.0001f), 0.0f, 1.0f);
 	}
 }

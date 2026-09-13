@@ -202,6 +202,7 @@ public:
 	void UpdateHelper();         ///< Per-frame focus reconcile + combo handling (from Menu).
 	void PumpHelperInput(bool panelReady); ///< Pump helper keyboard/wand input after ImGui backends (from OverlayRenderer).
 	void RenderHelperToPanel();  ///< Blit the menu into the helper's panel (from OverlayRenderer).
+	void ClearHelperPanel();     ///< Clear a stale helper menu surface when desktop-only mode takes ownership.
 	void RenderStatusHud();      ///< Always-on status overlays via a HUD-mode client (from Menu).
 	void FeedHelperEvent(uint32_t device, uint32_t key, bool pressed, float stickX, float stickY);
 	[[nodiscard]] bool IsHelperRegistered() const;    ///< True once the menu client is connected.
