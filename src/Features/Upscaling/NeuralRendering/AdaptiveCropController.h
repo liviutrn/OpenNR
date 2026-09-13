@@ -10,7 +10,7 @@ namespace NeuralRendering
 	 *
 	 * Crop geometry is a resource-boundary change, so this class selects only
 	 * coarse coverage tiers and lets the renderer mask the visible handoff.
-	 * Adaptive crop is subordinate to adaptive NR and never competes with a
+	 * Adaptive crop is coordinated with adaptive NR and never competes with a
 	 * gaze-owned crop.
 	 */
 	class AdaptiveCropController
@@ -19,7 +19,7 @@ namespace NeuralRendering
 		struct Config
 		{
 			bool enabled = false;
-			std::uint32_t minimumCoverage = 75;
+			std::uint32_t minimumCoverage = 50;
 			std::uint32_t downshiftFrames = 2;
 			std::uint32_t upshiftFrames = 24;
 			std::uint32_t minimumDwellFrames = 60;
@@ -29,7 +29,7 @@ namespace NeuralRendering
 		void Reset();
 		void Update(std::uint32_t frame, const Config& config, bool eligible,
 			std::uint32_t configuredCoverage, bool geometryCompatible,
-			bool eyeTrackingEnabled, bool nrAtMinimum, bool nrTransitioning,
+			bool eyeTrackingEnabled, bool allowDownshift, bool nrTransitioning,
 			bool nrAtMaximum, bool overBudget, bool headroom);
 
 		[[nodiscard]] std::uint32_t ActiveCoverage() const;
@@ -43,17 +43,18 @@ namespace NeuralRendering
 		[[nodiscard]] bool IsEyeTrackingBlocked() const { return eyeTrackingBlocked_; }
 		[[nodiscard]] bool IsGeometryBlocked() const { return geometryBlocked_; }
 
-		static constexpr const std::array<std::uint32_t, 15>& CoverageBuckets()
+		static constexpr const std::array<std::uint32_t, 11>& CoverageBuckets()
 		{
 			return kCoverageBuckets;
 		}
 
 	private:
-		// Keep the original five-percent handoff cadence and extend it to lower
-		// coverage. The UI exposes the useful ten-percent defaults while the
-		// controller retains small intermediate steps for smoother transitions.
-		static constexpr std::array<std::uint32_t, 15> kCoverageBuckets{
-			100, 95, 90, 85, 80, 75, 70, 65, 60, 55, 50, 45, 40, 35, 30 };
+		// Keep five-percent handoff steps, but stop the automatic crop controller
+		// at the requested 50% floor. The named centered presets can still retain
+		// lower manual choices for compatibility; adaptive crop fails closed below
+		// this floor.
+		static constexpr std::array<std::uint32_t, 11> kCoverageBuckets{
+			100, 95, 90, 85, 80, 75, 70, 65, 60, 55, 50 };
 
 		static std::uint32_t FindBucketAtOrBelow(std::uint32_t coverage);
 		static std::uint32_t FindBucketIndexAtOrBelow(std::uint32_t coverage);
@@ -70,7 +71,7 @@ namespace NeuralRendering
 		std::uint32_t activeBucket_ = 0;
 		std::uint32_t targetBucket_ = 0;
 		std::uint32_t maximumBucket_ = 0;
-		std::uint32_t minimumBucket_ = 5;
+		std::uint32_t minimumBucket_ = 10;
 		std::uint32_t transitionFrame_ = 0;
 		std::uint32_t transitionFrameCount_ = 0;
 		std::uint32_t dwellFrames_ = 0;

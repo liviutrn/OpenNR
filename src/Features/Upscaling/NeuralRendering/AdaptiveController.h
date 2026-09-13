@@ -18,8 +18,9 @@ namespace NeuralRendering
 		struct Config
 		{
 			bool enabled = false;
+			bool allowDownshift = true;
 			std::uint32_t refreshHz = 80;
-			std::uint32_t minimumResolution = 75;
+			std::uint32_t minimumResolution = 70;
 			std::uint32_t downshiftFrames = 4;
 			std::uint32_t upshiftFrames = 12;
 			std::uint32_t minimumDwellFrames = 30;
@@ -49,14 +50,14 @@ namespace NeuralRendering
 		}
 
 		/** @brief Returns the native buckets used by the adaptive test. */
-		static constexpr const std::array<std::uint32_t, 11>& ResolutionBuckets()
+		static constexpr const std::array<std::uint32_t, 7>& ResolutionBuckets()
 		{
 			return kResolutionBuckets;
 		}
 
 	private:
 		static constexpr std::array<std::uint32_t, 4> kRefreshTargets{ 70, 72, 80, 90 };
-		static constexpr std::array<std::uint32_t, 11> kResolutionBuckets{ 100, 95, 90, 85, 80, 75, 70, 67, 60, 50, 33 };
+		static constexpr std::array<std::uint32_t, 7> kResolutionBuckets{ 100, 95, 90, 85, 80, 75, 70 };
 
 		static std::uint32_t NormalizeRefresh(std::uint32_t refreshHz);
 		static std::uint32_t FindNearestBucket(std::uint32_t resolution);
@@ -73,7 +74,7 @@ namespace NeuralRendering
 		std::chrono::steady_clock::time_point lastTimestamp_{};
 		std::uint32_t activeBucket_ = 0;
 		std::uint32_t targetBucket_ = 0;
-		std::uint32_t minimumBucket_ = 5;
+		std::uint32_t minimumBucket_ = 6;
 		std::uint32_t transitionFrame_ = 0;
 		std::uint32_t transitionFrameCount_ = 0;
 		std::uint32_t dwellFrames_ = 0;

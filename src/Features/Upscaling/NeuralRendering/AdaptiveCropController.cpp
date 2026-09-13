@@ -38,7 +38,7 @@ namespace NeuralRendering
 		activeBucket_ = 0;
 		targetBucket_ = 0;
 		maximumBucket_ = 0;
-		minimumBucket_ = 5;
+		minimumBucket_ = static_cast<std::uint32_t>(kCoverageBuckets.size() - 1);
 		transitionFrame_ = 0;
 		transitionFrameCount_ = 0;
 		dwellFrames_ = 0;
@@ -70,7 +70,7 @@ namespace NeuralRendering
 
 	void AdaptiveCropController::Update(std::uint32_t frame, const Config& requestedConfig, bool eligible,
 		std::uint32_t configuredCoverage, bool geometryCompatible, bool eyeTrackingEnabled,
-		bool nrAtMinimum, bool nrTransitioning, bool nrAtMaximum, bool overBudget, bool headroom)
+		bool allowDownshift, bool nrTransitioning, bool nrAtMaximum, bool overBudget, bool headroom)
 	{
 		if (lastFrame_ == frame)
 			return;
@@ -141,7 +141,7 @@ namespace NeuralRendering
 			headroomFrames_ = 0;
 		}
 
-		if (dwellFrames_ >= config.minimumDwellFrames && !nrTransitioning && nrAtMinimum &&
+		if (dwellFrames_ >= config.minimumDwellFrames && !nrTransitioning && allowDownshift &&
 			overrunFrames_ >= config.downshiftFrames && activeBucket_ < minimumBucket_)
 			StartTransition(activeBucket_ + 1, config.transitionFrames);
 		else if (dwellFrames_ >= config.minimumDwellFrames && !nrTransitioning && nrAtMaximum &&

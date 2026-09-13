@@ -28,11 +28,11 @@ namespace NeuralRendering
 	{
 		constexpr std::uint32_t kEyeCount = 2;
 		constexpr std::uint32_t kCascadePassCount = 3;
-		constexpr std::array<std::uint32_t, 11> kResolutionTiers{
-			100, 95, 90, 85, 80, 75, 70, 67, 60, 50, 33 };
+		constexpr std::array<std::uint32_t, 7> kResolutionTiers{
+			100, 95, 90, 85, 80, 75, 70 };
 		constexpr std::uint32_t kResolutionTierCount = static_cast<std::uint32_t>(kResolutionTiers.size());
-		// Prewarm every supported adaptive tier so selecting the newly exposed
-		// 67/60/50/33% floors does not allocate an NGX feature during combat.
+		// All supported adaptive tiers are prewarmed. Keeping this ladder short
+		// limits the number of per-eye Feature 18 dimension/resource states.
 		constexpr std::uint32_t kAdaptiveTierCount = kResolutionTierCount;
 		constexpr std::uint32_t kTemporalReuseMinCadence = 2;
 		constexpr std::uint32_t kTemporalReuseMaxCadence = 4;
@@ -217,7 +217,11 @@ namespace NeuralRendering
 
 		std::uint32_t NormalizeModelResolution(std::uint32_t percent)
 		{
-			return std::find(kResolutionTiers.begin(), kResolutionTiers.end(), percent) != kResolutionTiers.end() ? percent : 100;
+			if (std::find(kResolutionTiers.begin(), kResolutionTiers.end(), percent) != kResolutionTiers.end())
+				return percent;
+			// Keep the renderer-side safety net aligned with FoveatedRender::ClampSettings:
+			// old experimental values below 70% must not silently re-enable full-cost NR.
+			return percent < kResolutionTiers.back() ? kResolutionTiers.back() : kResolutionTiers.front();
 		}
 
 		struct ModelResolveSettings
@@ -249,8 +253,8 @@ namespace NeuralRendering
 		{
 			// Reduced Feature 18 output is temporally less reliable around fine
 			// shadow/light transitions. Near-native model resolutions have enough
-			// spatial support to carry a substantially larger contribution, while
-			// the aggressive 50%/33% modes stay conservative for artifact control.
+			// spatial support to carry a substantially larger contribution. The
+			// controls build stops at the conservative 70% floor.
 			switch (modelResolution) {
 			case 95:
 				return { 1.00f, 0.92f, 1.75f, 0.95f };

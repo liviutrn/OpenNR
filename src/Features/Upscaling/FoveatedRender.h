@@ -136,18 +136,19 @@ struct FoveatedRender
 		float neuralRenderingTemporalColorTolerance = 0.08f;
 		// Opt-in in-game adaptive NR test. The controller derives a 2:1
 		// application budget from the selected headset refresh and moves through
-		// small native tiers; it never changes the display/compositor mode.
+		// the short 100/95/90/85/80/75/70 native ladder; it never changes the
+		// display/compositor mode.
 		bool neuralRenderingAdaptiveEnabled = false;
 		uint neuralRenderingAdaptiveRefreshHz = 80;
-		uint neuralRenderingAdaptiveMinimumResolution = 75;
+		uint neuralRenderingAdaptiveMinimumResolution = 70;
 		uint neuralRenderingAdaptiveDownshiftFrames = 4;
 		uint neuralRenderingAdaptiveUpshiftFrames = 12;
 		uint neuralRenderingAdaptiveMinimumDwellFrames = 30;
 		float neuralRenderingAdaptiveGuardTimeMs = 1.0f;
-		// Optional companion for the shared foveated crop. It is subordinate to
+		// Optional companion for the shared foveated crop. It is coordinated with
 		// adaptive NR and is hard-disabled while eye-tracked foveation owns UVs.
 		bool neuralRenderingAdaptiveCropEnabled = false;
-		uint neuralRenderingAdaptiveCropMinimumCoverage = 75;
+		uint neuralRenderingAdaptiveCropMinimumCoverage = 50;
 		uint neuralRenderingAdaptiveCropDownshiftFrames = 2;
 		uint neuralRenderingAdaptiveCropUpshiftFrames = 24;
 		uint neuralRenderingAdaptiveCropMinimumDwellFrames = 60;
@@ -185,6 +186,9 @@ struct FoveatedRender
 	NeuralRendering::AdaptiveController adaptiveController;
 	NeuralRendering::AdaptiveCropController adaptiveCropController;
 	Util::Subrect::Controller subrectController;
+	// Pressure alternates crop -> NR -> crop when both controllers can help.
+	// Restoration remains NR-first because crop is gated on NR maximum.
+	bool adaptiveNextDownshiftIsCrop = true;
 
 	// Called from Upscaling::DrawSettings. DrawEnable renders the always-visible
 	// header + Enable checkbox at the parent's top level; DrawSettings renders

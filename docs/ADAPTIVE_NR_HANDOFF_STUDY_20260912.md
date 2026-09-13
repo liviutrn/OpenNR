@@ -29,14 +29,15 @@ design is:
 5. blend to the new bucket over several frames; and
 6. keep the active bucket stable for a minimum dwell time.
 
-The current automatic ladder is `100, 95, 90, 85, 80, 75, 70, 67, 60, 50,
-33`. The UI shows the approximate model-pixel area beside each NR percentage;
-because the percentage applies to both axes, cost is approximately the square
-of the displayed scale. Arbitrary one-percent values are not currently native
-resource tiers: every distinct percentage creates a distinct resource/Feature
-18 dimension state. The 5% steps are the smoothness/performance compromise for
-this prototype, with the existing 67/60/50/33 native tiers retained for the
-aggressive end of the ladder.
+The current automatic and manual controls ladder is the shorter
+`100, 95, 90, 85, 80, 75, 70` set. The UI shows the approximate model-pixel
+area beside each NR percentage; because the percentage applies to both axes,
+cost is approximately the square of the displayed scale. Arbitrary one-
+percent values are not currently native resource tiers: every distinct
+percentage creates a distinct resource/Feature 18 dimension state. The seven
+5% steps are the resource/smoothness compromise for this controls build. Older
+67/60/50/33 values are clamped to the 70% floor rather than creating additional
+native resource states.
 
 For the requested 80 Hz target, a stable 2:1 cadence means approximately 40
 new application frames per second and a 25.00 ms application deadline. At
@@ -110,10 +111,10 @@ The branch now implements the proposed handoff in the renderer:
   uses overrun/headroom hysteresis, configurable downshifts, slower upshifts,
   and configurable minimum dwell time.
 * `Renderer` owns separate native tier resources and Feature 18 slots for both
-  eyes. It pre-warms all eleven automatic tiers while the adaptive test is
-  active, so a tier switch does not synchronously replace the current tier's
-  resources. This reduces first-use allocation risk at the cost of additional
-  startup VRAM and initialization work.
+  eyes. It pre-warms the seven automatic tiers (`100` through `70` in 5%
+  steps) while the adaptive test is active, so a tier switch does not
+  synchronously replace the current tier's resources. This reduces first-use
+  allocation risk while keeping the number of per-eye resource states bounded.
 * `AdaptiveHandoffCS.hlsl` blends the previously displayed tier into the new
   tier over the transition window. It uses separate per-eye color/depth
   history, current exact guides, motion-aware rejection, and depth gating.
@@ -124,6 +125,10 @@ The branch now implements the proposed handoff in the renderer:
 * Capture mode and the experimental pre-upscale route explicitly disable the
   adaptive controller; they retain fixed-resolution/stage-order semantics for
   validation.
+* When adaptive crop is enabled and compatible, pressure handoffs alternate
+  `Crop -> NR -> Crop`; if crop is unavailable or already at its 50% floor,
+  NR remains the fallback. Restoration remains NR-first and is slower than
+  downshift. Eye-tracked foveation retains ownership of crop placement.
 * NR intensity, local tone, and structure strength remain fixed during a
   transition. The prototype does not claim that increasing those values makes
   a reduced tier equivalent to the full tier; it only smooths the visual
@@ -171,10 +176,10 @@ headroom before engine work, other shader features, CPU submission, queue
 latency, and compositor overhead; it is not a promise that the whole frame
 will fit.
 
-| Target | Display interval | 2:1 application deadline | 100% margin | 95% margin* | 90% margin | 85% margin | 80% margin* | 75% margin |
-|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| 80 Hz / 40 FPS app cadence | 12.50 ms | 25.00 ms | 1.85 ms | 3.88 ms | 5.67 ms | 7.54 ms | 9.44 ms | 11.36 ms |
-| 90 Hz / 45 FPS app cadence | 11.11 ms | 22.22 ms | -0.93 ms | 1.10 ms | 2.89 ms | 4.76 ms | 6.66 ms | 8.58 ms |
+| Target | Display interval | 2:1 application deadline | 100% margin | 95% margin* | 90% margin | 85% margin | 80% margin* | 75% margin | 70% margin* |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 80 Hz / 40 FPS app cadence | 12.50 ms | 25.00 ms | 1.85 ms | 3.88 ms | 5.67 ms | 7.54 ms | 9.44 ms | 11.36 ms | 12.61 ms |
+| 90 Hz / 45 FPS app cadence | 11.11 ms | 22.22 ms | -0.93 ms | 1.10 ms | 2.89 ms | 4.76 ms | 6.66 ms | 8.58 ms | 9.83 ms |
 
 \* Curve estimate, not a native measurement.
 
@@ -211,14 +216,14 @@ TransitionState[eye]
     handoff alpha
 ```
 
-The prototype pre-warms all eleven automatic tiers (`100, 95, 90, 85, 80, 75,
-70, 67, 60, 50, 33`) per eye when adaptive mode first enters the route. Keeping
-all one-percent buckets alive would duplicate too many resources and Feature 18
-handles, so arbitrary 99/98/etc. values remain outside this build. The
-full-resolution input and guides are shared rather than copied once per bucket.
-The pre-warm itself can be a one-time VRAM/allocation event, and the first
-Feature 18 evaluation for a tier may still have driver/runtime work; this must
-be measured in the live run.
+The prototype pre-warms seven automatic tiers (`100, 95, 90, 85, 80, 75, 70`)
+per eye when adaptive mode first enters the route. Keeping all one-percent
+buckets alive would duplicate too many resources and Feature 18 handles, so
+arbitrary 99/98/etc. values remain outside this build. The full-resolution
+input and guides are shared rather than copied once per bucket. The pre-warm
+itself can be a one-time VRAM/allocation event, and the first Feature 18
+evaluation for a tier may still have driver/runtime work; this must be measured
+in the live run.
 
 The controller should report both requested and effective state:
 
@@ -280,8 +285,10 @@ the known-good runtime payload:
 * Live-tested fallback mod: `OpenNR EXP FIXED - Adaptive NR + Crop Handoff 2.14.8 20260913`
 * Controls revision profile: `MGO NSFW - Adaptive NR 80Hz CONTROLS 2.14.8 20260913`
 * Controls revision mod: `OpenNR EXP CONTROLS - Adaptive NR + Crop Handoff 2.14.8 20260913`
-* Defaults: adaptive enabled, 80 Hz, 75% minimum tier, four-frame downshift,
-  twelve-frame upshift, thirty-frame dwell, and 1.0 ms reserved headroom.
+* Defaults: adaptive enabled, 80 Hz, 70% minimum NR tier, 50% minimum adaptive
+  crop, four-frame NR downshift, twelve-frame NR upshift, thirty-frame NR dwell,
+  and 1.0 ms reserved headroom. Adaptive crop remains disabled by default and,
+  when enabled, is the first pressure action before the next NR tier.
 
 The controls revision is not selected automatically. After the current game
 session is finished, enable only the clearly named CONTROLS mod or create a

@@ -117,10 +117,10 @@ namespace NeuralRendering
 		[[nodiscard]] std::uint64_t SuccessfulFrames() const { return successfulFrames_; }
 
 	private:
-		// Two eyes x eleven resolution tiers x three cascade stages. The adaptive
+		// Two eyes x seven resolution tiers x three cascade stages. The adaptive
 		// controller keeps each tier's NGX feature handle isolated so a handoff
 		// never reuses a handle configured for a different model extent.
-		static constexpr std::uint32_t kFeatureSlotCount = 66;
+		static constexpr std::uint32_t kFeatureSlotCount = 42;
 		Runtime() = default;
 		void* module_ = nullptr;
 		void* parameters_ = nullptr;

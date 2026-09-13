@@ -54,7 +54,7 @@ namespace NeuralRendering
 		enabled_ = false;
 		activeBucket_ = 0;
 		targetBucket_ = 0;
-		minimumBucket_ = 5;
+		minimumBucket_ = 6;
 		transitionFrame_ = 0;
 		transitionFrameCount_ = 0;
 		dwellFrames_ = 0;
@@ -178,9 +178,11 @@ namespace NeuralRendering
 			overrunFrames_ = 0;
 			headroomFrames_ = 0;
 		}
+		if (!config.allowDownshift)
+			overrunFrames_ = 0;
 
 		if (dwellFrames_ >= config.minimumDwellFrames &&
-			(overrunFrames_ >= 2 || emergencyOverrun) && activeBucket_ < minimumBucket_) {
+			config.allowDownshift && (overrunFrames_ >= 2 || emergencyOverrun) && activeBucket_ < minimumBucket_) {
 			StartTransition(activeBucket_ + 1, config.downshiftFrames);
 			return;
 		}
