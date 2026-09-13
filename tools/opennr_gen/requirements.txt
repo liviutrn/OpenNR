@@ -1,0 +1,12 @@
+# Kept separate from the existing OpenNR runtime; torch is supplied by the
+# machine's CUDA 12.8 ML bundle at C:\OpenNR\python312_ml_deps_20260908.
+diffusers==0.35.2
+transformers==4.57.6
+accelerate==1.10.1
+huggingface_hub==0.36.0
+tokenizers==0.22.2
+requests==2.34.2
+PyYAML==6.0.3
+psutil==7.2.2
+packaging==26.3
+regex==2026.9.10

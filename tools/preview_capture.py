@@ -63,6 +63,7 @@ def build_preview(root: Path, output: Path, limit: int) -> int:
         sequence_id = html.escape(str(frame.get("sequence_id", "unknown")))
         frame_id = html.escape(str(frame.get("frame_id", "?")))
         status = html.escape(str(frame.get("status", "unknown")))
+        full_frame_mode = html.escape(str(frame.get("full_frame_mode", "none")))
         cards: list[str] = []
         for artifact in frame.get("artifacts", []):
             if not isinstance(artifact, dict):
@@ -75,15 +76,16 @@ def build_preview(root: Path, output: Path, limit: int) -> int:
             stage = html.escape(str(artifact.get("stage", "?")))
             eye = html.escape(str(artifact.get("eye", "?")))
             crop = html.escape(str(artifact.get("crop_index", "?")))
+            artifact_kind = "FULL FRAME" if artifact.get("full_frame", False) else f"crop {crop}"
             dimensions = f"{html.escape(str(artifact.get('width', '?')))}×{html.escape(str(artifact.get('height', '?')))}"
             cards.append(
-                '<figure><img loading="lazy" src="{}" alt="{} eye {} crop {}">'
-                '<figcaption>{} · eye {} · crop {} · {}</figcaption></figure>'.format(
-                    html.escape(relative), stage, eye, crop, stage, eye, crop, dimensions
+                '<figure><img loading="lazy" src="{}" alt="{} eye {} {}">'
+                '<figcaption>{} · eye {} · {} · {}</figcaption></figure>'.format(
+                    html.escape(relative), stage, eye, artifact_kind, stage, eye, artifact_kind, dimensions
                 )
             )
         sections.append(
-            '<section><h2>{} · frame {} · {}</h2><div class="meta">sample {} · host frame {} · route {}</div>'
+            '<section><h2>{} · frame {} · {}</h2><div class="meta">sample {} · host frame {} · route {} · full-frame mode {}</div>'
             '<div class="grid">{}</div></section>'.format(
                 sequence_id,
                 frame_id,
@@ -91,6 +93,7 @@ def build_preview(root: Path, output: Path, limit: int) -> int:
                 html.escape(str(frame.get("sample_index", "?"))),
                 html.escape(str(frame.get("host_frame", "?"))),
                 html.escape(str(frame.get("route", "?"))),
+                full_frame_mode,
                 "".join(cards) or '<p class="missing">No readable PNG artifacts.</p>',
             )
         )

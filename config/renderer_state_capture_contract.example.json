@@ -1,0 +1,78 @@
+{
+  "schema": "opennr-renderer-state-distillation-contract-v1",
+  "purpose": "Bounded paired renderer-conditioned temporal capture and state-response probing; offline research only",
+  "raw_capture": {
+    "sequence_frames": 64,
+    "eyes": [0, 1],
+    "route": "feature18_stereo",
+    "model_resolution_percent": 100,
+    "motion_vector_contract": "exact_feature18_bound_resource",
+    "full_frame_mode": "none",
+    "required_first_history_reset": [true, true],
+    "required_later_history_reset": [false, false],
+    "mid_sequence_reset": false,
+    "required_pass_counts": [1, 2],
+    "required_stage_names": [
+      "gbuffer_albedo",
+      "gbuffer_normal_roughness",
+      "gbuffer_masks",
+      "gbuffer_masks2",
+      "gbuffer_specular",
+      "gbuffer_reflectance"
+    ],
+    "required_base_resources": [
+      "input",
+      "teacher",
+      "depth",
+      "motion_vectors"
+    ],
+    "require_both_eyes_per_frame": true,
+    "require_contiguous_frame_id_and_sample_index": true,
+    "require_native_guides": true,
+    "forbid_optical_flow_substitution": true,
+    "teacher_settings_policy": "fixed_within_tranche_and_recorded_per_frame",
+    "runtime_fingerprint_policy": "record_dll_hash_settings_hash_gpu_driver_and_profile_label"
+  },
+  "tranche_target": {
+    "ordinary_one_pass_sequences_min": 24,
+    "state_response_pairs_min": 8,
+    "scene_motion_strata_min": 6,
+    "pair_split_policy": "sequence_level_train_validation_test; keep both members of a pair in one split",
+    "test_policy": "immutable_and_not_read_for_tuning"
+  },
+  "state_response_pair": {
+    "schema": "opennr-renderer-state-pairs-v1",
+    "definition": "Two rows with byte-identical current input, native guides and renderer conditioning but different valid teacher history",
+    "required_reset_member": "history_reset_pair == [true, true]",
+    "required_warm_member": "history_reset_pair == [false, false]",
+    "current_input_match": "exact_raw_cache_values",
+    "native_guide_match": "exact_raw_cache_values",
+    "renderer_conditioning_match": "exact_raw_cache_values",
+    "minimum_reported_teacher_response_mae": 0.0001,
+    "hidden_teacher_state_export": "optional_only_if_native_runtime_exposes_a_safe_hash_verified_tensor; never required_for_inference"
+  },
+  "cache_contract": {
+    "schema": "opennr-aligned-renderer-pilot-v1",
+    "conditioning_channels": 17,
+    "channel_order": [
+      "albedo_rgb",
+      "normal_xyz_roughness",
+      "masks_rgb",
+      "masks2_r",
+      "specular_rgb",
+      "reflectance_rgb"
+    ],
+    "normalization": "UNORM unchanged, signed decoded normals, float x/(1+x) for HDR-like unsigned stages",
+    "alignment": "map native guides and renderer stages to teacher crop before fixed BOX downsampling",
+    "preserve_raw_capture": true,
+    "new_cache_root_required": true
+  },
+  "promotion_gates": {
+    "step_zero_replay": "exact_warm_identity_or_declared_metric_stack_tolerance",
+    "ordinary_mae": "retain existing all-ordinary-cohort rule and target <= 0.011",
+    "temporal": "full contiguous streams, reset-qualified, no mid-reset, report warmup and steady behavior",
+    "visual": "both eyes, teacher/student A-B sheets for face, skin, highlights, shadows, fur and foliage",
+    "runtime": "offline evidence only until separate runtime/headset/stereo/frame-budget acceptance",
+    "promotion_requires": "independent checkpoint replay, full training-fit audit, and no frozen-test tuning"
+  }
+}

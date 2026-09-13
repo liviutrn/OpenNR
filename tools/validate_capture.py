@@ -27,6 +27,7 @@ BYTES_PER_PIXEL = {
     88: 4,  # B8G8R8X8_UNORM
     92: 4,  # B8G8R8X8_TYPELESS
     24: 4,  # R10G10B10A2_UNORM
+    26: 4,  # R11G11B10_FLOAT
     10: 8,  # R16G16B16A16_FLOAT
     11: 8,  # R16G16B16A16_UNORM
     15: 8,  # R32G32_TYPELESS
@@ -36,7 +37,28 @@ BYTES_PER_PIXEL = {
     37: 4,  # R16G16_SNORM
     39: 4,  # R32_TYPELESS
     41: 4,  # R32_FLOAT
+    56: 2,  # R16_UNORM
 }
+
+RENDERER_CONDITIONING_STAGES = (
+    "gbuffer_albedo",
+    "gbuffer_normal_roughness",
+    "gbuffer_masks",
+    "gbuffer_masks2",
+    "gbuffer_specular",
+    "gbuffer_reflectance",
+)
+
+# Renderer conditionings are captured at the configured training crop.  The
+# full-resolution master contract applies to the synchronized RGB/guide
+# resources; it must not silently reinterpret crop-only G-buffers as missing
+# full-frame artifacts.
+MASTER_FULL_FRAME_STAGES = (
+    "input",
+    "teacher",
+    "depth",
+    "motion_vectors",
+)
 
 
 @dataclass
@@ -46,6 +68,9 @@ class ValidationReport:
     complete_frames: int = 0
     partial_frames: int = 0
     failed_frames: int = 0
+    full_frame_frames: int = 0
+    master_sequence_frames: int = 0
+    missing_master_full_frame_artifacts: int = 0
     artifacts: int = 0
     missing_files: int = 0
     duplicate_ids: int = 0
@@ -62,6 +87,9 @@ class ValidationReport:
             "complete_frames": self.complete_frames,
             "partial_frames": self.partial_frames,
             "failed_frames": self.failed_frames,
+            "full_frame_frames": self.full_frame_frames,
+            "master_sequence_frames": self.master_sequence_frames,
+            "missing_master_full_frame_artifacts": self.missing_master_full_frame_artifacts,
             "artifacts": self.artifacts,
             "missing_files": self.missing_files,
             "duplicate_ids": self.duplicate_ids,
@@ -191,6 +219,10 @@ def validate_capture(root: Path, expected_crop_size: int = 512) -> ValidationRep
                 sequence = loaded_sequence
         except (OSError, json.JSONDecodeError) as exc:
             report.errors.append(f"cannot read {sequence_path}: {exc}")
+        master_sequence = (
+            bool(sequence.get("capture_full_frame", False))
+            and bool(sequence.get("capture_full_frame_sequence", False))
+        ) or sequence.get("full_frame_capture_policy") == "every_sample"
         try:
             lines = frame_file.read_text(encoding="utf-8").splitlines()
         except OSError as exc:
@@ -240,8 +272,15 @@ def validate_capture(root: Path, expected_crop_size: int = 512) -> ValidationRep
                 report.errors.append(f"{frame_file}:{line_number}: artifacts is empty or not an array")
                 continue
             artifact_keys: set[tuple[str, int, int]] = set()
+            full_frame_keys: set[tuple[str, int]] = set()
             for artifact in artifacts:
-                if not isinstance(artifact, dict) or artifact.get("full_frame", False):
+                if not isinstance(artifact, dict):
+                    continue
+                if artifact.get("full_frame", False):
+                    try:
+                        full_frame_keys.add((str(artifact.get("stage", "")), int(artifact.get("eye"))))
+                    except (TypeError, ValueError):
+                        pass
                     continue
                 try:
                     key = (str(artifact.get("stage", "")), int(artifact.get("eye")), int(artifact.get("crop_index")))
@@ -260,8 +299,42 @@ def validate_capture(root: Path, expected_crop_size: int = 512) -> ValidationRep
             ):
                 if sequence.get(enabled_key, False):
                     required_stages.append(stage)
+            renderer_conditionings = sequence.get("renderer_conditionings")
+            if isinstance(renderer_conditionings, dict) and renderer_conditionings.get("enabled", False):
+                if frame.get("renderer_conditionings_requested") is not True:
+                    report.errors.append(
+                        f"{frame_file}:{line_number}: renderer conditionings are enabled in sequence metadata "
+                        "but this frame did not request them"
+                    )
+                available = frame.get("renderer_conditionings_available")
+                if not isinstance(available, list) or not available:
+                    report.errors.append(
+                        f"{frame_file}:{line_number}: renderer conditionings were requested but no available channels were recorded"
+                    )
+                else:
+                    unknown = [str(stage) for stage in available if str(stage) not in RENDERER_CONDITIONING_STAGES]
+                    if unknown:
+                        report.errors.append(
+                            f"{frame_file}:{line_number}: unknown renderer conditioning stages {unknown}"
+                        )
+                    for stage in RENDERER_CONDITIONING_STAGES:
+                        if stage in available and stage not in required_stages:
+                            required_stages.append(stage)
             required_eyes = [eye for eye, key in ((0, "left_eye"), (1, "right_eye")) if sequence.get(key, False)]
             crop_count = int(sequence.get("crop_count", 0))
+
+            if full_frame_keys:
+                report.full_frame_frames += 1
+            if master_sequence and status == "complete":
+                report.master_sequence_frames += 1
+                for stage in MASTER_FULL_FRAME_STAGES:
+                    for eye in required_eyes:
+                        if (stage, eye) not in full_frame_keys:
+                            report.missing_master_full_frame_artifacts += 1
+                            report.errors.append(
+                                f"{frame_file}:{line_number}: master sequence frame is missing full-frame artifact {(stage, eye)}"
+                            )
+
             for stage in required_stages:
                 for eye in required_eyes:
                     for crop_index in range(crop_count):
@@ -280,6 +353,16 @@ def validate_capture(root: Path, expected_crop_size: int = 512) -> ValidationRep
                     report.errors.append(
                         f"{frame_file}:{line_number}: crop is {width}x{height}, expected {expected_crop_size}x{expected_crop_size}"
                     )
+                if full_frame:
+                    source_rect = artifact.get("source_rect")
+                    if isinstance(source_rect, dict):
+                        source_width = source_rect.get("width")
+                        source_height = source_rect.get("height")
+                        if width != source_width or height != source_height:
+                            report.errors.append(
+                                f"{frame_file}:{line_number}: full-frame artifact is {width}x{height}, "
+                                f"source rectangle is {source_width}x{source_height}"
+                            )
                 png_required = bool(artifact.get("png_required", True))
                 raw_required = bool(artifact.get("raw_required", True))
                 png_path = _safe_artifact_path(sequence_root, str(artifact.get("png_path", ""))) if png_required else None

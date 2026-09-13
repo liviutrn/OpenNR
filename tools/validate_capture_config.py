@@ -25,9 +25,11 @@ BOOLEAN_KEYS = (
     "capture_pre_nr",
     "capture_post_nr",
     "capture_raw_teacher",
+    "capture_renderer_conditionings",
     "capture_depth",
     "capture_motion_vectors",
     "capture_full_frame",
+    "capture_full_frame_sequence",
     "capture_left_eye",
     "capture_right_eye",
 )
@@ -100,6 +102,12 @@ def validate(document: Any) -> dict[str, Any]:
                     value = _number(crop.get(axis), f"crops[{index}].{axis}", errors)
                     if value is not None and not 0.0 <= value <= 1.0:
                         errors.append(f"crops[{index}].{axis} must be in [0, 1]")
+
+    if settings.get("capture_full_frame_sequence", False) and not settings.get("capture_full_frame", True):
+        warnings.append(
+            "capture_full_frame_sequence is enabled while capture_full_frame is false; "
+            "the runtime will not write full-frame artifacts"
+        )
 
     return {"valid": not errors, "errors": errors, "warnings": warnings}
 

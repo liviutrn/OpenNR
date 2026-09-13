@@ -1,0 +1,5 @@
+{
+  "schema": "opennr-renderer-state-pairs-v1",
+  "description": "Replace the empty pairs array only after a new capture has produced same-current-frame/different-history anchors.",
+  "pairs": []
+}
