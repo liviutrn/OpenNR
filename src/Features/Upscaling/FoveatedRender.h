@@ -23,8 +23,11 @@
 
 #include "../../Utils/BootSnapshot.h"
 #include "../../Utils/Subrect.h"
+#include "NeuralRendering/AdaptiveController.h"
+#include "NeuralRendering/AdaptiveCropController.h"
 
 #include <chrono>
+#include <cstdint>
 
 struct FoveatedRender
 {
@@ -131,6 +134,24 @@ struct FoveatedRender
 		uint neuralRenderingTemporalReuseCadence = 0;
 		float neuralRenderingTemporalDepthThreshold = 0.05f;
 		float neuralRenderingTemporalColorTolerance = 0.08f;
+		// Opt-in in-game adaptive NR test. The controller derives a 2:1
+		// application budget from the selected headset refresh and moves through
+		// small native tiers; it never changes the display/compositor mode.
+		bool neuralRenderingAdaptiveEnabled = false;
+		uint neuralRenderingAdaptiveRefreshHz = 80;
+		uint neuralRenderingAdaptiveMinimumResolution = 75;
+		uint neuralRenderingAdaptiveDownshiftFrames = 4;
+		uint neuralRenderingAdaptiveUpshiftFrames = 12;
+		uint neuralRenderingAdaptiveMinimumDwellFrames = 30;
+		float neuralRenderingAdaptiveGuardTimeMs = 1.0f;
+		// Optional companion for the shared foveated crop. It is subordinate to
+		// adaptive NR and is hard-disabled while eye-tracked foveation owns UVs.
+		bool neuralRenderingAdaptiveCropEnabled = false;
+		uint neuralRenderingAdaptiveCropMinimumCoverage = 75;
+		uint neuralRenderingAdaptiveCropDownshiftFrames = 2;
+		uint neuralRenderingAdaptiveCropUpshiftFrames = 24;
+		uint neuralRenderingAdaptiveCropMinimumDwellFrames = 60;
+		uint neuralRenderingAdaptiveCropTransitionFrames = 8;
 		// Isolated native OpenVR gaze-provider experiment. The provider moves a
 		// fixed-size crop around the per-eye gaze point; it is opt-in, NR-only,
 		// and falls back to the persisted static crop whenever the native API is
@@ -155,6 +176,8 @@ struct FoveatedRender
 	static constexpr const char* kPresetNasalConvergence70 = "Nasal Convergence 70%";  ///< 70% crop biased toward nasal convergence.
 
 	Settings settings;
+	NeuralRendering::AdaptiveController adaptiveController;
+	NeuralRendering::AdaptiveCropController adaptiveCropController;
 	Util::Subrect::Controller subrectController;
 
 	// Called from Upscaling::DrawSettings. DrawEnable renders the always-visible
@@ -182,6 +205,18 @@ struct FoveatedRender
 	bool IsRuntimeSupported() const;
 	bool IsActive() const;
 	bool IsLoaded() const { return enabledAtBoot; }
+
+	/** @brief Update the adaptive NR/crop policy once for the current engine frame. */
+	void UpdateAdaptiveState(std::uint32_t frame, bool routeEligible);
+	/** @brief Reset adaptive state without changing persisted user settings. */
+	void ResetAdaptiveState();
+	/** @brief True when a gaze/eye-tracking route owns crop geometry. */
+	bool IsEyeTrackedFoveationEnabled() const;
+	/** @brief Effective UVs consumed by foveated DLSS, VRS, and NR. */
+	Util::Subrect::UVRegion GetEffectiveLeftUV() const;
+	Util::Subrect::UVRegion GetEffectiveRightUV() const;
+	bool IsAdaptiveCropRuntimeActive() const { return adaptiveCropController.IsRuntimeActive(); }
+	bool IsAdaptiveCropTransitioning() const { return adaptiveCropController.IsTransitioning(); }
 
 	/** @brief True while drag-resizing the crop region, and for a few seconds after.
 	 *  Read by the stretch pass alongside settings.debugVisualize. */

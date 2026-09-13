@@ -51,7 +51,14 @@ namespace FoveatedRenderImpl
 		ID3D11Resource* upscalingTexture, ID3D11Resource* depthTexture,
 		ID3D11Resource* reactiveMask, ID3D11Resource* transparencyMask, ID3D11Resource* motionVectors)
 	{
+		// Resolve the adaptive decision before Params hashes the crop. The same
+		// effective UVs are then consumed by DLSS, VRS, and the later NR hook.
+		const auto frame = globals::state ? globals::state->frameCount : 0;
+		globals::features::upscaling.foveatedRender.UpdateAdaptiveState(frame, true);
 		auto p = VRDlssParams::Resolve(upscalingTexture, depthTexture, reactiveMask, transparencyMask, motionVectors);
+		// Preserve the source guides for the optional display-space crop handoff.
+		Core::vrAdaptiveCropDepthSource = p.depthTexture;
+		Core::vrAdaptiveCropMotionSource = p.motionVectors;
 
 		// Detect UV/mode change → destroy DLSS resources so SL recreates them at
 		// the new size. Both eye UVs feed the hash; asymmetric presets (e.g.

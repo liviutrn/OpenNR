@@ -48,6 +48,16 @@ namespace FoveatedRenderImpl
 			uint32_t eyeWidthOut,
 			uint32_t eyeHeightOut);
 
+		// Display-space bridge used only while the adaptive regular crop changes.
+		// It keeps the existing foveated route and its per-eye guide contract
+		// intact, then hides the crop boundary/resource reset in a short history
+		// blend after the final SBS image is assembled.
+		static bool ApplyAdaptiveCropHandoff(
+			ID3D11Resource* color,
+			ID3D11Resource* depth,
+			ID3D11Resource* motionVectors);
+		static void ResetAdaptiveCropHandoff();
+
 		// Release all GPU resources owned by Core.
 		static void ClearResources();
 		// Drop crop-sensitive temporal state even when the replacement resources
@@ -114,6 +124,27 @@ namespace FoveatedRenderImpl
 		// Subrect UV hash for resource recreation detection
 		static inline uint64_t activeSubrectUVHash = 0;
 		static inline uint32_t neuralGuidesFrame = UINT32_MAX;
+
+		// Full-SBS history for the optional adaptive crop transition. These are
+		// allocated lazily and reused; steady-state crop frames use copies only.
+		static inline eastl::unique_ptr<Texture2D> vrAdaptiveCropHistory[2];
+		static inline eastl::unique_ptr<Texture2D> vrAdaptiveCropTarget;
+		static inline eastl::unique_ptr<Texture2D> vrAdaptiveCropDepthHistory[2];
+		static inline winrt::com_ptr<ID3D11ComputeShader> vrAdaptiveCropHandoffCS;
+		static inline winrt::com_ptr<ID3D11Buffer> vrAdaptiveCropHandoffCB;
+		static inline winrt::com_ptr<ID3D11SamplerState> vrAdaptiveCropHandoffSampler;
+		static inline winrt::com_ptr<ID3D11ShaderResourceView> vrAdaptiveCropColorSRV;
+		static inline ID3D11Resource* vrAdaptiveCropColorSRVOwner = nullptr;
+		static inline winrt::com_ptr<ID3D11ShaderResourceView> vrAdaptiveCropMotionSRV;
+		static inline ID3D11Resource* vrAdaptiveCropMotionSRVOwner = nullptr;
+		static inline uint32_t vrAdaptiveCropHistoryW = 0;
+		static inline uint32_t vrAdaptiveCropHistoryH = 0;
+		static inline uint32_t vrAdaptiveCropGuideW = 0;
+		static inline uint32_t vrAdaptiveCropGuideH = 0;
+		static inline uint32_t vrAdaptiveCropFrameIdx = 0;
+		static inline bool vrAdaptiveCropHistoryValid = false;
+		static inline ID3D11Resource* vrAdaptiveCropDepthSource = nullptr;
+		static inline ID3D11Resource* vrAdaptiveCropMotionSource = nullptr;
 
 	private:
 		static bool ExecuteDefaultMode(Streamline& streamline, const VRDlssParams& p);

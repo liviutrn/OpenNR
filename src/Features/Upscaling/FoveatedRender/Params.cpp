@@ -52,14 +52,14 @@ namespace FoveatedRenderImpl
 		p.transparencyMask = transparency;
 		p.motionVectors = mvec;
 
-		// Mode & subrect. Stereo Subrect API: GetUV() returns the primary
-		// UV (= left-eye in stereo mode); GetRightEyeUV() returns the
-		// mirrored right-eye UV.
+		// Mode & subrect. Effective UVs include the optional regular centered
+		// adaptive-crop owner; gaze resolution below may still take ownership when
+		// eye-tracked foveation is explicitly enabled.
 		auto& enhancer = globals::features::upscaling.foveatedRender;
 		auto& upscaling = globals::features::upscaling;
 		p.mode = enhancer.GetDlssMode();
-		p.leftUV = enhancer.subrectController.GetUV();
-		p.rightUV = enhancer.subrectController.GetRightEyeUV();
+		p.leftUV = enhancer.GetEffectiveLeftUV();
+		p.rightUV = enhancer.GetEffectiveRightUV();
 		const NativeOpenVRGaze::Config gazeConfig{
 			.enabled = enhancer.settings.neuralRenderingEyeTrackedFoveation,
 			.smoothingMs = enhancer.settings.neuralRenderingEyeTrackedSmoothingMs,

@@ -34,6 +34,11 @@ namespace NeuralRendering
 		std::uint32_t temporalReuseCadence = 0;
 		float temporalReuseDepthThreshold = 0.05f;
 		float temporalReuseColorTolerance = 0.08f;
+		// Opt-in adaptive-resolution handoff. The controller changes only the
+		// native NR tier; the display/compositor cadence remains owned by VR.
+		bool adaptiveResolution = false;
+		float adaptiveHandoffAlpha = 1.0f;
+		float adaptiveDepthThreshold = 0.05f;
 	};
 
 	/**
@@ -112,7 +117,10 @@ namespace NeuralRendering
 		[[nodiscard]] std::uint64_t SuccessfulFrames() const { return successfulFrames_; }
 
 	private:
-		static constexpr std::uint32_t kFeatureSlotCount = 6;  // two eyes x three cascade stages
+		// Two eyes x eleven resolution tiers x three cascade stages. The adaptive
+		// controller keeps each tier's NGX feature handle isolated so a handoff
+		// never reuses a handle configured for a different model extent.
+		static constexpr std::uint32_t kFeatureSlotCount = 66;
 		Runtime() = default;
 		void* module_ = nullptr;
 		void* parameters_ = nullptr;

@@ -131,8 +131,11 @@ namespace NeuralRendering
 			return true;
 		}
 
-		Tuning GetTuning(const FoveatedRender::Settings& settings)
+		Tuning GetTuning(const FoveatedRender& foveated, bool adaptiveEligible)
 		{
+			const auto& settings = foveated.settings;
+			const bool adaptive = adaptiveEligible && settings.neuralRenderingAdaptiveEnabled &&
+				foveated.adaptiveController.IsEnabled();
 			return {
 				settings.neuralRenderingIntensity,
 				settings.neuralRenderingLocalTone,
@@ -141,14 +144,19 @@ namespace NeuralRendering
 				settings.neuralRenderingStyle,
 				settings.neuralRenderingAutoMask,
 				settings.neuralRenderingUICorrection,
-				settings.neuralRenderingModelResolution,
+				adaptive ? foveated.adaptiveController.ActiveResolution() : settings.neuralRenderingModelResolution,
 				settings.neuralRenderingResolveMode,
 				// Keep the two experimental stage-order features mutually exclusive:
 				// pre-upscale already adds a second NR route before the normal DLSS pass.
 				settings.neuralRenderingPreUpscale == 0 ? std::min(settings.neuralRenderingMultiPass, 2u) : 0u,
-				settings.neuralRenderingTemporalReuseCadence,
+				// Adaptive NR owns the per-frame model tier and its display-space
+				// handoff. Keep native residual reuse disabled while tiers are moving.
+				adaptive ? 0u : settings.neuralRenderingTemporalReuseCadence,
 				settings.neuralRenderingTemporalDepthThreshold,
 				settings.neuralRenderingTemporalColorTolerance,
+				adaptive,
+				adaptive ? foveated.adaptiveController.HandoffAlpha() : 1.0f,
+				adaptive ? settings.neuralRenderingTemporalDepthThreshold : 0.05f,
 			};
 		}
 
@@ -238,7 +246,7 @@ namespace NeuralRendering
 				color[0]->resource.get(), depth.texture, depth.depthSRV,
 				upscaling.motionVectorCopyTexture->resource.get(), motionDesc.Width, motionDesc.Height,
 				totalDesc.Width, totalDesc.Height, static_cast<float>(motionDesc.Width),
-				static_cast<float>(motionDesc.Height), GetTuning(foveated.settings));
+				static_cast<float>(motionDesc.Height), GetTuning(foveated, false));
 			if (succeeded) {
 				context->CopyResource(framebuffer, color[0]->resource.get());
 				lastAppliedFrame = frame;
@@ -391,7 +399,7 @@ namespace NeuralRendering
 		// are different Feature 18 stages. Keep the temporal state on the normal
 		// route until the state is made stage-aware; otherwise equal-sized stages
 		// could reuse a residual from the wrong point in the frame.
-		Tuning tuning = GetTuning(foveated.settings);
+		Tuning tuning = GetTuning(foveated, false);
 		tuning.temporalReuseCadence = 0;
 		bool succeeded = false;
 		if (!globals::game::isVR) {
@@ -506,6 +514,10 @@ namespace NeuralRendering
 		const std::uint32_t guideFrame = FoveatedRenderImpl::Core::neuralGuidesFrame;
 		if (lastAppliedFrame == frame || (guideFrame != frame && !(frame > 0 && guideFrame == frame - 1)))
 			return false;
+		// The controller samples the host-frame interval here, immediately before
+		// choosing the native tier used by this frame. Calling it again from the
+		// foveated hook is harmless because it is frame-idempotent.
+		foveated.UpdateAdaptiveState(frame, true);
 
 		auto* renderer = globals::game::renderer;
 		auto* context = globals::d3d::context;
@@ -525,8 +537,8 @@ namespace NeuralRendering
 		const bool gazeRequested = gazeConfig.enabled && foveated.settings.neuralRenderingEnabled &&
 			foveated.GetDlssMode() == FoveatedRender::DlssMode::kDefault &&
 			upscaling.GetUpscaleMethod() == Upscaling::UpscaleMethod::kDLSS;
-		const auto& staticLeftUV = foveated.subrectController.GetUV();
-		const auto& staticRightUV = foveated.subrectController.GetRightEyeUV();
+		const auto staticLeftUV = foveated.GetEffectiveLeftUV();
+		const auto staticRightUV = foveated.GetEffectiveRightUV();
 		const auto gaze = FoveatedRenderImpl::NativeOpenVRGaze::ResolveForFrame(
 			gazeConfig, staticLeftUV, staticRightUV, totalDesc.Width / 2, totalDesc.Height, frame,
 			gazeRequested && FoveatedRenderImpl::NativeOpenVRGaze::IsDynamicGazeAllowed());
@@ -605,7 +617,7 @@ namespace NeuralRendering
 				.motionVectorScaleY = motionScaleY * guideHeight,
 			};
 		}
-		Tuning tuning = GetTuning(foveated.settings);
+		Tuning tuning = GetTuning(foveated, true);
 		if (!fullEye)
 			// The cascade relies on full-eye dimensions and isolated stage history;
 			// keep cropped/foveated regions on the established single-pass route.
@@ -621,6 +633,14 @@ namespace NeuralRendering
 		if (succeeded) {
 			if (stagedBlendTarget)
 				context->CopyResource(total.texture, destination);
+			// When the regular crop owner changes its extent, blend the already
+			// assembled SBS image in display space for a few frames. This keeps the
+			// DLSS/NR guide contract and the crop transition separate, and is never
+			// used for gaze-owned geometry.
+			if (foveated.IsAdaptiveCropRuntimeActive())
+				FoveatedRenderImpl::Core::ApplyAdaptiveCropHandoff(
+					total.texture, FoveatedRenderImpl::Core::vrAdaptiveCropDepthSource,
+					FoveatedRenderImpl::Core::vrAdaptiveCropMotionSource);
 			lastAppliedFrame = frame;
 			if (!writebackLogged) {
 				const char* path = stagedBlendTarget ? "staged-uav" :
@@ -642,6 +662,7 @@ namespace NeuralRendering
 	void Reset()
 	{
 		Renderer::Instance().Reset();
+		globals::features::upscaling.foveatedRender.ResetAdaptiveState();
 		FoveatedRenderImpl::NativeOpenVRGaze::Reset();
 		historyResetRequested.store(false, std::memory_order_release);
 		temporalSuppressed = false;
