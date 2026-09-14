@@ -38,7 +38,7 @@ camera behavior was too broad.
 
 On 2026-09-14 the active MO2 profile was backed up before each profile edit.
 The latest recovery copy is
-`C:\\OpenNR\\ConsolidationBackups\\20260914\\map-camera-fix-20260914-144232-before-height-calibration`.
+`C:\OpenNR\ConsolidationBackups\20260914\map-camera-fix-20260914-144232-before-height-calibration`.
 The profile now contains the following targeted settings:
 
 ```ini
