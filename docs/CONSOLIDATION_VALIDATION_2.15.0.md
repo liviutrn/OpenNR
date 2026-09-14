@@ -1,11 +1,11 @@
 # OpenNR 2.15.0 final validation
 
-Validated source commit: `d2df235bd9de160c97cbd33782190b558e9e5e8f`. The package and installed mod record below were produced from this source tree.
+Validated source commit: `fe4bc8544d0916fee503700e640b369d07d34105`. The package and installed mod record below were produced from this source tree.
 
-The Release runtime and capture-enabled AIO package built successfully from the canonical runtime and declared C: dependencies. Automatic deployment was disabled. DLL version is 2.15.0.0. The archive at `E:/OpenNR_Builds/2.15.0/dist/OpenNR 2.15.0.7z` is 228,064,587 bytes and contains 490 files (440,836,162 uncompressed bytes). 7-Zip integrity testing passes; every extracted file matches the validated package stage by path, length and SHA-256. The archive was regenerated after the adaptive-budget UI and map-audit follow-up was added.
+The Release runtime and capture-enabled AIO package built successfully from the canonical runtime and declared C: dependencies. Automatic deployment was disabled. DLL version is 2.15.0.0. The final archive at `E:/OpenNR_Builds/2.15.0/dist/OpenNR 2.15.0.7z` is 228,064,606 bytes and contains 490 files (440,835,650 uncompressed bytes). 7-Zip integrity testing passes; every extracted file matches the validated package stage by path, length and SHA-256. The archive includes the adaptive-budget UI, map-audit record, and final foveation-copy trim.
 
-- Archive SHA-256: `0E65DA24F0A8B0685E98F32AC72E058AC6CC9DB1C118AC0ECC6AC78CA77A4ACF`
-- CommunityShaders.dll SHA-256: `9EAFD1DE4191D7F55E94205FEF84AE5AA59E0BFE9262F3DE6CA9E438CBBCBAC8`
+- Archive SHA-256: `E09E21EA0AAA6CF9BF21A3E4FA7021E590101E2F2736D7B043CE10F16DD41A68`
+- CommunityShaders.dll SHA-256: `7760FBF70D05BB50D5534B7D0E5D13DB52FE3BD88B026CAE9165F82FEA984A43`
 
 ## Clean source and supported workflows
 
