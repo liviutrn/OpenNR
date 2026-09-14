@@ -460,27 +460,23 @@ void Upscaling::DrawDLSSNRPage()
 	ImGui::PushID("DLSS5NRPage");
 	ImGui::TextUnformatted(T("menu.dlssnr.title", "Neural Rendering"));
 	ImGui::TextWrapped("%s", T("menu.dlssnr.description",
-		"Dedicated controls for Neural Rendering, foveated coverage, and the oval edge blend. Shared Upscaling values below write to the same settings used by the Upscaling page."));
-	Util::Text::WrappedInfo(T("menu.dlssnr.route_info",
-		"Recommended VR route: NVIDIA DLSS + PerfMode active + Foveated Default mode. Foveated Rendering is the primary VR control: enable it first, choose your coverage preset, then tune Neural Rendering below. Settings that show a restart marker are staged until the next game launch."));
+		"Neural Rendering and optional VR foveation. Shared upscaling settings stay in sync."));
 	if (globals::game::isVR) {
 		ImGui::TextUnformatted(T("menu.dlssnr.foveation_header", "Foveated Rendering"));
 		ImGui::TextWrapped("%s", T("menu.dlssnr.foveation_description",
-			"Start here for VR. Enable the foveated route, then choose the Nasal Convergence 70% oval preset or adjust the region, periphery fill, edge blend, and falloff. The full panel is opened by default so the primary coverage controls are visible."));
-		Util::Text::WrappedInfo(T("menu.dlssnr.foveation_recommended",
-			"Recommended first install: Enable Foveated Rendering, use Nasal Convergence 70%, keep Edge Shape on Oval, and start with Feather blending. Neural Rendering controls and shared upscaler settings are below."));
+			"Enable foveation, choose a coverage preset, then adjust the edge blend."));
 		DrawFoveationControls(true, false, true);
 		ImGui::Separator();
 		ImGui::TextUnformatted(T("menu.dlssnr.shared_header", "DLSS and Upscaling"));
 		ImGui::TextWrapped("%s", T("menu.dlssnr.shared_description",
-			"These shared controls are also available on the Upscaling page. They affect the same active runtime settings."));
+			"These settings are shared with Upscaling."));
 		DrawDLSSNRSharedControls();
 	} else {
 		DrawDLSSNRSharedControls();
 		ImGui::Separator();
 		ImGui::TextUnformatted(T("menu.dlssnr.neural_header", "Neural Rendering"));
 		ImGui::TextWrapped("%s", T("menu.dlssnr.flat_description",
-			"Flat mode exposes the same Feature 18 tuning without the VR-only crop and periphery controls."));
+			"Feature 18 controls for flat rendering."));
 		foveatedRender.DrawSettings(false);
 	}
 	ImGui::PopID();
@@ -1034,11 +1030,6 @@ void Upscaling::DrawSettings()
 
 		ImGui::TreePop();
 	}
-
-	// Foveated and neural controls live on the dedicated Neural Rendering page beside Upscaling.
-	// Keep this handoff visible here so existing users can find the new surface.
-	if (globals::game::isVR || upscaleMethod == UpscaleMethod::kDLSS)
-		Util::Text::WrappedInfo(T("menu.dlssnr.open_dedicated", "Neural Rendering controls are available on the dedicated Neural Rendering page beside Upscaling."));
 
 	if (ImGui::TreeNodeEx(T(TKEY("backend_diagnostics"), "Backend Diagnostics"))) {
 		// Streamline log level selection

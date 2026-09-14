@@ -4,6 +4,21 @@ Release date: 2026-09-13
 Comparison baseline: OpenNR 2.14.2 Temporal Reuse Experimental
 Package type: local 2.15.0 AIO build; automatic deployment disabled
 
+## 2.15.0 follow-up — adaptive budget UI and map audit (2026-09-14)
+
+- Added an opt-in adaptive-NR FPS target slider covering 15–60 FPS. Enabling
+  the custom target disables the headset-Hz buttons; turning it off restores
+  the existing refresh-derived budget. Older settings use the refresh path
+  because the new `neuralRenderingAdaptiveTargetFps` field defaults to zero.
+- Removed the blue recommendation and page-handoff blocks from the Neural
+  Rendering UI and shortened the remaining descriptions to describe current
+  behavior. The adaptive status now reports the active FPS budget.
+- Audited the reported world-map distance/floating-marker regression against
+  the active profile. OpenNR has no map-camera distance control, and the
+  installed A Quality World Map documentation identifies the perspective
+  camera/3D-marker behavior shown in the report. No map setting was changed
+  without an identified owner; live HMD confirmation remains required.
+
 OpenNR 2.15.0 is the consolidated OpenNR-VR development runtime. It carries
 the complete recovered 2.14.x VR/Neural Rendering feature chain and promotes
 the adaptive Neural Rendering and adaptive Crop implementation, including
@@ -389,8 +404,8 @@ silently promoted by the 2.15.0 consolidation:
 Passed source, build, and package gates include:
 
 - Release `CommunityShaders.dll` build, version `2.15.0.0`.
-- C++ suite: 171 cases and 2,357 assertions, including 12 adaptive cases and
-  54 adaptive assertions.
+- C++ suite: 173 cases and 2,363 assertions, including 14 adaptive cases and
+  60 adaptive assertions.
 - FXC `cs_5_0` compilation of the adaptive NR, adaptive Crop, and subrect-blend
   shaders.
 - Eight Python regression suites and five external-storage/path tests.

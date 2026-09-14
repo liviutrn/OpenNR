@@ -21,6 +21,8 @@ namespace NeuralRendering
 			bool allowDownshift = true;
 			bool allowUpshift = true;
 			std::uint32_t refreshHz = 80;
+			// Zero derives the budget from refreshHz; otherwise use 15–60 FPS.
+			std::uint32_t targetFps = 0;
 			std::uint32_t minimumResolution = 70;
 			std::uint32_t downshiftFrames = 4;
 			std::uint32_t upshiftFrames = 12;
@@ -39,6 +41,7 @@ namespace NeuralRendering
 		[[nodiscard]] float LastFrameTimeMs() const { return lastFrameTimeMs_; }
 		[[nodiscard]] float SmoothedFrameTimeMs() const { return smoothedFrameTimeMs_; }
 		[[nodiscard]] float ApplicationDeadlineMs() const { return applicationDeadlineMs_; }
+		[[nodiscard]] float ApplicationTargetFps() const;
 		[[nodiscard]] bool IsTransitioning() const { return transitionFrameCount_ != 0; }
 		[[nodiscard]] bool IsEnabled() const { return enabled_; }
 		[[nodiscard]] bool LastSampleOverBudget() const { return lastSampleOverBudget_; }
@@ -63,6 +66,7 @@ namespace NeuralRendering
 		static constexpr std::array<std::uint32_t, 7> kResolutionBuckets{ 100, 95, 90, 85, 80, 75, 70 };
 
 		static std::uint32_t NormalizeRefresh(std::uint32_t refreshHz);
+		static float ResolveTargetFps(const Config& config);
 		static std::uint32_t FindNearestBucket(std::uint32_t resolution);
 		static std::uint32_t FindBucketIndex(std::uint32_t resolution);
 		static Config NormalizeConfig(const Config& config);

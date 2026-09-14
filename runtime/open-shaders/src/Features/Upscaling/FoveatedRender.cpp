@@ -55,6 +55,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	neuralRenderingTemporalColorTolerance,
 	neuralRenderingAdaptiveEnabled,
 	neuralRenderingAdaptiveRefreshHz,
+	neuralRenderingAdaptiveTargetFps,
 	neuralRenderingAdaptiveMinimumResolution,
 	neuralRenderingAdaptiveDownshiftFrames,
 	neuralRenderingAdaptiveUpshiftFrames,
@@ -268,6 +269,8 @@ void FoveatedRender::ClampSettings()
 		settings.neuralRenderingAdaptiveRefreshHz = 80;
 		break;
 	}
+	if (settings.neuralRenderingAdaptiveTargetFps != 0)
+		settings.neuralRenderingAdaptiveTargetFps = std::clamp(settings.neuralRenderingAdaptiveTargetFps, 15u, 60u);
 	switch (settings.neuralRenderingAdaptiveMinimumResolution) {
 	case 70:
 	case 75:
@@ -403,6 +406,7 @@ void FoveatedRender::UpdateAdaptiveState(std::uint32_t frame, bool routeEligible
 	nrConfig.allowDownshift = !cropShouldDownshiftFirst && !adaptiveCropController.IsTransitioning();
 	nrConfig.allowUpshift = !adaptiveCropController.IsTransitioning();
 	nrConfig.refreshHz = settings.neuralRenderingAdaptiveRefreshHz;
+	nrConfig.targetFps = settings.neuralRenderingAdaptiveTargetFps;
 	nrConfig.minimumResolution = settings.neuralRenderingAdaptiveMinimumResolution;
 	nrConfig.downshiftFrames = settings.neuralRenderingAdaptiveDownshiftFrames;
 	nrConfig.upshiftFrames = settings.neuralRenderingAdaptiveUpshiftFrames;
@@ -899,9 +903,9 @@ const char* FoveatedRender::SubrectMaskModeName(SubrectMaskMode mode)
 
 		if (settings.neuralRenderingEnabled) {
 			ImGui::SeparatorText("NR Overview");
-			drawWrapped("Adaptive NR changes model workload to protect frame time. It does not change headset refresh or display resolution.");
-			drawWrapped("Adaptive crop starts at 85% and can fall to 60%. Eye-tracked foveation disables adaptive crop.");
-			drawDisabledWrapped("Test target: 80 Hz with a 40 FPS application budget. NR floor: 70%.");
+			drawWrapped("Adaptive NR changes model resolution to meet the selected frame-time target. Display refresh and output size stay unchanged.");
+			drawWrapped("Adaptive crop can reduce coverage to its configured floor. Eye-tracked foveation disables it.");
+			drawDisabledWrapped("Target: headset Hz or a custom 15–60 FPS budget. NR floor: 70%.");
 
 			// The runtime still receives the stable numeric Style value (0-3), but
 			// expose the four choices as named cards so users do not have to guess
@@ -980,7 +984,7 @@ const char* FoveatedRender::SubrectMaskModeName(SubrectMaskMode mode)
 			ImGui::SeparatorText("Adaptive Neural Rendering");
 			ImGui::Checkbox("Enable adaptive NR resolution", &settings.neuralRenderingAdaptiveEnabled);
 			if (auto _tt = Util::HoverTooltipWrapper())
-				drawWrapped("Moves one NR tier at a time after sustained pressure. Handoffs are blended; headset refresh and display resolution are unchanged.");
+				drawWrapped("Adjusts one NR tier after sustained pressure. Handoffs are blended.");
 			if (settings.neuralRenderingAdaptiveEnabled) {
 				static constexpr uint adaptiveRefreshValues[] = { 70u, 72u, 80u, 90u };
 				static const char* adaptiveRefreshRates[] = {
@@ -992,7 +996,17 @@ const char* FoveatedRender::SubrectMaskModeName(SubrectMaskMode mode)
 						break;
 					}
 
-				ImGui::TextDisabled("Adaptive application budget");
+				bool customFpsEnabled = settings.neuralRenderingAdaptiveTargetFps != 0;
+				if (ImGui::Checkbox("Use custom FPS target", &customFpsEnabled))
+					settings.neuralRenderingAdaptiveTargetFps = customFpsEnabled ? 40u : 0u;
+				int targetFps = customFpsEnabled ? static_cast<int>(std::clamp(settings.neuralRenderingAdaptiveTargetFps, 15u, 60u)) : 40;
+				ImGui::BeginDisabled(!customFpsEnabled);
+				if (ImGui::SliderInt("FPS target", &targetFps, 15, 60, "%d FPS"))
+					settings.neuralRenderingAdaptiveTargetFps = static_cast<uint>(targetFps);
+				ImGui::EndDisabled();
+
+				ImGui::TextDisabled("Headset refresh target");
+				ImGui::BeginDisabled(customFpsEnabled);
 				if (ImGui::BeginTable("##neural_rendering_adaptive_refresh", IM_ARRAYSIZE(adaptiveRefreshValues),
 						ImGuiTableFlags_SizingStretchSame | ImGuiTableFlags_PadOuterX | ImGuiTableFlags_NoSavedSettings)) {
 					for (int index = 0; index < IM_ARRAYSIZE(adaptiveRefreshValues); ++index) {
@@ -1007,7 +1021,8 @@ const char* FoveatedRender::SubrectMaskModeName(SubrectMaskMode mode)
 					}
 					ImGui::EndTable();
 				}
-				drawDisabledWrapped("Controller budget only. Select the matching physical headset mode in SteamVR.");
+				ImGui::EndDisabled();
+				drawDisabledWrapped(customFpsEnabled ? "Custom FPS mode is active; headset buttons are disabled." : "Hz mode uses half the selected headset refresh.");
 
 				static const char* adaptiveMinimums[] = {
 					"100% | 100% model area", "95% | 90% model area", "90% | 81% model area", "85% | 72% model area",
@@ -1033,12 +1048,13 @@ const char* FoveatedRender::SubrectMaskModeName(SubrectMaskMode mode)
 					settings.neuralRenderingAdaptiveMinimumDwellFrames = static_cast<uint>(minimumDwellFrames);
 				ImGui::SliderFloat("Adaptive reserved headroom", &settings.neuralRenderingAdaptiveGuardTimeMs,
 					0.0f, 5.0f, "%.1f ms");
-				ImGui::TextDisabled("NR tier: %u%% -> %u%% | handoff %.2f | frame %.2f / %.2f ms",
+				ImGui::TextDisabled("Target %.0f FPS | NR tier %u%% -> %u%% | frame %.2f / %.2f ms",
+					adaptiveController.ApplicationTargetFps(),
 					adaptiveController.ActiveResolution(), adaptiveController.TargetResolution(),
 					adaptiveController.HandoffAlpha(), adaptiveController.SmoothedFrameTimeMs(),
 					adaptiveController.ApplicationDeadlineMs());
-				drawDisabledWrapped("Pressure order with crop: Crop, then NR, then Crop. NR alone is used when crop is unavailable or at its 60% floor.");
-				drawWarningWrapped("Resource setup may cause a one-time hitch.");
+				drawDisabledWrapped("Order: crop → NR → crop. If crop is unavailable, NR adapts alone.");
+				drawWarningWrapped("Resource setup may hitch once.");
 				ImGui::Checkbox("Show handoff diagnostics", &settings.neuralRenderingAdaptiveDiagnostics);
 			}
 
@@ -1050,7 +1066,7 @@ const char* FoveatedRender::SubrectMaskModeName(SubrectMaskMode mode)
 			if (!adaptiveCropParentEnabled)
 				ImGui::EndDisabled();
 			if (auto _tt = Util::HoverTooltipWrapper())
-				drawWrapped("Pressure order: crop, NR, crop. Recovery restores NR to 100% before crop expands. Eye-tracked foveation disables adaptive crop.");
+				drawWrapped("Order: crop → NR → crop. NR restores before crop expands. Eye-tracked foveation disables adaptive crop.");
 			if (!adaptiveCropParentEnabled)
 				ImGui::TextDisabled("Enable Adaptive Neural Rendering before enabling its crop companion.");
 			if (settings.neuralRenderingAdaptiveCropEnabled && adaptiveCropParentEnabled) {

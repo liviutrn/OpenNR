@@ -40,6 +40,36 @@ TEST_CASE("adaptive NR ignores unavailable paced workload", "[adaptive][nr]")
 	REQUIRE_FALSE(controller.LastSampleHadHeadroom());
 }
 
+TEST_CASE("adaptive NR supports a custom FPS budget", "[adaptive][nr]")
+{
+	NRController controller;
+	NRController::Config config;
+	config.enabled = true;
+	config.targetFps = 60;
+	controller.Update(0, config, true);
+	REQUIRE(controller.ApplicationTargetFps() == Catch::Approx(60.0f));
+	REQUIRE(controller.ApplicationDeadlineMs() == Catch::Approx(1000.0f / 60.0f));
+
+	config.targetFps = 15;
+	controller.Update(1, config, true);
+	REQUIRE(controller.ApplicationTargetFps() == Catch::Approx(15.0f));
+	REQUIRE(controller.ApplicationDeadlineMs() == Catch::Approx(1000.0f / 15.0f));
+}
+
+TEST_CASE("adaptive NR clamps custom FPS budgets", "[adaptive][nr]")
+{
+	NRController controller;
+	NRController::Config config;
+	config.enabled = true;
+	config.targetFps = 1;
+	controller.Update(0, config, true);
+	REQUIRE(controller.ApplicationTargetFps() == Catch::Approx(15.0f));
+
+	config.targetFps = 120;
+	controller.Update(1, config, true);
+	REQUIRE(controller.ApplicationTargetFps() == Catch::Approx(60.0f));
+}
+
 TEST_CASE("adaptive NR recovers one tier from workload headroom", "[adaptive][nr]")
 {
 	NRController controller;

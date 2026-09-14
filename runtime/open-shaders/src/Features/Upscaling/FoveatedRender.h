@@ -135,11 +135,14 @@ struct FoveatedRender
 		float neuralRenderingTemporalDepthThreshold = 0.05f;
 		float neuralRenderingTemporalColorTolerance = 0.08f;
 		// Opt-in in-game adaptive NR test. The controller derives a 2:1
-		// application budget from the selected headset refresh and moves through
-		// the short 100/95/90/85/80/75/70 native ladder; it never changes the
-		// display/compositor mode.
+		// application budget from the selected headset refresh unless a custom FPS
+		// target is set, then moves through the short native ladder; it never changes
+		// the display/compositor mode.
 		bool neuralRenderingAdaptiveEnabled = false;
 		uint neuralRenderingAdaptiveRefreshHz = 80;
+		// Zero keeps the refresh-derived budget for existing settings. When set,
+		// the controller uses this custom application target instead.
+		uint neuralRenderingAdaptiveTargetFps = 0;
 		uint neuralRenderingAdaptiveMinimumResolution = 70;
 		uint neuralRenderingAdaptiveDownshiftFrames = 4;
 		uint neuralRenderingAdaptiveUpshiftFrames = 12;

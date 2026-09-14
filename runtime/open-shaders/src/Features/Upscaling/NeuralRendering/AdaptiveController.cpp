@@ -14,6 +14,11 @@ namespace NeuralRendering
 		return 80;
 	}
 
+	float AdaptiveController::ResolveTargetFps(const Config& config)
+	{
+		return config.targetFps != 0 ? static_cast<float>(config.targetFps) : static_cast<float>(config.refreshHz) * 0.5f;
+	}
+
 	std::uint32_t AdaptiveController::FindNearestBucket(std::uint32_t resolution)
 	{
 		std::uint32_t nearest = kResolutionBuckets.front();
@@ -41,6 +46,8 @@ namespace NeuralRendering
 	{
 		Config normalized = config;
 		normalized.refreshHz = NormalizeRefresh(normalized.refreshHz);
+		if (normalized.targetFps != 0)
+			normalized.targetFps = std::clamp(normalized.targetFps, 15u, 60u);
 		normalized.minimumResolution = FindNearestBucket(normalized.minimumResolution);
 		normalized.downshiftFrames = std::clamp(normalized.downshiftFrames, 1u, 16u);
 		normalized.upshiftFrames = std::clamp(normalized.upshiftFrames, 4u, 64u);
@@ -114,7 +121,8 @@ namespace NeuralRendering
 
 		const Config config = NormalizeConfig(requestedConfig);
 		const bool configurationChanged = config.enabled != config_.enabled ||
-			config.refreshHz != config_.refreshHz || config.minimumResolution != config_.minimumResolution ||
+			config.refreshHz != config_.refreshHz || config.targetFps != config_.targetFps ||
+			config.minimumResolution != config_.minimumResolution ||
 			config.downshiftFrames != config_.downshiftFrames || config.upshiftFrames != config_.upshiftFrames ||
 			config.minimumDwellFrames != config_.minimumDwellFrames ||
 			std::abs(config.guardTimeMs - config_.guardTimeMs) > 0.001f;
@@ -132,7 +140,7 @@ namespace NeuralRendering
 		}
 
 		enabled_ = true;
-		applicationDeadlineMs_ = 2000.0f / static_cast<float>(config.refreshHz);
+		applicationDeadlineMs_ = 1000.0f / std::max(ResolveTargetFps(config), 1.0f);
 		minimumBucket_ = FindBucketIndex(config.minimumResolution);
 		if (activeBucket_ > minimumBucket_)
 			activeBucket_ = minimumBucket_;
@@ -207,6 +215,11 @@ namespace NeuralRendering
 			decisionReason_ = "workload-headroom";
 			StartTransition(activeBucket_ - 1, config.upshiftFrames);
 		}
+	}
+
+	float AdaptiveController::ApplicationTargetFps() const
+	{
+		return ResolveTargetFps(config_);
 	}
 
 	std::uint32_t AdaptiveController::ActiveResolution() const
