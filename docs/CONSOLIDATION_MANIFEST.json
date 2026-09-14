@@ -381,21 +381,21 @@
     "second_clean_dll_build": false,
     "capture_disabled_dll_build": false
   },
-  "validated_source_commit": "5cb03c08f06bf978f15ae816512af57adf75503b",
+  "validated_source_commit": "06982a124b1e6606d802e76c2213a4c8deeabe67",
   "package": {
     "path": "E:\\OpenNR_Builds\\2.15.0\\dist\\OpenNR 2.15.0.7z",
-    "sha256": "FAB90E9A73D2434D2F4F5DFE2CE309AB2AB8EA2AB3FC705B4519C1CA1E63746F",
-    "bytes": 228064227,
+    "sha256": "237F65C7854BC22C7B1DACA7E4034A3DF1582B7E9A38F868EA11F8367860BD02",
+    "bytes": 228063929,
     "files": 490,
     "dll_version": "2.15.0.0",
-    "uncompressed_bytes": 440834707,
-    "dll_sha256": "7760FBF70D05BB50D5534B7D0E5D13DB52FE3BD88B026CAE9165F82FEA984A43"
+    "uncompressed_bytes": 440834671,
+    "dll_sha256": "0C300B10E46733DF0068D0C951321C39DD3BDC1BC6E2FFDE8A336839ED81CD4F"
   },
   "active_install": {
     "profile": "E:\\MGO-RC3-fresh\\profiles\\MGO NSFW - 4.0 BETA",
     "mod_path": "E:\\MGO-RC3-fresh\\mods\\OpenNR 2.15.0",
-    "package_sha256": "FAB90E9A73D2434D2F4F5DFE2CE309AB2AB8EA2AB3FC705B4519C1CA1E63746F",
-    "backup_path": "C:\\OpenNR\\ConsolidationBackups\\20260914\\installed-OpenNR-2.15.0-before-translation-trim",
+    "package_sha256": "237F65C7854BC22C7B1DACA7E4034A3DF1582B7E9A38F868EA11F8367860BD02",
+    "backup_path": "C:\\OpenNR\\ConsolidationBackups\\20260914\\installed-OpenNR-2.15.0-before-fallback-trim",
     "automatic_deployment": false,
     "live_game_or_hmd_check": false
   },
