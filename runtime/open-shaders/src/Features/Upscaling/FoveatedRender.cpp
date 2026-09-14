@@ -633,9 +633,7 @@ void FoveatedRender::DrawEnable()
 	ClampSettings();
 
 	ImGui::TextWrapped(T(TKEY("foveated_overview"),
-		"Foveated subrect upscaling: only the user-selected region gets full DLSS/FSR "
-		"upscaling, the periphery is cheaply stretched. Significant upscaler cost reduction "
-		"at the cost of peripheral sharpness. VR only."));
+		"Full DLSS/FSR runs in the selected eye region; the periphery is stretched to reduce VR cost."));
 
 	const bool runtimeSupported = IsRuntimeSupported();
 	if (!runtimeSupported) {
@@ -662,9 +660,9 @@ void FoveatedRender::DrawEnable()
 		else if (IsActive())
 			ImGui::TextWrapped("%s", T(TKEY("foveated_active"), "Active: foveated upscaling. Skipped in menus or after preflight failure."));
 		else if (!methodOk)
-			Util::Text::Warning(T(TKEY("foveated_standing_by"), "Standing by: only active while the Upscaling Method is DLSS or FSR. Inactive right now."));
+			Util::Text::Warning(T(TKEY("foveated_standing_by"), "Standing by: requires DLSS or FSR."));
 		else
-			Util::Text::Warning(T(TKEY("foveated_standing_by"), "Standing by: the VR upscaling route is not active right now."));
+			Util::Text::Warning(T(TKEY("foveated_standing_by"), "Standing by: the VR upscaling route is inactive."));
 	}
 
 	if (!globals::game::isVR) {
@@ -845,8 +843,7 @@ const char* FoveatedRender::SubrectMaskModeName(SubrectMaskMode mode)
 		ImGui::Separator();
 		ImGui::Text("%s", T(TKEY("foveated_subrect_region_header"), "Subrect Region"));
 		ImGui::TextWrapped(T(TKEY("foveated_subrect_region_desc"),
-			"Drag in the preview below to select the region that gets full upscaling. "
-			"The rest is cheaply stretched — saves significant upscaling cost."));
+			"Drag the preview to choose the full-quality region; the rest is stretched."));
 		drawDisabledWrapped(T(TKEY("foveated_screenshot_subrect_note"), "Screenshot has its own subrect; align only for pixel-matched captures."));
 
 			bool debugBool = settings.debugVisualize != 0;
