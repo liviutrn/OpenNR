@@ -365,8 +365,8 @@
     "import_commit": "987a9284277591b278ca90539e464aefc9926464"
   },
   "acceptance": {
-    "native_cpp_cases": 171,
-    "native_cpp_assertions": 2357,
+    "native_cpp_cases": 173,
+    "native_cpp_assertions": 2363,
     "python_regression_suites": 8,
     "python_storage_tests": 5,
     "shader_compile_checks": 3,
@@ -381,14 +381,23 @@
     "second_clean_dll_build": false,
     "capture_disabled_dll_build": false
   },
-  "validated_source_commit": "caadbe82",
+  "validated_source_commit": "d2df235bd9de160c97cbd33782190b558e9e5e8f",
   "package": {
     "path": "E:\\OpenNR_Builds\\2.15.0\\dist\\OpenNR 2.15.0.7z",
-    "sha256": "D90BAFF47BE32C2AABC1F65A9ADDBD1A5D10BC3F961DB47FA6AA69A3A9E75C07",
-    "bytes": 228064393,
+    "sha256": "0E65DA24F0A8B0685E98F32AC72E058AC6CC9DB1C118AC0ECC6AC78CA77A4ACF",
+    "bytes": 228064587,
     "files": 490,
     "dll_version": "2.15.0.0",
-    "dll_sha256": "EB1933B89F612BECC80B405E76EB68298D213545E40748E29DCCB4A9C910C9B1"
+    "uncompressed_bytes": 440836162,
+    "dll_sha256": "9EAFD1DE4191D7F55E94205FEF84AE5AA59E0BFE9262F3DE6CA9E438CBBCBAC8"
+  },
+  "active_install": {
+    "profile": "E:\\MGO-RC3-fresh\\profiles\\MGO NSFW - 4.0 BETA",
+    "mod_path": "E:\\MGO-RC3-fresh\\mods\\OpenNR 2.15.0",
+    "package_sha256": "0E65DA24F0A8B0685E98F32AC72E058AC6CC9DB1C118AC0ECC6AC78CA77A4ACF",
+    "backup_path": "C:\\OpenNR\\ConsolidationBackups\\20260914\\installed-OpenNR-2.15.0-before-ui-fps",
+    "automatic_deployment": false,
+    "live_game_or_hmd_check": false
   },
   "content_discovery": {
     "eligible_files_scanned": 181257,

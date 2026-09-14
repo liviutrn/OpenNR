@@ -1,11 +1,11 @@
 # OpenNR 2.15.0 final validation
 
-Validated source commit: `caadbe82`. Later documentation and the local main merge preserve this source tree.
+Validated source commit: `d2df235bd9de160c97cbd33782190b558e9e5e8f`. The package and installed mod record below were produced from this source tree.
 
-The Release runtime and capture-enabled AIO package built successfully from the canonical runtime and declared C: dependencies. Automatic deployment was disabled. DLL version is 2.15.0.0. The archive at `E:/OpenNR_Builds/2.15.0/dist/OpenNR 2.15.0.7z` is 228,064,393 bytes and contains 490 files (440,835,707 uncompressed bytes). 7-Zip integrity testing passes; every extracted file matches the validated package stage by path, length and SHA-256. The archive was regenerated after the complete 2.15.0 changelog was added; no runtime source code changed in that package-refresh step.
+The Release runtime and capture-enabled AIO package built successfully from the canonical runtime and declared C: dependencies. Automatic deployment was disabled. DLL version is 2.15.0.0. The archive at `E:/OpenNR_Builds/2.15.0/dist/OpenNR 2.15.0.7z` is 228,064,587 bytes and contains 490 files (440,836,162 uncompressed bytes). 7-Zip integrity testing passes; every extracted file matches the validated package stage by path, length and SHA-256. The archive was regenerated after the adaptive-budget UI and map-audit follow-up was added.
 
-- Archive SHA-256: `D90BAFF47BE32C2AABC1F65A9ADDBD1A5D10BC3F961DB47FA6AA69A3A9E75C07`
-- CommunityShaders.dll SHA-256: `EB1933B89F612BECC80B405E76EB68298D213545E40748E29DCCB4A9C910C9B1`
+- Archive SHA-256: `0E65DA24F0A8B0685E98F32AC72E058AC6CC9DB1C118AC0ECC6AC78CA77A4ACF`
+- CommunityShaders.dll SHA-256: `9EAFD1DE4191D7F55E94205FEF84AE5AA59E0BFE9262F3DE6CA9E438CBBCBAC8`
 
 ## Clean source and supported workflows
 
@@ -13,7 +13,7 @@ A Git source export at `C:/OpenNR/Validation/CleanCheckout-2.15.0` configured in
 
 Source-contract validation, native dimension/output-path contracts, temporal fixture tests and the synthetic CPU train/save/resume/evaluate/ONNX workflow passed using the exported source. Resumed optimizer updates match exactly and ONNX checker passes. The export emits nonfatal constant-folding warnings. This is workflow evidence, not model quality or inference-speed acceptance.
 
-A second complete DLL and a capture-disabled DLL were not built. Capture-disabled evidence is configuration and source-selection validation only. The shipped local package is capture-enabled. Main-source validation also passed 171 C++ cases / 2,357 assertions, eight Python regression suites, five storage tests and three FXC shader compilations. Both teacher harnesses and the texture bridge build; native teacher inference was not executed.
+A second complete DLL and a capture-disabled DLL were not built. Capture-disabled evidence is configuration and source-selection validation only. The shipped local package is capture-enabled. Main-source validation also passed 173 C++ cases / 2,363 assertions, eight Python regression suites, five storage tests and three FXC shader compilations. Both teacher harnesses and the texture bridge build; native teacher inference was not executed.
 
 ## Final inventory and reconciliation
 
@@ -23,7 +23,7 @@ A fresh physical D: scan covered 199,500 files with zero errors and no matching 
 
 ## Acceptance and rollback
 
-Adaptive NR and Crop are main development features; both retain their existing disabled defaults. Saved settings are preserved. Headset stereo output, motion/disocclusion, transition appearance, menu/map/VR input, resource stability, restoration and sustained frame timing still require live acceptance. H: capture storage remains unavailable. No model was promoted, no remote was pushed and no active game installation was changed.
+Adaptive NR and Crop are main development features; both retain their existing disabled defaults. Saved settings are preserved. Headset stereo output, motion/disocclusion, transition appearance, menu/map/VR input, resource stability, restoration and sustained frame timing still require live acceptance. H: capture storage remains unavailable. No model was promoted and no remote was pushed. The user-authorized local `OpenNR 2.15.0` mod directory was refreshed from the verified archive; game launch and live HMD acceptance were not performed.
 
 Recovery root: `C:/OpenNR/ConsolidationBackups/20260913`. The original research main is `b71f8313250b70af5bf4513d91596dbebae0bff8`; adaptive baseline is `a39a25b5edb2bc8f139c06b8fb9efbd95fcdb5f5`, stable correction snapshot `44bae628`, and original-source recovery commit `c6fc308f`. Inspect these through a separate external checkout for comparison or recovery. To undo the promotion on main, first preserve any later work, then revert the final merge with its mainline parent; do not reset away subsequent work. Use per-file migration manifests to copy and verify any storage rollback before replacing a junction. Keep the C: Git object store with all repository backups.
 
@@ -36,4 +36,13 @@ The final handoff initially left V:, W: and X: SUBST mappings present. They have
 Tests no longer assume that an arbitrary X: drive belongs to OpenNR. The optional Python alias check discovers existing mappings that actually resolve to D: and explicitly skips when none exist. The native direct-D check remains. Earlier actual alias rejection evidence remains valid; no persistent drive is needed for routine testing. Intentional C:/E: storage junctions are retained because they keep generated data physically off D:.
 
 Post-removal checks: CMake configuration passes with physical C:/E: paths; Python storage checks pass (four executed, optional existing-alias case explicitly skipped); the native contract executable rebuilds and passes without V:/W:/X:.
-`CommunityShaders` and `cpp_tests` subsequently rebuilt successfully with no SUBST mappings. The C++ suite again passed 171 cases / 2,357 assertions. Build log: `C:/OpenNR/ConsolidationBackups/20260913/build-without-aliases.log`. The AIO archive was regenerated after the full 2.15.0 changelog update and then re-tested; its current size and hashes are recorded above. The alias cleanup itself changed tests and audit documentation only.
+`CommunityShaders` and `cpp_tests` subsequently rebuilt successfully with no SUBST mappings. The C++ suite again passed 173 cases / 2,363 assertions. Build log: `C:/OpenNR/ConsolidationBackups/20260913/build-without-aliases.log`. The AIO archive was regenerated after the adaptive-budget UI and map-audit follow-up and then re-tested; its current size and hashes are recorded above. The installed mod refresh is recorded at `C:/OpenNR/ConsolidationBackups/20260914/install-record.json`, with the prior directory backed up beside it.
+
+## UI and map follow-up
+
+The new custom adaptive-NR FPS target and the concise Neural Rendering copy are
+documented in [the follow-up audit](OPENNR_2.15.0_UI_MAP_FOLLOWUP_20260914.md).
+The active profile's map stack has no identified camera-distance owner in
+OpenNR or NavigateVR; the reported floating markers match the installed A
+Quality World Map perspective-camera limitation. No map setting was changed
+without a verified owner, and live HMD confirmation remains outstanding.

@@ -8,9 +8,13 @@ The fixed adaptive NR/crop branch at `a39a25b5` plus correction 20260913-B was i
 
 The imported build includes its adaptive controllers, shaders, GPU/active-submit timing, guide dimensions, VR/UI/map/input and HDR changes. Existing adaptive enable defaults remain false; saved settings were not edited. Capture's fresh output default is now C:/OpenNR/Captures, with configured paths checked before recording.
 
-The current-phase validation record is `CONSOLIDATION_MANIFEST.json`. Final source integration is local only. No remote push, public release, game launch or active-install deployment occurred. No learned model or recovered teacher was promoted.
+The current-phase validation record is `CONSOLIDATION_MANIFEST.json`. Final source integration is local only. No remote push, public release or game launch occurred. No learned model or recovered teacher was promoted.
 
 ## Discovery coverage
+
+The user-authorized local `OpenNR 2.15.0` mod directory was refreshed from the
+verified follow-up package on 2026-09-14; the prior directory is backed up under
+`C:/OpenNR/ConsolidationBackups/20260914`.
 
 - Enumerated C:, D:, E:, G:: **2,085,758 file records**, **253,544 directories**, **283 reparse points**.
 - Recorded **419 exclusion/access-error records**. System directories, recycle bins and Git object internals were excluded from the filesystem walk; Git history was inspected separately. Aliases V:, W:, X: were not counted as separate physical volumes.
@@ -86,7 +90,7 @@ Python maintained writers reject physical D: output. Native capture and benchmar
 ## Validation
 
 - Release CommunityShaders.dll build: version 2.15.0.0; source contract checks pass.
-- C++ suite: 171 cases, 2,357 assertions passed, including adaptive NR/crop cases.
+- C++ suite: 173 cases, 2,363 assertions passed, including 14 adaptive NR/crop cases and 60 adaptive assertions.
 - Three adaptive/crop compute shaders compile with FXC cs_5_0.
 - Eight Python suites passed: student identity/gradients, recurrent model, raw cache, temporal capture, native guide alignment, optimizer resume, master dataset and master audit.
 - Five Python storage tests pass, including D: rejection, alias/junction resolution and precedence.
