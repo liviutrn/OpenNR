@@ -1,10 +1,10 @@
 # OpenNR 2.15.0 final validation
 
-Validated source commit: `fe4bc8544d0916fee503700e640b369d07d34105`. The package and installed mod record below were produced from this source tree.
+Validated source commit: `5cb03c08f06bf978f15ae816512af57adf75503b`. The package and installed mod record below were produced from this source tree.
 
-The Release runtime and capture-enabled AIO package built successfully from the canonical runtime and declared C: dependencies. Automatic deployment was disabled. DLL version is 2.15.0.0. The final archive at `E:/OpenNR_Builds/2.15.0/dist/OpenNR 2.15.0.7z` is 228,064,606 bytes and contains 490 files (440,835,650 uncompressed bytes). 7-Zip integrity testing passes; every extracted file matches the validated package stage by path, length and SHA-256. The archive includes the adaptive-budget UI, map-audit record, and final foveation-copy trim.
+The Release runtime and capture-enabled AIO package built successfully from the canonical runtime and declared C: dependencies. Automatic deployment was disabled. DLL version is 2.15.0.0. The final archive at `E:/OpenNR_Builds/2.15.0/dist/OpenNR 2.15.0.7z` is 228,064,227 bytes and contains 490 files (440,834,707 uncompressed bytes). 7-Zip integrity testing passes; every extracted file matches the validated package stage by path, length and SHA-256. The archive includes the adaptive-budget UI, map-audit record, final foveation-copy trim, and shorter English translation strings.
 
-- Archive SHA-256: `E09E21EA0AAA6CF9BF21A3E4FA7021E590101E2F2736D7B043CE10F16DD41A68`
+- Archive SHA-256: `FAB90E9A73D2434D2F4F5DFE2CE309AB2AB8EA2AB3FC705B4519C1CA1E63746F`
 - CommunityShaders.dll SHA-256: `7760FBF70D05BB50D5534B7D0E5D13DB52FE3BD88B026CAE9165F82FEA984A43`
 
 ## Clean source and supported workflows
@@ -36,7 +36,7 @@ The final handoff initially left V:, W: and X: SUBST mappings present. They have
 Tests no longer assume that an arbitrary X: drive belongs to OpenNR. The optional Python alias check discovers existing mappings that actually resolve to D: and explicitly skips when none exist. The native direct-D check remains. Earlier actual alias rejection evidence remains valid; no persistent drive is needed for routine testing. Intentional C:/E: storage junctions are retained because they keep generated data physically off D:.
 
 Post-removal checks: CMake configuration passes with physical C:/E: paths; Python storage checks pass (four executed, optional existing-alias case explicitly skipped); the native contract executable rebuilds and passes without V:/W:/X:.
-`CommunityShaders` and `cpp_tests` subsequently rebuilt successfully with no SUBST mappings. The C++ suite again passed 173 cases / 2,363 assertions. Build log: `C:/OpenNR/ConsolidationBackups/20260913/build-without-aliases.log`. The AIO archive was regenerated after the adaptive-budget UI and map-audit follow-up and then re-tested; its current size and hashes are recorded above. The installed mod refresh is recorded at `C:/OpenNR/ConsolidationBackups/20260914/install-record.json`, with the prior directory backed up beside it.
+`CommunityShaders` and `cpp_tests` subsequently rebuilt successfully with no SUBST mappings. The C++ suite again passed 173 cases / 2,363 assertions. Build log: `C:/OpenNR/ConsolidationBackups/20260913/build-without-aliases.log`. The AIO archive was regenerated after the adaptive-budget UI, map-audit follow-up, and final English translation trim, then re-tested; its current size and hashes are recorded above. The installed mod refresh is recorded at `C:/OpenNR/ConsolidationBackups/20260914/install-record.json`, with the latest pre-refresh directory backed up beside it.
 
 ## UI and map follow-up
 
