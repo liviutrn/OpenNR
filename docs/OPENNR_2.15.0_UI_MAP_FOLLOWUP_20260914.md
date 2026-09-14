@@ -29,13 +29,39 @@ that it selects physical map armors and does not modify the world-map camera.
 
 The installed A Quality World Map readme explicitly describes the paper map as
 2D while its markers remain 3D, so markers can appear to float or swim because
-Skyrim's world-map camera is perspective rather than orthographic. The supplied
-image matches that known limitation. OpenNR's map-related code only handles
-static-menu backdrop compositing; it has no camera-pose or map-distance owner.
-The earlier claim that OpenNR had fixed this camera behavior was too broad. No
-INI or mod setting was changed based on the screenshot alone. A controlled HMD
-trace is still needed if the symptom persists with the paper-map feature
-disabled.
+Skyrim's world-map camera is perspective rather than orthographic. OpenNR's
+map-related code only handles static-menu backdrop compositing; it has no
+camera-pose or map-distance owner. The earlier claim that OpenNR had fixed this
+camera behavior was too broad.
+
+## Profile-scoped camera correction
+
+On 2026-09-14 the active MO2 profile was backed up before each profile edit.
+The latest recovery copy is
+`C:\\OpenNR\\ConsolidationBackups\\20260914\\map-camera-fix-20260914-144232-before-height-calibration`.
+The profile now contains the following targeted settings:
+
+```ini
+[MapMenu]
+fMapWorldHeightAdjustmentForce=0
+
+[VRUI]
+fVrMapMenuScaleStart=1.0000
+fVrMapMenuScale=1.0000
+fVrMapMenuModelScale=1.0000
+fVrMapMenuHeightOffset=20000.0000
+```
+
+`fMapWorldHeightAdjustmentForce=0` holds terrain-following height while panning;
+it does not set the initial viewpoint. The earlier `1.25` scale values were an
+unverified experiment and have been returned to the documented vanilla `1.0`
+defaults. `fVrMapMenuHeightOffset=20000.0000` is a reversible profile
+calibration against the engine's implicit `40000.0000` default and is intended
+to bring the initial VR map view closer to the terrain. It is not a confirmed
+engine-level fix until it is checked in the headset. No VRIK calibration,
+world-scale setting, map plugin, or OpenNR runtime code was changed. Skyrim VR
+must be restarted before it reads the INI; the result still needs a live HMD
+check for initial altitude, panning, both eyes, and marker placement.
 
 ## Verification boundary
 
