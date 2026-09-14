@@ -666,7 +666,7 @@ void FoveatedRender::DrawEnable()
 	}
 
 	if (!globals::game::isVR) {
-		Util::Text::Warning(T(TKEY("foveated_vr_only"), "VR only -- flat has no equivalent lens-driven periphery quality cliff to exploit."));
+		Util::Text::Warning(T(TKEY("foveated_vr_only"), "VR only."));
 	}
 }
 
