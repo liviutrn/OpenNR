@@ -70,10 +70,24 @@ namespace NeuralRendering
 				const StereoResourceEnvelope& resourceEnvelope = {});
 		/** @brief Drops cached standalone neural-rendering shaders so they recompile on the next frame. */
 		void ClearShaderCache();
-		void Reset();
+		/** @brief Resets the native renderer; false means the GPU fence could not be drained safely. */
+		bool Reset();
 		void ResetHistory();
 
 		[[nodiscard]] bool IsFailureLatched() const;
+		[[nodiscard]] bool IsFailureRecoverable() const;
+		/** @brief Holds adaptive upshifts after the session's bounded recovery attempt. */
+		[[nodiscard]] bool IsRecoveryLimited() const;
+		/**
+		 * @brief Returns whether an adaptive model tier is fully resident for both eyes.
+		 *
+		 * Adaptive tier changes are only safe to expose at frame time when the
+		 * shared textures and native Feature 18 handles already exist.  The
+		 * renderer may prewarm those objects while the current tier is running;
+		 * callers use this query to keep the controller on the current tier until
+		 * the handoff can be made without an on-demand create stall.
+		 */
+		[[nodiscard]] bool IsAdaptiveTierReady(std::uint32_t modelResolution) const;
 		[[nodiscard]] std::uint32_t NgxResult() const;
 		[[nodiscard]] std::uint64_t SuccessfulFrames() const;
 		[[nodiscard]] const char* StatusText() const;

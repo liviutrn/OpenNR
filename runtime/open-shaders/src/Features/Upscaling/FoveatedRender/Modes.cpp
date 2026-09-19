@@ -62,14 +62,14 @@ namespace FoveatedRenderImpl
 
 		// Adaptive regular crop uses a stable resource envelope. Its UVs are
 		// per-frame valid-region data, not a new Streamline resource identity.
-		// Static and gaze-owned crops retain the exact UV contract and therefore
-		// keep the conservative hash/recreate behavior.
+		// Gaze loss changes history, not resource identity: fixed-size crops
+		// retain their allocations across tracking and static fallback.
 		const bool fixedEnvelopeCandidate = globals::features::upscaling.foveatedRender.IsAdaptiveCropRuntimeActive() &&
 			!p.eyeTrackedGazeActive && !Core::vrSubrectFixedEnvelopeRejected;
 		const Util::Subrect::UVRegion envelopeUV{ 0.0f, 0.0f, 1.0f, 1.0f };
 		uint64_t uvHash = fixedEnvelopeCandidate ?
 			ComputeSubrectUVHash(envelopeUV, envelopeUV, (uint32_t)p.mode, false) :
-			ComputeSubrectUVHash(p.leftUV, p.rightUV, (uint32_t)p.mode, !p.eyeTrackedGazeActive);
+			ComputeSubrectUVHash(p.leftUV, p.rightUV, (uint32_t)p.mode, !p.eyeTrackedGazeConfigured);
 		if (uvHash != Core::activeSubrectUVHash) {
 			logger::info("[FOVEATED] resource contract changed mode={} adaptiveEnvelope={} left={}x{} right={}x{}; recreating DLSS resources",
 				static_cast<uint32_t>(p.mode), fixedEnvelopeCandidate, p.leftUV.w, p.leftUV.h, p.rightUV.w, p.rightUV.h);
@@ -84,11 +84,14 @@ namespace FoveatedRenderImpl
 			logger::debug("[FOVEATED] Native OpenVR gaze history reset without resource resize");
 		}
 
+		Bridge::gazeHistoryReset = p.eyeTrackedGazeReset;
 		Bridge::foveatedEvaluating = true;
+		Core::neuralGuidesFrame = UINT32_MAX;
 		bool result = (p.mode == FoveatedRender::DlssMode::kFaster) ?
 		                  ExecuteFasterMode(streamline, p) :
 		                  ExecuteDefaultMode(streamline, p);
 		Bridge::foveatedEvaluating = false;
+		Bridge::gazeHistoryReset = false;
 		return result;
 	}
 
@@ -119,8 +122,9 @@ namespace FoveatedRenderImpl
 						p.transparencyMask ? Core::vrIntermediateTransparencyMask[i]->resource.get() : nullptr,
 						p.eyeWidthIn, p.eyeHeightIn, p.eyeWidthOut, p.eyeHeightOut,
 						p.eyeWidthIn, p.eyeHeightIn)) {
-					logger::error("[FOVEATED] ExecuteDefaultMode full-eye dispatch failed for eye {} — falling back", i);
-					return false;
+					SnapshotSBS(p.colorSrc, p.renderW, p.renderH);
+					return StretchDRSBothEyes(p.colorDstUAV, p.eyeWidthOut, p.eyeHeightOut,
+						p.eyeWidthIn, p.eyeHeightIn, p.renderW, p.renderH);
 				}
 			}
 
@@ -182,17 +186,6 @@ namespace FoveatedRenderImpl
 			Core::InvalidateTemporalState();
 			logger::debug("[FOVEATED] Streamline handles invalidated after subrect resource contract change frame={}", frame);
 		}
-		const auto retryWithoutFixedEnvelope = [&]() -> bool {
-			if (!fixedEnvelopeCandidate || Core::vrSubrectFixedEnvelopeRejected)
-				return false;
-			Core::vrSubrectFixedEnvelopeRejected = true;
-			++Core::vrSubrectFallbackEntries;
-			logger::warn("[FOVEATED] fixed-envelope dispatch rejected; exact fallback and adaptive crop HOLD until restart frame={} entries={}",
-				frame, Core::vrSubrectFallbackEntries);
-			streamline.DestroyDLSSResources();
-			Core::InvalidateTemporalState();
-			return ExecuteDefaultMode(streamline, p);
-		};
 
 		// Snapshot + clear HMD hidden-area ring before cropping into subrect inputs.
 		SnapshotSBS(p.colorSrc, p.renderW, p.renderH);
@@ -236,10 +229,15 @@ namespace FoveatedRenderImpl
 					p.transparencyMask ? Core::vrSubrectTransparencyMask[i]->resource.get() : nullptr,
 					subInW, subInH, subOutW, subOutH,
 					p.eyeWidthIn, p.eyeHeightIn)) {
-				logger::error("[FOVEATED] ExecuteDefaultMode subrect dispatch failed for eye {} — falling back", i);
-				if (retryWithoutFixedEnvelope())
-					return true;
-				return false;
+				if (fixedEnvelopeCandidate && !Core::vrSubrectFixedEnvelopeRejected) {
+					Core::vrSubrectFixedEnvelopeRejected = true;
+					++Core::vrSubrectFallbackEntries;
+					logger::warn("[FOVEATED] Envelope failed frame={}; exact extents on next frame, crop held until Reset", frame);
+				}
+				// The current-frame periphery already covers both eyes. A second
+				// dispatch would resubmit constants and crop the overwritten input.
+				Core::InvalidateTemporalState();
+				return true;
 			}
 		}
 		// Publish copied guide extents, never the larger backing allocation.

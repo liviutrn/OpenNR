@@ -36,6 +36,7 @@ namespace NeuralRendering
 		bool flatHdrBlockLogged = false;
 		bool blendFallbackLogged = false;
 		std::atomic_bool historyResetRequested{ false };
+		std::atomic_bool fullResetRequested{ false };
 		bool temporalSuppressed = false;
 		bool menuStateObserved = false;
 		bool menuWasOpen = false;
@@ -45,6 +46,7 @@ namespace NeuralRendering
 		bool preUpscaleBlockLogged = false;
 		bool preUpscaleSuccessLogged = false;
 		bool preUpscaleExecutionFailed = false;
+		bool adaptiveCropHandoffDisabledLogged = false;
 
 		bool IsGameMenuOpen()
 		{
@@ -136,6 +138,11 @@ namespace NeuralRendering
 			const auto& settings = foveated.settings;
 			const bool adaptive = adaptiveEligible && settings.neuralRenderingAdaptiveEnabled &&
 				foveated.adaptiveController.IsEnabled();
+			const bool adaptiveCrop = adaptive && foveated.IsAdaptiveCropRuntimeActive();
+			const auto& controller = foveated.adaptiveController;
+			const int prewarmDirection = !adaptive || foveated.IsAdaptiveCropTransitioning() ? 0 :
+				controller.LastSampleOverBudget() && !controller.IsAtMinimum() ? -1 :
+				controller.LastSampleHadHeadroom() && !controller.IsAtMaximum() ? 1 : 0;
 			return {
 				settings.neuralRenderingIntensity,
 				settings.neuralRenderingLocalTone,
@@ -154,9 +161,13 @@ namespace NeuralRendering
 				adaptive ? 0u : settings.neuralRenderingTemporalReuseCadence,
 				settings.neuralRenderingTemporalDepthThreshold,
 				settings.neuralRenderingTemporalColorTolerance,
+				settings.neuralRenderingTemporalReuseResetAfterSkip,
 				adaptive,
+				!adaptiveCrop,
 				adaptive ? foveated.adaptiveController.HandoffAlpha() : 1.0f,
 				adaptive ? settings.neuralRenderingTemporalDepthThreshold : 0.05f,
+				prewarmDirection,
+				adaptive ? controller.MemoryCeiling() : 100u,
 			};
 		}
 
@@ -279,6 +290,24 @@ namespace NeuralRendering
 
 	void UpdateFrameState()
 	{
+		static std::uint32_t resetCheckedFrame = UINT32_MAX;
+		const auto currentFrame = globals::state ? globals::state->frameCount : 0;
+		const bool firstUpdate = resetCheckedFrame != currentFrame;
+		resetCheckedFrame = currentFrame;
+		if (firstUpdate && fullResetRequested.exchange(false, std::memory_order_acq_rel)) {
+			Reset();
+			if (Renderer::Instance().IsFailureLatched())
+				return;
+			auto& streamline = globals::features::upscaling.streamline;
+			streamline.DestroyDLSSResources();
+			streamline.lastDLSSFailureFrame = UINT32_MAX;
+			streamline.lastVRAMPressureFrame = UINT32_MAX;
+			FoveatedRenderImpl::Core::vrSubrectFixedEnvelopeRejected = false;
+			FoveatedRenderImpl::Core::vrSubrectNeuralFixedEnvelopeRejected = false;
+			FoveatedRenderImpl::Core::activeSubrectUVHash = 0;
+			FoveatedRenderImpl::Core::InvalidateTemporalState();
+			logger::info("[DLSSNR] Manual reset completed on render thread; DLSS and adaptive crop rearmed");
+		}
 		const bool menuOpen = IsGameMenuOpen();
 		const bool overlayOpen = IsTemporalOverlayOpen();
 		const bool requested = historyResetRequested.exchange(false, std::memory_order_acq_rel);
@@ -318,7 +347,7 @@ namespace NeuralRendering
 		const char* resetReason = stageChanged ? "NR stage changed" :
 			menuChanged ? (menuOpen ? "menu open" : "menu closed") :
 			requested ? "event" : (overlayOpen ? "overlay open" : "overlay closed");
-		logger::debug("[DLSSNR] Temporal history reset ({})",
+		logger::info("[DLSSNR] Temporal history reset ({})",
 			resetReason);
 	}
 
@@ -640,35 +669,46 @@ namespace NeuralRendering
 			};
 		}
 		Tuning tuning = GetTuning(foveated, true);
+		if (!fullEye && tuning.adaptiveResolution && !tuning.adaptiveHandoff && !adaptiveCropHandoffDisabledLogged) {
+			logger::info("[DLSSNR] adaptive NR history handoff disabled while adaptive crop is active; using current-frame crop feathering");
+			adaptiveCropHandoffDisabledLogged = true;
+		}
 		if (!fullEye)
 			// The cascade relies on full-eye dimensions and isolated stage history;
 			// keep cropped/foveated regions on the established single-pass route.
 		{
 			tuning.multiPass = 0;
-			// Temporal residuals are native full-eye state. A crop has a different
-			// coordinate origin/extent and must never consume or update that state.
-			tuning.temporalReuseCadence = 0;
+			// A fixed crop now owns crop-local temporal history in the renderer. Do
+			// not attempt reuse while an eye-tracked crop is moving: its local origin
+			// changes every frame and must first be handled by an explicit crop-origin
+			// transform. Adaptive crop already supplies cadence zero through GetTuning.
+			if (gaze.dynamic)
+				tuning.temporalReuseCadence = 0;
 		}
 			bool succeeded = Renderer::Instance().ApplyStereo(globals::d3d::device, context,
 				total.texture, inputs, guideWidth, guideHeight,
 				outWidth, outHeight, tuning, destination, destinationUAV, wantsEdgeBlend && destinationUAV != nullptr,
 				resourceEnvelope);
-			if (!succeeded && resourceEnvelope.IsValid()) {
+			if (!succeeded && resourceEnvelope.IsValid() &&
+				Renderer::Instance().IsFailureRecoverable()) {
 				// A native Feature 18 failure is not allowed to leave the runtime
 				// latched on the experimental envelope. Drop only the NR renderer's
 				// state, remember the rejection for this route, and retry with exact
 				// current extents. The native depth/motion guide inputs stay unchanged.
-				FoveatedRenderImpl::Core::vrSubrectNeuralFixedEnvelopeRejected = true;
-				++FoveatedRenderImpl::Core::vrSubrectNeuralFallbackEntries;
 				logger::warn("[DLSSNR] fixed resource envelope rejected; retrying exact extents frame={} result=0x{:08X} fallbackEntries={}",
-					frame, Renderer::Instance().NgxResult(), FoveatedRenderImpl::Core::vrSubrectNeuralFallbackEntries);
-				Renderer::Instance().Reset();
-				FoveatedRenderImpl::Core::InvalidateTemporalState();
-				resourceEnvelope.enabled = false;
-				succeeded = Renderer::Instance().ApplyStereo(globals::d3d::device, context,
-					total.texture, inputs, guideWidth, guideHeight,
-					outWidth, outHeight, tuning, destination, destinationUAV, wantsEdgeBlend && destinationUAV != nullptr,
-					resourceEnvelope);
+					frame, Renderer::Instance().NgxResult(), FoveatedRenderImpl::Core::vrSubrectNeuralFallbackEntries + 1);
+				if (Renderer::Instance().Reset()) {
+					FoveatedRenderImpl::Core::vrSubrectNeuralFixedEnvelopeRejected = true;
+					++FoveatedRenderImpl::Core::vrSubrectNeuralFallbackEntries;
+					FoveatedRenderImpl::Core::InvalidateTemporalState();
+					resourceEnvelope.enabled = false;
+					succeeded = Renderer::Instance().ApplyStereo(globals::d3d::device, context,
+						total.texture, inputs, guideWidth, guideHeight,
+						outWidth, outHeight, tuning, destination, destinationUAV, wantsEdgeBlend && destinationUAV != nullptr,
+						resourceEnvelope);
+				} else {
+					logger::error("[DLSSNR] fixed resource envelope fallback aborted because the GPU fence could not be drained");
+				}
 			}
 		if (succeeded) {
 			if (stagedBlendTarget)
@@ -690,6 +730,11 @@ namespace NeuralRendering
 			if (rtv) rtv->Release();
 		if (savedDSV) savedDSV->Release();
 		return succeeded;
+	}
+
+	void RequestReset()
+	{
+		fullResetRequested.store(true, std::memory_order_release);
 	}
 
 	void Reset()
@@ -715,6 +760,7 @@ namespace NeuralRendering
 		preUpscaleBlockLogged = false;
 		preUpscaleSuccessLogged = false;
 		preUpscaleExecutionFailed = false;
+		adaptiveCropHandoffDisabledLogged = false;
 		writebackLogged = false;
 		flatRouteWasActive = false;
 		flatFrameGenerationBlockLogged = false;

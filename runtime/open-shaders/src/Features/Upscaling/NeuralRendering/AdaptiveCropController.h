@@ -32,6 +32,10 @@ namespace NeuralRendering
 		{
 			bool enabled = false;
 			bool hold = false;
+			// Upper adaptive tier. This is intentionally independent of the static
+			// crop preset, which supplies geometry but must not pin re-arming at a
+			// smaller comparison crop.
+			std::uint32_t maximumCoverage = 85;
 			std::uint32_t minimumCoverage = 60;
 			std::uint32_t downshiftFrames = 2;
 			std::uint32_t upshiftFrames = 24;
@@ -50,7 +54,7 @@ namespace NeuralRendering
 		[[nodiscard]] std::uint32_t MaximumCoverage() const;
 		[[nodiscard]] std::uint32_t MinimumCoverage() const;
 		[[nodiscard]] float HandoffAlpha() const;
-		/** @brief Render the union of both tiers while moving only the current-frame mask. */
+		/** @brief Keep crop geometry on the previous tier while the handoff mask moves. */
 		[[nodiscard]] std::uint32_t RenderCoverage() const;
 		[[nodiscard]] float VisibleCoverage() const;
 		[[nodiscard]] bool IsTransitioning() const { return transitionFrameCount_ != 0; }

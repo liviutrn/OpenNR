@@ -629,6 +629,10 @@ public:
 			{ "motion_vector_scale_y", a_info.motionVectorScaleY },
 			{ "motion_vector_contract", "exact_feature18_bound_resource" },
 			{ "history_reset", a_info.historyReset },
+			{ "temporal_reuse", a_info.temporalReuse },
+			{ "temporal_frame_index", a_info.temporalFrameIndex },
+			{ "temporal_skipped_since_full", a_info.temporalSkippedSinceFull },
+			{ "temporal_next_anchor_reset", a_info.temporalNextAnchorReset },
 			{ "renderer_conditionings_requested", owner.settings.captureRendererConditionings },
 			{ "renderer_conditionings_available", a_info.rendererConditioningsAvailable },
 			{ "teacher_settings", {

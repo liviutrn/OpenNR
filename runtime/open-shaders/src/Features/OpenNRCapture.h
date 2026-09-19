@@ -80,6 +80,14 @@ struct OpenNRCaptureFeature final : Feature
 		std::array<float, 2> motionVectorScaleX{ 1.0f, 1.0f };
 		std::array<float, 2> motionVectorScaleY{ 1.0f, 1.0f };
 		std::array<bool, 2> historyReset{ true, true };
+		/** @brief True when this sample is the current-frame residual-reuse output rather than a native anchor. */
+		bool temporalReuse = false;
+		/** @brief Temporal cadence counter after this frame was accepted. */
+		std::uint64_t temporalFrameIndex = 0;
+		/** @brief Whether a skipped native frame preceded or was produced by this sample. */
+		bool temporalSkippedSinceFull = false;
+		/** @brief Diagnostic: the next native anchor will be forced to reset after this reuse sample. */
+		bool temporalNextAnchorReset = false;
 		float intensity = 0.0f;
 		float localToneStrength = 0.0f;
 		float localStructureStrength = 0.0f;

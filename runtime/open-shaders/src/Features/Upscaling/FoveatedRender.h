@@ -130,10 +130,14 @@ struct FoveatedRender
 		uint neuralRenderingMultiPass = 0;
 		// Experimental Feature 18 temporal reuse. 0 = off; 2/3/4 means a full
 		// neural pass every Nth frame, with exact-MV residual reprojection between
-		// full passes. Runtime-gated to native-size single-pass full-eye layouts.
+		// full passes. Runtime-gated to native-size single-pass full-eye or stable
+		// fixed crop-local layouts; moving crop origins remain disabled.
 		uint neuralRenderingTemporalReuseCadence = 0;
 		float neuralRenderingTemporalDepthThreshold = 0.05f;
 		float neuralRenderingTemporalColorTolerance = 0.08f;
+		// Diagnostic only: keep the conservative reset after reused frames unless
+		// explicitly disabled for an isolated temporal-causality experiment.
+		bool neuralRenderingTemporalReuseResetAfterSkip = true;
 		// Opt-in in-game adaptive NR test. The controller derives a 2:1
 		// application budget from the selected headset refresh unless a custom FPS
 		// target is set, then moves through the short native ladder; it never changes
@@ -152,6 +156,10 @@ struct FoveatedRender
 		// Optional companion for the shared foveated crop. It is coordinated with
 		// adaptive NR and is hard-disabled while eye-tracked foveation owns UVs.
 		bool neuralRenderingAdaptiveCropEnabled = false;
+		// Adaptive crop's upper tier is independent of the static crop preset. This
+		// lets a user compare against a smaller static preset, then re-arm adaptive
+		// crop at its normal 85% tier without silently changing the saved preset.
+		uint neuralRenderingAdaptiveCropMaximumCoverage = 85;
 		uint neuralRenderingAdaptiveCropMinimumCoverage = 60;
 		uint neuralRenderingAdaptiveCropDownshiftFrames = 2;
 		uint neuralRenderingAdaptiveCropUpshiftFrames = 24;
@@ -162,7 +170,7 @@ struct FoveatedRender
 		// and falls back to the persisted static crop whenever the native API is
 		// unavailable, stale, unfocused, or in a menu/loading context.
 		bool neuralRenderingEyeTrackedFoveation = false;
-		float neuralRenderingEyeTrackedSmoothingMs = 20.0f;
+		float neuralRenderingEyeTrackedSmoothingMs = 0.0f;
 		uint neuralRenderingEyeTrackedQuantizationPixels = 8;
 	};
 

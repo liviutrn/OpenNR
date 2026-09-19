@@ -455,6 +455,7 @@ foreach(_contract IN ITEMS
     "void Upscaling::DrawDLSSNRPage()"
     "Temporal Stability"
     "neuralRenderingTemporalReuseCadence"
+    "neuralRenderingTemporalReuseResetAfterSkip"
 )
     string(FIND "${_upscaling_page}${_foveated_render}" "${_contract}" _contract_index)
     if(_contract_index EQUAL -1)
@@ -494,7 +495,7 @@ foreach(_contract IN ITEMS
 endforeach()
 
 foreach(_contract IN ITEMS
-    "VERSION 2.15.0"
+    "VERSION 2.15.1"
     "does not match OpenNR"
     "OPENNR_LEAN_PACKAGE"
 )

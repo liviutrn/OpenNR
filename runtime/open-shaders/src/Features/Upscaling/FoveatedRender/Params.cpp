@@ -75,6 +75,7 @@ namespace FoveatedRenderImpl
 		p.leftUV = gaze.leftUV;
 		p.rightUV = gaze.rightUV;
 		p.eyeTrackedGazeActive = gaze.dynamic;
+		p.eyeTrackedGazeConfigured = gazeRequested;
 		p.eyeTrackedGazeReset = gaze.historyReset;
 		p.isFullEye = p.leftUV.IsFullEye() && p.rightUV.IsFullEye();
 

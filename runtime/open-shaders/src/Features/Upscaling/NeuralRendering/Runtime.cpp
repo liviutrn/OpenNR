@@ -8,6 +8,7 @@
 #include <nvsdk_ngx.h>
 
 #include <array>
+#include <chrono>
 #include <cstring>
 #include <format>
 #include <vector>
@@ -283,68 +284,113 @@ namespace NeuralRendering
 		return true;
 	}
 
-	bool Runtime::Execute(ID3D12GraphicsCommandList* commandList, std::uint32_t slot,
-		ID3D12Resource* color, ID3D12Resource* depth, ID3D12Resource* motionVectors, ID3D12Resource* output,
-		const Feature18GuideContract& guide, const Tuning& tuning, bool reset)
+	bool Runtime::EnsureFeature(ID3D12GraphicsCommandList* commandList, std::uint32_t slot,
+		const Feature18GuideContract& guide, bool* created)
 	{
-		if (status_ != RuntimeStatus::Initialized || !commandList || slot >= kFeatureSlotCount || !color || !depth || !motionVectors || !output || !guide.IsValid())
+		if (created)
+			*created = false;
+		if (status_ != RuntimeStatus::Initialized || !commandList || slot >= kFeatureSlotCount ||
+			!guide.IsValid() || !parameters_)
 			return false;
 
-		const auto inputWidth = guide.colorWidth;
-		const auto inputHeight = guide.colorHeight;
-		const auto outputWidth = guide.outputWidth;
-		const auto outputHeight = guide.outputHeight;
+		const auto inputWidth = guide.FeatureInputWidth();
+		const auto inputHeight = guide.FeatureInputHeight();
+		const auto outputWidth = guide.FeatureOutputWidth();
+		const auto outputHeight = guide.FeatureOutputHeight();
+		// A stable creation envelope may be larger than the current valid
+		// evaluation subrect, but never smaller. Rejecting that contract here
+		// keeps native Feature 18 from reading outside the current backing region.
+		if (inputWidth < guide.colorWidth || inputHeight < guide.colorHeight ||
+			outputWidth < guide.outputWidth || outputHeight < guide.outputHeight ||
+			inputWidth == 0 || inputHeight == 0 || outputWidth == 0 || outputHeight == 0) {
+			ngxResult_ = static_cast<std::uint32_t>(NVSDK_NGX_Result_FAIL_InvalidParameter);
+			detail_ = std::format("Feature 18 creation envelope is smaller than evaluation subrect slot={}", slot);
+			return false;
+		}
+
 		auto* parameters = static_cast<NVSDK_NGX_Parameter*>(parameters_);
 		auto create = reinterpret_cast<CreateFeature>(GetProcAddress(static_cast<HMODULE>(module_), "NVSDK_NGX_D3D12_CreateFeature"));
-		auto evaluate = reinterpret_cast<EvaluateFeature>(GetProcAddress(static_cast<HMODULE>(module_), "NVSDK_NGX_D3D12_EvaluateFeature"));
-		auto release = reinterpret_cast<ReleaseFeature>(GetProcAddress(static_cast<HMODULE>(module_), "NVSDK_NGX_D3D12_ReleaseFeature"));
 		SignedRuntimePathScope scope(static_cast<HMODULE>(module_), path_.parent_path() / L"nvngx.dll");
-		if (!scope.IsInstalled())
+		if (!create || !scope.IsInstalled()) {
+			detail_ = "native Feature 18 create export or signed-runtime proxy is unavailable";
 			return false;
+		}
 
 		const bool dimensionsChanged = featureInputWidth_[slot] != inputWidth || featureInputHeight_[slot] != inputHeight ||
 			featureOutputWidth_[slot] != outputWidth || featureOutputHeight_[slot] != outputHeight ||
 			featureMotionVectorsLowResolution_[slot] != guide.motionVectorsLowResolution;
 		if (featureHandles_[slot] && dimensionsChanged) {
-			release(static_cast<NVSDK_NGX_Handle*>(featureHandles_[slot]));
-			featureHandles_[slot] = nullptr;
+			ngxResult_ = static_cast<std::uint32_t>(NVSDK_NGX_Result_FAIL_InvalidParameter);
+			detail_ = std::format("Feature 18 dimensions changed without GPU-safe retirement slot={}", slot);
+			return false;
 		}
+		if (featureHandles_[slot])
+			return true;
 
-		if (!featureHandles_[slot]) {
-			parameters->Reset();
-			const auto createFlags = guide.motionVectorsLowResolution ?
-				static_cast<unsigned int>(NVSDK_NGX_DLSS_Feature_Flags_MVLowRes) : 0u;
-			parameters->Set(NVSDK_NGX_Parameter_DLSS_Feature_Create_Flags, createFlags);
-			parameters->Set("Width", outputWidth);
-			parameters->Set("Height", outputHeight);
-			parameters->Set("OutWidth", outputWidth);
-			parameters->Set("OutHeight", outputHeight);
-			parameters->Set("DLSSNR.Width", outputWidth);
-			parameters->Set("DLSSNR.Height", outputHeight);
-			parameters->Set("DLSSNR.InputWidth", inputWidth);
-			parameters->Set("DLSSNR.InputHeight", inputHeight);
-			parameters->Set("DLSSNR.OutputWidth", outputWidth);
-			parameters->Set("DLSSNR.OutputHeight", outputHeight);
-			parameters->Set("DLSSNR.Output.Width", outputWidth);
-			parameters->Set("DLSSNR.Output.Height", outputHeight);
-			parameters->Set("DLSSNR.Scale", static_cast<float>(outputWidth) / inputWidth);
-			parameters->Set("DLSSNR.Upscaling", 1u);
-			parameters->Set("DLSSNR.ScalingRatio", static_cast<float>(outputWidth) / inputWidth);
-			parameters->Set("DLSSNR.Hint.Render.Preset", 0u);
-			NVSDK_NGX_Handle* handle = nullptr;
-			ngxResult_ = static_cast<std::uint32_t>(create(commandList, kFeatureDlssNr, parameters, &handle));
-			if (ngxResult_ != NVSDK_NGX_Result_Success || !handle) {
-				detail_ = std::format("Feature 18 create failed slot={} result=0x{:08X} proxyHits={}", slot, ngxResult_, scope.Hits());
-				return false;
-			}
-			featureHandles_[slot] = handle;
-			featureInputWidth_[slot] = inputWidth;
-			featureInputHeight_[slot] = inputHeight;
-			featureOutputWidth_[slot] = outputWidth;
-			featureOutputHeight_[slot] = outputHeight;
-			featureMotionVectorsLowResolution_[slot] = guide.motionVectorsLowResolution;
-			reset = true;
+		parameters->Reset();
+		const auto createFlags = guide.motionVectorsLowResolution ?
+			static_cast<unsigned int>(NVSDK_NGX_DLSS_Feature_Flags_MVLowRes) : 0u;
+		parameters->Set(NVSDK_NGX_Parameter_DLSS_Feature_Create_Flags, createFlags);
+		parameters->Set("Width", outputWidth);
+		parameters->Set("Height", outputHeight);
+		parameters->Set("OutWidth", outputWidth);
+		parameters->Set("OutHeight", outputHeight);
+		parameters->Set("DLSSNR.Width", outputWidth);
+		parameters->Set("DLSSNR.Height", outputHeight);
+		parameters->Set("DLSSNR.InputWidth", inputWidth);
+		parameters->Set("DLSSNR.InputHeight", inputHeight);
+		parameters->Set("DLSSNR.OutputWidth", outputWidth);
+		parameters->Set("DLSSNR.OutputHeight", outputHeight);
+		parameters->Set("DLSSNR.Output.Width", outputWidth);
+		parameters->Set("DLSSNR.Output.Height", outputHeight);
+		parameters->Set("DLSSNR.Scale", static_cast<float>(outputWidth) / inputWidth);
+		parameters->Set("DLSSNR.Upscaling", 1u);
+		parameters->Set("DLSSNR.ScalingRatio", static_cast<float>(outputWidth) / inputWidth);
+		parameters->Set("DLSSNR.Hint.Render.Preset", 0u);
+		NVSDK_NGX_Handle* handle = nullptr;
+		const auto createStart = std::chrono::steady_clock::now();
+		ngxResult_ = static_cast<std::uint32_t>(create(commandList, kFeatureDlssNr, parameters, &handle));
+		const auto createMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - createStart).count();
+		logger::info("[DLSSNR] Feature create slot={} createInput={}x{} createOutput={}x{} evalInput={}x{} evalOutput={}x{} ms={:.2f} result=0x{:08X}",
+			slot, inputWidth, inputHeight, outputWidth, outputHeight,
+			guide.colorWidth, guide.colorHeight, guide.outputWidth, guide.outputHeight, createMs, ngxResult_);
+		if (ngxResult_ != NVSDK_NGX_Result_Success || !handle) {
+			detail_ = std::format("Feature 18 create failed slot={} result=0x{:08X} proxyHits={}", slot, ngxResult_, scope.Hits());
+			return false;
 		}
+		featureHandles_[slot] = handle;
+		featureInputWidth_[slot] = inputWidth;
+		featureInputHeight_[slot] = inputHeight;
+		featureOutputWidth_[slot] = outputWidth;
+		featureOutputHeight_[slot] = outputHeight;
+		featureMotionVectorsLowResolution_[slot] = guide.motionVectorsLowResolution;
+		if (created)
+			*created = true;
+		return true;
+	}
+
+	bool Runtime::Execute(ID3D12GraphicsCommandList* commandList, std::uint32_t slot,
+		ID3D12Resource* color, ID3D12Resource* depth, ID3D12Resource* motionVectors, ID3D12Resource* output,
+		const Feature18GuideContract& guide, const Tuning& tuning, bool reset)
+	{
+		if (status_ != RuntimeStatus::Initialized || !commandList || slot >= kFeatureSlotCount ||
+			!color || !depth || !motionVectors || !output || !guide.IsValid())
+			return false;
+
+		const auto inputWidth = guide.colorWidth;
+		const auto inputHeight = guide.colorHeight;
+		auto* parameters = static_cast<NVSDK_NGX_Parameter*>(parameters_);
+		auto evaluate = reinterpret_cast<EvaluateFeature>(GetProcAddress(static_cast<HMODULE>(module_), "NVSDK_NGX_D3D12_EvaluateFeature"));
+		if (!parameters || !evaluate)
+			return false;
+		bool created = false;
+		if (!EnsureFeature(commandList, slot, guide, &created))
+			return false;
+		reset = reset || created;
+
+		SignedRuntimePathScope scope(static_cast<HMODULE>(module_), path_.parent_path() / L"nvngx.dll");
+		if (!scope.IsInstalled())
+			return false;
 
 		parameters->Reset();
 		parameters->Set("DLSSNR.Color", color);
@@ -402,6 +448,31 @@ namespace NeuralRendering
 		}
 		++successfulFrames_;
 		return true;
+	}
+
+	bool Runtime::PrewarmFeature(ID3D12GraphicsCommandList* commandList, std::uint32_t slot,
+		const Feature18GuideContract& guide)
+	{
+		return EnsureFeature(commandList, slot, guide);
+	}
+
+	bool Runtime::HasFeature(std::uint32_t slot) const
+	{
+		return slot < kFeatureSlotCount && featureHandles_[slot] != nullptr;
+	}
+
+	bool Runtime::NeedsRecreation(std::uint32_t slot, std::uint32_t width, std::uint32_t height, bool lowResolutionMotion) const
+	{
+		return NeedsRecreation(slot, width, height, width, height, lowResolutionMotion);
+	}
+
+	bool Runtime::NeedsRecreation(std::uint32_t slot, std::uint32_t inputWidth, std::uint32_t inputHeight,
+		std::uint32_t outputWidth, std::uint32_t outputHeight, bool lowResolutionMotion) const
+	{
+		return slot < kFeatureSlotCount && featureHandles_[slot] &&
+			(featureInputWidth_[slot] != inputWidth || featureInputHeight_[slot] != inputHeight ||
+				 featureOutputWidth_[slot] != outputWidth || featureOutputHeight_[slot] != outputHeight ||
+				 featureMotionVectorsLowResolution_[slot] != lowResolutionMotion);
 	}
 
 	void Runtime::ResetFeature(std::uint32_t slot)

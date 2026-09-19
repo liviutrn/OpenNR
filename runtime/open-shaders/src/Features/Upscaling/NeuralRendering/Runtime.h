@@ -29,16 +29,29 @@ namespace NeuralRendering
 		std::uint32_t multiPass = 0;
 		// Experimental temporal reuse: 0 = disabled, otherwise run a full
 		// Feature 18 pass every Nth frame and reproject the saved residual on the
-		// intervening frames. The renderer only enables this for native-size,
-		// single-pass, full-eye layouts with exact game motion vectors.
+		// intervening frames. The renderer enables this for single-pass, stable
+		// full-eye or fixed crop-local layouts with exact game motion vectors.
+		// Moving/gaze/adaptive crop origins remain disabled until an explicit
+		// origin transform and reset-qualified handoff are implemented.
 		std::uint32_t temporalReuseCadence = 0;
 		float temporalReuseDepthThreshold = 0.05f;
 		float temporalReuseColorTolerance = 0.08f;
+		// Preserve the conservative post-skip reset by default. The isolated
+		// causal arm can disable it to test whether the reset itself causes the
+		// cadence discontinuity seen in native Feature 18 output.
+		bool temporalReuseResetAfterSkip = true;
 		// Opt-in adaptive-resolution handoff. The controller changes only the
 		// native NR tier; the display/compositor cadence remains owned by VR.
 		bool adaptiveResolution = false;
+		// The crop route keeps its own current-frame feathering contract. Mixing
+		// a previous NR image with moving crop coordinates can produce a stereo
+		// ghost, so integration disables this only while adaptive crop is active.
+		bool adaptiveHandoff = true;
 		float adaptiveHandoffAlpha = 1.0f;
 		float adaptiveDepthThreshold = 0.05f;
+		// -1 prepares lower quality, +1 prepares higher quality, 0 holds prewarming.
+		std::int32_t adaptivePrewarmDirection = 0;
+		std::uint32_t adaptiveMemoryCeiling = 100;
 	};
 
 	/**
@@ -72,9 +85,35 @@ namespace NeuralRendering
 		std::uint32_t outputWidth = 0;
 		std::uint32_t outputHeight = 0;
 
+		// Optional stable creation extents. Adaptive crop changes the valid
+		// evaluation subrect every few frames, but a native Feature 18 handle
+		// must not be recreated for each of those valid-region changes. Zero
+		// means use the corresponding current valid extent.
+		std::uint32_t creationInputWidth = 0;
+		std::uint32_t creationInputHeight = 0;
+		std::uint32_t creationOutputWidth = 0;
+		std::uint32_t creationOutputHeight = 0;
+
 		float motionVectorScaleX = 1.0f;
 		float motionVectorScaleY = 1.0f;
 		bool motionVectorsLowResolution = false;
+
+		[[nodiscard]] std::uint32_t FeatureInputWidth() const
+		{
+			return creationInputWidth != 0 ? creationInputWidth : colorWidth;
+		}
+		[[nodiscard]] std::uint32_t FeatureInputHeight() const
+		{
+			return creationInputHeight != 0 ? creationInputHeight : colorHeight;
+		}
+		[[nodiscard]] std::uint32_t FeatureOutputWidth() const
+		{
+			return creationOutputWidth != 0 ? creationOutputWidth : outputWidth;
+		}
+		[[nodiscard]] std::uint32_t FeatureOutputHeight() const
+		{
+			return creationOutputHeight != 0 ? creationOutputHeight : outputHeight;
+		}
 
 		[[nodiscard]] bool IsValid() const
 		{
@@ -104,7 +143,16 @@ namespace NeuralRendering
 		bool Execute(ID3D12GraphicsCommandList* commandList, std::uint32_t slot,
 			ID3D12Resource* color, ID3D12Resource* depth, ID3D12Resource* motionVectors, ID3D12Resource* output,
 			const Feature18GuideContract& guide, const Tuning& tuning, bool reset);
+		/** @brief Creates the native handle without evaluating it, used to hide adjacent-tier transitions. */
+		bool PrewarmFeature(ID3D12GraphicsCommandList* commandList, std::uint32_t slot,
+			const Feature18GuideContract& guide);
+		[[nodiscard]] bool HasFeature(std::uint32_t slot) const;
 		void ResetFeature(std::uint32_t slot);
+		/** @brief Detects a live feature that must be retired after the GPU completes its last use. */
+		bool NeedsRecreation(std::uint32_t slot, std::uint32_t width, std::uint32_t height, bool lowResolutionMotion) const;
+		/** @brief Same check with separate native input and output creation extents. */
+		bool NeedsRecreation(std::uint32_t slot, std::uint32_t inputWidth, std::uint32_t inputHeight,
+			std::uint32_t outputWidth, std::uint32_t outputHeight, bool lowResolutionMotion) const;
 		void ResetFeatures();
 		void Shutdown();
 
@@ -117,11 +165,13 @@ namespace NeuralRendering
 		[[nodiscard]] std::uint64_t SuccessfulFrames() const { return successfulFrames_; }
 
 	private:
-		// Two eyes x seven resolution tiers x three cascade stages. The adaptive
-		// controller keeps each tier's NGX feature handle isolated so a handoff
-		// never reuses a handle configured for a different model extent.
-		static constexpr std::uint32_t kFeatureSlotCount = 42;
+		// Two eyes x nine fixed resolution tiers x three cascade stages. The
+		// adaptive controller still targets only its conservative 100%-70%
+		// bucket ladder; 50% and 33% are isolated fixed experimental tiers.
+		static constexpr std::uint32_t kFeatureSlotCount = 54;
 		Runtime() = default;
+		bool EnsureFeature(ID3D12GraphicsCommandList* commandList, std::uint32_t slot,
+			const Feature18GuideContract& guide, bool* created = nullptr);
 		void* module_ = nullptr;
 		void* parameters_ = nullptr;
 		void* featureHandles_[kFeatureSlotCount]{};

@@ -7,6 +7,8 @@ namespace NeuralRendering
 
 	/** Requests a temporal-history reset from a non-render-thread event callback. */
 	void RequestHistoryReset();
+	/** Requests a full NR, DLSS and adaptive-failure reset on the render thread. */
+	void RequestReset();
 
 	/** Resets Feature 18 temporal history while keeping the runtime initialized. */
 	void ResetHistory();
