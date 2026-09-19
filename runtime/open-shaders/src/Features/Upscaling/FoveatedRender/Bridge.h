@@ -29,4 +29,5 @@ namespace FoveatedRenderImpl::Bridge
 	// mvecScale correction is not applied to the standard full-frame DLSS path
 	// (e.g. menus, frames where foveated is skipped).
 	inline bool foveatedEvaluating = false;
+	inline bool gazeHistoryReset = false;
 }

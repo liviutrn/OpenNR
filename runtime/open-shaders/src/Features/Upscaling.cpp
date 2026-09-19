@@ -14,6 +14,8 @@
 #include "Upscaling/FoveatedRender/Postprocess.h"
 #include "Upscaling/FoveatedRender/Preprocess.h"
 #include "Upscaling/NeuralRendering/Integration.h"
+#include "Upscaling/NeuralRendering/Renderer.h"
+#include "Upscaling/NativeOpenVRGaze.h"
 #include "Upscaling/PerfMode.h"
 #include "Upscaling/Streamline.h"
 #include "Utils/DevBenchUx.h"
@@ -669,6 +671,32 @@ std::string Upscaling::GetProfilePreviewText(PerfProfile profile) const
 
 void Upscaling::RegisterUxActions()
 {
+	FEATURE_QUERY("eyeTrackingStatus",
+		"Read native OpenVR query validity/cost, last-valid-query age (not sensor age), raw/filtered gaze, resolved crops and history-reset counters. Params: none.",
+		[](const Feature*, const json&) -> json {
+			const auto gaze = FoveatedRenderImpl::NativeOpenVRGaze::GetDiagnostics();
+			return json({ { "status", FoveatedRenderImpl::NativeOpenVRGaze::StatusName(gaze.status) },
+				{ "frame", gaze.frame }, { "enabled", gaze.experimentEnabled }, { "dynamic", gaze.dynamic },
+				{ "fallback", gaze.usingFallback }, { "nativeQueryValid", gaze.nativeQueryValid },
+				{ "providerQueryMs", gaze.providerQueryMs }, { "lastValidQueryAgeMs", gaze.sampleAgeMs },
+				{ "sensorAgeAvailable", false }, { "validQueryCount", gaze.sampleSequence },
+				{ "rawLeftUV", gaze.rawLeftUV }, { "rawRightUV", gaze.rawRightUV },
+				{ "filteredLeftUV", gaze.filteredLeftUV }, { "filteredRightUV", gaze.filteredRightUV },
+				{ "leftCropUV", gaze.leftCropUV }, { "rightCropUV", gaze.rightCropUV },
+				{ "cropChanged", gaze.cropChanged }, { "historyReset", gaze.historyReset },
+				{ "cropChangeCount", gaze.cropChangeCount }, { "historyResetCount", gaze.historyResetCount } });
+		});
+	FEATURE_COMMAND("resetNeuralRendering",
+		"Queue the same full NR/DLSS/adaptive-failure reset as the Neural Rendering menu button. Executes on the next render update; does not edit settings. Params: none.",
+		[](Feature*, const json&) { NeuralRendering::RequestReset(); });
+	FEATURE_QUERY("neuralRenderingStatus",
+		"Read NR failure/recovery limits, successful evaluation count, NGX result and crop hold state. Params: none.",
+		[](const Feature*, const json&) -> json {
+			const auto& nr = NeuralRendering::Renderer::Instance();
+			return json({ { "failureLatched", nr.IsFailureLatched() }, { "recoveryLimited", nr.IsRecoveryLimited() },
+				{ "successfulEvaluations", nr.SuccessfulFrames() }, { "ngxResult", nr.NgxResult() },
+				{ "cropHeld", FoveatedRenderImpl::Core::vrSubrectFixedEnvelopeRejected || FoveatedRenderImpl::Core::vrSubrectNeuralFixedEnvelopeRejected } });
+		});
 	FEATURE_COMMAND("applyFoveationPreset",
 		"Apply a named foveation crop preset (see openshaders.feature get shortName=Upscaling -> foveatedRender.CropPresets[].name, e.g. \"Center 75%\") -- the same code path as clicking the preset dropdown, including right-eye auto-mirror. Params: name (string).",
 		[](Feature*, const json& args) {

@@ -1,6 +1,7 @@
 #include "Renderer.h"
 
 #include "D3D12Interop.h"
+#include "RuntimePolicy.h"
 #include "Deferred.h"
 #if defined(OPENNR_CAPTURE_ENABLED)
 #include "Features/OpenNRCapture.h"
@@ -30,12 +31,14 @@ namespace NeuralRendering
 	{
 		constexpr std::uint32_t kEyeCount = 2;
 		constexpr std::uint32_t kCascadePassCount = 3;
-		constexpr std::array<std::uint32_t, 7> kResolutionTiers{
-			100, 95, 90, 85, 80, 75, 70 };
+		constexpr std::uint32_t kAdaptiveMinimumResolution = 70;
+		// The adaptive controller intentionally stops at 70%. The two lower
+		// entries are fixed experimental tiers backed by the captured 50%/33%
+		// native-scale studies; they are not adaptive targets and are not
+		// temporal-reuse promotion evidence.
+		constexpr std::array<std::uint32_t, 9> kResolutionTiers{
+			100, 95, 90, 85, 80, 75, 70, 50, 33 };
 		constexpr std::uint32_t kResolutionTierCount = static_cast<std::uint32_t>(kResolutionTiers.size());
-		// All supported adaptive tiers are prewarmed. Keeping this ladder short
-		// limits the number of per-eye Feature 18 dimension/resource states.
-		constexpr std::uint32_t kAdaptiveTierCount = kResolutionTierCount;
 		constexpr std::uint32_t kTemporalReuseMinCadence = 2;
 		constexpr std::uint32_t kTemporalReuseMaxCadence = 4;
 
@@ -221,9 +224,15 @@ namespace NeuralRendering
 		{
 			if (std::find(kResolutionTiers.begin(), kResolutionTiers.end(), percent) != kResolutionTiers.end())
 				return percent;
-			// Keep the renderer-side safety net aligned with FoveatedRender::ClampSettings:
-			// old experimental values below 70% must not silently re-enable full-cost NR.
-			return percent < kResolutionTiers.back() ? kResolutionTiers.back() : kResolutionTiers.front();
+			// Keep the renderer-side safety net aligned with FoveatedRender::ClampSettings.
+			// Values below the experimental 33% floor use 33%; legacy/intermediate
+			// values in the old 70%-floor range remain conservative at 70% rather
+			// than silently re-enabling full-cost NR.
+			if (percent < 33)
+				return 33;
+			if (percent < 70)
+				return 70;
+			return 100;
 		}
 
 		struct ModelResolveSettings
@@ -256,7 +265,8 @@ namespace NeuralRendering
 			// Reduced Feature 18 output is temporally less reliable around fine
 			// shadow/light transitions. Near-native model resolutions have enough
 			// spatial support to carry a substantially larger contribution. The
-			// controls build stops at the conservative 70% floor.
+			// Adaptive controls stop at the conservative 70% floor; 50% and 33%
+			// remain fixed experimental tiers only.
 			switch (modelResolution) {
 			case 95:
 				return { 1.00f, 0.92f, 1.75f, 0.95f };
@@ -267,7 +277,10 @@ namespace NeuralRendering
 			case 80:
 				return { 0.95f, 0.61f, 1.52f, 0.80f };
 			case 75:
-				return { 0.90f, 0.52f, 1.50f, 0.76f };
+				// Matched-residual calibration: the retained 75% study recovered
+				// substantially more effect at strength 1.00 with only a small
+				// reconstruction-error change.
+				return { 0.90f, 0.52f, 1.50f, 1.00f };
 			case 70:
 				return { 0.86f, 0.45f, 1.45f, 0.72f };
 			case 67:
@@ -275,9 +288,13 @@ namespace NeuralRendering
 			case 60:
 				return { 0.76f, 0.30f, 1.38f, 0.66f };
 			case 50:
-				return { 0.70f, 0.22f, 1.35f, 0.65f };
+				// Fixed experimental tier calibrated against the eight-sequence
+				// native replay; keep the source bound and the full residual effect.
+				return { 0.70f, 0.22f, 1.50f, 1.00f };
 			case 33:
-				return { 0.60f, 0.18f, 1.20f, 0.55f };
+				// Same calibrated matched-residual contract for the high-headroom
+				// fixed tier. This remains a live-test candidate, not a promotion.
+				return { 0.60f, 0.18f, 1.50f, 1.00f };
 			default:
 				// Full resolution bypasses this resolve stage. Keep a safe default
 				// here in case the helper is called independently in the future.
@@ -356,6 +373,11 @@ namespace NeuralRendering
 			std::uint32_t height = 0;
 			std::uint32_t guideWidth = 0;
 			std::uint32_t guideHeight = 0;
+			// Source rectangle in the SBS destination. A crop-local history is only
+			// valid while the same eye rectangle is being evaluated. Moving/gaze
+			// crops must re-anchor before reuse rather than mixing coordinate spaces.
+			std::uint32_t regionX = 0;
+			std::uint32_t regionY = 0;
 			std::uint32_t accumulatedMotionIndex = 0;
 			bool valid = false;
 		};
@@ -431,8 +453,16 @@ namespace NeuralRendering
 				std::uint32_t sharedGuideWidth = 0;
 				std::uint32_t sharedGuideHeight = 0;
 				bool sharedResourcesValid = false;
-				bool adaptiveTiersPrewarmed = false;
+				TierResidency residency;
 				HandoffEyeState handoff;
+		};
+
+		struct AdaptivePrewarmWork
+		{
+			bool valid = false;
+			std::uint32_t candidateIndex = 0;
+			std::uint32_t tierIndex = UINT32_MAX;
+			std::uint32_t eyeIndex = 0;
 		};
 
 		State()
@@ -448,6 +478,7 @@ namespace NeuralRendering
 			std::uint32_t colorWidth, std::uint32_t colorHeight,
 			float motionVectorScaleX, float motionVectorScaleY, const Tuning& tuning)
 		{
+			RecoverIfReady(device);
 			if (failureLatched || !device || !context || eyeIndex >= eyes.size() || !color || !depth || !depthSRV || !motionVectors)
 				return false;
 			CS_GPU_PASS("NeuralRendering::Evaluate");
@@ -465,12 +496,12 @@ namespace NeuralRendering
 			SyncTemporalReuseConfig(tuning, modelResolution, passCount);
 			if (!EnsureResources(device, eyeIndex, color, depth, motionVectors, guideWidth, guideHeight,
 				colorWidth, colorHeight, modelWidth, modelHeight, passCount, modelResolution,
-				tuning.adaptiveResolution, {}))
+				tuning.adaptiveResolution, {}, tuning.adaptiveMemoryCeiling))
 				return LatchFailure("shared resource creation", interop.LastError());
 
 			auto& eye = eyes[eyeIndex];
 			auto& tier = eye.tiers[tierIndex];
-			if (!tuning.adaptiveResolution)
+			if (!tuning.adaptiveResolution || !tuning.adaptiveHandoff)
 				eye.handoff.valid = false;
 			context->CopyResource(eye.color.resource11.Get(), color);
 			if (tier.reducedResolution && !DispatchModelInput(device, context, eye, tier, colorWidth, colorHeight, modelWidth, modelHeight,
@@ -480,23 +511,95 @@ namespace NeuralRendering
 				return LatchFailure("depth guide conversion", E_FAIL);
 			context->CopyResource(eye.motionVectors.resource11.Get(), motionVectors);
 
-			const bool temporalCandidate = IsTemporalReuseConfigured(tuning) &&
-				modelResolution == 100 && passCount == 1 &&
-				CanAttemptTemporalReuse(eye, colorWidth, colorHeight, guideWidth, guideHeight) &&
+			const bool temporalCandidate = IsTemporalReuseSupported(tuning, tier) &&
+				CanAttemptTemporalReuse(eye, colorWidth, colorHeight, guideWidth, guideHeight, 0, 0) &&
 				!tuning.adaptiveResolution && !resetPending[eyeIndex][tierIndex] &&
 				(temporalFrameIndex % tuning.temporalReuseCadence) != 0;
-			if (temporalCandidate && TryTemporalReuse(device, context, eye,
+			ID3D11UnorderedAccessView* temporalOutputUAV = tier.reducedResolution ?
+				tier.resolvedUAV.Get() : tier.output.uav11.Get();
+			if (temporalCandidate && TryTemporalReuse(device, context, eye, temporalOutputUAV,
 				colorWidth, colorHeight, guideWidth, guideHeight,
-				motionVectorScaleX * static_cast<float>(modelWidth) / colorWidth,
-				motionVectorScaleY * static_cast<float>(modelHeight) / colorHeight, tuning)) {
-				context->CopyResource(color, eye.tiers[0].output.resource11.Get());
+				motionVectorScaleX, motionVectorScaleY, tuning)) {
+				ID3D11Resource* temporalOutput = tier.reducedResolution ?
+					tier.resolved.Get() : tier.output.resource11.Get();
+				context->CopyResource(color, temporalOutput);
 				resetPending[eyeIndex][tierIndex] = false;
 				temporalSkippedSinceFull = true;
 				AdvanceTemporalFrame(tuning);
-				LogTemporalReuseActive(tuning.temporalReuseCadence);
+				LogTemporalReuseActive(tuning.temporalReuseCadence, false);
+#if defined(OPENNR_CAPTURE_ENABLED)
+				if (globals::features::openNRCapture.settings.enableCapture) {
+					OpenNRCaptureFeature::FrameInfo captureInfo;
+					captureInfo.hostFrame = globals::state ? globals::state->frameCount : 0;
+					captureInfo.colorWidth = colorWidth;
+					captureInfo.colorHeight = colorHeight;
+					captureInfo.modelWidth = modelWidth;
+					captureInfo.modelHeight = modelHeight;
+					captureInfo.modelResolutionPercent = modelResolution;
+					captureInfo.guideWidth = guideWidth;
+					captureInfo.guideHeight = guideHeight;
+					captureInfo.passCount = passCount;
+					captureInfo.motionVectorScaleX[eyeIndex] = motionVectorScaleX * static_cast<float>(modelWidth) / colorWidth;
+					captureInfo.motionVectorScaleY[eyeIndex] = motionVectorScaleY * static_cast<float>(modelHeight) / colorHeight;
+					captureInfo.historyReset[eyeIndex] = false;
+					captureInfo.temporalReuse = true;
+					captureInfo.temporalFrameIndex = temporalFrameIndex;
+					captureInfo.temporalSkippedSinceFull = temporalSkippedSinceFull;
+					captureInfo.temporalNextAnchorReset = tuning.temporalReuseResetAfterSkip;
+					captureInfo.intensity = tuning.intensity;
+					captureInfo.localToneStrength = tuning.localToneStrength;
+					captureInfo.localStructureStrength = tuning.localStructureStrength;
+					captureInfo.skinStructureStrength = tuning.skinStructureStrength;
+					captureInfo.style = tuning.style;
+					captureInfo.useAutoMask = tuning.useAutoMask;
+					captureInfo.uiCorrection = tuning.uiCorrection;
+					captureInfo.route = "feature18_temporal_reuse";
+					const bool captureFrame = globals::features::openNRCapture.BeginFrame(captureInfo);
+					if (captureFrame) {
+						logger::info("[DLSSNR][TemporalDiag] mode=reuse route=single hostFrame={} cadence=N{} temporalFrameIndex={} skippedSinceFull={} nextAnchorReset={}",
+							captureInfo.hostFrame, tuning.temporalReuseCadence, captureInfo.temporalFrameIndex,
+							captureInfo.temporalSkippedSinceFull, captureInfo.temporalNextAnchorReset);
+						const bool writeColorPreview = globals::features::openNRCapture.settings.writeColorPreviews;
+						if (globals::features::openNRCapture.settings.capturePreNR) {
+							ID3D11Resource* modelInput = tier.reducedResolution ? tier.modelInput.resource11.Get() : eye.color.resource11.Get();
+							const auto modelInputWidth = tier.reducedResolution ? modelWidth : colorWidth;
+							const auto modelInputHeight = tier.reducedResolution ? modelHeight : colorHeight;
+							globals::features::openNRCapture.CaptureTexture(modelInput, 0, 0,
+								modelInputWidth, modelInputHeight, "input", eyeIndex, false, writeColorPreview);
+							if (globals::features::openNRCapture.IsFullFrameValidationFrame())
+								globals::features::openNRCapture.CaptureTexture(modelInput, 0, 0,
+									modelInputWidth, modelInputHeight, "input", eyeIndex, true);
+						}
+						if (globals::features::openNRCapture.settings.captureDepth) {
+							globals::features::openNRCapture.CaptureTexture(eye.depth.resource11.Get(), 0, 0,
+								guideWidth, guideHeight, "depth", eyeIndex, false, false);
+							if (globals::features::openNRCapture.IsFullFrameValidationFrame())
+								globals::features::openNRCapture.CaptureTexture(eye.depth.resource11.Get(), 0, 0,
+									guideWidth, guideHeight, "depth", eyeIndex, true, false);
+						}
+						if (globals::features::openNRCapture.settings.captureMotionVectors) {
+							globals::features::openNRCapture.CaptureTexture(eye.motionVectors.resource11.Get(), 0, 0,
+								guideWidth, guideHeight, "motion_vectors", eyeIndex, false, false);
+							if (globals::features::openNRCapture.IsFullFrameValidationFrame())
+								globals::features::openNRCapture.CaptureTexture(eye.motionVectors.resource11.Get(), 0, 0,
+									guideWidth, guideHeight, "motion_vectors", eyeIndex, true, false);
+						}
+						if (globals::features::openNRCapture.settings.capturePostNR) {
+							globals::features::openNRCapture.CaptureTexture(temporalOutput, 0, 0,
+								colorWidth, colorHeight, "temporal_output", eyeIndex, false, writeColorPreview);
+							if (globals::features::openNRCapture.IsFullFrameValidationFrame())
+								globals::features::openNRCapture.CaptureTexture(temporalOutput, 0, 0,
+									colorWidth, colorHeight, "temporal_output", eyeIndex, true);
+						}
+						globals::features::openNRCapture.EndFrame();
+					}
+				}
+#endif
 				return true;
 			}
 
+			const bool resetForAnchor = resetPending[eyeIndex][tierIndex] ||
+				(temporalSkippedSinceFull && tuning.temporalReuseResetAfterSkip);
 #if defined(OPENNR_CAPTURE_ENABLED)
 			bool captureFrame = false;
 			if (globals::features::openNRCapture.settings.enableCapture) {
@@ -512,19 +615,28 @@ namespace NeuralRendering
 				captureInfo.passCount = passCount;
 				captureInfo.motionVectorScaleX[eyeIndex] = motionVectorScaleX * static_cast<float>(modelWidth) / colorWidth;
 				captureInfo.motionVectorScaleY[eyeIndex] = motionVectorScaleY * static_cast<float>(modelHeight) / colorHeight;
-				captureInfo.historyReset[eyeIndex] = resetPending[eyeIndex][tierIndex];
+				captureInfo.historyReset[eyeIndex] = resetForAnchor;
+				captureInfo.temporalReuse = false;
+				captureInfo.temporalFrameIndex = temporalFrameIndex;
+				captureInfo.temporalSkippedSinceFull = temporalSkippedSinceFull;
+				captureInfo.temporalNextAnchorReset = false;
 				captureInfo.intensity = tuning.intensity;
 				captureInfo.localToneStrength = tuning.localToneStrength;
 				captureInfo.localStructureStrength = tuning.localStructureStrength;
 				captureInfo.skinStructureStrength = tuning.skinStructureStrength;
 				captureInfo.style = tuning.style;
 				captureInfo.useAutoMask = tuning.useAutoMask;
-			captureInfo.uiCorrection = tuning.uiCorrection;
-			captureInfo.route = "feature18";
+				captureInfo.uiCorrection = tuning.uiCorrection;
+				captureInfo.route = "feature18";
 			#if defined(OPENNR_CAPTURE_ENABLED)
 			AppendRendererConditioningAvailability(captureInfo, 0, 0, colorWidth, colorHeight);
 			#endif
 				captureFrame = globals::features::openNRCapture.BeginFrame(captureInfo);
+				if (captureFrame)
+					logger::info("[DLSSNR][TemporalDiag] mode=anchor route=single hostFrame={} cadence=N{} resetSent={} temporalFrameIndex={} skippedSinceFull={}",
+						captureInfo.hostFrame, tuning.temporalReuseCadence,
+						resetForAnchor,
+						captureInfo.temporalFrameIndex, captureInfo.temporalSkippedSinceFull);
 			}
 			if (captureFrame && globals::features::openNRCapture.settings.capturePreNR) {
 				const bool writeColorPreview = globals::features::openNRCapture.settings.writeColorPreviews;
@@ -580,9 +692,12 @@ namespace NeuralRendering
 				tier.reducedResolution ? modelWidth : colorWidth,
 				tier.reducedResolution ? modelHeight : colorHeight,
 				guideWidth, guideHeight, modelWidth, modelHeight,
+				tier.reducedResolution ? modelWidth : colorWidth,
+				tier.reducedResolution ? modelHeight : colorHeight,
+				modelWidth, modelHeight,
 				motionVectorScaleX * static_cast<float>(modelWidth) / colorWidth,
 				motionVectorScaleY * static_cast<float>(modelHeight) / colorHeight,
-				tuning, passCount, resetPending[eyeIndex][tierIndex] || temporalSkippedSinceFull);
+				tuning, passCount, resetForAnchor);
 			if (!interop.EndD3D12()) {
 #if defined(OPENNR_CAPTURE_ENABLED)
 				if (captureFrame)
@@ -606,8 +721,11 @@ namespace NeuralRendering
 #endif
 				return LatchFailure("model output resolve", E_FAIL);
 			}
-			if (!tuning.adaptiveResolution && IsTemporalReuseConfigured(tuning) && modelResolution == 100 && passCount == 1) {
-				if (!RecordTemporalHistory(device, context, eye, colorWidth, colorHeight, guideWidth, guideHeight))
+			if (!tuning.adaptiveResolution && IsTemporalReuseSupported(tuning, tier)) {
+				ID3D11ShaderResourceView* teacherSRV = tier.reducedResolution ?
+					tier.resolvedSRV.Get() : tier.output.srv11.Get();
+				if (!RecordTemporalHistory(device, context, eye, teacherSRV,
+					colorWidth, colorHeight, guideWidth, guideHeight, 0, 0))
 					InvalidateTemporalHistory();
 			}
 			temporalSkippedSinceFull = false;
@@ -632,7 +750,7 @@ namespace NeuralRendering
 			ID3D11Resource* neuralOutput = tier.reducedResolution ? tier.resolved.Get() : tier.output.resource11.Get();
 			ID3D11ShaderResourceView* neuralOutputSRV = tier.reducedResolution ? tier.resolvedSRV.Get() : tier.output.srv11.Get();
 			ID3D11Resource* writeback = neuralOutput;
-			if (tuning.adaptiveResolution)
+			if (tuning.adaptiveResolution && tuning.adaptiveHandoff)
 				writeback = ApplyAdaptiveHandoff(device, context, eyeIndex, eye, neuralOutput, neuralOutputSRV,
 					colorWidth, colorHeight, guideWidth, guideHeight, motionVectorScaleX, motionVectorScaleY,
 					0, 0, tuning);
@@ -648,6 +766,7 @@ namespace NeuralRendering
 			ID3D11Resource* destination, ID3D11UnorderedAccessView* destinationUAV,
 			bool blendSubrect, const StereoResourceEnvelope& resourceEnvelope)
 		{
+			RecoverIfReady(device);
 			if (failureLatched || !device || !context || !color)
 				return false;
 			ID3D11Resource* writeback = destination ? destination : color;
@@ -666,6 +785,15 @@ namespace NeuralRendering
 			const std::uint32_t modelResolution = NormalizeModelResolution(tuning.modelResolutionPercent);
 			const std::uint32_t modelWidth = ScaleDimension(colorWidth, modelResolution);
 			const std::uint32_t modelHeight = ScaleDimension(colorHeight, modelResolution);
+			const bool stableEnvelope = resourceEnvelope.IsValid();
+			const std::uint32_t stableColorWidth = stableEnvelope ? resourceEnvelope.colorWidth : colorWidth;
+			const std::uint32_t stableColorHeight = stableEnvelope ? resourceEnvelope.colorHeight : colorHeight;
+			const std::uint32_t stableGuideWidth = stableEnvelope ? resourceEnvelope.guideWidth : guideWidth;
+			const std::uint32_t stableGuideHeight = stableEnvelope ? resourceEnvelope.guideHeight : guideHeight;
+			const std::uint32_t stableModelWidth = ScaleDimension(stableColorWidth, modelResolution);
+			const std::uint32_t stableModelHeight = ScaleDimension(stableColorHeight, modelResolution);
+			const std::uint32_t stableFeatureInputWidth = modelResolution == 100 ? stableColorWidth : stableModelWidth;
+			const std::uint32_t stableFeatureInputHeight = modelResolution == 100 ? stableColorHeight : stableModelHeight;
 			const std::uint32_t passCount = GetPassCount(tuning);
 			const std::uint32_t tierIndex = ResolutionTierIndex(modelResolution);
 			const auto resolveSettings = FrameResolveSettings(modelResolution, tuning.adaptiveResolution);
@@ -676,7 +804,7 @@ namespace NeuralRendering
 					return false;
 				if (!EnsureResources(device, eyeIndex, color, input.depth, input.motionVectors,
 						guideWidth, guideHeight, colorWidth, colorHeight, modelWidth, modelHeight, passCount, modelResolution,
-						tuning.adaptiveResolution, resourceEnvelope))
+						tuning.adaptiveResolution, resourceEnvelope, tuning.adaptiveMemoryCeiling))
 					return LatchFailure("shared resource creation", interop.LastError());
 
 				D3D11_BOX sourceBox{
@@ -685,6 +813,8 @@ namespace NeuralRendering
 				};
 				auto& eye = eyes[eyeIndex];
 				auto& tier = eye.tiers[tierIndex];
+				if (!tuning.adaptiveResolution || !tuning.adaptiveHandoff)
+					eye.handoff.valid = false;
 				context->CopySubresourceRegion(eye.color.resource11.Get(), 0, 0, 0, 0, color, 0, &sourceBox);
 				if (tier.reducedResolution && !DispatchModelInput(device, context, eye, tier, colorWidth, colorHeight, modelWidth, modelHeight,
 					 tuning.modelResolveMode == 1))
@@ -694,21 +824,49 @@ namespace NeuralRendering
 				context->CopyResource(eye.motionVectors.resource11.Get(), input.motionVectors);
 			}
 
-			const bool temporalCandidate = IsTemporalReuseConfigured(tuning) &&
-				modelResolution == 100 && passCount == 1 && !blendSubrect &&
-				IsFullEyeTemporalLayout(colorDesc, inputs, colorWidth, colorHeight) &&
-				CanAttemptTemporalReuse(eyes[0], colorWidth, colorHeight, guideWidth, guideHeight) &&
-				CanAttemptTemporalReuse(eyes[1], colorWidth, colorHeight, guideWidth, guideHeight) &&
+			const auto adaptivePrewarm = PrepareAdjacentPrewarmResources(device, tierIndex,
+				colorWidth, colorHeight, guideWidth, guideHeight, passCount, modelResolution,
+				stableColorWidth, stableColorHeight, tuning);
+
+			const bool temporalTierSupported = IsTemporalReuseSupported(tuning, eyes[0].tiers[tierIndex]) &&
+				IsTemporalReuseSupported(tuning, eyes[1].tiers[tierIndex]);
+			const bool fullEyeTemporalLayout = IsFullEyeTemporalLayout(colorDesc, inputs, colorWidth, colorHeight);
+			const bool stableTemporalLayout = IsTemporalLayoutStable(colorDesc, inputs, colorWidth, colorHeight);
+			bool temporalLayoutChanged = false;
+			for (std::uint32_t eyeIndex = 0; eyeIndex < inputs.size(); ++eyeIndex) {
+				const auto& temporal = eyes[eyeIndex].temporal;
+				if (temporal.valid &&
+					(temporal.regionX != inputs[eyeIndex].sourceX || temporal.regionY != inputs[eyeIndex].sourceY)) {
+					temporalLayoutChanged = true;
+					break;
+				}
+			}
+			if (temporalLayoutChanged) {
+				// A moving crop changes the meaning of every local history sample. The
+				// first frame at the new region must be a native anchor for both eyes.
+				InvalidateTemporalHistory();
+				resetPending[0][tierIndex] = true;
+				resetPending[1][tierIndex] = true;
+			}
+			const bool cropTemporalLayout = stableTemporalLayout && !fullEyeTemporalLayout;
+			const bool temporalCandidate = temporalTierSupported && stableTemporalLayout &&
+				CanAttemptTemporalReuse(eyes[0], colorWidth, colorHeight, guideWidth, guideHeight,
+					inputs[0].sourceX, inputs[0].sourceY) &&
+				CanAttemptTemporalReuse(eyes[1], colorWidth, colorHeight, guideWidth, guideHeight,
+					inputs[1].sourceX, inputs[1].sourceY) &&
 				!tuning.adaptiveResolution && !resetPending[0][tierIndex] && !resetPending[1][tierIndex] &&
 				(temporalFrameIndex % tuning.temporalReuseCadence) != 0;
 			if (temporalCandidate) {
 				bool reused = true;
 				for (std::uint32_t eyeIndex = 0; eyeIndex < inputs.size(); ++eyeIndex) {
 					const auto& input = inputs[eyeIndex];
-					if (!TryTemporalReuse(device, context, eyes[eyeIndex],
+					auto& eye = eyes[eyeIndex];
+					auto& tier = eye.tiers[tierIndex];
+					ID3D11UnorderedAccessView* temporalOutputUAV = tier.reducedResolution ?
+						tier.resolvedUAV.Get() : tier.output.uav11.Get();
+					if (!TryTemporalReuse(device, context, eye, temporalOutputUAV,
 						colorWidth, colorHeight, guideWidth, guideHeight,
-						input.motionVectorScaleX * static_cast<float>(modelWidth) / colorWidth,
-						input.motionVectorScaleY * static_cast<float>(modelHeight) / colorHeight, tuning)) {
+						input.motionVectorScaleX, input.motionVectorScaleY, tuning)) {
 						reused = false;
 						break;
 					}
@@ -718,18 +876,97 @@ namespace NeuralRendering
 					for (std::uint32_t eyeIndex = 0; eyeIndex < inputs.size(); ++eyeIndex) {
 						const auto& input = inputs[eyeIndex];
 						auto& eye = eyes[eyeIndex];
+						auto& tier = eye.tiers[tierIndex];
+						ID3D11Resource* temporalOutput = tier.reducedResolution ?
+							tier.resolved.Get() : tier.output.resource11.Get();
 						if (blendSubrect && destinationUAV) {
-							FoveatedRenderImpl::Ops::BlendSubrectToOutput(eye.tiers[0].output.resource11.Get(),
+							FoveatedRenderImpl::Ops::BlendSubrectToOutput(temporalOutput,
 								writeback, destinationUAV, input.sourceX, input.sourceY, colorWidth, colorHeight);
 						} else {
 							context->CopySubresourceRegion(writeback, 0, input.sourceX, input.sourceY, 0,
-								eye.tiers[0].output.resource11.Get(), 0, &outputBox);
+								temporalOutput, 0, &outputBox);
 						}
 						resetPending[eyeIndex][tierIndex] = false;
 					}
 					temporalSkippedSinceFull = true;
 					AdvanceTemporalFrame(tuning);
-					LogTemporalReuseActive(tuning.temporalReuseCadence);
+					LogTemporalReuseActive(tuning.temporalReuseCadence, cropTemporalLayout);
+#if defined(OPENNR_CAPTURE_ENABLED)
+					if (globals::features::openNRCapture.settings.enableCapture) {
+						OpenNRCaptureFeature::FrameInfo captureInfo;
+						captureInfo.hostFrame = globals::state ? globals::state->frameCount : 0;
+						captureInfo.colorWidth = colorWidth;
+						captureInfo.colorHeight = colorHeight;
+						captureInfo.modelWidth = modelWidth;
+						captureInfo.modelHeight = modelHeight;
+						captureInfo.modelResolutionPercent = modelResolution;
+						captureInfo.guideWidth = guideWidth;
+						captureInfo.guideHeight = guideHeight;
+						captureInfo.passCount = passCount;
+						for (std::uint32_t eyeIndex = 0; eyeIndex < inputs.size(); ++eyeIndex) {
+							captureInfo.motionVectorScaleX[eyeIndex] = inputs[eyeIndex].motionVectorScaleX * static_cast<float>(modelWidth) / colorWidth;
+							captureInfo.motionVectorScaleY[eyeIndex] = inputs[eyeIndex].motionVectorScaleY * static_cast<float>(modelHeight) / colorHeight;
+							captureInfo.historyReset[eyeIndex] = false;
+						}
+						captureInfo.temporalReuse = true;
+						captureInfo.temporalFrameIndex = temporalFrameIndex;
+						captureInfo.temporalSkippedSinceFull = temporalSkippedSinceFull;
+						captureInfo.temporalNextAnchorReset = tuning.temporalReuseResetAfterSkip;
+						captureInfo.intensity = tuning.intensity;
+						captureInfo.localToneStrength = tuning.localToneStrength;
+						captureInfo.localStructureStrength = tuning.localStructureStrength;
+						captureInfo.skinStructureStrength = tuning.skinStructureStrength;
+						captureInfo.style = tuning.style;
+						captureInfo.useAutoMask = tuning.useAutoMask;
+						captureInfo.uiCorrection = tuning.uiCorrection;
+						captureInfo.route = cropTemporalLayout ?
+							"feature18_crop_temporal_reuse" : "feature18_stereo_temporal_reuse";
+						const bool captureFrame = globals::features::openNRCapture.BeginFrame(captureInfo);
+						if (captureFrame) {
+							logger::info("[DLSSNR][TemporalDiag] mode=reuse route={} hostFrame={} cadence=N{} temporalFrameIndex={} skippedSinceFull={} nextAnchorReset={}",
+								captureInfo.route, captureInfo.hostFrame, tuning.temporalReuseCadence, captureInfo.temporalFrameIndex,
+								captureInfo.temporalSkippedSinceFull, captureInfo.temporalNextAnchorReset);
+							const bool writeColorPreview = globals::features::openNRCapture.settings.writeColorPreviews;
+							for (std::uint32_t eyeIndex = 0; eyeIndex < inputs.size(); ++eyeIndex) {
+								auto& eye = eyes[eyeIndex];
+								auto& tier = eye.tiers[tierIndex];
+								ID3D11Resource* temporalOutput = tier.reducedResolution ? tier.resolved.Get() : tier.output.resource11.Get();
+								if (globals::features::openNRCapture.settings.capturePreNR) {
+									ID3D11Resource* modelInput = tier.reducedResolution ? tier.modelInput.resource11.Get() : eye.color.resource11.Get();
+									const auto modelInputWidth = tier.reducedResolution ? modelWidth : colorWidth;
+									const auto modelInputHeight = tier.reducedResolution ? modelHeight : colorHeight;
+									globals::features::openNRCapture.CaptureTexture(modelInput, 0, 0,
+										modelInputWidth, modelInputHeight, "input", eyeIndex, false, writeColorPreview);
+									if (globals::features::openNRCapture.IsFullFrameValidationFrame())
+										globals::features::openNRCapture.CaptureTexture(modelInput, 0, 0,
+											modelInputWidth, modelInputHeight, "input", eyeIndex, true);
+								}
+								if (globals::features::openNRCapture.settings.captureDepth) {
+									globals::features::openNRCapture.CaptureTexture(eye.depth.resource11.Get(), 0, 0,
+										guideWidth, guideHeight, "depth", eyeIndex, false, false);
+									if (globals::features::openNRCapture.IsFullFrameValidationFrame())
+										globals::features::openNRCapture.CaptureTexture(eye.depth.resource11.Get(), 0, 0,
+											guideWidth, guideHeight, "depth", eyeIndex, true, false);
+								}
+								if (globals::features::openNRCapture.settings.captureMotionVectors) {
+									globals::features::openNRCapture.CaptureTexture(eye.motionVectors.resource11.Get(), 0, 0,
+										guideWidth, guideHeight, "motion_vectors", eyeIndex, false, false);
+									if (globals::features::openNRCapture.IsFullFrameValidationFrame())
+										globals::features::openNRCapture.CaptureTexture(eye.motionVectors.resource11.Get(), 0, 0,
+											guideWidth, guideHeight, "motion_vectors", eyeIndex, true, false);
+								}
+								if (globals::features::openNRCapture.settings.capturePostNR) {
+									globals::features::openNRCapture.CaptureTexture(temporalOutput, 0, 0,
+										colorWidth, colorHeight, "temporal_output", eyeIndex, false, writeColorPreview);
+									if (globals::features::openNRCapture.IsFullFrameValidationFrame())
+										globals::features::openNRCapture.CaptureTexture(temporalOutput, 0, 0,
+											colorWidth, colorHeight, "temporal_output", eyeIndex, true);
+								}
+							}
+							globals::features::openNRCapture.EndFrame();
+						}
+					}
+#endif
 					return true;
 				}
 			}
@@ -750,7 +987,8 @@ namespace NeuralRendering
 				for (std::uint32_t eyeIndex = 0; eyeIndex < inputs.size(); ++eyeIndex) {
 					captureInfo.motionVectorScaleX[eyeIndex] = inputs[eyeIndex].motionVectorScaleX * static_cast<float>(modelWidth) / colorWidth;
 					captureInfo.motionVectorScaleY[eyeIndex] = inputs[eyeIndex].motionVectorScaleY * static_cast<float>(modelHeight) / colorHeight;
-					captureInfo.historyReset[eyeIndex] = resetPending[eyeIndex][tierIndex];
+					captureInfo.historyReset[eyeIndex] = resetPending[eyeIndex][tierIndex] ||
+						(temporalSkippedSinceFull && tuning.temporalReuseResetAfterSkip);
 				}
 				captureInfo.intensity = tuning.intensity;
 				captureInfo.localToneStrength = tuning.localToneStrength;
@@ -759,7 +997,7 @@ namespace NeuralRendering
 				captureInfo.style = tuning.style;
 				captureInfo.useAutoMask = tuning.useAutoMask;
 				captureInfo.uiCorrection = tuning.uiCorrection;
-				captureInfo.route = "feature18_stereo";
+				captureInfo.route = cropTemporalLayout ? "feature18_crop" : "feature18_stereo";
 				#if defined(OPENNR_CAPTURE_ENABLED)
 				for (std::uint32_t eyeIndex = 0; eyeIndex < inputs.size(); ++eyeIndex)
 					AppendRendererConditioningAvailability(captureInfo, inputs[eyeIndex].sourceX, inputs[eyeIndex].sourceY,
@@ -825,6 +1063,8 @@ namespace NeuralRendering
 #endif
 				return LatchFailure("BeginD3D12 stereo", interop.LastError());
 			}
+			ExecuteAdaptivePrewarm(commandList, adaptivePrewarm, stableGuideWidth, stableGuideHeight,
+				stableColorWidth, stableColorHeight);
 
 			bool succeeded = true;
 			for (std::uint32_t eyeIndex = 0; eyeIndex < inputs.size(); ++eyeIndex) {
@@ -840,9 +1080,12 @@ namespace NeuralRendering
 					tier.reducedResolution ? modelWidth : colorWidth,
 					tier.reducedResolution ? modelHeight : colorHeight,
 					guideWidth, guideHeight, modelWidth, modelHeight,
+					stableFeatureInputWidth, stableFeatureInputHeight,
+					stableModelWidth, stableModelHeight,
 					input.motionVectorScaleX * static_cast<float>(modelWidth) / colorWidth,
 					input.motionVectorScaleY * static_cast<float>(modelHeight) / colorHeight,
-					tuning, passCount, resetPending[eyeIndex][tierIndex] || temporalSkippedSinceFull);
+						tuning, passCount, resetPending[eyeIndex][tierIndex] ||
+						(temporalSkippedSinceFull && tuning.temporalReuseResetAfterSkip));
 				if (!eyeSucceeded) {
 					succeeded = false;
 					break;
@@ -894,7 +1137,7 @@ namespace NeuralRendering
 				ID3D11Resource* neuralOutput = tier.reducedResolution ? tier.resolved.Get() : tier.output.resource11.Get();
 				ID3D11ShaderResourceView* neuralOutputSRV = tier.reducedResolution ? tier.resolvedSRV.Get() : tier.output.srv11.Get();
 				ID3D11Resource* writebackOutput = neuralOutput;
-				if (tuning.adaptiveResolution)
+				if (tuning.adaptiveResolution && tuning.adaptiveHandoff)
 					writebackOutput = ApplyAdaptiveHandoff(device, context, eyeIndex, eye, neuralOutput, neuralOutputSRV,
 						colorWidth, colorHeight, guideWidth, guideHeight,
 						input.motionVectorScaleX, input.motionVectorScaleY,
@@ -910,11 +1153,17 @@ namespace NeuralRendering
 				}
 				resetPending[eyeIndex][tierIndex] = false;
 			}
-			if (IsTemporalReuseConfigured(tuning) && modelResolution == 100 && passCount == 1) {
+			if (temporalTierSupported) {
 				bool recorded = true;
-				for (std::uint32_t eyeIndex = 0; eyeIndex < inputs.size(); ++eyeIndex)
-					recorded = RecordTemporalHistory(device, context, eyes[eyeIndex],
-						colorWidth, colorHeight, guideWidth, guideHeight) && recorded;
+				for (std::uint32_t eyeIndex = 0; eyeIndex < inputs.size(); ++eyeIndex) {
+					auto& eye = eyes[eyeIndex];
+					auto& tier = eye.tiers[tierIndex];
+					ID3D11ShaderResourceView* teacherSRV = tier.reducedResolution ?
+						tier.resolvedSRV.Get() : tier.output.srv11.Get();
+					recorded = RecordTemporalHistory(device, context, eye, teacherSRV,
+						colorWidth, colorHeight, guideWidth, guideHeight,
+						inputs[eyeIndex].sourceX, inputs[eyeIndex].sourceY) && recorded;
+				}
 				if (!recorded)
 					InvalidateTemporalHistory();
 			}
@@ -927,16 +1176,24 @@ namespace NeuralRendering
 			return true;
 		}
 
-		void Reset()
+		bool Reset(bool manual = true)
 		{
+			if (!interop.WaitForIdle()) {
+				failureLatched = true;
+				recoverableFailure = false;
+				logger::error("[DLSSNR] Reset deferred: GPU work has not completed; resources retained");
+				return false;
+			}
+			if (manual)
+				recoveryAttempted = false;
 			resolveInitialized = false;
 			resolveFrame = UINT32_MAX;
-			interop.WaitForIdle();
 			Runtime::Instance().Shutdown();
 			interop.Shutdown();
 			eyes = {};
 			for (auto& eyeReset : resetPending)
 				eyeReset.fill(true);
+			ResetAdaptivePrewarmState();
 			failureLatched = false;
 			copyDepthGuideCS.Reset();
 			modelResolutionCS.Reset();
@@ -952,13 +1209,13 @@ namespace NeuralRendering
 			temporalFrameIndex = 0;
 			temporalSkippedSinceFull = false;
 			temporalReuseActiveLogged = false;
+			temporalReuseCropActiveLogged = false;
 			temporalReuseWarningLogged = false;
+			return true;
 		}
 
 		void ResetHistory()
 		{
-			interop.WaitForIdle();
-			Runtime::Instance().ResetFeatures();
 			for (auto& eyeReset : resetPending)
 				eyeReset.fill(true);
 			InvalidateTemporalHistory();
@@ -975,6 +1232,40 @@ namespace NeuralRendering
 		}
 
 		[[nodiscard]] bool IsFailureLatched() const { return failureLatched; }
+		[[nodiscard]] bool IsFailureRecoverable() const { return failureLatched && recoverableFailure; }
+		[[nodiscard]] bool IsRecoveryLimited() const { return recoveryAttempted; }
+
+		[[nodiscard]] bool IsAdaptiveTierReady(std::uint32_t modelResolution) const
+		{
+			if (recoveryAttempted)
+				return false;
+
+			const auto normalizedResolution = NormalizeModelResolution(modelResolution);
+			const auto tierIndex = ResolutionTierIndex(normalizedResolution);
+			for (std::uint32_t eyeIndex = 0; eyeIndex < eyes.size(); ++eyeIndex) {
+				const auto& eye = eyes[eyeIndex];
+				const auto& tier = eye.tiers[tierIndex];
+				if (!eye.sharedResourcesValid || tier.modelResolution != normalizedResolution ||
+					tier.passCount != 1 || tier.reducedResolution != (normalizedResolution != 100) ||
+					!tier.output.resource11 || !Runtime::Instance().HasFeature(FeatureSlot(eyeIndex, tierIndex, 0)))
+					return false;
+			}
+			return true;
+		}
+
+		void RecoverIfReady(ID3D11Device* device)
+		{
+			if (!failureLatched || recoveryAttempted || !recoverableFailure || !device ||
+				std::chrono::steady_clock::now() - failureTime < std::chrono::seconds(2))
+				return;
+			recoveryAttempted = true;
+			if (FAILED(device->GetDeviceRemovedReason()) || !interop.WaitForIdle()) {
+				logger::error("[DLSSNR] Recovery stopped: device or GPU fence is unhealthy");
+				return;
+			}
+			logger::warn("[DLSSNR] Retrying NR once after cooldown; adaptive upshifts held until manual Reset");
+			Reset(false);
+		}
 
 	private:
 		bool IsTemporalReuseConfigured(const Tuning& tuning) const
@@ -983,34 +1274,37 @@ namespace NeuralRendering
 				tuning.temporalReuseCadence <= kTemporalReuseMaxCadence;
 		}
 
+		bool IsTemporalReuseSupported(const Tuning& tuning, const TierResources& tier) const
+		{
+			if (!IsTemporalReuseConfigured(tuning) || tier.passCount != 1)
+				return false;
+			// A reduced tier has no native full-resolution output to snapshot. Its
+			// temporal history is therefore valid only after the matched-residual
+			// resolve has produced a full-eye image in tier.resolved.
+			return !tier.reducedResolution || tuning.modelResolveMode == 1;
+		}
+
 		void SyncTemporalReuseConfig(const Tuning& tuning, std::uint32_t modelResolution, std::uint32_t passCount)
 		{
-			const bool changed = !temporalConfigInitialized ||
-				temporalConfigCadence != tuning.temporalReuseCadence ||
-				temporalConfigDepthThreshold != tuning.temporalReuseDepthThreshold ||
-				temporalConfigColorTolerance != tuning.temporalReuseColorTolerance ||
-				temporalConfigModelResolution != modelResolution ||
-				temporalConfigPassCount != passCount;
-			if (!changed)
+			const TemporalHistoryConfig next{ tuning.adaptiveResolution, modelResolution, tuning.temporalReuseCadence,
+				tuning.temporalReuseDepthThreshold, tuning.temporalReuseColorTolerance, passCount };
+			if (temporalConfigInitialized && temporalConfig == next)
 				return;
-
+			const bool preserveHandoff = temporalConfigInitialized && temporalConfig.PreservesHandoff(next);
 			temporalConfigInitialized = true;
-			temporalConfigCadence = tuning.temporalReuseCadence;
-			temporalConfigDepthThreshold = tuning.temporalReuseDepthThreshold;
-			temporalConfigColorTolerance = tuning.temporalReuseColorTolerance;
-			temporalConfigModelResolution = modelResolution;
-			temporalConfigPassCount = passCount;
-			InvalidateTemporalHistory();
+			temporalConfig = next;
+			InvalidateTemporalHistory(preserveHandoff);
 		}
 
 		bool CanAttemptTemporalReuse(const EyeResources& eye,
 			std::uint32_t colorWidth, std::uint32_t colorHeight,
-			std::uint32_t guideWidth, std::uint32_t guideHeight) const
+			std::uint32_t guideWidth, std::uint32_t guideHeight,
+			std::uint32_t regionX, std::uint32_t regionY) const
 		{
-			const auto& fullTier = eye.tiers[0];
-			return !fullTier.reducedResolution && fullTier.passCount == 1 && eye.temporal.valid &&
+			return eye.temporal.valid &&
 				eye.temporal.width == colorWidth && eye.temporal.height == colorHeight &&
 				eye.temporal.guideWidth == guideWidth && eye.temporal.guideHeight == guideHeight &&
+				eye.temporal.regionX == regionX && eye.temporal.regionY == regionY &&
 				eye.temporal.base.resource && eye.temporal.base.srv && eye.temporal.base.uav &&
 				eye.temporal.residual.resource && eye.temporal.residual.srv && eye.temporal.residual.uav &&
 				eye.temporal.depth.resource && eye.temporal.depth.srv &&
@@ -1028,6 +1322,28 @@ namespace NeuralRendering
 				return false;
 			for (std::uint32_t eyeIndex = 0; eyeIndex < inputs.size(); ++eyeIndex) {
 				if (inputs[eyeIndex].sourceX != eyeIndex * colorWidth || inputs[eyeIndex].sourceY != 0)
+					return false;
+			}
+			return true;
+		}
+
+		bool IsTemporalLayoutStable(const D3D11_TEXTURE2D_DESC& colorDesc,
+			const std::array<StereoEyeInput, 2>& inputs,
+			std::uint32_t colorWidth, std::uint32_t colorHeight) const
+		{
+			if (!colorWidth || !colorHeight || colorDesc.Width == 0 || colorDesc.Height == 0 ||
+				(colorDesc.Width % 2) != 0)
+				return false;
+			const std::uint32_t eyeWidth = colorDesc.Width / 2;
+			if (colorWidth > eyeWidth || colorHeight > colorDesc.Height)
+				return false;
+			for (std::uint32_t eyeIndex = 0; eyeIndex < inputs.size(); ++eyeIndex) {
+				const auto& input = inputs[eyeIndex];
+				const std::uint64_t eyeStart = static_cast<std::uint64_t>(eyeIndex) * eyeWidth;
+				const std::uint64_t eyeEnd = eyeStart + eyeWidth;
+				const std::uint64_t sourceEndX = static_cast<std::uint64_t>(input.sourceX) + colorWidth;
+				const std::uint64_t sourceEndY = static_cast<std::uint64_t>(input.sourceY) + colorHeight;
+				if (input.sourceX < eyeStart || sourceEndX > eyeEnd || sourceEndY > colorDesc.Height)
 					return false;
 			}
 			return true;
@@ -1151,10 +1467,11 @@ namespace NeuralRendering
 		}
 
 		bool DispatchTemporalSnapshot(ID3D11Device* device, ID3D11DeviceContext* context,
-			const EyeResources& eye, std::uint32_t colorWidth, std::uint32_t colorHeight,
+			const EyeResources& eye, ID3D11ShaderResourceView* teacherSRV,
+			std::uint32_t colorWidth, std::uint32_t colorHeight,
 			std::uint32_t guideWidth, std::uint32_t guideHeight)
 		{
-			if (!EnsureTemporalReuseShaders(device) || !context || !eye.color.srv11 || !eye.tiers[0].output.srv11 ||
+			if (!EnsureTemporalReuseShaders(device) || !context || !eye.color.srv11 || !teacherSRV ||
 				!eye.temporal.base.uav || !eye.temporal.residual.uav)
 				return false;
 			CS_GPU_PASS("NeuralRendering::TemporalReuseSnapshot");
@@ -1167,7 +1484,7 @@ namespace NeuralRendering
 			context->UpdateSubresource(temporalReuseCB.Get(), 0, nullptr, &constants, 0, 0);
 			std::array<ID3D11ShaderResourceView*, 8> sources{};
 			sources[0] = eye.color.srv11.Get();
-			sources[1] = eye.tiers[0].output.srv11.Get();
+			sources[1] = teacherSRV;
 			std::array<ID3D11UnorderedAccessView*, 4> targets{};
 			targets[0] = eye.temporal.base.uav.Get();
 			targets[1] = eye.temporal.residual.uav.Get();
@@ -1220,13 +1537,14 @@ namespace NeuralRendering
 		}
 
 		bool DispatchTemporalReprojection(ID3D11Device* device, ID3D11DeviceContext* context,
-			const EyeResources& eye, const TemporalEyeState& temporal,
+			const EyeResources& eye, ID3D11UnorderedAccessView* outputUAV,
+			const TemporalEyeState& temporal,
 			std::uint32_t colorWidth, std::uint32_t colorHeight,
 			std::uint32_t guideWidth, std::uint32_t guideHeight,
 			float depthThreshold, float colorTolerance)
 		{
 			if (!EnsureTemporalReuseShaders(device) || !context || !eye.color.srv11 || !eye.depth.srv11 ||
-				!eye.tiers[0].output.uav11 || !temporal.base.srv || !temporal.depth.srv || !temporal.residual.srv ||
+				!outputUAV || !temporal.base.srv || !temporal.depth.srv || !temporal.residual.srv ||
 				!temporal.accumulatedMotion[temporal.accumulatedMotionIndex].srv)
 				return false;
 			CS_GPU_PASS("NeuralRendering::TemporalReuseReproject");
@@ -1247,7 +1565,7 @@ namespace NeuralRendering
 			sources[5] = temporal.residual.srv.Get();
 			sources[7] = temporal.accumulatedMotion[temporal.accumulatedMotionIndex].srv.Get();
 			std::array<ID3D11UnorderedAccessView*, 4> targets{};
-			targets[3] = eye.tiers[0].output.uav11.Get();
+			targets[3] = outputUAV;
 			ID3D11Buffer* constantBuffer = temporalReuseCB.Get();
 			ID3D11SamplerState* sampler = temporalReuseSampler.Get();
 			context->CSSetShader(temporalReprojectCS.get(), nullptr, 0);
@@ -1261,23 +1579,29 @@ namespace NeuralRendering
 		}
 
 		bool RecordTemporalHistory(ID3D11Device* device, ID3D11DeviceContext* context, EyeResources& eye,
+			ID3D11ShaderResourceView* teacherSRV,
 			std::uint32_t colorWidth, std::uint32_t colorHeight,
-			std::uint32_t guideWidth, std::uint32_t guideHeight)
+			std::uint32_t guideWidth, std::uint32_t guideHeight,
+			std::uint32_t regionX, std::uint32_t regionY)
 		{
 			if (!EnsureTemporalEyeResources(device, eye, colorWidth, colorHeight, guideWidth, guideHeight) ||
-				!DispatchTemporalSnapshot(device, context, eye, colorWidth, colorHeight, guideWidth, guideHeight) ||
+				!DispatchTemporalSnapshot(device, context, eye, teacherSRV,
+					colorWidth, colorHeight, guideWidth, guideHeight) ||
 				!eye.depth.resource11 || !eye.temporal.depth.resource)
 				return false;
 			context->CopyResource(eye.temporal.depth.resource.Get(), eye.depth.resource11.Get());
 			const float clearValue[4]{};
 			context->ClearUnorderedAccessViewFloat(eye.temporal.accumulatedMotion[0].uav.Get(), clearValue);
 			context->ClearUnorderedAccessViewFloat(eye.temporal.accumulatedMotion[1].uav.Get(), clearValue);
+			eye.temporal.regionX = regionX;
+			eye.temporal.regionY = regionY;
 			eye.temporal.accumulatedMotionIndex = 0;
 			eye.temporal.valid = true;
 			return true;
 		}
 
 		bool TryTemporalReuse(ID3D11Device* device, ID3D11DeviceContext* context, EyeResources& eye,
+			ID3D11UnorderedAccessView* outputUAV,
 			std::uint32_t colorWidth, std::uint32_t colorHeight,
 			std::uint32_t guideWidth, std::uint32_t guideHeight,
 			float motionScaleX, float motionScaleY, const Tuning& tuning)
@@ -1294,7 +1618,7 @@ namespace NeuralRendering
 				return false;
 			}
 			eye.temporal.accumulatedMotionIndex = nextIndex;
-			if (!DispatchTemporalReprojection(device, context, eye, eye.temporal,
+			if (!DispatchTemporalReprojection(device, context, eye, outputUAV, eye.temporal,
 				colorWidth, colorHeight, guideWidth, guideHeight,
 				tuning.temporalReuseDepthThreshold, tuning.temporalReuseColorTolerance)) {
 				LogTemporalReuseFailure("residual reprojection");
@@ -1304,15 +1628,13 @@ namespace NeuralRendering
 			return true;
 		}
 
-		void InvalidateTemporalHistory()
+		void InvalidateTemporalHistory(bool preserveHandoff = false)
 		{
 			for (auto& eye : eyes) {
 				eye.temporal.valid = false;
 				eye.temporal.accumulatedMotionIndex = 0;
-				// A resolution handoff uses a separate display-space history. Keep it
-				// only while the adaptive route remains at the same crop/extent; a
-				// normal temporal reset must invalidate it as well.
-				eye.handoff.valid = false;
+				if (!preserveHandoff)
+					eye.handoff.valid = false;
 			}
 			temporalFrameIndex = 0;
 			// Keep this marker separate from the private residual buffers. If a
@@ -1336,12 +1658,14 @@ namespace NeuralRendering
 			logger::warn("[DLSSNR] temporal residual reuse unavailable during {}; falling back to full Feature 18", operation);
 		}
 
-		void LogTemporalReuseActive(std::uint32_t cadence)
+		void LogTemporalReuseActive(std::uint32_t cadence, bool cropLocal)
 		{
-			if (temporalReuseActiveLogged)
+			bool& routeLogged = cropLocal ? temporalReuseCropActiveLogged : temporalReuseActiveLogged;
+			if (routeLogged)
 				return;
-			temporalReuseActiveLogged = true;
-			logger::info("[DLSSNR] experimental temporal residual reuse active cadence=N{}; full-eye exact-MV normal route only", cadence);
+			routeLogged = true;
+			logger::info("[DLSSNR] experimental temporal residual reuse active cadence=N{} route={} exact-MV stable-layout", cadence,
+				cropLocal ? "crop-local" : "full-eye");
 		}
 
 		bool ExecuteCascade(ID3D12GraphicsCommandList* commandList, std::uint32_t eyeIndex, std::uint32_t tierIndex,
@@ -1351,6 +1675,8 @@ namespace NeuralRendering
 			std::uint32_t firstInputWidth, std::uint32_t firstInputHeight,
 			std::uint32_t guideWidth, std::uint32_t guideHeight,
 			std::uint32_t outputWidth, std::uint32_t outputHeight,
+			std::uint32_t creationFirstInputWidth, std::uint32_t creationFirstInputHeight,
+			std::uint32_t creationOutputWidth, std::uint32_t creationOutputHeight,
 			float motionVectorScaleX, float motionVectorScaleY,
 			const Tuning& tuning, std::uint32_t passCount, bool reset)
 		{
@@ -1380,6 +1706,10 @@ namespace NeuralRendering
 				guide.motionHeight = guideHeight;
 				guide.outputWidth = outputWidth;
 				guide.outputHeight = outputHeight;
+				guide.creationInputWidth = passIndex == 0 ? creationFirstInputWidth : creationOutputWidth;
+				guide.creationInputHeight = passIndex == 0 ? creationFirstInputHeight : creationOutputHeight;
+				guide.creationOutputWidth = creationOutputWidth;
+				guide.creationOutputHeight = creationOutputHeight;
 				guide.motionVectorScaleX = motionVectorScaleX;
 				guide.motionVectorScaleY = motionVectorScaleY;
 				// Per-eye resources are isolated before this D3D12 bridge. Their
@@ -1492,8 +1822,8 @@ namespace NeuralRendering
 				.mode = matchedResidual ? 3u : 1u,
 				.width = width,
 				.height = height,
-				.sourceWidth = width,
-				.sourceHeight = height,
+				.sourceWidth = ScaleDimension(width, tier.modelResolution),
+				.sourceHeight = ScaleDimension(height, tier.modelResolution),
 				.transferStrength = resolveSettings.transferStrength,
 				.colourStrength = resolveSettings.colourStrength,
 				.maxRatio = resolveSettings.maxRatio,
@@ -1769,6 +2099,153 @@ namespace NeuralRendering
 			return true;
 		}
 
+		void ResetAdaptivePrewarmState()
+		{
+			adaptivePrewarmTier = UINT32_MAX;
+			adaptivePrewarmResolution = 0;
+			adaptivePrewarmDirection = 0;
+			adaptivePrewarmPassCount = 0;
+			adaptivePrewarmStableFrames = 0;
+			adaptivePrewarmCandidate = 0;
+			adaptivePrewarmEye = 0;
+			adaptivePrewarmColorWidth = 0;
+			adaptivePrewarmColorHeight = 0;
+			adaptivePrewarmGuideWidth = 0;
+			adaptivePrewarmGuideHeight = 0;
+			adaptivePrewarmResourcesReady.fill(false);
+			adaptivePrewarmRejected.fill(false);
+		}
+
+		AdaptivePrewarmWork PrepareAdjacentPrewarmResources(ID3D11Device* device,
+			std::uint32_t tierIndex, std::uint32_t colorWidth, std::uint32_t colorHeight,
+			std::uint32_t guideWidth, std::uint32_t guideHeight, std::uint32_t passCount,
+			std::uint32_t modelResolution, std::uint32_t stableColorWidth, std::uint32_t stableColorHeight,
+			const Tuning& tuning)
+		{
+			// Prewarming is deliberately limited to the single-pass adaptive path.
+			// Multi-pass and recovery paths retain their smaller resource budget and
+			// continue to create only the selected tier on demand.
+			if (!device || !tuning.adaptiveResolution || passCount != 1 || recoveryAttempted ||
+				tuning.adaptiveHandoffAlpha < 0.999f || tuning.adaptivePrewarmDirection == 0 ||
+				tierIndex >= kResolutionTierCount)
+			{
+				ResetAdaptivePrewarmState();
+				return {};
+			}
+
+			if (adaptivePrewarmTier != tierIndex || adaptivePrewarmResolution != modelResolution ||
+				adaptivePrewarmDirection != tuning.adaptivePrewarmDirection ||
+				adaptivePrewarmPassCount != passCount || adaptivePrewarmColorWidth != stableColorWidth ||
+				adaptivePrewarmColorHeight != stableColorHeight || adaptivePrewarmGuideWidth != guideWidth ||
+				adaptivePrewarmGuideHeight != guideHeight)
+			{
+				ResetAdaptivePrewarmState();
+				adaptivePrewarmTier = tierIndex;
+				adaptivePrewarmResolution = modelResolution;
+				adaptivePrewarmDirection = tuning.adaptivePrewarmDirection;
+				adaptivePrewarmPassCount = passCount;
+				adaptivePrewarmColorWidth = stableColorWidth;
+				adaptivePrewarmColorHeight = stableColorHeight;
+				adaptivePrewarmGuideWidth = guideWidth;
+				adaptivePrewarmGuideHeight = guideHeight;
+			}
+
+			++adaptivePrewarmStableFrames;
+			if (adaptivePrewarmStableFrames < 8)
+				return {};
+
+			const std::array<std::uint32_t, 2> candidates{
+				tuning.adaptivePrewarmDirection < 0 && tierIndex + 1 < kResolutionTierCount ? tierIndex + 1 : UINT32_MAX,
+				tuning.adaptivePrewarmDirection > 0 && tierIndex > 0 ? tierIndex - 1 : UINT32_MAX,
+			};
+			while (adaptivePrewarmCandidate < candidates.size()) {
+				const auto candidate = candidates[adaptivePrewarmCandidate];
+				if (candidate == UINT32_MAX ||
+					kResolutionTiers[candidate] < kAdaptiveMinimumResolution ||
+					(kResolutionTiers[candidate] > tuning.adaptiveMemoryCeiling && candidate < tierIndex) ||
+					adaptivePrewarmRejected[adaptivePrewarmCandidate]) {
+					++adaptivePrewarmCandidate;
+					adaptivePrewarmEye = 0;
+					continue;
+				}
+				if (!adaptivePrewarmResourcesReady[adaptivePrewarmCandidate]) {
+					const auto candidateResolution = kResolutionTiers[candidate];
+					const auto candidateModelWidth = ScaleDimension(colorWidth, candidateResolution);
+					const auto candidateModelHeight = ScaleDimension(colorHeight, candidateResolution);
+					bool resourcesReady = true;
+					for (std::uint32_t eyeIndex = 0; eyeIndex < eyes.size(); ++eyeIndex) {
+						if (!EnsureTierResources(device, eyeIndex, eyes[eyeIndex], candidate,
+							candidateModelWidth, candidateModelHeight, passCount, candidateResolution,
+							stableColorWidth, stableColorHeight)) {
+							resourcesReady = false;
+							break;
+						}
+					}
+					if (!resourcesReady) {
+						logger::warn("[DLSSNR] adaptive prewarm resource allocation failed tier={} resolution={}%; continuing with on-demand creation",
+							candidate, candidateResolution);
+						adaptivePrewarmRejected[adaptivePrewarmCandidate] = true;
+						++adaptivePrewarmCandidate;
+						adaptivePrewarmEye = 0;
+						continue;
+					}
+					adaptivePrewarmResourcesReady[adaptivePrewarmCandidate] = true;
+				}
+				if (adaptivePrewarmEye >= eyes.size()) {
+					++adaptivePrewarmCandidate;
+					adaptivePrewarmEye = 0;
+					adaptivePrewarmResourcesReady[adaptivePrewarmCandidate - 1] = false;
+					continue;
+				}
+				return { true, adaptivePrewarmCandidate, candidate, adaptivePrewarmEye };
+			}
+			return {};
+		}
+
+		void ExecuteAdaptivePrewarm(ID3D12GraphicsCommandList* commandList, const AdaptivePrewarmWork& work,
+			std::uint32_t stableGuideWidth, std::uint32_t stableGuideHeight,
+			std::uint32_t stableColorWidth, std::uint32_t stableColorHeight)
+		{
+			if (!work.valid || !commandList || work.tierIndex >= kResolutionTierCount || work.eyeIndex >= eyes.size())
+				return;
+			const auto resolution = kResolutionTiers[work.tierIndex];
+			const auto outputWidth = ScaleDimension(stableColorWidth, resolution);
+			const auto outputHeight = ScaleDimension(stableColorHeight, resolution);
+			const auto inputWidth = resolution == 100 ? stableColorWidth : outputWidth;
+			const auto inputHeight = resolution == 100 ? stableColorHeight : outputHeight;
+			Feature18GuideContract guide{};
+			guide.colorWidth = inputWidth;
+			guide.colorHeight = inputHeight;
+			guide.depthWidth = stableGuideWidth;
+			guide.depthHeight = stableGuideHeight;
+			guide.motionWidth = stableGuideWidth;
+			guide.motionHeight = stableGuideHeight;
+			guide.outputWidth = outputWidth;
+			guide.outputHeight = outputHeight;
+			guide.creationInputWidth = inputWidth;
+			guide.creationInputHeight = inputHeight;
+			guide.creationOutputWidth = outputWidth;
+			guide.creationOutputHeight = outputHeight;
+			guide.motionVectorsLowResolution = stableGuideWidth <= inputWidth && stableGuideHeight <= inputHeight;
+			const auto slot = FeatureSlot(work.eyeIndex, work.tierIndex, 0);
+			bool succeeded = Runtime::Instance().HasFeature(slot);
+			if (!succeeded)
+				succeeded = Runtime::Instance().PrewarmFeature(commandList, slot, guide);
+			if (!succeeded) {
+				logger::warn("[DLSSNR] adaptive prewarm Feature 18 failed eye={} tier={} resolution={}%; continuing with on-demand creation result=0x{:08X}",
+					work.eyeIndex, work.tierIndex, resolution, Runtime::Instance().NgxResult());
+				adaptivePrewarmRejected[work.candidateIndex] = true;
+				adaptivePrewarmEye = static_cast<std::uint32_t>(eyes.size());
+			} else {
+				++adaptivePrewarmEye;
+			}
+			if (adaptivePrewarmEye >= eyes.size() || adaptivePrewarmRejected[work.candidateIndex]) {
+				++adaptivePrewarmCandidate;
+				adaptivePrewarmEye = 0;
+				adaptivePrewarmResourcesReady[work.candidateIndex] = false;
+			}
+		}
+
 		bool EnsureTierResources(ID3D11Device* device, std::uint32_t eyeIndex, EyeResources& eye,
 			std::uint32_t tierIndex, std::uint32_t modelWidth, std::uint32_t modelHeight,
 			std::uint32_t passCount, std::uint32_t modelResolution,
@@ -1779,7 +2256,10 @@ namespace NeuralRendering
 				resourceColorWidth == 0 || resourceColorHeight == 0 || !eye.sharedResourcesValid)
 				return false;
 
-			const bool reducedResolution = modelWidth != eye.colorWidth || modelHeight != eye.colorHeight;
+			// The valid crop can be smaller than the stable backing resource even
+			// at the native NR tier. Tier identity, not the transient crop extent,
+			// decides whether a model-input resolve is required.
+			const bool reducedResolution = modelResolution != 100;
 			const bool multiPass = passCount > 1;
 			const UINT sharedFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
 			const auto resourceModelWidth = ScaleDimension(resourceColorWidth, modelResolution);
@@ -1846,7 +2326,7 @@ namespace NeuralRendering
 			std::uint32_t colorWidth, std::uint32_t colorHeight,
 			std::uint32_t modelWidth, std::uint32_t modelHeight, std::uint32_t passCount,
 			std::uint32_t modelResolution, bool prewarmAdaptive,
-			const StereoResourceEnvelope& resourceEnvelope)
+			const StereoResourceEnvelope& resourceEnvelope, std::uint32_t memoryCeiling)
 		{
 			if (!device || eyeIndex >= eyes.size() || guideWidth == 0 || guideHeight == 0 ||
 				colorWidth == 0 || colorHeight == 0 || modelWidth == 0 || modelHeight == 0 ||
@@ -1888,6 +2368,7 @@ namespace NeuralRendering
 						for (std::uint32_t passIndex = 0; passIndex < kCascadePassCount; ++passIndex)
 							Runtime::Instance().ResetFeature(FeatureSlot(eyeIndex, oldTier, passIndex));
 				}
+				ResetAdaptivePrewarmState();
 				eye = {};
 				const std::string suffix = eyeIndex == 0 ? "Left" : "Right";
 				if (!interop.CreateSharedTexture(colorDesc, eye.color, ("NeuralRendering::Color" + suffix).c_str()) ||
@@ -1899,7 +2380,6 @@ namespace NeuralRendering
 				eye.sharedGuideWidth = sharedGuideWidth;
 				eye.sharedGuideHeight = sharedGuideHeight;
 				eye.sharedResourcesValid = true;
-				eye.adaptiveTiersPrewarmed = false;
 				resetPending[eyeIndex].fill(true);
 			}
 
@@ -1912,34 +2392,50 @@ namespace NeuralRendering
 			eye.guideHeight = guideHeight;
 
 			const auto tierIndex = ResolutionTierIndex(modelResolution);
+			const bool retainAdjacentTiers = prewarmAdaptive && !recoveryAttempted && passCount == 1;
+			const bool tierChanged = eye.residency.Select(tierIndex, retainAdjacentTiers);
+			bool waited = false;
+			for (std::uint32_t resident = 0; resident < kResolutionTierCount; ++resident) {
+				const bool adjacent = resident + 1 == tierIndex ||
+					(tierIndex + 1 < kResolutionTierCount && resident == tierIndex + 1);
+				// Re-entry above the learned ceiling still needs the next lower tier to descend.
+				const bool aboveMemoryCeiling = prewarmAdaptive && kResolutionTiers[resident] > memoryCeiling &&
+					resident != tierIndex + 1;
+				if (resident == tierIndex || (!aboveMemoryCeiling &&
+					(eye.residency.Contains(resident) || (retainAdjacentTiers && adjacent))))
+					continue;
+				if (!eye.tiers[resident].output.resource11)
+					continue;
+				if (!waited && !interop.WaitForIdle())
+					return false;
+				waited = true;
+				for (std::uint32_t pass = 0; pass < kCascadePassCount; ++pass)
+					Runtime::Instance().ResetFeature(FeatureSlot(eyeIndex, resident, pass));
+				eye.tiers[resident] = {};
+				resetPending[eyeIndex][resident] = true;
+			}
 			if (!EnsureTierResources(device, eyeIndex, eye, tierIndex, modelWidth, modelHeight, passCount, modelResolution,
 				sharedColorWidth, sharedColorHeight))
 				return false;
-			if (prewarmAdaptive && passCount == 1) {
-				if (useEnvelope) {
-					if (!eye.adaptiveTiersPrewarmed) {
-						for (std::uint32_t prewarmIndex = 0; prewarmIndex < kAdaptiveTierCount; ++prewarmIndex) {
-							const auto resolution = kResolutionTiers[prewarmIndex];
-							if (!EnsureTierResources(device, eyeIndex, eye, prewarmIndex,
-								ScaleDimension(colorWidth, resolution), ScaleDimension(colorHeight, resolution),
-								1, resolution, sharedColorWidth, sharedColorHeight))
-								return false;
-						}
-						eye.adaptiveTiersPrewarmed = true;
-					}
-				} else {
-					// Exact-size fallback bounds residency to the active tier and
-					// its likely one-step neighbors.
-					const auto first = tierIndex == 0 ? 0u : tierIndex - 1;
-					const auto last = std::min<std::uint32_t>(kAdaptiveTierCount - 1, tierIndex + 1);
-					for (std::uint32_t residentIndex = first; residentIndex <= last; ++residentIndex) {
-						const auto resolution = kResolutionTiers[residentIndex];
-						if (!EnsureTierResources(device, eyeIndex, eye, residentIndex,
-							ScaleDimension(colorWidth, resolution), ScaleDimension(colorHeight, resolution),
-							1, resolution, sharedColorWidth, sharedColorHeight))
-							return false;
-					}
-				}
+			if (tierChanged)
+				resetPending[eyeIndex][tierIndex] = true;
+			const std::uint32_t resourceModelWidth = useEnvelope ?
+				ScaleDimension(sharedColorWidth, modelResolution) : modelWidth;
+			const std::uint32_t resourceModelHeight = useEnvelope ?
+				ScaleDimension(sharedColorHeight, modelResolution) : modelHeight;
+			const std::uint32_t featureInputWidth = modelResolution == 100 ? sharedColorWidth : resourceModelWidth;
+			const std::uint32_t featureInputHeight = modelResolution == 100 ? sharedColorHeight : resourceModelHeight;
+			const bool lowResolutionMotion = sharedGuideWidth <= featureInputWidth && sharedGuideHeight <= featureInputHeight;
+			for (std::uint32_t pass = 0; pass < passCount; ++pass) {
+				const auto slot = FeatureSlot(eyeIndex, tierIndex, pass);
+				if (!Runtime::Instance().NeedsRecreation(slot, featureInputWidth, featureInputHeight,
+					resourceModelWidth, resourceModelHeight, lowResolutionMotion))
+					continue;
+				if (!waited && !interop.WaitForIdle())
+					return false;
+				waited = true;
+				Runtime::Instance().ResetFeature(slot);
+				resetPending[eyeIndex][tierIndex] = true;
 			}
 			return true;
 		}
@@ -1947,6 +2443,8 @@ namespace NeuralRendering
 		bool LatchFailure(const char* operation, HRESULT error)
 		{
 			failureLatched = true;
+			failureTime = std::chrono::steady_clock::now();
+			recoverableFailure = error == E_OUTOFMEMORY || static_cast<std::uint32_t>(error) == 0xBAD00002u;
 			logger::error("[DLSSNR] {} failed hr/ngx=0x{:08X} status={} detail={}",
 				operation, static_cast<std::uint32_t>(error), ToString(Runtime::Instance().Status()), Runtime::Instance().Detail());
 			return false;
@@ -1968,16 +2466,29 @@ namespace NeuralRendering
 		std::array<EyeResources, 2> eyes;
 		std::array<std::array<bool, kResolutionTierCount>, 2> resetPending{};
 		bool temporalConfigInitialized = false;
-		std::uint32_t temporalConfigCadence = 0;
-		float temporalConfigDepthThreshold = 0.05f;
-		float temporalConfigColorTolerance = 0.08f;
-		std::uint32_t temporalConfigModelResolution = 100;
-		std::uint32_t temporalConfigPassCount = 1;
+		TemporalHistoryConfig temporalConfig;
 		std::uint64_t temporalFrameIndex = 0;
 		bool temporalSkippedSinceFull = false;
 		bool temporalReuseActiveLogged = false;
+		bool temporalReuseCropActiveLogged = false;
 		bool temporalReuseWarningLogged = false;
+		std::uint32_t adaptivePrewarmTier = UINT32_MAX;
+		std::uint32_t adaptivePrewarmResolution = 0;
+		std::int32_t adaptivePrewarmDirection = 0;
+		std::uint32_t adaptivePrewarmPassCount = 0;
+		std::uint32_t adaptivePrewarmStableFrames = 0;
+		std::uint32_t adaptivePrewarmCandidate = 0;
+		std::uint32_t adaptivePrewarmEye = 0;
+		std::uint32_t adaptivePrewarmColorWidth = 0;
+		std::uint32_t adaptivePrewarmColorHeight = 0;
+		std::uint32_t adaptivePrewarmGuideWidth = 0;
+		std::uint32_t adaptivePrewarmGuideHeight = 0;
+		std::array<bool, 2> adaptivePrewarmResourcesReady{};
+		std::array<bool, 2> adaptivePrewarmRejected{};
 		bool failureLatched = false;
+		bool recoveryAttempted = false;
+		bool recoverableFailure = false;
+		std::chrono::steady_clock::time_point failureTime{};
 	};
 
 	Renderer::Renderer() : state_(new State()) {}
@@ -2006,10 +2517,13 @@ namespace NeuralRendering
 				destination, destinationUAV, blendSubrect, resourceEnvelope);
 	}
 
-	void Renderer::Reset() { state_->Reset(); }
+	bool Renderer::Reset() { return state_->Reset(); }
 	void Renderer::ClearShaderCache() { state_->ClearShaderCache(); }
 	void Renderer::ResetHistory() { state_->ResetHistory(); }
 	bool Renderer::IsFailureLatched() const { return state_->IsFailureLatched(); }
+	bool Renderer::IsFailureRecoverable() const { return state_->IsFailureRecoverable(); }
+	bool Renderer::IsRecoveryLimited() const { return state_->IsRecoveryLimited(); }
+	bool Renderer::IsAdaptiveTierReady(std::uint32_t modelResolution) const { return state_->IsAdaptiveTierReady(modelResolution); }
 	std::uint32_t Renderer::NgxResult() const { return Runtime::Instance().NgxResult(); }
 	std::uint64_t Renderer::SuccessfulFrames() const { return Runtime::Instance().SuccessfulFrames(); }
 	const char* Renderer::StatusText() const { return ToString(Runtime::Instance().Status()); }

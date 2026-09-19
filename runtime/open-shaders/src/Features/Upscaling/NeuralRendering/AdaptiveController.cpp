@@ -76,6 +76,7 @@ namespace NeuralRendering
 
 	void AdaptiveController::Reset()
 	{
+		memoryCeiling_ = 100;
 		config_ = {};
 		hasTimestamp_ = false;
 		lastFrame_ = UINT32_MAX;
@@ -142,6 +143,10 @@ namespace NeuralRendering
 		enabled_ = true;
 		applicationDeadlineMs_ = 1000.0f / std::max(ResolveTargetFps(config), 1.0f);
 		minimumBucket_ = FindBucketIndex(config.minimumResolution);
+		if (config.memoryPressure)
+			memoryCeiling_ = std::min(memoryCeiling_, ActiveResolution());
+		if (ActiveResolution() > memoryCeiling_)
+			frameTimeMs = std::max(frameTimeMs, applicationDeadlineMs_ * 1.3f);
 		if (activeBucket_ > minimumBucket_)
 			activeBucket_ = minimumBucket_;
 		if (targetBucket_ > minimumBucket_)
@@ -186,7 +191,9 @@ namespace NeuralRendering
 		const bool emergencyOverrun = frameTimeMs > applicationDeadlineMs_ * 1.25f;
 		const bool overrun = emergencyOverrun || frameTimeMs > guardedDeadline ||
 			(smoothedFrameTimeMs_ > guardedDeadline && frameTimeMs > applicationDeadlineMs_ * 0.95f);
-		const bool headroom = frameTimeMs < applicationDeadlineMs_ - config.guardTimeMs * 2.0f;
+		const float restorationBudget = std::min(applicationDeadlineMs_ * 0.85f,
+			applicationDeadlineMs_ - config.guardTimeMs * 2.0f);
+		const bool headroom = frameTimeMs < restorationBudget && smoothedFrameTimeMs_ < restorationBudget;
 		lastSampleOverBudget_ = overrun;
 		lastSampleHadHeadroom_ = headroom;
 		if (overrun) {
@@ -205,13 +212,17 @@ namespace NeuralRendering
 		if (IsTransitioning())
 			return;
 		if (dwellFrames_ >= config.minimumDwellFrames &&
-			config.allowDownshift && (overrunFrames_ >= 2 || emergencyOverrun) && activeBucket_ < minimumBucket_) {
+			config.allowDownshift && (overrunFrames_ >= config.downshiftFrames || emergencyOverrun) && activeBucket_ < minimumBucket_) {
 			decisionReason_ = "workload-pressure";
 			StartTransition(activeBucket_ + 1, config.downshiftFrames);
+			if (config.memoryPressure)
+				memoryCeiling_ = std::min(memoryCeiling_, ActiveResolution());
 			return;
 		}
 
-		if (config.allowUpshift && dwellFrames_ >= config.minimumDwellFrames && headroomFrames_ >= config.upshiftFrames && activeBucket_ > 0) {
+		if (config.allowUpshift && !config.memoryPressure && dwellFrames_ >= config.minimumDwellFrames &&
+			headroomFrames_ >= config.upshiftFrames && activeBucket_ > 0 &&
+			kResolutionBuckets[activeBucket_ - 1] <= memoryCeiling_) {
 			decisionReason_ = "workload-headroom";
 			StartTransition(activeBucket_ - 1, config.upshiftFrames);
 		}

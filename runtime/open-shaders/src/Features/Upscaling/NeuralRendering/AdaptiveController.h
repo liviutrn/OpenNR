@@ -20,6 +20,7 @@ namespace NeuralRendering
 			bool enabled = false;
 			bool allowDownshift = true;
 			bool allowUpshift = true;
+			bool memoryPressure = false;
 			std::uint32_t refreshHz = 80;
 			// Zero derives the budget from refreshHz; otherwise use 15–60 FPS.
 			std::uint32_t targetFps = 0;
@@ -48,6 +49,8 @@ namespace NeuralRendering
 		[[nodiscard]] bool LastSampleHadHeadroom() const { return lastSampleHadHeadroom_; }
 		[[nodiscard]] bool IsAtMinimum() const { return activeBucket_ >= minimumBucket_; }
 		[[nodiscard]] bool IsAtMaximum() const { return activeBucket_ == 0; }
+		/** @brief Session memory ceiling; only an explicit Reset clears learned pressure. */
+		[[nodiscard]] std::uint32_t MemoryCeiling() const { return memoryCeiling_; }
 
 		/** @brief Returns the supported controller refresh/budget targets. */
 		static constexpr const std::array<std::uint32_t, 4>& RefreshTargets()
@@ -75,6 +78,7 @@ namespace NeuralRendering
 		void StartTransition(std::uint32_t targetBucket, std::uint32_t frameCount);
 
 		Config config_{};
+		std::uint32_t memoryCeiling_ = 100;
 		bool enabled_ = false;
 		bool hasTimestamp_ = false;
 		std::uint32_t lastFrame_ = UINT32_MAX;

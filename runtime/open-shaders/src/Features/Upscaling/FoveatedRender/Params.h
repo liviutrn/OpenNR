@@ -35,6 +35,7 @@ namespace FoveatedRenderImpl
 		Util::Subrect::UVRegion rightUV;
 		bool isFullEye;
 		bool eyeTrackedGazeActive = false;
+		bool eyeTrackedGazeConfigured = false;
 		bool eyeTrackedGazeReset = false;
 
 		// Jitter (pixel-space, render resolution)

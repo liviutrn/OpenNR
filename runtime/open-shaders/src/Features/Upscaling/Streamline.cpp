@@ -13,6 +13,7 @@
 #include "../Upscaling.h"
 #include "DX12SwapChain.h"
 #include "FoveatedRender/Bridge.h"
+#include "FoveatedRender/Ops.h"
 #include "PerfMode.h"
 
 void LoggingCallback(sl::LogType type, const char* msg)
@@ -432,6 +433,12 @@ bool Streamline::CheckFrameConstants(sl::ViewportHandle p_viewport, uint32_t eye
 
 	if (!EnsureFrameToken())
 		return false;
+	const auto frame = globals::state->frameCount;
+	const auto index = globals::game::isVR ? eyeIndex : 0u;
+	if (index >= constantsFrames.size())
+		return false;
+	if (constantsFrames[index] == frame)
+		return constantsFoveated[index] == FoveatedRenderImpl::Bridge::foveatedEvaluating;
 
 	// In VR, we need to set constants for each viewport/eye separately
 	// In non-VR, this is called once per frame
@@ -484,7 +491,8 @@ bool Streamline::CheckFrameConstants(sl::ViewportHandle p_viewport, uint32_t eye
 	// Static menu backdrops render no reliable motion vectors; camera-derived MVs
 	// restore valid reprojection there. Reset only when that fill could not run —
 	// accumulating against zero MVs ghosts.
-	slConstants.reset = (state->IsStaticMenuBackdropOpen(globals::game::ui) && !upscaling.menuCameraMVsValid) ?
+	slConstants.reset = ((state->IsStaticMenuBackdropOpen(globals::game::ui) && !upscaling.menuCameraMVsValid) ||
+		(FoveatedRenderImpl::Bridge::foveatedEvaluating && FoveatedRenderImpl::Bridge::gazeHistoryReset)) ?
 	                        sl::Boolean::eTrue :
 	                        sl::Boolean::eFalse;
 
@@ -503,9 +511,16 @@ bool Streamline::CheckFrameConstants(sl::ViewportHandle p_viewport, uint32_t eye
 	slConstants.motionVectorsJittered = sl::Boolean::eFalse;
 
 	if (SL_FAILED(res, slSetConstants(slConstants, *frameToken, p_viewport))) {
-		logger::error("[Streamline {}] Could not set constants for eye {}", instanceTag, eyeIndex);
+		if (lastDLSSErrorLogFrame == UINT32_MAX || frame - lastDLSSErrorLogFrame >= 300) {
+			logger::error("[Streamline {}] Constants failed eye={} frame={} result={} ({})", instanceTag, eyeIndex, frame,
+				static_cast<int>(res), magic_enum::enum_name(res));
+			lastDLSSErrorLogFrame = frame;
+		}
+		lastDLSSFailureFrame = frame;
 		return false;
 	}
+	constantsFrames[index] = frame;
+	constantsFoveated[index] = FoveatedRenderImpl::Bridge::foveatedEvaluating;
 
 	return true;
 }
@@ -707,17 +722,31 @@ bool Streamline::EvaluateDLSS(sl::ViewportHandle vp, uint32_t eyeIndex,
 	if (state->frameAnnotations)
 		state->EndPerfEvent();
 
+	const auto frame = globals::state->frameCount;
+	if (evalResult == sl::Result::eWarnOutOfVRAM) {
+		if (!IsVRAMPressure())
+			logger::warn("[Streamline {}] DLSS output valid but VRAM budget exceeded frame={}; reducing adaptive workload", instanceTag, frame);
+		lastVRAMPressureFrame = frame;
+		return true;
+	}
 	if (evalResult != sl::Result::eOk) {
-		static bool evalErrorLogged[2] = { false, false };
-		uint32_t logIdx = globals::game::isVR ? eyeIndex : 0;
-		if (!evalErrorLogged[logIdx]) {
-			evalErrorLogged[logIdx] = true;
-			logger::error("[Streamline {}] slEvaluateFeature failed{} result={}", instanceTag, globals::game::isVR ? std::format(" for eye {}", eyeIndex) : "", (int)evalResult);
+		lastDLSSFailureFrame = frame;
+		if (lastDLSSErrorLogFrame == UINT32_MAX || frame - lastDLSSErrorLogFrame >= 300) {
+			lastDLSSErrorLogFrame = frame;
+			logger::error("[Streamline {}] DLSS failed eye={} frame={} result={} ({})", instanceTag, eyeIndex, frame,
+				static_cast<int>(evalResult), magic_enum::enum_name(evalResult));
 		}
 		return false;
 	}
 
 	return true;
+}
+
+bool Streamline::IsVRAMPressure() const
+{
+	return globals::state && lastVRAMPressureFrame != UINT32_MAX &&
+		globals::state->frameCount >= lastVRAMPressureFrame &&
+		globals::state->frameCount - lastVRAMPressureFrame < 120;
 }
 
 void Streamline::Upscale(ID3D11Resource* a_upscalingTexture, ID3D11Resource* a_reactiveMask, ID3D11Resource* a_transparencyCompositionMask, ID3D11Resource* a_motionVectors)
@@ -757,8 +786,8 @@ void Streamline::Upscale(ID3D11Resource* a_upscalingTexture, ID3D11Resource* a_r
 	//
 	// Both eyes copy their color slice into per-eye intermediates so ClearHMDMask can zero
 	// outside-mask regions before DLSS sees them (prevents temporal bleed into visible pixels).
-	// Eye 0 outputs directly to colorOut (zero-offset) — no intermediate output buffer needed.
-	// Eye 1 outputs to vrIntermediateColorOut[1] then copies back to kMAIN at eyeWidthOut.
+	// Both outputs stay isolated until both evaluations succeed, so a failed
+	// eye cannot publish stale output or overwrite the other eye's fallback input.
 	//
 	// Eye 1 is pre-copied before eye 0 runs: at non-DLAA scales eye 0's upscaled output
 	// extends past eyeWidthIn into eye 1's input region of kMAIN.
@@ -776,12 +805,14 @@ void Streamline::Upscale(ID3D11Resource* a_upscalingTexture, ID3D11Resource* a_r
 		// Both flags track the same creation pool (EnsureVRIntermediateTextures creates all
 		// intermediates atomically), so in practice eye0Ready == eye1Ready. The separate checks
 		// are kept for null-safety and to document which resources each eye path actually uses.
-		bool eye0Ready = upscaling.vrIntermediateColorIn[0] &&
+		bool eye0Ready = upscaling.vrIntermediateColorIn[0] && upscaling.vrIntermediateColorOut[0] &&
 		                 upscaling.vrIntermediateMotionVectors[0] && upscaling.vrIntermediateReactiveMask[0] && upscaling.vrIntermediateTransparencyMask[0];
 		bool eye1Ready = upscaling.vrIntermediateColorIn[1] && upscaling.vrIntermediateColorOut[1] &&
 		                 upscaling.vrIntermediateDepth && upscaling.vrIntermediateMotionVectors[1] &&
 		                 upscaling.vrIntermediateReactiveMask[1] && upscaling.vrIntermediateTransparencyMask[1];
 
+		bool eye0Succeeded = false;
+		bool eye1Succeeded = false;
 		// Pre-copy eye 1 before eye 0 runs (overlap hazard), then clear HMD mask.
 		if (eye1Ready) {
 			D3D11_BOX rightIn = { eyeWidthIn, 0, 0, eyeWidthIn * 2, eyeHeightIn, 1 };
@@ -791,15 +822,15 @@ void Streamline::Upscale(ID3D11Resource* a_upscalingTexture, ID3D11Resource* a_r
 				eyeWidthIn, eyeHeightIn, eyeWidthIn, 0);
 		}
 
-		// Eye 0: copy left-eye slice, clear HMD mask, output directly to colorOut at offset 0.
+		// Keep kMAIN intact until both eye outputs are ready.
 		if (eye0Ready) {
 			D3D11_BOX leftIn = { 0, 0, 0, eyeWidthIn, eyeHeightIn, 1 };
 			context->CopySubresourceRegion(upscaling.vrIntermediateColorIn[0]->resource.get(), 0, 0, 0, 0, a_upscalingTexture, 0, &leftIn);
 			upscaling.ClearHMDMask(upscaling.vrIntermediateColorIn[0]->uav.get(), depthTexture.depthSRV,
 				eyeWidthIn, eyeHeightIn, 0, 0);
 
-			EvaluateDLSS(viewport, 0,
-				upscaling.vrIntermediateColorIn[0]->resource.get(), colorOut,
+			eye0Succeeded = EvaluateDLSS(viewport, 0,
+				upscaling.vrIntermediateColorIn[0]->resource.get(), upscaling.vrIntermediateColorOut[0]->resource.get(),
 				depthTexture.texture,
 				upscaling.vrIntermediateMotionVectors[0]->resource.get(),
 				upscaling.vrIntermediateReactiveMask[0]->resource.get(),
@@ -807,9 +838,8 @@ void Streamline::Upscale(ID3D11Resource* a_upscalingTexture, ID3D11Resource* a_r
 				perEyeIn, perEyeOut, eyeWidthOut);
 		}
 
-		// Eye 1: evaluate into intermediate, then copy upscaled result to kMAIN right-eye position.
 		if (eye1Ready) {
-			EvaluateDLSS(viewportRight, 1,
+			eye1Succeeded = EvaluateDLSS(viewportRight, 1,
 				upscaling.vrIntermediateColorIn[1]->resource.get(),
 				upscaling.vrIntermediateColorOut[1]->resource.get(),
 				upscaling.vrIntermediateDepth->resource.get(),
@@ -817,9 +847,20 @@ void Streamline::Upscale(ID3D11Resource* a_upscalingTexture, ID3D11Resource* a_r
 				upscaling.vrIntermediateReactiveMask[1]->resource.get(),
 				upscaling.vrIntermediateTransparencyMask[1]->resource.get(),
 				perEyeIn, perEyeOut, eyeWidthOut);
-
-			D3D11_BOX rightOut = { 0, 0, 0, eyeWidthOut, eyeHeightOut, 1 };
-			context->CopySubresourceRegion(colorOut, 0, eyeWidthOut, 0, 0, upscaling.vrIntermediateColorOut[1]->resource.get(), 0, &rightOut);
+		}
+		if (eye0Succeeded && eye1Succeeded) {
+			D3D11_BOX eyeOut = { 0, 0, 0, eyeWidthOut, eyeHeightOut, 1 };
+			for (uint32_t eye = 0; eye < 2; ++eye)
+				context->CopySubresourceRegion(colorOut, 0, eye * eyeWidthOut, 0, 0,
+					upscaling.vrIntermediateColorOut[eye]->resource.get(), 0, &eyeOut);
+		} else {
+			winrt::com_ptr<ID3D11UnorderedAccessView> fallbackUAV;
+			if (SUCCEEDED(globals::d3d::device->CreateUnorderedAccessView(colorOut, nullptr, fallbackUAV.put()))) {
+				Util::SetResourceName(fallbackUAV.get(), "Streamline::SpatialFallback UAV");
+				FoveatedRenderImpl::Ops::SnapshotSBS(a_upscalingTexture, static_cast<uint32_t>(renderSize.x), eyeHeightIn);
+				FoveatedRenderImpl::Ops::StretchDRSBothEyes(fallbackUAV.get(), eyeWidthOut, eyeHeightOut,
+					eyeWidthIn, eyeHeightIn, static_cast<uint32_t>(renderSize.x), eyeHeightIn);
+			}
 		}
 	} else {
 		// Non-VR: Simple full-texture upscale.

@@ -32,7 +32,7 @@ namespace
 	}
 }
 
-TEST_CASE("crop boundary fade renders the union without old display history", "[adaptive][crop]")
+TEST_CASE("crop boundary fade keeps the previous geometry without old display history", "[adaptive][crop]")
 {
 	Controller controller;
 	auto config = FastConfig();
@@ -54,13 +54,47 @@ TEST_CASE("crop boundary fade renders the union without old display history", "[
 	REQUIRE(controller.ActiveCoverage() == 80);
 }
 
+TEST_CASE("adaptive crop holds the previous geometry for both handoff directions", "[adaptive][crop]")
+{
+	auto config = FastConfig();
+	config.transitionFrames = 8;
+	Controller controller;
+	Tick(controller, 1, config);
+
+	// Force one downshift from 85% to 80%, then let that transition finish.
+	for (std::uint32_t frame = 2; frame <= 8; ++frame)
+		Tick(controller, frame, config, true);
+	REQUIRE(controller.ActiveCoverage() == 80);
+	REQUIRE(controller.IsTransitioning());
+	REQUIRE(controller.RenderCoverage() == 85);
+
+	config.hold = true;
+	for (std::uint32_t frame = 9; frame <= 16; ++frame)
+		Tick(controller, frame, config, true);
+	REQUIRE_FALSE(controller.IsTransitioning());
+	REQUIRE(controller.ActiveCoverage() == 80);
+	REQUIRE(controller.RenderCoverage() == 80);
+
+	// Restore one tier. The active tier changes immediately for controller
+	// decisions, but the rendered geometry must remain at 80% until the
+	// handoff completes, just as it did for the downshift.
+	config.hold = false;
+	for (std::uint32_t frame = 17; frame <= 24; ++frame)
+		Tick(controller, frame, config, false, true);
+	REQUIRE(controller.ActiveCoverage() == 85);
+	REQUIRE(controller.IsTransitioning());
+	REQUIRE(controller.RenderCoverage() == 80);
+	REQUIRE(controller.VisibleCoverage() > 80.0f);
+	REQUIRE(controller.VisibleCoverage() < 85.0f);
+}
+
 TEST_CASE("adaptive crop exposes the six-tier 85-to-60 ladder", "[adaptive][crop]")
 {
 	const std::array<std::uint32_t, 6> expected{ 85, 80, 75, 70, 65, 60 };
 	REQUIRE(Controller::CoverageBuckets() == expected);
 }
 
-TEST_CASE("adaptive crop starts at the configured upper bound capped at 85", "[adaptive][crop]")
+TEST_CASE("adaptive crop starts at the explicit adaptive maximum", "[adaptive][crop]")
 {
 	const auto config = FastConfig();
 
@@ -73,13 +107,21 @@ TEST_CASE("adaptive crop starts at the configured upper bound capped at 85", "[a
 	Controller fromEighty;
 	Tick(fromEighty, 1, config, false, false, true, false, true, 80);
 	REQUIRE(fromEighty.IsRuntimeActive());
-	REQUIRE(fromEighty.ActiveCoverage() == 80);
-	REQUIRE(fromEighty.MaximumCoverage() == 80);
+	REQUIRE(fromEighty.ActiveCoverage() == 85);
+	REQUIRE(fromEighty.MaximumCoverage() == 85);
 
 	Controller fromSixty;
 	Tick(fromSixty, 1, config, false, false, true, false, true, 60);
 	REQUIRE(fromSixty.IsRuntimeActive());
-	REQUIRE(fromSixty.ActiveCoverage() == 60);
+	REQUIRE(fromSixty.ActiveCoverage() == 85);
+
+	auto limited = config;
+	limited.maximumCoverage = 75;
+	Controller fromExplicitMaximum;
+	Tick(fromExplicitMaximum, 1, limited, false, false, true, false, true, 60);
+	REQUIRE(fromExplicitMaximum.IsRuntimeActive());
+	REQUIRE(fromExplicitMaximum.ActiveCoverage() == 75);
+	REQUIRE(fromExplicitMaximum.MaximumCoverage() == 75);
 }
 
 TEST_CASE("adaptive crop fails closed below the 60 percent floor", "[adaptive][crop]")

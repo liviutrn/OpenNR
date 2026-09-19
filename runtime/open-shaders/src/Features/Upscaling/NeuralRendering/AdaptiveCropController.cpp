@@ -47,7 +47,10 @@ namespace NeuralRendering
 	AdaptiveCropController::Config AdaptiveCropController::NormalizeConfig(const Config& config)
 	{
 		Config normalized = config;
+		normalized.maximumCoverage = FindBucketAtOrBelow(std::clamp(normalized.maximumCoverage, 60u, 85u));
 		normalized.minimumCoverage = FindBucketAtOrBelow(std::max(normalized.minimumCoverage, 60u));
+		if (normalized.maximumCoverage < normalized.minimumCoverage)
+			normalized.maximumCoverage = normalized.minimumCoverage;
 		normalized.downshiftFrames = std::clamp(normalized.downshiftFrames, 1u, 16u);
 		normalized.upshiftFrames = std::clamp(normalized.upshiftFrames, 8u, 240u);
 		normalized.minimumDwellFrames = std::clamp(normalized.minimumDwellFrames, 8u, 600u);
@@ -103,14 +106,14 @@ namespace NeuralRendering
 		lastFrame_ = frame;
 
 		const Config config = NormalizeConfig(requestedConfig);
-		// Adaptive crop is deliberately a reduced-coverage companion. A 100%, 95%,
-		// or 90% manual crop enters at the top adaptive tier (85%), while a smaller
-		// manual crop remains an upper bound and is never enlarged by this controller.
-		const std::uint32_t effectiveConfiguredCoverage = std::min(configuredCoverage, 85u);
-		const std::uint32_t maximumBucket = FindBucketIndexAtOrBelow(effectiveConfiguredCoverage);
-		const std::uint32_t requestedFloorCoverage = std::min(config.minimumCoverage, configuredCoverage);
+		// The static crop preset supplies the stereo geometry and the eligibility
+		// floor. It is not the adaptive upper bound: otherwise a user who compares
+		// against a 60% preset can never re-arm the 85-to-60 adaptive ladder.
+		const std::uint32_t maximumBucket = FindBucketIndexAtOrBelow(config.maximumCoverage);
+		const std::uint32_t requestedFloorCoverage = std::min(config.minimumCoverage, config.maximumCoverage);
 		const std::uint32_t minimumBucket = std::max(maximumBucket, FindBucketIndexAtOrBelow(requestedFloorCoverage));
 		const bool configurationChanged = config.enabled != config_.enabled ||
+			config.maximumCoverage != config_.maximumCoverage ||
 			config.minimumCoverage != config_.minimumCoverage ||
 			config.downshiftFrames != config_.downshiftFrames ||
 			config.upshiftFrames != config_.upshiftFrames ||
@@ -162,7 +165,8 @@ namespace NeuralRendering
 			++generation_;
 		}
 
-		// The user's configured crop is an upper bound. Never silently enlarge it.
+		// The adaptive maximum is an explicit setting. The static crop preset is
+		// intentionally not used as an implicit upper bound.
 		activeBucket_ = std::clamp(activeBucket_, maximumBucket_, minimumBucket_);
 		targetBucket_ = std::clamp(targetBucket_, maximumBucket_, minimumBucket_);
 
@@ -235,7 +239,14 @@ namespace NeuralRendering
 
 	std::uint32_t AdaptiveCropController::RenderCoverage() const
 	{
-		return IsTransitioning() ? std::max(previousCoverage_, ActiveCoverage()) : ActiveCoverage();
+		// Keep the source and destination geometry on the tier that was already
+		// rendered for the entire handoff.  The visible mask may move gradually,
+		// but changing UVs before both eyes have crossed the same boundary can
+		// present the two eyes with different crop generations.  The old max()
+		// rule was safe for a downshift because the previous tier was larger, but
+		// made an upshift switch immediately to the new larger crop and produced
+		// the observed transient double vision.
+		return IsTransitioning() ? previousCoverage_ : ActiveCoverage();
 	}
 
 	float AdaptiveCropController::VisibleCoverage() const

@@ -32,7 +32,7 @@ namespace FoveatedRenderImpl::NativeOpenVRGaze
 	struct Config
 	{
 		bool enabled = false;
-		float smoothingMs = 20.0f;
+		float smoothingMs = 0.0f;
 		std::uint32_t quantizationPixels = 8;
 	};
 
@@ -53,6 +53,12 @@ namespace FoveatedRenderImpl::NativeOpenVRGaze
 		std::uint32_t frame = 0;
 		std::uint64_t sampleSequence = 0;
 		float sampleAgeMs = 0.0f;
+		float providerQueryMs = 0.0f;
+		bool cropChanged = false;
+		std::uint64_t cropChangeCount = 0;
+		std::uint64_t historyResetCount = 0;
+		std::array<float, 4> leftCropUV{};
+		std::array<float, 4> rightCropUV{};
 		std::array<float, 2> rawLeftUV{};
 		std::array<float, 2> rawRightUV{};
 		std::array<float, 2> filteredLeftUV{};

@@ -4,6 +4,7 @@
 #include "Hooks.h"
 #include "State.h"
 #include "Upscaling.h"
+#include "Upscaling/NativeOpenVRGaze.h"
 #include "Utils/UI.h"
 
 #include <algorithm>
@@ -309,14 +310,6 @@ void VRS::UpdateVRShadingRateState()
 	vrsSettings.enableBoundaryDither = settings.vrEnableBoundaryDither;
 	vrsSettings.enableDiagnostics = settings.vrEnableDiagnostics;
 
-	{
-		const auto& subrect = upscaling.foveatedRender.subrectController;
-		const auto& leftUV = subrect.GetUV();
-		const auto& rightUV = subrect.GetRightEyeUV();
-		vrsSettings.leftSubrectUV = { leftUV.x, leftUV.y, leftUV.w, leftUV.h };
-		vrsSettings.rightSubrectUV = { rightUV.x, rightUV.y, rightUV.w, rightUV.h };
-	}
-
 	float2 displaySize = globals::state->screenSize;
 	float2 renderSize = { displaySize.x * upscaling.resolutionScale.x, displaySize.y * upscaling.resolutionScale.y };
 	if (upscaling.perfMode.IsHookActive()) {
@@ -333,6 +326,25 @@ void VRS::UpdateVRShadingRateState()
 	frameInfo.displayHeight = std::max(static_cast<int>(displaySize.y), 1);
 	frameInfo.renderWidth = std::max(static_cast<int>(renderSize.x), 1);
 	frameInfo.renderHeight = std::max(static_cast<int>(renderSize.y), 1);
+	auto& foveated = upscaling.foveatedRender;
+	auto leftUV = foveated.GetEffectiveLeftUV();
+	auto rightUV = foveated.GetEffectiveRightUV();
+	if (vrsSettings.enable && foveated.IsActive() && foveated.settings.neuralRenderingEyeTrackedFoveation &&
+		foveated.settings.neuralRenderingEnabled && foveated.GetDlssMode() == FoveatedRender::DlssMode::kDefault &&
+		upscaling.GetUpscaleMethod() == Upscaling::UpscaleMethod::kDLSS) {
+		const FoveatedRenderImpl::NativeOpenVRGaze::Config config{
+			.enabled = true,
+			.smoothingMs = foveated.settings.neuralRenderingEyeTrackedSmoothingMs,
+			.quantizationPixels = foveated.settings.neuralRenderingEyeTrackedQuantizationPixels,
+		};
+		const auto gaze = FoveatedRenderImpl::NativeOpenVRGaze::ResolveForFrame(config, leftUV, rightUV,
+			frameInfo.renderWidth / 2, frameInfo.renderHeight, globals::state->frameCount,
+			FoveatedRenderImpl::NativeOpenVRGaze::IsDynamicGazeAllowed());
+		leftUV = gaze.leftUV;
+		rightUV = gaze.rightUV;
+	}
+	vrsSettings.leftSubrectUV = { leftUV.x, leftUV.y, leftUV.w, leftUV.h };
+	vrsSettings.rightSubrectUV = { rightUV.x, rightUV.y, rightUV.w, rightUV.h };
 
 	nvVrs.Update(vrsSettings, frameInfo, globals::d3d::device, globals::d3d::context);
 }

@@ -10,8 +10,9 @@
 //
 // The accumulated vector follows the current-to-previous convention used by
 // the OpenNR guide contract: current pixel p maps to the previous frame at
-// p + MV. The C++ caller gates this shader to native-size, single-pass,
-// full-eye layouts and invalidates its history on reset or route changes.
+// p + MV. The C++ caller gates this shader to single-pass, stable-layout
+// full-eye or crop-local resources and invalidates its history on reset or
+// route/crop changes. A moving crop is not transformed here yet.
 
 cbuffer TemporalReuseParams : register(b0)
 {
@@ -150,4 +151,3 @@ void Reproject(uint3 dispatchThreadID : SV_DispatchThreadID)
 		result += gPreviousResidual.SampleLevel(gLinear, ColorUV(previousPosition), 0).rgb;
 	gOutput[pixel] = float4(max(result, 0.0.xxx), currentColor.a);
 }
-

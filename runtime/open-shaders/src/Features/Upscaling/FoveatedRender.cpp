@@ -23,6 +23,54 @@ static_assert(!NeuralRendering::Future::AsyncOwnershipContract::kRuntimeEnabled)
 static_assert(!NeuralRendering::Future::DepthMatchedResidualFillContract::kRuntimeEnabled);
 static_assert(!NeuralRendering::Future::PeripheralCompressionContract::kRuntimeEnabled);
 
+namespace
+{
+	constexpr float kStereoGeometryEpsilon = 0.0025f;
+
+	bool IsNasalConvergenceGeometry(const Util::Subrect::UVRegion& left,
+		const Util::Subrect::UVRegion& right)
+	{
+		// The known-good SkyrimVR arrangement places the left-eye crop toward the
+		// nasal/right side and the right-eye crop toward the nasal/left side. The
+		// extents must still match because the shared Feature 18 resource contract
+		// is size-symmetric; only the per-eye x origins differ.
+		const bool sameExtent = std::abs(left.w - right.w) <= kStereoGeometryEpsilon &&
+			std::abs(left.h - right.h) <= kStereoGeometryEpsilon;
+		const bool mirrored = std::abs(right.x - (1.0f - left.x - left.w)) <= kStereoGeometryEpsilon;
+		return sameExtent && mirrored && left.x > right.x + kStereoGeometryEpsilon;
+	}
+
+	Util::Subrect::UVRegion MakeAdaptiveCropUV(float coverage, bool leftEye, bool nasalConvergence)
+	{
+		const float offset = (1.0f - coverage) * 0.5f;
+		if (!nasalConvergence)
+			return { offset, offset, coverage, coverage };
+
+		// Keep the two eye crops on their original HMD convergence sides while
+		// changing only their shared coverage. At 60% this exactly reproduces the
+		// persisted Nasal Convergence 60% preset: left=(.4,.2,.6,.6),
+		// right=(0,.2,.6,.6).
+		return leftEye ?
+			Util::Subrect::UVRegion{ 1.0f - coverage, offset, coverage, coverage } :
+			Util::Subrect::UVRegion{ 0.0f, offset, coverage, coverage };
+	}
+
+	std::uint32_t AdjacentAdaptiveResolution(std::uint32_t resolution, bool higher)
+	{
+		const auto& buckets = NeuralRendering::AdaptiveController::ResolutionBuckets();
+		for (std::size_t index = 0; index < buckets.size(); ++index) {
+			if (buckets[index] != resolution)
+				continue;
+			if (higher && index > 0)
+				return buckets[index - 1];
+			if (!higher && index + 1 < buckets.size())
+				return buckets[index + 1];
+			return resolution;
+		}
+		return resolution;
+	}
+}
+
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	FoveatedRender::Settings,
 	enabled,
@@ -53,6 +101,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	neuralRenderingTemporalReuseCadence,
 	neuralRenderingTemporalDepthThreshold,
 	neuralRenderingTemporalColorTolerance,
+	neuralRenderingTemporalReuseResetAfterSkip,
 	neuralRenderingAdaptiveEnabled,
 	neuralRenderingAdaptiveRefreshHz,
 	neuralRenderingAdaptiveTargetFps,
@@ -63,6 +112,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	neuralRenderingAdaptiveGuardTimeMs,
 	neuralRenderingAdaptiveDiagnostics,
 	neuralRenderingAdaptiveCropEnabled,
+	neuralRenderingAdaptiveCropMaximumCoverage,
 	neuralRenderingAdaptiveCropMinimumCoverage,
 	neuralRenderingAdaptiveCropDownshiftFrames,
 	neuralRenderingAdaptiveCropUpshiftFrames,
@@ -235,14 +285,17 @@ void FoveatedRender::ClampSettings()
 	settings.subrectFeatherWidth = std::clamp(settings.subrectFeatherWidth, 2.0f, 128.0f);
 	settings.subrectFalloffCurve = std::clamp(settings.subrectFalloffCurve, 0.5f, 2.0f);
 	settings.subrectDitherStrength = std::clamp(settings.subrectDitherStrength, 0.0f, 2.0f);
-	if (settings.neuralRenderingModelResolution != 70 &&
+	if (settings.neuralRenderingModelResolution != 33 &&
+		settings.neuralRenderingModelResolution != 50 &&
+		settings.neuralRenderingModelResolution != 70 &&
 		settings.neuralRenderingModelResolution != 75 &&
 		settings.neuralRenderingModelResolution != 80 &&
 		settings.neuralRenderingModelResolution != 85 &&
 		settings.neuralRenderingModelResolution != 90 &&
 		settings.neuralRenderingModelResolution != 95 &&
 		settings.neuralRenderingModelResolution != 100)
-		settings.neuralRenderingModelResolution = settings.neuralRenderingModelResolution < 70 ? 70 : 100;
+		settings.neuralRenderingModelResolution = settings.neuralRenderingModelResolution < 33 ? 33 :
+			(settings.neuralRenderingModelResolution < 70 ? 70 : 100);
 	settings.neuralRenderingPreset = std::min(settings.neuralRenderingPreset, 5u);
 	settings.neuralRenderingIntensity = std::clamp(settings.neuralRenderingIntensity, 0.0f, 2.0f);
 	settings.neuralRenderingLocalTone = std::clamp(settings.neuralRenderingLocalTone, 0.0f, 2.0f);
@@ -299,6 +352,23 @@ void FoveatedRender::ClampSettings()
 		settings.neuralRenderingAdaptiveCropMinimumCoverage = 60;
 		break;
 	}
+	switch (settings.neuralRenderingAdaptiveCropMaximumCoverage) {
+	case 60:
+	case 65:
+	case 70:
+	case 75:
+	case 80:
+	case 85:
+		break;
+	default:
+		settings.neuralRenderingAdaptiveCropMaximumCoverage = 85;
+		break;
+	}
+	// Keep the configured ladder ordered. If a user raises the minimum above
+	// the saved maximum, preserving the requested floor is the least surprising
+	// repair and avoids a controller with an empty legal range.
+	if (settings.neuralRenderingAdaptiveCropMaximumCoverage < settings.neuralRenderingAdaptiveCropMinimumCoverage)
+		settings.neuralRenderingAdaptiveCropMaximumCoverage = settings.neuralRenderingAdaptiveCropMinimumCoverage;
 	settings.neuralRenderingAdaptiveCropDownshiftFrames = std::clamp(settings.neuralRenderingAdaptiveCropDownshiftFrames, 1u, 16u);
 	settings.neuralRenderingAdaptiveCropUpshiftFrames = std::clamp(settings.neuralRenderingAdaptiveCropUpshiftFrames, 8u, 240u);
 	settings.neuralRenderingAdaptiveCropMinimumDwellFrames = std::clamp(settings.neuralRenderingAdaptiveCropMinimumDwellFrames, 8u, 600u);
@@ -371,13 +441,19 @@ bool FoveatedRender::IsEyeTrackedFoveationEnabled() const
 
 void FoveatedRender::UpdateAdaptiveState(std::uint32_t frame, bool routeEligible)
 {
+	const auto& nrRenderer = NeuralRendering::Renderer::Instance();
+	const auto& streamline = globals::features::upscaling.streamline;
+	const bool recentDLSSFailure = streamline.lastDLSSFailureFrame != UINT32_MAX &&
+		frame >= streamline.lastDLSSFailureFrame &&
+		frame - streamline.lastDLSSFailureFrame <= 1;
+	const bool runtimeHealthy = !nrRenderer.IsFailureLatched() && !recentDLSSFailure;
 	const auto method = globals::features::upscaling.GetUpscaleMethod();
 	const bool nrEligible = routeEligible && IsActive() &&
 		method == Upscaling::UpscaleMethod::kDLSS &&
 		GetDlssMode() == DlssMode::kDefault && settings.neuralRenderingEnabled &&
 		!globals::features::upscaling.IsFrameGenerationActive() &&
 		!globals::features::openNRCapture.settings.enableCapture &&
-		settings.neuralRenderingPreUpscale == 0;
+		settings.neuralRenderingPreUpscale == 0 && runtimeHealthy;
 	const auto leftUV = subrectController.GetUV();
 	const auto rightUV = subrectController.GetRightEyeUV();
 	const bool geometryCompatible = std::abs(leftUV.w - rightUV.w) <= 0.0005f &&
@@ -400,11 +476,26 @@ void FoveatedRender::UpdateAdaptiveState(std::uint32_t frame, bool routeEligible
 	// the other controller becomes eligible instead of stalling the response.
 	const bool cropShouldDownshiftFirst = cropCanDownshift &&
 		(adaptiveNextDownshiftIsCrop || !nrCanDownshift);
+	const auto activeNRForReadiness = adaptiveController.ActiveResolution();
+	const auto higherNR = AdjacentAdaptiveResolution(activeNRForReadiness, true);
+	const auto lowerNR = AdjacentAdaptiveResolution(activeNRForReadiness, false);
+	// Feature 18 creation is not a frame-safe operation on this route. The
+	// renderer prewarms the adjacent tier while the current tier is running;
+	// do not let the controller expose a tier until both eyes and its native
+	// handle are resident. This turns an on-demand multi-hundred-ms create into
+	// a quiet wait on the current image instead of a stale/reprojected frame.
+	const bool nrUpshiftReady = adaptiveController.IsAtMaximum() ||
+		nrRenderer.IsAdaptiveTierReady(higherNR);
+	const bool nrDownshiftReady = adaptiveController.IsAtMinimum() ||
+		nrRenderer.IsAdaptiveTierReady(lowerNR);
 
 	NeuralRendering::AdaptiveController::Config nrConfig;
 	nrConfig.enabled = settings.neuralRenderingAdaptiveEnabled;
-	nrConfig.allowDownshift = !cropShouldDownshiftFirst && !adaptiveCropController.IsTransitioning();
-	nrConfig.allowUpshift = !adaptiveCropController.IsTransitioning();
+	nrConfig.memoryPressure = streamline.IsVRAMPressure();
+	nrConfig.allowDownshift = !cropShouldDownshiftFirst && !adaptiveCropController.IsTransitioning() &&
+		nrDownshiftReady;
+	nrConfig.allowUpshift = !adaptiveCropController.IsTransitioning() &&
+		!nrRenderer.IsRecoveryLimited() && !streamline.IsVRAMPressure() && nrUpshiftReady;
 	nrConfig.refreshHz = settings.neuralRenderingAdaptiveRefreshHz;
 	nrConfig.targetFps = settings.neuralRenderingAdaptiveTargetFps;
 	nrConfig.minimumResolution = settings.neuralRenderingAdaptiveMinimumResolution;
@@ -436,7 +527,13 @@ void FoveatedRender::UpdateAdaptiveState(std::uint32_t frame, bool routeEligible
 			}
 		}
 	}
+	if (streamline.IsVRAMPressure())
+		workloadMs = std::max(workloadMs, 1.3f * adaptiveController.ApplicationDeadlineMs());
+	const auto previousMemoryCeiling = adaptiveController.MemoryCeiling();
 	adaptiveController.Update(frame, nrConfig, nrEligible, workloadMs);
+	if (previousMemoryCeiling != adaptiveController.MemoryCeiling())
+		logger::info("[DLSSNR][MEMORY] ceiling {}% -> {}% active={}%; higher tiers held until Neural Rendering Reset or restart",
+			previousMemoryCeiling, adaptiveController.MemoryCeiling(), adaptiveController.ActiveResolution());
 	const bool adaptiveNRActive = nrEligible && adaptiveController.IsEnabled();
 	if (nrEligible && previousNR != adaptiveController.ActiveResolution()) {
 		logger::info("[DLSSNR] adaptive NR handoff {}% -> {}% alpha={:.2f} work={:.2f}/{:.2f}ms reason={}",
@@ -448,6 +545,7 @@ void FoveatedRender::UpdateAdaptiveState(std::uint32_t frame, bool routeEligible
 	cropConfig.enabled = settings.neuralRenderingAdaptiveCropEnabled;
 	cropConfig.hold = FoveatedRenderImpl::Core::vrSubrectFixedEnvelopeRejected ||
 		FoveatedRenderImpl::Core::vrSubrectNeuralFixedEnvelopeRejected;
+	cropConfig.maximumCoverage = settings.neuralRenderingAdaptiveCropMaximumCoverage;
 	cropConfig.minimumCoverage = settings.neuralRenderingAdaptiveCropMinimumCoverage;
 	cropConfig.downshiftFrames = settings.neuralRenderingAdaptiveCropDownshiftFrames;
 	cropConfig.upshiftFrames = settings.neuralRenderingAdaptiveCropUpshiftFrames;
@@ -457,6 +555,7 @@ void FoveatedRender::UpdateAdaptiveState(std::uint32_t frame, bool routeEligible
 	const bool cropWasActive = adaptiveCropController.IsRuntimeActive();
 	const auto previousCrop = adaptiveCropController.ActiveCoverage();
 	const auto previousCropTarget = adaptiveCropController.TargetCoverage();
+	const auto previousRenderCrop = adaptiveCropController.RenderCoverage();
 	// Crop restoration must wait until NR has completed its handoff to the true
 	// maximum tier. A pending 100% target is still a transition and must not
 	// expand the crop in the same interval.
@@ -468,15 +567,17 @@ void FoveatedRender::UpdateAdaptiveState(std::uint32_t frame, bool routeEligible
 	if (cropWasActive && !adaptiveCropController.IsRuntimeActive())
 		FoveatedRenderImpl::Core::ResetAdaptiveCropHandoff();
 	const auto currentCrop = adaptiveCropController.ActiveCoverage();
+	const auto currentRenderCrop = adaptiveCropController.RenderCoverage();
 	const auto currentNR = adaptiveController.ActiveResolution();
 	static std::uint32_t lastBudgetLog = UINT32_MAX;
 	if (settings.neuralRenderingAdaptiveEnabled && frame % 300 == 0 && frame != lastBudgetLog) {
 		lastBudgetLog = frame;
-		logger::info("[DLSSNR][BUDGET] frame={} source=steamvr-workload fresh={} workMs={:.2f} averageMs={:.2f} deadlineMs={:.2f} pressure={} headroom={} nr={} crop={} cropHeld={} nrTransition={} cropTransition={} gpuMs={:.2f} activeSubmitMs={:.2f}",
+		logger::info("[DLSSNR][BUDGET] frame={} source=steamvr-workload fresh={} workMs={:.2f} averageMs={:.2f} deadlineMs={:.2f} pressure={} headroom={} nr={} crop={} cropHeld={} nrTransition={} cropTransition={} nrUpReady={} nrDownReady={} gpuMs={:.2f} activeSubmitMs={:.2f}",
 			frame, workloadMs > 0.0f, workloadMs, adaptiveController.SmoothedFrameTimeMs(),
 			adaptiveController.ApplicationDeadlineMs(), adaptiveController.LastSampleOverBudget(),
 			adaptiveController.LastSampleHadHeadroom(), currentNR, currentCrop, cropConfig.hold,
-			adaptiveController.IsTransitioning(), adaptiveCropController.IsTransitioning(), gpuWorkMs, activeSubmitMs);
+			adaptiveController.IsTransitioning(), adaptiveCropController.IsTransitioning(), nrUpshiftReady,
+			nrDownshiftReady, gpuWorkMs, activeSubmitMs);
 	}
 	const auto effectiveLeftUV = GetEffectiveLeftUV();
 	const auto effectiveRightUV = GetEffectiveRightUV();
@@ -485,11 +586,11 @@ void FoveatedRender::UpdateAdaptiveState(std::uint32_t frame, bool routeEligible
 		adaptiveCropDiagnosticGeneration = adaptiveCropController.Generation();
 		const char* resourceMode = FoveatedRenderImpl::Core::vrSubrectResourceMode ==
 			FoveatedRenderImpl::Core::SubrectResourceMode::FixedEnvelope ? "fixed-envelope" : "exact-cache";
-		logger::info("[DLSSNR][ADAPTIVE] frame={} generation={} reset={} eligible={} nrEligible={} cropEligible={} eyeTracking={} geometry={} configuredCrop={} prevNR={} prevNRTarget={} activeNR={} targetNR={} prevCrop={} prevCropTarget={} activeCrop={} targetCrop={} effectiveLUV=({:.3f},{:.3f},{:.3f},{:.3f}) effectiveRUV=({:.3f},{:.3f},{:.3f},{:.3f}) validOut={}x{} validIn={}x{} envelopeOut={}x{} envelopeIn={}x{} resourceMode={} creates={} reuses={} frees={} envelopeChecks={} fallbackEntries={} fallbackEvictions={} neuralFallbackEntries={}",
+		logger::info("[DLSSNR][ADAPTIVE] frame={} generation={} reset={} eligible={} nrEligible={} cropEligible={} eyeTracking={} geometry={} configuredCrop={} adaptiveCropMax={} prevNR={} prevNRTarget={} activeNR={} targetNR={} prevCrop={} prevCropTarget={} activeCrop={} targetCrop={} effectiveLUV=({:.3f},{:.3f},{:.3f},{:.3f}) effectiveRUV=({:.3f},{:.3f},{:.3f},{:.3f}) validOut={}x{} validIn={}x{} envelopeOut={}x{} envelopeIn={}x{} resourceMode={} creates={} reuses={} frees={} envelopeChecks={} fallbackEntries={} fallbackEvictions={} neuralFallbackEntries={}",
 			frame, adaptiveCropController.Generation(),
 			NeuralRendering::AdaptiveCropController::ResetReasonName(adaptiveCropController.LastResetReason()),
 			adaptiveNRActive && geometryCompatible, nrEligible, cropPolicyAvailable, eyeTrackingOwnsCrop,
-			geometryCompatible, configuredCoverage, previousNR, previousNRTarget, currentNR, adaptiveController.TargetResolution(),
+			geometryCompatible, configuredCoverage, cropConfig.maximumCoverage, previousNR, previousNRTarget, currentNR, adaptiveController.TargetResolution(),
 			previousCrop, previousCropTarget, currentCrop, adaptiveCropController.TargetCoverage(),
 			effectiveLeftUV.x, effectiveLeftUV.y, effectiveLeftUV.w, effectiveLeftUV.h,
 			effectiveRightUV.x, effectiveRightUV.y, effectiveRightUV.w, effectiveRightUV.h,
@@ -504,13 +605,30 @@ void FoveatedRender::UpdateAdaptiveState(std::uint32_t frame, bool routeEligible
 			FoveatedRenderImpl::Core::vrSubrectNeuralFallbackEntries);
 	}
 	if (adaptiveCropController.IsRuntimeActive() && previousCrop != currentCrop) {
-		logger::info("[DLSSNR] adaptive crop handoff {}% -> {}% alpha={:.2f} frame={} generation={} valid={}x{} envelope={}x{}",
-			previousCrop, currentCrop, adaptiveCropController.HandoffAlpha(), frame,
+		// ActiveCoverage changes when the controller makes a new decision, while
+		// RenderCoverage remains on the old UV geometry until the handoff is
+		// complete. Do not invalidate temporal history here: the renderer is still
+		// sampling the old crop geometry during this part of the transition.
+		logger::info("[DLSSNR] adaptive crop decision {}% -> {}% render={} -> {}% alpha={:.2f} frame={} generation={} valid={}x{} envelope={}x{}",
+			previousCrop, currentCrop, previousRenderCrop, currentRenderCrop,
+			adaptiveCropController.HandoffAlpha(), frame,
 			adaptiveCropController.Generation(), FoveatedRenderImpl::Core::vrSubrectValidOutW,
 			FoveatedRenderImpl::Core::vrSubrectValidOutH, FoveatedRenderImpl::Core::vrSubrectOutW,
 			FoveatedRenderImpl::Core::vrSubrectOutH);
 		if (currentCrop < previousCrop)
 			adaptiveNextDownshiftIsCrop = false;
+	}
+	if (adaptiveCropController.IsRuntimeActive() && previousRenderCrop != currentRenderCrop) {
+		// The fixed envelope keeps the native resource identity stable, but the
+		// crop origin/extent changes the meaning of every temporal sample. Reset
+		// only when RenderCoverage commits the new UV geometry, so Feature 18 and
+		// both eyes cannot blend history produced for the previous crop tier.
+		FoveatedRenderImpl::Core::InvalidateTemporalState();
+		logger::info("[DLSSNR] adaptive crop geometry commit {}% -> {}% decision={} -> {}% frame={} generation={} valid={}x{} envelope={}x{}",
+			previousRenderCrop, currentRenderCrop, previousCrop, currentCrop, frame,
+			adaptiveCropController.Generation(), FoveatedRenderImpl::Core::vrSubrectValidOutW,
+			FoveatedRenderImpl::Core::vrSubrectValidOutH, FoveatedRenderImpl::Core::vrSubrectOutW,
+			FoveatedRenderImpl::Core::vrSubrectOutH);
 	}
 	if (nrEligible && previousNR != currentNR && currentNR < previousNR)
 		adaptiveNextDownshiftIsCrop = true;
@@ -524,8 +642,9 @@ Util::Subrect::UVRegion FoveatedRender::GetEffectiveLeftUV() const
 		return subrectController.GetUV();
 	const float coverage = std::clamp(
 		static_cast<float>(adaptiveCropController.RenderCoverage()) / 100.0f, 0.01f, 1.0f);
-	const float offset = (1.0f - coverage) * 0.5f;
-	return { offset, offset, coverage, coverage };
+	const bool nasalConvergence = IsNasalConvergenceGeometry(
+		subrectController.GetUV(), subrectController.GetRightEyeUV());
+	return MakeAdaptiveCropUV(coverage, true, nasalConvergence);
 }
 
 Util::Subrect::UVRegion FoveatedRender::GetEffectiveRightUV() const
@@ -534,8 +653,9 @@ Util::Subrect::UVRegion FoveatedRender::GetEffectiveRightUV() const
 		return subrectController.GetRightEyeUV();
 	const float coverage = std::clamp(
 		static_cast<float>(adaptiveCropController.RenderCoverage()) / 100.0f, 0.01f, 1.0f);
-	const float offset = (1.0f - coverage) * 0.5f;
-	return { offset, offset, coverage, coverage };
+	const bool nasalConvergence = IsNasalConvergenceGeometry(
+		subrectController.GetUV(), subrectController.GetRightEyeUV());
+	return MakeAdaptiveCropUV(coverage, false, nasalConvergence);
 }
 
 FoveatedRender::DlssMode FoveatedRender::GetDlssMode() const
@@ -961,8 +1081,9 @@ const char* FoveatedRender::SubrectMaskModeName(SubrectMaskMode mode)
 			ImGui::TextDisabled("%s %s", T(TKEY("neural_rendering_active_style"), "Active style:"), styleLabels[activeStyle]);
 
 			ImGui::SeparatorText("NR Cost / Model Resolution");
-			static const char* modelResolutions[] = { "Full (100%)", "95%", "90%", "85%", "80%", "75%", "70%" };
-			static constexpr uint modelResolutionValues[] = { 100u, 95u, 90u, 85u, 80u, 75u, 70u };
+			static const char* modelResolutions[] = {
+				"Full (100%)", "95%", "90%", "85%", "80%", "75%", "70%", "50% (experimental)", "33% (experimental)" };
+			static constexpr uint modelResolutionValues[] = { 100u, 95u, 90u, 85u, 80u, 75u, 70u, 50u, 33u };
 			int modelResolution = 0;
 			for (int index = 0; index < IM_ARRAYSIZE(modelResolutionValues); ++index) {
 				if (settings.neuralRenderingModelResolution == modelResolutionValues[index]) {
@@ -976,7 +1097,7 @@ const char* FoveatedRender::SubrectMaskModeName(SubrectMaskMode mode)
 			}
 			if (auto _tt = Util::HoverTooltipWrapper())
 				drawWrapped(T(TKEY("neural_rendering_model_resolution_tooltip"),
-					"The display stays full resolution. Only the NR model area changes; 70% is the supported floor."));
+					"The display stays full resolution. Only the NR model area changes. 50% and 33% are fixed experimental tiers; adaptive NR remains limited to 70% and above."));
 
 			ImGui::SeparatorText("Adaptive Neural Rendering");
 			ImGui::Checkbox("Enable adaptive NR resolution", &settings.neuralRenderingAdaptiveEnabled);
@@ -1067,6 +1188,20 @@ const char* FoveatedRender::SubrectMaskModeName(SubrectMaskMode mode)
 			if (!adaptiveCropParentEnabled)
 				ImGui::TextDisabled("Enable Adaptive Neural Rendering before enabling its crop companion.");
 			if (settings.neuralRenderingAdaptiveCropEnabled && adaptiveCropParentEnabled) {
+				static const char* adaptiveCropMaximums[] = { "85%", "80%", "75%", "70%", "65%", "60%" };
+				static constexpr uint adaptiveCropMaximumValues[] = { 85u, 80u, 75u, 70u, 65u, 60u };
+				int cropMaximumIndex = 0;
+				for (int index = 0; index < IM_ARRAYSIZE(adaptiveCropMaximumValues); ++index)
+					if (settings.neuralRenderingAdaptiveCropMaximumCoverage == adaptiveCropMaximumValues[index]) {
+						cropMaximumIndex = index;
+						break;
+					}
+				if (ImGui::Combo("Adaptive maximum crop coverage", &cropMaximumIndex,
+					adaptiveCropMaximums, IM_ARRAYSIZE(adaptiveCropMaximums)))
+					settings.neuralRenderingAdaptiveCropMaximumCoverage = adaptiveCropMaximumValues[cropMaximumIndex];
+				if (auto _tt = Util::HoverTooltipWrapper())
+					drawWrapped("Maximum is independent of the static crop preset; it is the tier used when adaptive crop is re-armed.");
+
 				static const char* adaptiveCropMinimums[] = { "80%", "75%", "70%", "65%", "60%" };
 				static constexpr uint adaptiveCropMinimumValues[] = { 80u, 75u, 70u, 65u, 60u };
 				int cropMinimumIndex = IM_ARRAYSIZE(adaptiveCropMinimumValues) - 1;
@@ -1091,8 +1226,9 @@ const char* FoveatedRender::SubrectMaskModeName(SubrectMaskMode mode)
 				int cropTransitionFrames = static_cast<int>(settings.neuralRenderingAdaptiveCropTransitionFrames);
 				if (ImGui::SliderInt("Crop handoff duration", &cropTransitionFrames, 2, 24, "%d frames"))
 					settings.neuralRenderingAdaptiveCropTransitionFrames = static_cast<uint>(cropTransitionFrames);
-				ImGui::TextDisabled("Crop: %u%% -> %u%% | handoff %.2f",
+				ImGui::TextDisabled("Crop: %u%% -> %u%% | max %u%% | handoff %.2f",
 					adaptiveCropController.ActiveCoverage(), adaptiveCropController.TargetCoverage(),
+					settings.neuralRenderingAdaptiveCropMaximumCoverage,
 					adaptiveCropController.HandoffAlpha());
 			}
 			if (IsEyeTrackedFoveationEnabled())
@@ -1172,12 +1308,17 @@ const char* FoveatedRender::SubrectMaskModeName(SubrectMaskMode mode)
 				&temporalReuseMode, temporalReuseModes, IM_ARRAYSIZE(temporalReuseModes)))
 				settings.neuralRenderingTemporalReuseCadence = temporalReuseValues[temporalReuseMode];
 			if (auto _tt = Util::HoverTooltipWrapper())
-				drawWrapped(T(TKEY("neural_rendering_temporal_mode_tooltip"), "Runs a full Feature 18 pass every Nth frame and reuses its residual between passes. Full Eye and 100% model resolution only."));
+				drawWrapped(T(TKEY("neural_rendering_temporal_mode_tooltip"), "Runs a full Feature 18 pass every Nth frame and reuses its residual between passes. Supports 100% single-pass Full Eye or a stable fixed crop; moving/adaptive crop origins disable reuse."));
 			if (settings.neuralRenderingTemporalReuseCadence != 0) {
 				ImGui::SliderFloat(T(TKEY("neural_rendering_temporal_depth_threshold"), "Depth rejection threshold"),
 					&settings.neuralRenderingTemporalDepthThreshold, 0.0f, 0.25f, "%.3f");
 				ImGui::SliderFloat(T(TKEY("neural_rendering_temporal_color_tolerance"), "Color rejection tolerance"),
 					&settings.neuralRenderingTemporalColorTolerance, 0.0f, 0.50f, "%.3f");
+				ImGui::Checkbox(T(TKEY("neural_rendering_temporal_reset_after_skip"), "Reset native history after a skipped frame"),
+					&settings.neuralRenderingTemporalReuseResetAfterSkip);
+				if (auto _tt = Util::HoverTooltipWrapper())
+					drawWrapped(T(TKEY("neural_rendering_temporal_reset_after_skip_tooltip"),
+						"Diagnostic only. Disable only for an isolated quiet-scene A/B; stale native history may cause ghosting or motion instability."));
 				drawWarningWrapped(T(TKEY("neural_rendering_temporal_warning"), "Experimental. Watch for ghosting, cadence shimmer, and disocclusion errors."));
 			}
 
@@ -1188,8 +1329,9 @@ const char* FoveatedRender::SubrectMaskModeName(SubrectMaskMode mode)
 			if (auto _tt = Util::HoverTooltipWrapper())
 				drawWrapped("Optional moving crop for native OpenVR eye tracking. Requires VR, Default mode, and a cropped region; stale gaze falls back to the static crop.");
 			if (settings.neuralRenderingEyeTrackedFoveation) {
-				ImGui::SliderFloat("Gaze smoothing", &settings.neuralRenderingEyeTrackedSmoothingMs,
+				ImGui::SliderFloat("Fixation smoothing", &settings.neuralRenderingEyeTrackedSmoothingMs,
 					0.0f, 250.0f, "%.0f ms");
+				drawWrapped("Eye movements respond immediately; smoothing applies only to tiny fixation noise. Crop motion resets temporal history.");
 				int quantizationPixels = static_cast<int>(std::min(settings.neuralRenderingEyeTrackedQuantizationPixels, 64u));
 				if (ImGui::SliderInt("Crop movement quantization", &quantizationPixels, 0, 64, quantizationPixels == 0 ? "Off" : "%d input px"))
 					settings.neuralRenderingEyeTrackedQuantizationPixels = static_cast<uint>(std::clamp(quantizationPixels, 0, 64));
@@ -1199,14 +1341,19 @@ const char* FoveatedRender::SubrectMaskModeName(SubrectMaskMode mode)
 					drawWarningWrapped("Native OpenVR gaze requires Foveated Default mode.");
 				else if (subrectController.GetUV().IsFullEye() && subrectController.GetRightEyeUV().IsFullEye())
 					drawWarningWrapped("Select a cropped eye region before enabling moving gaze.");
+				if (settings.neuralRenderingTemporalReuseCadence != 0)
+					drawWarningWrapped("Temporal residual reuse is disabled while this crop moves; use a fixed crop for the N2 test.");
 
 				const auto gaze = FoveatedRenderImpl::NativeOpenVRGaze::GetDiagnostics();
 				ImGui::TextDisabled("Provider: %s | API: %s | Focus: %s | Native sample: %s",
 					FoveatedRenderImpl::NativeOpenVRGaze::StatusName(gaze.status), gaze.interfaceVersion.c_str(),
 					gaze.focused ? "yes" : "no", gaze.nativeQueryValid ? "valid" : "invalid");
-				ImGui::TextDisabled("Crop: %s | Fallback: %s | History reset: %s | Sample age: %.1f ms",
+				ImGui::TextDisabled("Crop: %s | Fallback: %s | History reset: %s | Last valid query: %.1f ms",
 					gaze.dynamic ? "dynamic" : "static", gaze.usingFallback ? "yes" : "no",
 					gaze.historyReset ? "yes" : "no", gaze.sampleAgeMs);
+				ImGui::TextDisabled("Query: %.3f ms | Crop changes: %llu | Resets: %llu",
+					gaze.providerQueryMs, static_cast<unsigned long long>(gaze.cropChangeCount),
+					static_cast<unsigned long long>(gaze.historyResetCount));
 				ImGui::TextDisabled("Filtered gaze L=(%.3f, %.3f) R=(%.3f, %.3f) | sequence=%llu",
 					gaze.filteredLeftUV[0], gaze.filteredLeftUV[1], gaze.filteredRightUV[0], gaze.filteredRightUV[1],
 					static_cast<unsigned long long>(gaze.sampleSequence));
@@ -1229,10 +1376,15 @@ const char* FoveatedRender::SubrectMaskModeName(SubrectMaskMode mode)
 				settings.neuralRenderingPreset = 5;
 
 				auto& neuralRenderer = NeuralRendering::Renderer::Instance();
-				if (neuralRenderer.IsFailureLatched()) {
-					drawWarningWrapped("DLSS Neural Rendering failed for this session. Check CommunityShaders.log.");
+				if (adaptiveController.MemoryCeiling() < 100)
+					ImGui::TextDisabled("VRAM-limited NR ceiling: %u%%. Reset retries higher tiers.", adaptiveController.MemoryCeiling());
+				if (neuralRenderer.IsFailureLatched() || neuralRenderer.IsRecoveryLimited() ||
+					adaptiveController.MemoryCeiling() < 100 ||
+					FoveatedRenderImpl::Core::vrSubrectFixedEnvelopeRejected ||
+					FoveatedRenderImpl::Core::vrSubrectNeuralFixedEnvelopeRejected) {
+					drawWarningWrapped("Neural rendering recovery or adaptive crop is limited after a failure. Reset to retry.");
 				if (ImGui::Button("Reset Neural Rendering Failure"))
-					neuralRenderer.Reset();
+					NeuralRendering::RequestReset();
 			}
 			if (globals::state && globals::state->IsDeveloperMode()) {
 				ImGui::TextDisabled("Status: %s | NGX: 0x%08X | Evaluations: %llu",

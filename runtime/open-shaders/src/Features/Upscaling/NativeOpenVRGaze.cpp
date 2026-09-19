@@ -1,4 +1,5 @@
 #include "NativeOpenVRGaze.h"
+#include "GazeCropPolicy.h"
 
 #include "../../Globals.h"
 #include "../../State.h"
@@ -49,8 +50,6 @@ namespace FoveatedRenderImpl::NativeOpenVRGaze
 		constexpr float kMaxAcceptedNdc = 1.25f;
 		constexpr float kDefaultFrameDeltaMs = 16.67f;
 		constexpr float kStaleHoldMs = 50.0f;
-		constexpr float kReturnToStaticMs = 150.0f;
-		constexpr float kJumpResetRatio = 0.125f;
 
 		struct RuntimeState
 		{
@@ -73,6 +72,8 @@ namespace FoveatedRenderImpl::NativeOpenVRGaze
 			TimePoint lastSampleAt{};
 			TimePoint lastValidAt{};
 			std::uint64_t sampleSequence = 0;
+			std::uint64_t cropChangeCount = 0;
+			std::uint64_t historyResetCount = 0;
 
 			bool cacheValid = false;
 			std::uint32_t cachedFrame = std::numeric_limits<std::uint32_t>::max();
@@ -228,16 +229,6 @@ namespace FoveatedRenderImpl::NativeOpenVRGaze
 			return a_region;
 		}
 
-		std::array<float, 2> RegionCenter(const Util::Subrect::UVRegion& a_region)
-		{
-			return { a_region.x + a_region.w * 0.5f, a_region.y + a_region.h * 0.5f };
-		}
-
-		float ClampSmoothingMs(float a_value)
-		{
-			return std::clamp(std::isfinite(a_value) ? a_value : 20.0f, 0.0f, 250.0f);
-		}
-
 		float ElapsedMs(TimePoint a_start, TimePoint a_end)
 		{
 			if (a_start == TimePoint{})
@@ -245,31 +236,14 @@ namespace FoveatedRenderImpl::NativeOpenVRGaze
 			return std::max(0.0f, std::chrono::duration<float, std::milli>(a_end - a_start).count());
 		}
 
-		std::array<float, 2> Lerp(const std::array<float, 2>& a_from, const std::array<float, 2>& a_to, float a_t)
-		{
-			return {
-				a_from[0] + (a_to[0] - a_from[0]) * a_t,
-				a_from[1] + (a_to[1] - a_from[1]) * a_t,
-			};
-		}
-
 		Util::Subrect::UVRegion CropFromCenter(
-			const Util::Subrect::UVRegion& a_base,
-			const std::array<float, 2>& a_center,
-			std::uint32_t a_eyeWidth,
-			std::uint32_t a_eyeHeight,
-			std::uint32_t a_quantizationPixels)
+			const Util::Subrect::UVRegion& base, const std::array<float, 2>& center,
+			const Util::Subrect::UVRegion& previous, bool havePrevious,
+			std::uint32_t width, std::uint32_t height, std::uint32_t quantization)
 		{
-			auto result = a_base;
-			result.x = std::clamp(a_center[0] - result.w * 0.5f, 0.0f, 1.0f - result.w);
-			result.y = std::clamp(a_center[1] - result.h * 0.5f, 0.0f, 1.0f - result.h);
-
-			if (a_quantizationPixels > 0 && a_eyeWidth > 0 && a_eyeHeight > 0) {
-				const float stepX = static_cast<float>(a_quantizationPixels) / static_cast<float>(a_eyeWidth);
-				const float stepY = static_cast<float>(a_quantizationPixels) / static_cast<float>(a_eyeHeight);
-				result.x = std::clamp(std::round(result.x / stepX) * stepX, 0.0f, 1.0f - result.w);
-				result.y = std::clamp(std::round(result.y / stepY) * stepY, 0.0f, 1.0f - result.h);
-			}
+			auto result = base;
+			result.x = GazeCropPolicy::ResolveOrigin(previous.x, center[0], base.w, width, quantization, havePrevious);
+			result.y = GazeCropPolicy::ResolveOrigin(previous.y, center[1], base.h, height, quantization, havePrevious);
 			return result;
 		}
 
@@ -373,7 +347,9 @@ namespace FoveatedRenderImpl::NativeOpenVRGaze
 			result.diagnostics.focused = focused;
 			RawHmdVector2 rawLeft{};
 			RawHmdVector2 rawRight{};
+			const auto queryStart = Clock::now();
 			const bool nativeQueryValid = state.eyeTrackedFoveationCenter(state.system, &rawLeft, &rawRight);
+			result.diagnostics.providerQueryMs = ElapsedMs(queryStart, Clock::now());
 			result.diagnostics.nativeQueryValid = nativeQueryValid;
 			std::array<float, 2> leftUV{};
 			std::array<float, 2> rightUV{};
@@ -395,27 +371,23 @@ namespace FoveatedRenderImpl::NativeOpenVRGaze
 				const bool reacquired = !state.haveFiltered || state.wasInvalid || inputKeyChanged;
 				const auto previousLeft = state.filteredLeft;
 				const auto previousRight = state.filteredRight;
-				const float jumpLimit = std::max(0.01f, std::min(baseLeft.w, baseLeft.h) * kJumpResetRatio);
-				const bool largeJump = state.haveFiltered && !reacquired &&
-					(std::max(std::abs(leftUV[0] - previousLeft[0]), std::abs(leftUV[1] - previousLeft[1])) > jumpLimit ||
-						std::max(std::abs(rightUV[0] - previousRight[0]), std::abs(rightUV[1] - previousRight[1])) > jumpLimit);
-				if (reacquired || largeJump) {
+				if (reacquired) {
 					state.filteredLeft = leftUV;
 					state.filteredRight = rightUV;
 					result.historyReset = true;
 				} else {
-					const float smoothingMs = ClampSmoothingMs(a_config.smoothingMs);
-					const float alpha = smoothingMs <= 0.0f ? 1.0f : std::clamp(dtMs / (smoothingMs + dtMs), 0.0f, 1.0f);
-					state.filteredLeft = Lerp(previousLeft, leftUV, alpha);
-					state.filteredRight = Lerp(previousRight, rightUV, alpha);
+					state.filteredLeft = GazeCropPolicy::Filter(previousLeft, leftUV, dtMs, a_config.smoothingMs, a_eyeWidth, a_eyeHeight);
+					state.filteredRight = GazeCropPolicy::Filter(previousRight, rightUV, dtMs, a_config.smoothingMs, a_eyeWidth, a_eyeHeight);
 				}
 				state.haveFiltered = true;
 				state.wasInvalid = false;
 				state.lastValidAt = now;
 				state.wasDynamic = true;
 
-				result.leftUV = CropFromCenter(baseLeft, state.filteredLeft, a_eyeWidth, a_eyeHeight, a_config.quantizationPixels);
-				result.rightUV = CropFromCenter(baseRight, state.filteredRight, a_eyeWidth, a_eyeHeight, a_config.quantizationPixels);
+				result.leftUV = CropFromCenter(baseLeft, state.filteredLeft, state.cachedResult.leftUV,
+					state.cacheValid && !reacquired, a_eyeWidth, a_eyeHeight, a_config.quantizationPixels);
+				result.rightUV = CropFromCenter(baseRight, state.filteredRight, state.cachedResult.rightUV,
+					state.cacheValid && !reacquired, a_eyeWidth, a_eyeHeight, a_config.quantizationPixels);
 				result.dynamic = true;
 				result.diagnostics.dynamic = true;
 				result.diagnostics.usingFallback = false;
@@ -436,26 +408,13 @@ namespace FoveatedRenderImpl::NativeOpenVRGaze
 				const float ageMs = ElapsedMs(state.lastValidAt, now);
 				result.diagnostics.sampleAgeMs = ageMs;
 				if (ageMs <= kStaleHoldMs) {
-					result.leftUV = CropFromCenter(baseLeft, state.filteredLeft, a_eyeWidth, a_eyeHeight, a_config.quantizationPixels);
-					result.rightUV = CropFromCenter(baseRight, state.filteredRight, a_eyeWidth, a_eyeHeight, a_config.quantizationPixels);
+					result.leftUV = state.cachedResult.leftUV;
+					result.rightUV = state.cachedResult.rightUV;
 					result.dynamic = true;
 					result.diagnostics.dynamic = true;
 					result.diagnostics.holding = true;
 					result.diagnostics.usingFallback = false;
 					result.diagnostics.status = Status::Holding;
-					LogStatusChangeLocked(result.diagnostics);
-					return result;
-				}
-				if (ageMs < kStaleHoldMs + kReturnToStaticMs) {
-					const float progress = std::clamp((ageMs - kStaleHoldMs) / kReturnToStaticMs, 0.0f, 1.0f);
-					const auto leftCenter = Lerp(state.filteredLeft, RegionCenter(baseLeft), progress);
-					const auto rightCenter = Lerp(state.filteredRight, RegionCenter(baseRight), progress);
-					result.leftUV = CropFromCenter(baseLeft, leftCenter, a_eyeWidth, a_eyeHeight, a_config.quantizationPixels);
-					result.rightUV = CropFromCenter(baseRight, rightCenter, a_eyeWidth, a_eyeHeight, a_config.quantizationPixels);
-					result.dynamic = true;
-					result.diagnostics.dynamic = true;
-					result.diagnostics.usingFallback = false;
-					result.diagnostics.status = Status::Returning;
 					LogStatusChangeLocked(result.diagnostics);
 					return result;
 				}
@@ -527,18 +486,29 @@ namespace FoveatedRenderImpl::NativeOpenVRGaze
 		bool a_allowDynamic)
 	{
 		std::lock_guard lock(stateMutex);
-		// Params resolves the crop in the DLSS input coordinate space and the
-		// NR writeback path resolves it again later in the same game frame. Do
-		// not let their output-space dimensions create a second crop/history
-		// decision; the first result is the frame's shared contract.
+		// VRS, DLSS and NR must share one crop despite input/output dimension differences.
+		// Resampling mid-frame would misalign color, native guides and the shading-rate map.
 		if (state.cacheValid && state.cachedFrame == a_frame &&
 			SameConfig(a_config, state.cachedConfig) && SameRegion(a_baseLeftUV, state.cachedBaseLeft) &&
 			SameRegion(a_baseRightUV, state.cachedBaseRight) && state.cachedAllowDynamic == a_allowDynamic)
 			return state.cachedResult;
 
-		state.cachedResult = ResolveLocked(a_config, a_baseLeftUV, a_baseRightUV,
+		auto result = ResolveLocked(a_config, a_baseLeftUV, a_baseRightUV,
 			a_eyeWidth, a_eyeHeight, a_frame, a_allowDynamic);
-		state.cachedResult.diagnostics.historyReset = state.cachedResult.historyReset;
+		const bool cropChanged = state.cacheValid && (a_config.enabled || state.cachedResult.diagnostics.experimentEnabled) &&
+			(!SameRegion(result.leftUV, state.cachedResult.leftUV) || !SameRegion(result.rightUV, state.cachedResult.rightUV));
+		// Crop-local histories have no verified exposed-region validity mask.
+		// Any origin change must reset both reconstruction stages without freeing resources.
+		result.historyReset = result.historyReset || cropChanged;
+		state.cropChangeCount += cropChanged ? 1 : 0;
+		state.historyResetCount += result.historyReset ? 1 : 0;
+		result.diagnostics.cropChanged = cropChanged;
+		result.diagnostics.cropChangeCount = state.cropChangeCount;
+		result.diagnostics.historyResetCount = state.historyResetCount;
+		result.diagnostics.leftCropUV = { result.leftUV.x, result.leftUV.y, result.leftUV.w, result.leftUV.h };
+		result.diagnostics.rightCropUV = { result.rightUV.x, result.rightUV.y, result.rightUV.w, result.rightUV.h };
+		result.diagnostics.historyReset = result.historyReset;
+		state.cachedResult = result;
 		state.cachedFrame = a_frame;
 		state.cacheValid = true;
 		return state.cachedResult;
