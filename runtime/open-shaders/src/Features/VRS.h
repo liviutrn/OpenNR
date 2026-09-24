@@ -1,12 +1,8 @@
 #pragma once
 
 #include "Feature.h"
+#include "RE/B/BSShaderAccumulator.h"
 #include "VRS/NvVrsController.h"
-
-namespace RE::BSGraphics
-{
-	class BSShaderAccumulator;
-}
 
 /// NVAPI Variable Rate Shading — foveated rendering for VR.
 ///
@@ -98,7 +94,7 @@ private:
 
 	struct Main_FinishAccumulatingDispatch
 	{
-		static void thunk(RE::BSGraphics::BSShaderAccumulator* shaderAccumulator, uint32_t renderFlags);
+		static void thunk(RE::BSShaderAccumulator* shaderAccumulator, uint32_t renderFlags);
 		static inline REL::Relocation<decltype(thunk)> func;
 	};
 };

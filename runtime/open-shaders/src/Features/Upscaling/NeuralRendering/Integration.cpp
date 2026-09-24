@@ -70,7 +70,7 @@ namespace NeuralRendering
 			winrt::com_ptr<ID3D11Texture2D>& holder)
 		{
 			if (target.texture)
-				return target.texture;
+				return Util::AsReal(target.texture);
 			auto resolveView = [&](ID3D11View* view) -> ID3D11Texture2D* {
 				if (!view)
 					return nullptr;
@@ -80,9 +80,9 @@ namespace NeuralRendering
 					return nullptr;
 				return holder.get();
 			};
-			if (auto* texture = resolveView(target.SRV))
+			if (auto* texture = resolveView(Util::AsReal(target.SRV)))
 				return texture;
-			return resolveView(target.RTV);
+			return resolveView(Util::AsReal(target.RTV));
 		}
 
 		bool EnsureColorResources(ID3D11Resource* source, std::uint32_t width, std::uint32_t height)
@@ -254,7 +254,7 @@ namespace NeuralRendering
 			context->CopyResource(color[0]->resource.get(), framebuffer);
 
 			const bool succeeded = Renderer::Instance().Apply(globals::d3d::device, context, 0,
-				color[0]->resource.get(), depth.texture, depth.depthSRV,
+				color[0]->resource.get(), Util::AsReal(depth.texture), Util::AsReal(depth.depthSRV),
 				upscaling.motionVectorCopyTexture->resource.get(), motionDesc.Width, motionDesc.Height,
 				totalDesc.Width, totalDesc.Height, static_cast<float>(motionDesc.Width),
 				static_cast<float>(motionDesc.Height), GetTuning(foveated, false));
@@ -406,8 +406,8 @@ namespace NeuralRendering
 
 		D3D11_TEXTURE2D_DESC colorDesc{};
 		D3D11_TEXTURE2D_DESC motionDesc{};
-		main.texture->GetDesc(&colorDesc);
-		motionVector.texture->GetDesc(&motionDesc);
+		main.texture->GetDesc(Util::AsW32(&colorDesc));
+		motionVector.texture->GetDesc(Util::AsW32(&motionDesc));
 		if (colorDesc.Width == 0 || colorDesc.Height == 0 ||
 			(globals::game::isVR && (colorDesc.Width < 2 || (colorDesc.Width & 1u) != 0)) ||
 			motionDesc.Width == 0 || motionDesc.Height == 0) {
@@ -434,7 +434,7 @@ namespace NeuralRendering
 		if (!globals::game::isVR) {
 			CS_GPU_PASS("NeuralRendering::FlatPreUpscale");
 			succeeded = Renderer::Instance().Apply(globals::d3d::device, context, 0,
-				main.texture, depth.texture, depth.depthSRV, motionVector.texture,
+				Util::AsReal(main.texture), Util::AsReal(depth.texture), Util::AsReal(depth.depthSRV), Util::AsReal(motionVector.texture),
 				motionDesc.Width, motionDesc.Height, colorDesc.Width, colorDesc.Height,
 				static_cast<float>(motionDesc.Width), static_cast<float>(motionDesc.Height), tuning);
 		} else {
@@ -456,7 +456,7 @@ namespace NeuralRendering
 					auto& total = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kTOTAL];
 					if (total.texture) {
 						D3D11_TEXTURE2D_DESC totalDesc{};
-						total.texture->GetDesc(&totalDesc);
+						Util::AsReal(total.texture)->GetDesc(&totalDesc);
 						if (totalDesc.Width >= 2 && totalDesc.Height > 0) {
 							outputEyeWidth = totalDesc.Width / 2;
 							outputEyeHeight = totalDesc.Height;
@@ -467,7 +467,7 @@ namespace NeuralRendering
 				if (outputEyeWidth == 0 || outputEyeHeight == 0) {
 					LogPreUpscaleBlocked("display-resolution stereo dimensions are invalid");
 				} else if (!FoveatedRenderImpl::Core::PrepareVRPerEyeInputs(
-						main.texture, depth.texture, motionVector.texture, nullptr, nullptr,
+						Util::AsReal(main.texture), Util::AsReal(depth.texture), Util::AsReal(motionVector.texture), nullptr, nullptr,
 						eyeWidth, eyeHeight, outputEyeWidth, outputEyeHeight)) {
 					LogPreUpscaleBlocked("per-eye pre-NR guide preparation failed");
 				} else {
@@ -492,7 +492,7 @@ namespace NeuralRendering
 					} else {
 						CS_GPU_PASS("NeuralRendering::StereoPreUpscale");
 						succeeded = Renderer::Instance().ApplyStereo(globals::d3d::device, context,
-						main.texture, inputs, eyeWidth, eyeHeight, eyeWidth, eyeHeight, tuning);
+						Util::AsReal(main.texture), inputs, eyeWidth, eyeHeight, eyeWidth, eyeHeight, tuning);
 					}
 				}
 			}
@@ -556,7 +556,7 @@ namespace NeuralRendering
 		if (!total.texture)
 			return false;
 		D3D11_TEXTURE2D_DESC totalDesc{};
-		total.texture->GetDesc(&totalDesc);
+		 total.texture->GetDesc(Util::AsW32(&totalDesc));
 
 		const FoveatedRenderImpl::NativeOpenVRGaze::Config gazeConfig{
 			.enabled = foveated.settings.neuralRenderingEyeTrackedFoveation,
@@ -624,16 +624,16 @@ namespace NeuralRendering
 		const auto blendMode = foveated.GetSubrectBlendMode();
 		const bool wantsEdgeBlend = !fullEye &&
 			(foveated.IsAdaptiveCropRuntimeActive() || blendMode != FoveatedRender::SubrectBlendMode::kHardCopy);
-		ID3D11Resource* destination = total.texture;
-		ID3D11UnorderedAccessView* destinationUAV = total.UAV;
+		ID3D11Resource* destination = Util::AsReal(total.texture);
+		ID3D11UnorderedAccessView* destinationUAV = Util::AsReal(total.UAV);
 		bool stagedBlendTarget = false;
 		if (wantsEdgeBlend && !destinationUAV) {
 			// kTOTAL is not guaranteed to have D3D11_BIND_UNORDERED_ACCESS. Keep
 			// its original background in a private UAV-capable copy, blend there,
 			// then copy the finished SBS image back. This costs two full-frame
 			// copies only on this fallback path; targets exposing a UAV stay direct.
-			if (EnsureStereoBlendTarget(total.texture, totalDesc.Width, totalDesc.Height)) {
-				context->CopyResource(stereoBlendTarget->resource.get(), total.texture);
+			if (EnsureStereoBlendTarget(Util::AsReal(total.texture), totalDesc.Width, totalDesc.Height)) {
+				context->CopyResource(stereoBlendTarget->resource.get(), Util::AsReal(total.texture));
 				destination = stereoBlendTarget->resource.get();
 				destinationUAV = stereoBlendTarget->uav.get();
 				stagedBlendTarget = true;
@@ -686,7 +686,7 @@ namespace NeuralRendering
 				tuning.temporalReuseCadence = 0;
 		}
 			bool succeeded = Renderer::Instance().ApplyStereo(globals::d3d::device, context,
-				total.texture, inputs, guideWidth, guideHeight,
+				Util::AsReal(total.texture), inputs, guideWidth, guideHeight,
 				outWidth, outHeight, tuning, destination, destinationUAV, wantsEdgeBlend && destinationUAV != nullptr,
 				resourceEnvelope);
 			if (!succeeded && resourceEnvelope.IsValid() &&
@@ -703,7 +703,7 @@ namespace NeuralRendering
 					FoveatedRenderImpl::Core::InvalidateTemporalState();
 					resourceEnvelope.enabled = false;
 					succeeded = Renderer::Instance().ApplyStereo(globals::d3d::device, context,
-						total.texture, inputs, guideWidth, guideHeight,
+						Util::AsReal(total.texture), inputs, guideWidth, guideHeight,
 						outWidth, outHeight, tuning, destination, destinationUAV, wantsEdgeBlend && destinationUAV != nullptr,
 						resourceEnvelope);
 				} else {
@@ -712,7 +712,7 @@ namespace NeuralRendering
 			}
 		if (succeeded) {
 			if (stagedBlendTarget)
-				context->CopyResource(total.texture, destination);
+				context->CopyResource(Util::AsReal(total.texture), destination);
 			// Crop handoffs move the current-frame compositing mask; no prior SBS image is reused.
 			lastAppliedFrame = frame;
 			if (!writebackLogged) {

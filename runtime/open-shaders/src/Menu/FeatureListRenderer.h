@@ -66,11 +66,30 @@ public:
 		const std::function<void()>& drawGeneralSettings,
 		const std::function<void()>& drawAdvancedSettings);
 
+	/**
+	 * @brief Compatibility overload for the editor browser entry point.
+	 *
+	 * The current OpenNR menu renderer intentionally shares the regular two-column
+	 * implementation with the editor browser. Keep the editor call surface while
+	 * the upstream editor-specific layout is reconciled separately.
+	 */
+	static void RenderFeatureList(
+		float footerHeight,
+		Menu::SidebarState& sidebar,
+		size_t& selectedMenu,
+		std::string& featureSearch,
+		std::string& pendingFeatureSelection,
+		const std::function<void()>& drawGeneralSettings,
+		const std::function<void()>& drawAdvancedSettings,
+		bool editorLayout,
+		bool resetLayout);
+
 private:
 	struct ListMenuVisitor
 	{
 		size_t listId;
 		size_t& selectedMenuRef;
+		bool editorLayout = false;
 
 		void operator()(const BuiltInMenu& menu);
 		void operator()(const std::string& label);
@@ -99,10 +118,14 @@ private:
 			float size{};
 		};
 
-		FeatureActionsLayout RenderFeatureHeader(Feature* feat, bool isLoaded);
-		void RenderFeatureActions(Feature* feat, bool isDisabled, bool isLoaded, bool sceneControlled, const FeatureActionsLayout& layout);
-		float RenderFeatureMaterial(Feature* feat, bool isDisabled, bool isLoaded, bool hasFailedMessage);
-		void RenderFeatureSettings(Feature* feat, bool isDisabled, bool isLoaded, bool hasFailedMessage, bool sceneControlled);
+		FeatureActionsLayout RenderFeatureHeader(Feature* feat, bool isDisabled, bool isLoaded,
+			bool canEditSceneSettings);
+		void RenderFeatureActions(Feature* feat, bool isDisabled, bool isLoaded,
+			bool sceneControlled, bool canEditSceneSettings, const FeatureActionsLayout& layout);
+		float RenderFeatureMaterial(Feature* feat, bool isDisabled, bool isLoaded,
+			bool hasFailedMessage);
+		void RenderFeatureSettings(Feature* feat, bool isDisabled, bool isLoaded,
+			bool hasFailedMessage, bool sceneControlled, bool sceneEditing);
 		void RenderReactiveConstraintWarningDialog();
 	};
 

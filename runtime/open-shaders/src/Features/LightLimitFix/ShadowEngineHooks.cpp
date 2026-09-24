@@ -97,8 +97,8 @@ namespace ShadowCasterManager
 			return;
 		auto* renderer = reinterpret_cast<RE::BSGraphics::Renderer*>(ctx.R15);
 		for (int i = 0; i < 8; i++) {
-			renderer->GetDepthStencilData().depthStencils[4].views[i] = reinterpret_cast<ID3D11DepthStencilView*>(globals::features::llf::normalDepthBuffer[i]);
-			renderer->GetDepthStencilData().depthStencils[4].readOnlyViews[i] = reinterpret_cast<ID3D11DepthStencilView*>(globals::features::llf::readOnlyDepthBuffer[i]);
+			renderer->GetDepthStencilData().depthStencils[4].views[i] = Util::CastTo<REX::W32::ID3D11DepthStencilView>(globals::features::llf::normalDepthBuffer[i]);
+			renderer->GetDepthStencilData().depthStencils[4].readOnlyViews[i] = Util::CastTo<REX::W32::ID3D11DepthStencilView>(globals::features::llf::readOnlyDepthBuffer[i]);
 		}
 	}
 
@@ -162,11 +162,11 @@ namespace ShadowCasterManager
 	{
 		for (int i = 8; i < shadowCount; i++) {
 			if (globals::features::llf::normalDepthBuffer[i]) {
-				reinterpret_cast<ID3D11DepthStencilView*>(globals::features::llf::normalDepthBuffer[i])->Release();
+				Util::CastTo<ID3D11DepthStencilView>(globals::features::llf::normalDepthBuffer[i])->Release();
 				globals::features::llf::normalDepthBuffer[i] = nullptr;
 			}
 			if (globals::features::llf::readOnlyDepthBuffer[i]) {
-				reinterpret_cast<ID3D11DepthStencilView*>(globals::features::llf::readOnlyDepthBuffer[i])->Release();
+				Util::CastTo<ID3D11DepthStencilView>(globals::features::llf::readOnlyDepthBuffer[i])->Release();
 				globals::features::llf::readOnlyDepthBuffer[i] = nullptr;
 			}
 		}
@@ -248,26 +248,26 @@ namespace ShadowCasterManager
 				const float sliceDim = static_cast<float>(AtlasBaseTile());
 				if (GetSlotTileTexels(slice, tile) && sliceDim > 0.0f) {
 					const float inv = 1.0f / sliceDim;
-					viewPort.TopLeftX = tile.x + viewPort.TopLeftX * inv * tile.size;
-					viewPort.TopLeftY = tile.y + viewPort.TopLeftY * inv * tile.size;
-					viewPort.Width = viewPort.Width * inv * tile.size;
-					viewPort.Height = viewPort.Height * inv * tile.size;
+					viewPort.topLeftX = tile.x + viewPort.topLeftX * inv * tile.size;
+					viewPort.topLeftY = tile.y + viewPort.topLeftY * inv * tile.size;
+					viewPort.width = viewPort.width * inv * tile.size;
+					viewPort.height = viewPort.height * inv * tile.size;
 				} else {
 					// No tile behind this slice: collapse the viewport so a
 					// stray raster clips to nothing instead of stomping other
 					// lights' tiles in the shared atlas.
-					viewPort.Width = 0.0f;
-					viewPort.Height = 0.0f;
+					viewPort.width = 0.0f;
+					viewPort.height = 0.0f;
 				}
 				return;
 			}
 			const float scale = s_lights.Lights[slice].pendingScale;
 			if (scale <= 0.0f || scale >= 1.0f)
 				return;
-			viewPort.TopLeftX *= scale;
-			viewPort.TopLeftY *= scale;
-			viewPort.Width *= scale;
-			viewPort.Height *= scale;
+			viewPort.topLeftX *= scale;
+			viewPort.topLeftY *= scale;
+			viewPort.width *= scale;
+			viewPort.height *= scale;
 		}
 		static inline REL::Relocation<decltype(thunk)> func;
 	};
@@ -285,36 +285,6 @@ namespace ShadowCasterManager
 		static void thunk()
 		{
 			(void)func;  // suppress "unused" warning while keeping the relocation
-		}
-		static inline REL::Relocation<decltype(thunk)> func;
-	};
-
-	// BSBatchRenderer::StartGroupingAlphas bump-allocates a global array with no
-	// capacity check; an extended shadow pool's demand can exceed it, AV'ing on
-	// adjacent .rdata read as bogus `this`. Return null: callers already handle it.
-	static std::uint32_t* s_alphaGroupCount = nullptr;
-	static std::uint32_t s_alphaGroupLimit = 0;
-
-	struct Hook_StartGroupingAlphas
-	{
-		static void* thunk(RE::BSBatchRenderer* a_this, void* a_bound, RE::NiCamera* a_camera,
-			bool a_sortByClosestPoint)
-		{
-			if (s_alphaGroupCount && a_camera) {
-				const std::uint32_t live = *s_alphaGroupCount;
-				// High-water mark; CAS so a concurrent worker cannot lose a higher peak.
-				std::uint32_t seen = s_alphaGroupPeak.load(std::memory_order_relaxed);
-				while (live > seen && !s_alphaGroupPeak.compare_exchange_weak(
-										  seen, live, std::memory_order_relaxed)) {
-				}
-				if (live >= s_alphaGroupLimit) {
-					const uint64_t n = s_alphaGroupDrops.fetch_add(1, std::memory_order_relaxed) + 1;
-					if (n == 1u || (n % 10000u) == 0u)
-						logger::warn("[SCM] Alpha GeometryGroup ceiling reached ({} live, {} refused)", live, n);
-					return nullptr;
-				}
-			}
-			return func(a_this, a_bound, a_camera, a_sortByClosestPoint);
 		}
 		static inline REL::Relocation<decltype(thunk)> func;
 	};
@@ -354,11 +324,6 @@ namespace ShadowCasterManager
 		return !ssn || ssn->GetRuntimeData().portalGraph == nullptr;
 	}
 
-	static bool GetSunBool1()
-	{
-		static REL::RelocationID uid(513201, 390932);
-		return *reinterpret_cast<bool*>(uid.address());
-	}
 	// Engine's per-frame count of focus shadow actors (player + tracked NPCs);
 	// max is iNumFocusShadow:Display (default 4). The engine renders one
 	// high-resolution shadow per entry into kSHADOWMAPS slots
@@ -1347,53 +1312,6 @@ namespace ShadowCasterManager
 		stl::detour_thunk<Hook_RenderShadowLightsWithUtilityShader>(
 			REL::RelocationID(100423, 107141));
 
-		// Alpha GeometryGroup ceiling (100874/107670, see Hook_StartGroupingAlphas).
-		// The counter has no address-library id of its own; it's decoded out of
-		// ClearAlphaGeometryGroups (100856/107646), an 11-byte `mov dword
-		// [counter], 0; ret` whose RIP-relative operand IS the counter -- the
-		// opcode check below is what makes that safe rather than a guess.
-		{
-			// `mov dword ptr [rip+disp32], imm32` (C7 /0, RIP-relative ModRM), then
-			// `ret`; the operand is relative to the end of the 10-byte store.
-			constexpr std::uint8_t kMovDwordImmOpcode = 0xC7;
-			constexpr std::uint8_t kRipRelativeModRM = 0x05;
-			constexpr std::uint8_t kRetOpcode = 0xC3;
-			constexpr std::size_t kMovDwordImmSize = 10;
-
-			const auto clearFn = REL::RelocationID(100856, 107646).address();
-			const auto* code = reinterpret_cast<const std::uint8_t*>(clearFn);
-			std::uint32_t immediate = 1;
-			std::int32_t displacement = 0;
-			if (clearFn) {
-				std::memcpy(&displacement, code + 2, sizeof(displacement));
-				std::memcpy(&immediate, code + 6, sizeof(immediate));
-			}
-			// The immediate must be the zero this function exists to store: a
-			// patched sentinel would mean the counter no longer means what the
-			// ceiling check assumes.
-			const bool shapeOk = clearFn && code[0] == kMovDwordImmOpcode &&
-			                     code[1] == kRipRelativeModRM && immediate == 0u &&
-			                     code[kMovDwordImmSize] == kRetOpcode;
-			const auto counter = shapeOk ? clearFn + kMovDwordImmSize + displacement : 0;
-			// Containment check: a decode this guard trusts enough to dereference
-			// every frame must land in the module's own data, not wherever a
-			// displacement happened to point.
-			const auto data = REL::Module::get().segment(REL::Segment::data);
-			if (counter >= data.address() && counter < data.address() + data.size()) {
-				s_alphaGroupCount = reinterpret_cast<std::uint32_t*>(counter);
-				s_alphaGroupLimit = (globals::game::isVR ? kAlphaGeometryGroupCapacityVR :
-														   kAlphaGeometryGroupCapacityFlat) -
-				                    kAlphaGeometryGroupReserve;
-				if (long rc = stl::detour_thunk<Hook_StartGroupingAlphas>(REL::RelocationID(100874, 107670)))
-					logger::error("[SCM] Failed to install Hook_StartGroupingAlphas ({})", rc);
-			} else {
-				s_alphaGroupCount = nullptr;
-				logger::error(
-					"[SCM] Alpha GeometryGroup guard not installed: "
-					"ClearAlphaGeometryGroups did not decode to a counter in .data");
-			}
-		}
-
 		// ---- Shadow caster selection -----------------------------------------
 
 		// Replace CalculateActiveShadowCasterLights entirely (ID 100419/107137).
@@ -1475,6 +1393,7 @@ namespace ShadowCasterManager
 		// Parabolic Render (vtable 0x0A): repair the engine's omission of copying
 		// cascade 0's shadowmapIndex to cascade 1, so teardown frees the right slot.
 		stl::write_vfunc<0x0A, Hook_ParabolicRender>(RE::VTABLE_BSShadowParabolicLight[0]);
+		InstallPassRegistrationHooks();
 
 		// Contribution-cull point-light shadow casters (parabolic AppendVirtual).
 		InstallCasterCullHook();

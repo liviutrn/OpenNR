@@ -10,7 +10,7 @@
 #include <algorithm>
 #include <cmath>
 
-#include "RE/S/ShaderAccumulator.h"
+#include "RE/B/BSShaderAccumulator.h"
 
 // Terrain Blending compatibility: VRS is suspended around TB's deferred terrain passes.
 // Note: VRS reduces pixel shader overhead at high resolutions but does not affect compute shader cost; further adaptation needed.
@@ -58,12 +58,12 @@ void VRS::Main_UpdateJitter::thunk(RE::BSGraphics::State* a_state)
 	globals::features::vrs.UpdateVRShadingRateState();
 }
 
-void VRS::Main_FinishAccumulatingDispatch::thunk(RE::BSGraphics::BSShaderAccumulator* shaderAccumulator, uint32_t renderFlags)
+void VRS::Main_FinishAccumulatingDispatch::thunk(RE::BSShaderAccumulator* shaderAccumulator, uint32_t renderFlags)
 {
 	// renderMode 24 = UI pass, which runs at display resolution (DRS=1.0).
 	// VRS must be disabled before the UI pass to avoid foveated cull/low-rate
 	// artifacts on HUD elements.
-	if (shaderAccumulator && shaderAccumulator->GetRuntimeData().renderMode == 24) {
+	if (shaderAccumulator && shaderAccumulator->GetRuntimeData().renderMode == RE::BSShaderAccumulator::RENDER_MODE::kVRWorldSpaceUIPass) {
 		globals::features::vrs.DisableVRShadingRateState();
 	}
 	func(shaderAccumulator, renderFlags);
@@ -137,8 +137,8 @@ void VRS::DrawSettings()
 		ID3D11Texture2D* previewTex = nullptr;
 		if (auto renderer = globals::game::renderer) {
 			auto& framebuffer = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kVR_FRAMEBUFFER];
-			previewSrv = framebuffer.SRV;
-			previewTex = static_cast<ID3D11Texture2D*>(framebuffer.texture);
+			previewSrv = Util::AsReal(framebuffer.SRV);
+			previewTex = Util::AsReal(framebuffer.texture);
 		}
 		subrect.DrawEditor(previewSrv, previewTex, 0.5f, 0.0f, Util::Subrect::OpaquePreviewBlendCallback);
 	}

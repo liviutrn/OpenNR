@@ -1,9 +1,14 @@
 #pragma once
 
+// CommonLibVR's RE:: headers no longer transitively pull this in (they use their own
+// REX::W32 D3D11 reimplementation); the real Windows SDK types below need it directly.
+#include <d3d11.h>
+
 #include <atomic>
 
 struct CloudShadows;
 struct CloudRelight;
+struct ProceduralSun;
 struct DynamicCubemaps;
 struct VolumetricShadows;
 struct ExtendedMaterials;
@@ -42,6 +47,8 @@ struct VRS;
 class Profiler;
 struct CSEditor;
 struct CSUtility;
+struct Wind;
+struct FeatureOverwrites;
 #if defined(ENABLE_EFFECTS11)
 struct Effects11;
 #endif
@@ -51,6 +58,7 @@ struct PostProcessing;
 struct ScreenshotFeature;
 struct OpenNRCaptureFeature;
 struct Skin;
+struct SceneManager;
 
 class State;
 class Deferred;
@@ -58,7 +66,6 @@ struct TruePBR;
 class RenderDoc;
 class RemoteControl;
 class Menu;
-class WeatherManager;
 class SceneSettingsManager;
 
 namespace SIE
@@ -105,6 +112,7 @@ namespace globals
 	{
 		extern CloudShadows cloudShadows;
 		extern CloudRelight cloudRelight;
+		extern ProceduralSun proceduralSun;
 		extern DynamicCubemaps dynamicCubemaps;
 		extern VolumetricShadows volumetricShadows;
 		extern ExtendedMaterials extendedMaterials;
@@ -150,10 +158,13 @@ namespace globals
 		extern OpenNRCaptureFeature openNRCapture;
 		extern CSEditor csEditor;
 		extern CSUtility csUtility;
+		extern Wind wind;
+		extern FeatureOverwrites featureOverwrites;
 		extern ExponentialHeightFog exponentialHeightFog;
 		extern TruePBR truePBR;
 		extern Skin skin;
 		extern PostProcessing postProcessing;
+		extern SceneManager sceneManager;
 
 		namespace llf
 		{
@@ -334,7 +345,6 @@ namespace globals
 	extern Menu* menu;
 	extern SIE::ShaderCache* shaderCache;
 	extern Profiler* profiler;
-	extern WeatherManager* weatherManager;
 	extern SceneSettingsManager* sceneSettingsManager;
 
 	/** @brief Initializes core singletons (ShaderCache, State, Menu, Deferred). Called once at plugin load. */

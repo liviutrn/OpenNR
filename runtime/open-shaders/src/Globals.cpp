@@ -1,5 +1,7 @@
 #include "Globals.h"
 
+#include "Utils/D3D.h"
+
 #include "Deferred.h"
 #include "Features/CSEditor.h"
 #include "Features/CSUtility.h"
@@ -10,6 +12,7 @@
 #include "Features/ExponentialHeightFog.h"
 #include "Features/ExtendedMaterials.h"
 #include "Features/ExtendedTranslucency.h"
+#include "Features/FeatureOverwrites.h"
 #include "Features/FoliageLighting.h"
 #include "Features/GrassCollision.h"
 #include "Features/GrassLighting.h"
@@ -25,8 +28,10 @@
 #include "Features/LinearLighting.h"
 #include "Features/PerformanceOverlay.h"
 #include "Features/PostProcessing.h"
+#include "Features/ProceduralSun.h"
 #include "Features/RemoteControl.h"
 #include "Features/RenderDoc.h"
+#include "Features/SceneManager.h"
 #include "Features/SceneSelector.h"
 #include "Features/ScreenSpaceGI.h"
 #include "Features/ScreenSpaceShadows.h"
@@ -50,13 +55,13 @@
 #include "Features/VolumetricShadows.h"
 #include "Features/WaterEffects.h"
 #include "Features/WetnessEffects.h"
+#include "Features/Wind/Wind.h"
 #include "Menu.h"
 #include "SceneSettingsManager.h"
 #include "ShaderCache.h"
 #include "State.h"
 #include "TruePBR.h"
 #include "Utils/Game.h"
-#include "WeatherManager.h"
 
 namespace globals
 {
@@ -71,6 +76,7 @@ namespace globals
 	{
 		CloudShadows cloudShadows{};
 		CloudRelight cloudRelight{};
+		ProceduralSun proceduralSun{};
 		DynamicCubemaps dynamicCubemaps{};
 		VolumetricShadows volumetricShadows{};
 		ExtendedMaterials extendedMaterials{};
@@ -116,10 +122,13 @@ namespace globals
 		OpenNRCaptureFeature openNRCapture{};
 		CSEditor csEditor{};
 		CSUtility csUtility{};
+		Wind wind{};
+		FeatureOverwrites featureOverwrites{};
 		ExponentialHeightFog exponentialHeightFog{};
 		TruePBR truePBR{};
 		Skin skin{};
 		PostProcessing postProcessing{};
+		SceneManager sceneManager{};
 
 		namespace llf
 		{
@@ -197,7 +206,6 @@ namespace globals
 	Deferred* deferred = nullptr;
 	Menu* menu = nullptr;
 	SIE::ShaderCache* shaderCache = nullptr;
-	WeatherManager* weatherManager = nullptr;
 	SceneSettingsManager* sceneSettingsManager = nullptr;
 
 	static Profiler profilerInstance;
@@ -209,7 +217,6 @@ namespace globals
 		state = State::GetSingleton();
 		menu = Menu::GetSingleton();
 		deferred = Deferred::GetSingleton();
-		weatherManager = WeatherManager::GetSingleton();
 		sceneSettingsManager = SceneSettingsManager::GetSingleton();
 	}
 
@@ -262,9 +269,9 @@ namespace globals
 			BSMultiStreamInstanceTriShapeRTTI = { RE::BSMultiStreamInstanceTriShape::Ni_RTTI };
 		}
 
-		d3d::device = reinterpret_cast<ID3D11Device*>(game::renderer->GetRuntimeData().forwarder);
-		d3d::context = reinterpret_cast<ID3D11DeviceContext*>(game::renderer->GetRuntimeData().context);
-		d3d::swapChain = reinterpret_cast<IDXGISwapChain*>(game::renderer->GetRuntimeData().renderWindows->swapChain);
+		d3d::device = Util::AsReal(game::renderer->GetRuntimeData().forwarder);
+		d3d::context = Util::AsReal(game::renderer->GetRuntimeData().context);
+		d3d::swapChain = Util::AsReal(game::renderer->GetRuntimeData().renderWindows->swapChain);
 	}
 
 	void OnDataLoaded()
@@ -395,7 +402,7 @@ namespace globals
 						ID3D11Resource* clearRes = nullptr;
 						ID3D11Resource* mainRes = nullptr;
 						pDepthStencilView->GetResource(&clearRes);
-						mainDepth.views[0]->GetResource(&mainRes);
+						mainDepth.views[0]->GetResource(Util::AsW32(&mainRes));
 						bool isMainDSV = (clearRes == mainRes);
 						if (clearRes)
 							clearRes->Release();

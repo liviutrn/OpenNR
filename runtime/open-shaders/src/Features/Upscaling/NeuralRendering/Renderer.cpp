@@ -122,7 +122,7 @@ namespace NeuralRendering
 				return true;
 			D3D11_TEXTURE2D_DESC colorDesc{}, nativeDesc{};
 			if (!globals::game::renderer || !GetTextureDesc(color, colorDesc) ||
-				!GetTextureDesc(globals::game::renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN].texture, nativeDesc) ||
+					!GetTextureDesc(Util::AsReal(globals::game::renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN].texture), nativeDesc) ||
 				!colorDesc.Width || !colorDesc.Height || !nativeDesc.Width || !nativeDesc.Height ||
 				static_cast<std::uint64_t>(x) + width > colorDesc.Width ||
 				static_cast<std::uint64_t>(y) + height > colorDesc.Height)
@@ -149,7 +149,7 @@ namespace NeuralRendering
 			auto& targets = globals::game::renderer->GetRuntimeData().renderTargets;
 			for (const auto& source : kRendererConditionings) {
 				auto* texture = targets[source.target].texture;
-				if (!IsValidCaptureRect(texture, sourceX, sourceY, sourceWidth, sourceHeight))
+				if (!IsValidCaptureRect(Util::AsReal(texture), sourceX, sourceY, sourceWidth, sourceHeight))
 					continue;
 				if (std::find(info.rendererConditioningsAvailable.begin(), info.rendererConditioningsAvailable.end(), source.stage) ==
 					info.rendererConditioningsAvailable.end())
@@ -175,11 +175,11 @@ namespace NeuralRendering
 			for (const auto& source : kRendererConditionings) {
 				auto* texture = targets[source.target].texture;
 				D3D11_TEXTURE2D_DESC desc{};
-				const bool hasDesc = GetTextureDesc(texture, desc);
+				const bool hasDesc = GetTextureDesc(Util::AsReal(texture), desc);
 				const bool validRect = hasDesc && sourceWidth && sourceHeight &&
 					static_cast<std::uint64_t>(sourceX) + sourceWidth <= desc.Width &&
 					static_cast<std::uint64_t>(sourceY) + sourceHeight <= desc.Height;
-				const bool queued = validRect && capture.CaptureTexture(texture, sourceX, sourceY,
+				const bool queued = validRect && capture.CaptureTexture(Util::AsReal(texture), sourceX, sourceY,
 					sourceWidth, sourceHeight, source.stage, eyeIndex, false, false);
 				const char* reason = !texture ? "texture_missing" : !hasDesc ? "not_texture2d" :
 					!validRect ? "source_rectangle_out_of_bounds" : !queued ? "copy_not_queued" : "copy_queued";

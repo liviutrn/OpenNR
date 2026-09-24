@@ -24,7 +24,7 @@ namespace Util
 			prefer16bit = false;
 		auto& zPrepassCopy = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPOST_ZPREPASS_COPY];
 		if (globals::deferred && globals::deferred->sceneDepthFinal)
-			return zPrepassCopy.depthSRV;
+			return Util::AsReal(zPrepassCopy.depthSRV);
 
 		auto& tb = globals::features::terrainBlending;
 		if (tb.loaded && tb.settings.Enabled) {
@@ -32,7 +32,7 @@ namespace Util
 			if (srv)
 				return srv;
 		}
-		return zPrepassCopy.depthSRV;
+		return Util::AsReal(zPrepassCopy.depthSRV);
 	}
 
 	ID3D11ShaderResourceView* GetSRVFromRTV(const ID3D11RenderTargetView* a_rtv)
@@ -41,8 +41,8 @@ namespace Util
 			if (auto r = globals::game::renderer) {
 				for (int i = 0; i < GetRenderTargetCount(); i++) {
 					auto rt = r->GetRuntimeData().renderTargets[i];
-					if (a_rtv == rt.RTV) {
-						return rt.SRV;
+					if (a_rtv == Util::AsReal(rt.RTV)) {
+						return Util::AsReal(rt.SRV);
 					}
 				}
 			}
@@ -56,8 +56,8 @@ namespace Util
 			if (auto r = globals::game::renderer) {
 				for (int i = 0; i < GetRenderTargetCount(); i++) {
 					auto rt = r->GetRuntimeData().renderTargets[i];
-					if (a_srv == rt.SRV || a_srv == rt.SRVCopy) {
-						return rt.RTV;
+					if (a_srv == Util::AsReal(rt.SRV) || a_srv == Util::AsReal(rt.SRVCopy)) {
+						return Util::AsReal(rt.RTV);
 					}
 				}
 			}
@@ -73,7 +73,7 @@ namespace Util
 			if (auto r = globals::game::renderer) {
 				for (int i = 0; i < GetRenderTargetCount(); i++) {
 					auto rt = r->GetRuntimeData().renderTargets[i];
-					if (a_srv == rt.SRV || a_srv == rt.SRVCopy) {
+					if (a_srv == Util::AsReal(rt.SRV) || a_srv == Util::AsReal(rt.SRVCopy)) {
 						return std::string(magic_enum::enum_name(static_cast<RENDER_TARGET>(i)));
 					}
 				}
@@ -89,7 +89,7 @@ namespace Util
 			if (auto r = globals::game::renderer) {
 				for (int i = 0; i < GetRenderTargetCount(); i++) {
 					auto rt = r->GetRuntimeData().renderTargets[i];
-					if (a_rtv == rt.RTV) {
+					if (a_rtv == Util::AsReal(rt.RTV)) {
 						return std::string(magic_enum::enum_name(static_cast<RENDER_TARGET>(i)));
 					}
 				}
@@ -98,7 +98,7 @@ namespace Util
 		return "NONE";
 	}
 
-	GUID WKPDID_D3DDebugObjectNameT = { 0x429b8c22, 0x9188, 0x4b0c, 0x87, 0x42, 0xac, 0xb0, 0xbf, 0x85, 0xc2, 0x00 };
+	GUID WKPDID_D3DDebugObjectNameT = { 0x429b8c22, 0x9188, 0x4b0c, { 0x87, 0x42, 0xac, 0xb0, 0xbf, 0x85, 0xc2, 0x00 } };
 
 	void SetResourceName(ID3D11DeviceChild* Resource, const char* Format, ...)
 	{
@@ -139,11 +139,9 @@ namespace Util
 			logger::debug("[{}] Shader logs:\n{}", Context, static_cast<char*>(ErrorBlob->GetBufferPointer()));
 	}
 
-	ID3D11DeviceChild* CompileShader(const wchar_t* FilePath, const std::vector<std::pair<const char*, const char*>>& Defines, const char* ProgramType, const char* Program)
+	winrt::com_ptr<ID3DBlob> CompileShaderBlob(const wchar_t* FilePath, const std::vector<std::pair<const char*, const char*>>& Defines, const char* ProgramType, const char* Program)
 	{
-		auto device = globals::d3d::device;
-
-		CustomInclude include;
+		CustomInclude include(FilePath);
 
 		// Build defines (aka convert vector->D3DCONSTANT array)
 		std::vector<D3D_SHADER_MACRO> macros;
@@ -168,17 +166,15 @@ namespace Util
 			for (unsigned int i = 0; i < shaderDefines->size(); i++)
 				macros.push_back({ shaderDefines->at(i).first.c_str(), shaderDefines->at(i).second.c_str() });
 		}
-		if (!_stricmp(ProgramType, "ps_5_0"))
+		if (!_stricmp(ProgramType, "ps_5_0") || !_stricmp(ProgramType, "ps_4_0"))
 			macros.push_back({ "PSHADER", "" });
-		else if (!_stricmp(ProgramType, "vs_5_0"))
+		else if (!_stricmp(ProgramType, "vs_5_0") || !_stricmp(ProgramType, "vs_4_0"))
 			macros.push_back({ "VSHADER", "" });
 		else if (!_stricmp(ProgramType, "hs_5_0"))
 			macros.push_back({ "HULLSHADER", "" });
 		else if (!_stricmp(ProgramType, "ds_5_0"))
 			macros.push_back({ "DOMAINSHADER", "" });
-		else if (!_stricmp(ProgramType, "cs_5_0"))
-			macros.push_back({ "COMPUTESHADER", "" });
-		else if (!_stricmp(ProgramType, "cs_4_0"))
+		else if (!_stricmp(ProgramType, "cs_5_0") || !_stricmp(ProgramType, "cs_4_0"))
 			macros.push_back({ "COMPUTESHADER", "" });
 		else
 			return nullptr;
@@ -213,14 +209,24 @@ namespace Util
 			return nullptr;
 		}
 		LogShaderCompileWarnings(shaderErrors.get(), str);
+		return shaderBlob;
+	}
 
+	ID3D11DeviceChild* CompileShader(const wchar_t* FilePath, const std::vector<std::pair<const char*, const char*>>& Defines, const char* ProgramType, const char* Program)
+	{
+		auto device = globals::d3d::device;
+		auto shaderBlob = CompileShaderBlob(FilePath, Defines, ProgramType, Program);
+		if (!shaderBlob)
+			return nullptr;
+
+		std::string str = Util::WStringToString(FilePath);
 		HRESULT hr = S_OK;
 		ID3D11DeviceChild* regShader = nullptr;
-		if (!_stricmp(ProgramType, "ps_5_0")) {
+		if (!_stricmp(ProgramType, "ps_5_0") || !_stricmp(ProgramType, "ps_4_0")) {
 			ID3D11PixelShader* shader = nullptr;
 			hr = device->CreatePixelShader(shaderBlob->GetBufferPointer(), shaderBlob->GetBufferSize(), nullptr, &shader);
 			regShader = shader;
-		} else if (!_stricmp(ProgramType, "vs_5_0")) {
+		} else if (!_stricmp(ProgramType, "vs_5_0") || !_stricmp(ProgramType, "vs_4_0")) {
 			ID3D11VertexShader* shader = nullptr;
 			hr = device->CreateVertexShader(shaderBlob->GetBufferPointer(), shaderBlob->GetBufferSize(), nullptr, &shader);
 			regShader = shader;

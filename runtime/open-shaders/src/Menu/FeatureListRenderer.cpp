@@ -14,6 +14,7 @@
 #include "FeatureConstraints.h"
 #include "FeatureIssues.h"
 #include "Features/CSEditor.h"
+#include "Features/SceneManagerUI.h"
 #include "Features/Upscaling.h"
 #include "Fonts.h"
 #include "Globals.h"
@@ -24,6 +25,7 @@
 #include "Menu/ProfilingRenderer.h"
 #include "Menu/ThemeManager.h"
 #include "SceneSettingsManager.h"
+#include "SceneSettingsUIHooks.h"
 #include "SettingsOverrideManager.h"
 #include "State.h"
 #include "Util.h"
@@ -434,6 +436,33 @@ void FeatureListRenderer::RenderFeatureList(
 	ImGui::EndChild();
 }
 
+void FeatureListRenderer::RenderFeatureList(
+	float footerHeight,
+	Menu::SidebarState& sidebar,
+	size_t& selectedMenu,
+	std::string& featureSearch,
+	std::string& pendingFeatureSelection,
+	const std::function<void()>& drawGeneralSettings,
+	const std::function<void()>& drawAdvancedSettings,
+	bool editorLayout,
+	bool resetLayout)
+{
+	// The OpenNR menu keeps one stable two-column renderer for both the normal
+	// settings page and the editor browser. Preserve the upstream editor call
+	// surface while its specialized layout is reconciled with our Neural
+	// Rendering/Upscaling peer pages.
+	(void)editorLayout;
+	(void)resetLayout;
+	RenderFeatureList(
+		footerHeight,
+		sidebar,
+		selectedMenu,
+		featureSearch,
+		pendingFeatureSelection,
+		drawGeneralSettings,
+		drawAdvancedSettings);
+}
+
 std::vector<FeatureListRenderer::MenuFuncInfo> FeatureListRenderer::BuildMenuList(
 	const std::function<void()>& drawGeneralSettings,
 	const std::function<void()>& drawAdvancedSettings)
@@ -741,7 +770,7 @@ void FeatureListRenderer::DrawMenuVisitor::operator()(Feature* feat)
 	bool isDisabled = globals::state->IsFeatureDisabled(featureName);
 	bool isLoaded = feat->loaded;
 	bool hasFailedMessage = !feat->failedLoadedMessage.empty();
-	const bool featureProfilingAvailable = !isDisabled && isLoaded && ProfilingRenderer::IsFeatureProfilingAvailable();
+	const bool featureProfilingAvailable = !isDisabled && isLoaded && ProfilingRenderer::IsFeatureProfilingAvailable(featureName);
 
 	ImGui::PushID(featureName.c_str());
 	const float profilingHeight = ProfilingRenderer::PrepareFeatureTimers(featureName, featureProfilingAvailable);
@@ -794,14 +823,21 @@ float FeatureListRenderer::DrawMenuVisitor::RenderFeatureMaterial(Feature* feat,
 	auto* sceneManager = globals::sceneSettingsManager;
 	const auto featureName = feat->GetShortName();
 	const bool sceneControlled = sceneManager->HasActiveSettingsForFeature(featureName) && !sceneManager->IsFeaturePaused(featureName);
-	const auto featureActionsLayout = RenderFeatureHeader(feat, isLoaded);
-	RenderFeatureSettings(feat, isDisabled, isLoaded, hasFailedMessage, sceneControlled);
-	RenderFeatureActions(feat, isDisabled, isLoaded, sceneControlled, featureActionsLayout);
+	const bool canEditSceneSettings = SceneManagerUI::CanEditFeaturePage(feat);
+	const auto featureActionsLayout = RenderFeatureHeader(feat, isDisabled, isLoaded, canEditSceneSettings);
+	SceneManagerUI::DrawFeaturePageControls(feat, !isDisabled && isLoaded);
+	const bool sceneEditing = SceneManagerUI::IsFeaturePageEditing(feat) &&
+	                          sceneManager->IsFeatureSceneEditing(featureName);
+	RenderFeatureSettings(feat, isDisabled, isLoaded, hasFailedMessage, sceneControlled, sceneEditing);
+	RenderFeatureActions(feat, isDisabled, isLoaded, sceneControlled, canEditSceneSettings, featureActionsLayout);
 	return std::max(ImGui::GetCursorPosY() - materialStartY, 0.0f);
 }
 
-FeatureListRenderer::DrawMenuVisitor::FeatureActionsLayout FeatureListRenderer::DrawMenuVisitor::RenderFeatureHeader(Feature* feat, bool isLoaded)
+FeatureListRenderer::DrawMenuVisitor::FeatureActionsLayout FeatureListRenderer::DrawMenuVisitor::RenderFeatureHeader(
+	Feature* feat, bool isDisabled, bool isLoaded, bool canEditSceneSettings)
 {
+	(void)isDisabled;
+	(void)canEditSceneSettings;
 	// Get available content width for positioning
 	float availableWidth = ImGui::GetContentRegionAvail().x;
 
@@ -837,12 +873,14 @@ void FeatureListRenderer::DrawMenuVisitor::RenderFeatureActions(
 	bool isDisabled,
 	bool isLoaded,
 	bool sceneControlled,
+	bool canEditSceneSettings,
 	const FeatureActionsLayout& layout)
 {
 	auto& themeSettings = globals::menu->GetSettings().Theme;
 	const auto featureName = feat->GetShortName();
 	auto overrideManager = SettingsOverrideManager::GetSingleton();
 	bool hasOverrides = overrideManager && overrideManager->HasFeatureOverrides(featureName);
+	const bool sceneEditing = SceneManagerUI::IsFeaturePageEditing(feat);
 
 	const ImVec2 cursorPosAfterSettings = ImGui::GetCursorScreenPos();
 	ImGui::SetCursorScreenPos(ImVec2(layout.x, layout.y));
@@ -876,7 +914,16 @@ void FeatureListRenderer::DrawMenuVisitor::RenderFeatureActions(
 	const ImVec2 actionsButtonMax = ImGui::GetItemRectMax();
 	auto* actionsButtonDrawList = ImGui::GetWindowDrawList();
 	{
-		Util::FlyoutScope flyout(g_featureActionsFlyout, actionsButtonId, actionsButtonPressed);
+		const auto& style = ImGui::GetStyle();
+		const float highlightGap = std::max(0.0f, style.WindowPadding.x - style.ItemSpacing.x * 0.5f);
+		const ImVec2 flyoutPadding(style.WindowPadding.x, highlightGap + style.ItemSpacing.y * 0.5f);
+		Util::FlyoutScope flyout(
+			g_featureActionsFlyout, actionsButtonId, actionsButtonPressed,
+			{ .windowPadding = flyoutPadding,
+				.windowRounding = style.WindowRounding,
+				.windowBackgroundAlpha = ImGui::GetStyleColorVec4(ImGuiCol_WindowBg).w,
+				.contentAlpha = style.Alpha,
+				.blurBackground = true });
 		if (flyout) {
 			bool closeFlyout = false;
 			{
@@ -913,6 +960,20 @@ void FeatureListRenderer::DrawMenuVisitor::RenderFeatureActions(
 			if (Util::FlyoutMenuItem(T("menu.features.add_to_favorites", "Add to Favorites"), favorite, isLoaded,
 					FEATURE_ACTION_CHECKMARK_LEFT_OFFSET * Util::GetUIScale(), Util::DrawStarIcon))
 				g_featurePreferenceSaveFailed = !globals::state->SetFeatureFavorite(featureName, !favorite);
+
+			if (canEditSceneSettings) {
+				if (Util::FlyoutMenuItem(
+						T("feature.scene_manager.name", "Scene Manager"),
+						sceneEditing,
+						!isDisabled && isLoaded,
+						FEATURE_ACTION_CHECKMARK_LEFT_OFFSET * Util::GetUIScale())) {
+					if (sceneEditing)
+						SceneManagerUI::HideFeaturePageEditing();
+					else
+						SceneManagerUI::BeginFeaturePageEditing(feat);
+					closeFlyout = true;
+				}
+			}
 			if (g_featurePreferenceSaveFailed)
 				Util::Text::WrappedError("%s", T("menu.features.preference_save_failed", "Could not save this preference. Please try again."));
 
@@ -994,7 +1055,8 @@ void FeatureListRenderer::DrawMenuVisitor::RenderFeatureActions(
 	ImGui::Dummy(ImVec2(0.0f, 0.0f));
 }
 
-void FeatureListRenderer::DrawMenuVisitor::RenderFeatureSettings(Feature* feat, bool isDisabled, bool isLoaded, bool hasFailedMessage, bool sceneControlled)
+void FeatureListRenderer::DrawMenuVisitor::RenderFeatureSettings(
+	Feature* feat, bool isDisabled, bool isLoaded, bool hasFailedMessage, bool sceneControlled, bool sceneEditing)
 {
 	auto& themeSettings = globals::menu->GetSettings().Theme;
 
@@ -1020,37 +1082,49 @@ void FeatureListRenderer::DrawMenuVisitor::RenderFeatureSettings(Feature* feat, 
 				ImGui::Separator();
 			}
 
-			// Scene-specific settings toggle (Interior Only / TimeOfDay / Weather-Specific)
-			// Show toggle whenever scene entries exist for this feature, even if feature-paused
-			{
+			// Scene-specific settings toggle (Interior Only / TimeOfDay / Weather-Specific).
+			// The editor owns this row while a feature page draft is active.
+			if (!sceneEditing) {
 				const auto& featureShortName = feat->GetShortName();
 				auto* sceneMgr = globals::sceneSettingsManager;
 				bool scenePaused = sceneMgr->IsFeaturePaused(featureShortName);
-				if (sceneControlled || scenePaused) {
+				if (sceneMgr->HasCurrentSceneSettingsForFeature(featureShortName)) {
+					const auto rowStart = ImGui::GetCursorScreenPos();
+					const float rowHeight = ImGui::GetFrameHeight();
+					const ImVec2 toggleSize(rowHeight * 1.6f, rowHeight * 0.8f);
+					ImGui::SetCursorScreenPos(ImVec2(rowStart.x,
+						rowStart.y + (rowHeight - toggleSize.y) * 0.5f));
 					bool active = !scenePaused;
-					if (Util::FeatureToggle("##PauseSceneSettings", &active))
+					if (Util::FeatureToggle("##PauseSceneSettings", &active, toggleSize)) {
 						sceneMgr->SetFeaturePaused(featureShortName, !active);
-					ImGui::SameLine();
-					ImGui::Text("%s", T("menu.features.scene_specific_settings", "Scene Specific Settings"));
-					if (auto _tt = Util::HoverTooltipWrapper()) {
-						ImGui::Text("%s", T(scenePaused ? "menu.features.scene_paused_tooltip" : "menu.features.scene_active_tooltip",
-											  scenePaused ? "Paused - click to resume" : "Active - click to pause"));
+						scenePaused = !active;
+						sceneControlled = sceneMgr->HasActiveSettingsForFeature(featureShortName) && !scenePaused;
 					}
+					const auto toggleMaximum = ImGui::GetItemRectMax();
+					const ImVec2 labelPosition(toggleMaximum.x + ImGui::GetStyle().ItemSpacing.x,
+						rowStart.y + (rowHeight - ImGui::GetTextLineHeight()) * 0.5f);
+					ImGui::GetWindowDrawList()->AddText(labelPosition, ImGui::GetColorU32(ImGuiCol_Text),
+						T("menu.features.scene_specific_settings", "Scene Specific Settings"));
+					if (auto _tt = Util::HoverTooltipWrapper()) {
+						const auto* tooltip = scenePaused ?
+						                          T("menu.features.scene_paused_tooltip", "Paused - click to resume") :
+						                          T("menu.features.scene_active_tooltip", "Active - click to pause");
+						ImGui::Text("%s", tooltip);
+					}
+					ImGui::SetCursorScreenPos(ImVec2(rowStart.x,
+						rowStart.y + rowHeight + ImGui::GetStyle().ItemSpacing.y));
 					ImGui::Separator();
 				}
 			}
 
-			// Disable feature settings while scene overrides are actively applied (not paused)
-			if (sceneControlled)
-				ImGui::BeginDisabled();
-
 			ImVec2 cursorPosBefore = ImGui::GetCursorPos();
-			feat->DrawSettings();
+			{
+				SceneSettingsUIHooks::FeatureDrawGuard featureDrawGuard(
+					feat, sceneControlled, sceneEditing);
+				feat->DrawSettings();
+			}
 
 			ImVec2 cursorPosAfter = ImGui::GetCursorPos();
-
-			if (sceneControlled)
-				ImGui::EndDisabled();
 
 			// --- Reactive constraint detection ---
 			// Compare the current full constraint set against g_knownConstraintKeys.

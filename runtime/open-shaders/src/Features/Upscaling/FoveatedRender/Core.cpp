@@ -41,8 +41,8 @@ namespace FoveatedRenderImpl::Ops
 			if (auto* renderer = globals::game::renderer) {
 				auto& depth = renderer->GetDepthStencilData()
 					.depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN];
-				if (depth.texture == source && depth.depthSRV)
-					return depth.depthSRV;
+				if (Util::AsReal(depth.texture) == source && depth.depthSRV)
+					return Util::AsReal(depth.depthSRV);
 			}
 
 			winrt::com_ptr<ID3D11Texture2D> texture;
@@ -761,7 +761,7 @@ namespace FoveatedRenderImpl::Ops
 			// sized (write at offset 0).
 			globals::features::upscaling.ClearHMDMask(
 				Core::vrIntermediateColorIn[i]->uav.get(),
-				depthSRV,
+				Util::AsReal(depthSRV),
 				eyeWidthIn,
 				eyeHeightIn,
 				i * eyeWidthIn,
@@ -1103,7 +1103,7 @@ namespace FoveatedRenderImpl::Ops
 		auto& upscaling = globals::features::upscaling;
 		for (uint32_t i = 0; i < 2; ++i) {
 			const uint32_t eyeOffsetX = i * p.eyeWidthIn;
-			upscaling.ClearHMDMask(Core::vrRenderSBS->uav.get(), depthSRV,
+			upscaling.ClearHMDMask(Core::vrRenderSBS->uav.get(), Util::AsReal(depthSRV),
 				p.eyeWidthIn, p.eyeHeightIn, eyeOffsetX, eyeOffsetX);
 		}
 	}

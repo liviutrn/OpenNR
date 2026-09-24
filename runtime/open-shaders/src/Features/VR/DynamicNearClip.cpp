@@ -389,10 +389,11 @@ void VRDynamicNearClip::FinishWorldDepth()
 	if (!collectingWorldDepth)
 		return;
 	auto& terrain = globals::features::terrainBlending;
-	auto* depth = globals::game::renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN].depthSRV;
+	auto* depth = Util::AsReal(globals::game::renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN].depthSRV);
 	if (terrain.loaded && terrain.depthSRVBackup)
-		depth = terrain.depthSRVBackup;
-	auto* terrainDepth = terrain.loaded && terrain.settings.Enabled && globals::shaderCache->IsEnabled() ? terrain.terrainDepth.depthSRV : nullptr;
+		depth = Util::AsReal(terrain.depthSRVBackup);
+	auto* terrainDepth = terrain.loaded && terrain.settings.Enabled && globals::shaderCache->IsEnabled() ?
+		Util::AsReal(terrain.terrainDepth.depthSRV) : nullptr;
 	if (depth)
 		CaptureDepth(controlledCamera.get(), depth, terrainDepth);
 	collectingWorldDepth = false;

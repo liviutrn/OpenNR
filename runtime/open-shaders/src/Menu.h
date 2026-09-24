@@ -164,6 +164,8 @@ public:
 	void Init();
 	/** @brief Draws the main settings window with all tabs and feature panels */
 	void DrawSettings();
+	/** @brief Draws menu pages in the editor's sidebar layout without a header or footer. */
+	void DrawEditorSettings(bool resetLayout);
 
 	/**
 	 * @brief Programmatically set the settings menu visibility (open/close/toggle).
@@ -397,7 +399,7 @@ public:
 		}();
 
 		bool UseSimplePalette = false;      // DEPRECATED: No longer affects behavior. UI now shows both Simple and Advanced controls.
-		bool ShowActionIcons = true;        // whether to show action buttons as icons
+		bool ShowActionIcons = true;        // whether to show the feature action menu button in page headers
 		bool UseMonochromeIcons = false;    // whether to use monochrome (white) action icons with text color tinting
 		bool UseMonochromeLogo = false;     // whether to use monochrome CS logo
 		bool ShowFooter = true;             // whether to show the footer with game version/GPU info
