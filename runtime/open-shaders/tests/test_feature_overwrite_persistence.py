@@ -1,5 +1,6 @@
 import os
 import unittest
+from pathlib import Path
 
 from test_scene_settings_policy import ROOT
 import test_scene_settings_runtime as runtime
@@ -339,7 +340,8 @@ int main() {
 
         source = source.replace("MANAGER_HEADER", (ROOT / "src/SettingsOverrideManager.h").as_posix())
         source = source.replace("PATCH_HEADER", (ROOT / "src/Utils/SettingsPatch.h").as_posix())
-        source = source.replace("GENERATED_HEADER", (ROOT / "build/ALL/generated/SceneSettingsCatalog.generated.h").as_posix())
+        generated_dir = Path(os.environ.get("OPENNR_GENERATED_DIR", ROOT / "build/ALL/generated"))
+        source = source.replace("GENERATED_HEADER", (generated_dir / "SceneSettingsCatalog.generated.h").as_posix())
         source = source.replace("CATALOGUE_HEADER", without_includes(catalogue_header).replace("#pragma once", ""))
         source = source.replace("CATALOGUE", without_includes(catalogue))
         source = source.replace("WRITER", braced(writer, "bool WriteJsonAtomically("))
@@ -356,8 +358,8 @@ int main() {
         scene_helpers += "\n" + braced(scene, "void SceneSettingsManager::RestoreBaselinesInSerializedSettings(")
         source = source.replace("SCENE_HELPERS", scene_helpers).replace("BOOT_PREFERENCES", boot_preferences)
         source = source.replace("METHODS", methods).replace("PERSISTENCE", without_includes(persistence))
-        runtime.SceneSettingsRuntimeTests().compile_and_run(
-            source, imgui_root=ROOT / "build/ALL/vcpkg_installed/x64-windows-static-md-release")
+        vcpkg_root = Path(os.environ.get("OPENNR_TEST_VCPKG_ROOT", ROOT / "build/ALL/vcpkg_installed/x64-windows-static-md-release"))
+        runtime.SceneSettingsRuntimeTests().compile_and_run(source, imgui_root=vcpkg_root)
 
     def test_native_live_file_changes_preserve_drafts_and_scene_safe_exports(self):
         self.compile_persistence_test(r'''

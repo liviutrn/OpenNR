@@ -1,5 +1,6 @@
 import os
 import unittest
+from pathlib import Path
 
 from test_scene_settings_policy import MANAGER_PATH, ROOT
 import test_scene_settings_runtime as runtime
@@ -85,7 +86,7 @@ int main() {
             "bool RemoveObjectValueAtPath(", "static bool RemoveSettingsFromOverwriteFile("))
         runtime.SceneSettingsRuntimeTests().compile_and_run(
             source.replace("HELPERS", helpers),
-            imgui_root=ROOT / "build/ALL/vcpkg_installed/x64-windows-static-md-release")
+            imgui_root=Path(os.environ.get("OPENNR_TEST_VCPKG_ROOT", ROOT / "build/ALL/vcpkg_installed/x64-windows-static-md-release")))
 
     def test_scene_switch_never_stores_a_draft(self):
         ui = (ROOT / "src/CSEditor/SceneSettingsUI.cpp").read_text(encoding="utf-8")
@@ -156,7 +157,8 @@ int main() {
     check(manager.reapplies == 1, "Successful save reapplies once");
 }
 '''.replace("STORE_TAIL", tail)
-        runtime.SceneSettingsRuntimeTests().compile_and_run(source, imgui_root=ROOT / "build/ALL/vcpkg_installed/x64-windows-static-md-release")
+        imgui_root = Path(os.environ.get("OPENNR_TEST_VCPKG_ROOT", ROOT / "build/ALL/vcpkg_installed/x64-windows-static-md-release"))
+        runtime.SceneSettingsRuntimeTests().compile_and_run(source, imgui_root=imgui_root)
 
     def test_native_bulk_delete_batches_writes_and_keeps_failed_files(self):
         manager = MANAGER_PATH.read_text(encoding="utf-8")

@@ -16,11 +16,40 @@ be recorded below only after each action succeeds.
 
 ## Validation
 
-Pending final build and package verification.
+- MSVC/VS2022 `CommunityShaders` build passed; DLL file version is
+  `2.17.0.0` and SHA-256 is
+  `3D4E34C947D7996FEAD70E541E613ACC92E2D59D28B0AD3FB09D2F6252F2894F`.
+- Native Catch2 tests passed: 230 cases and 9,601 assertions. CTest passed
+  `CppUtilTests` 1/1.
+- Release source contract and AIO validation passed. `7z t` verified 521
+  files and 105 folders; extraction contains only
+  `OPENNR-2.17.0-CHANGELOG.md` and its DLL matches the built hash.
+- Archive: `E:/OpenNR_Builds/2.17.0/dist/OpenNR 2.17.0.7z`, 228,748,066
+  bytes, SHA-256
+  `56A6DCFAA2263651D4D675AF5DF64A5C82A2B219037B7166E2DF33F6E1BB6D81`.
+- Python suite passed: 150 tests in 177.481 seconds, 7 skipped. The native
+  test harness was made compatible with the external build's generated-header
+  and vcpkg paths; `OPENNR_GENERATED_DIR` and `OPENNR_TEST_VCPKG_ROOT` were
+  supplied for this run, along with MSVC's `INCLUDE` path.
 
 ## Local installation and rollback
 
-Pending verified archive and isolated Mod Organizer profile installation.
+- Copied the verified extraction into
+  `E:/MGO-RC3-fresh/mods/OpenNR 2.17.0`; installed DLL hash matches above.
+- Cloned `MGO NSFW - 4.0 BETA` as
+  `MGO NSFW - OpenNR 2.17.0 Performance Test`. The clone disables
+  `OpenNR 2.15.1` and enables `OpenNR 2.17.0`; it is selected in MO2.
+- The shared overwrite `SettingsUser.json` was backed up, then changed only
+  in five performance fields: AO `NumSlices` 3 to 2, `NumSteps` 6 to 4;
+  Skylighting incremental and reduced-frequency updates false to true;
+  VRS enable 0 to 1. NR and DLSS settings were preserved byte-for-byte.
+- Backups of the original shared settings, `ModOrganizer.ini`, and the base
+  profile modlist are in
+  `E:/MGO-RC3-fresh/_OpenNR_Pilot_Backups/2.17.0-local-test-20260924`.
+  To roll back completely with MO2 closed, restore `SettingsUser.json` to
+  `overwrite/SKSE/Plugins/CommunityShaders/SettingsUser.json` and
+  `ModOrganizer.ini` to the MGO root from that backup. The prior mod and
+  profiles were not removed.
 
 ## Acceptance
 
