@@ -43,7 +43,7 @@ public:
 	struct Settings
 	{
 		/// 0 = Disabled, 1 = Enabled.  When off, controller unbinds surface and sends 1×1 LUT.
-		uint vrEnableVRS = 0;
+		uint vrEnableVRS = 1;
 
 		/// SRS ring rate preset: 0=Default (6-step), 1=Faster (4-step), 2=Extreme (3-step).
 		uint vrVRSSrsPreset = 0;

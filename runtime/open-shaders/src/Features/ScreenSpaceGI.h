@@ -107,8 +107,8 @@ public:
 		bool EnableExperimentalSpecularGI = false;
 		bool EnableVanillaSSAO = false;
 		// performance/quality
-		uint NumSlices = REL::Module::IsVR() ? 3u : 4u;  // AO preset for VR
-		uint NumSteps = REL::Module::IsVR() ? 6u : 8u;
+		uint NumSlices = REL::Module::IsVR() ? 2u : 4u;
+		uint NumSteps = REL::Module::IsVR() ? 4u : 8u;
 		bool EnableAdaptiveSampling = false;
 		int ResolutionMode = 1;  // 0-full, 1-half, 2-quarter - DBF default
 		// Restart-gated: default resource allocation follows the platform's default effect mode.

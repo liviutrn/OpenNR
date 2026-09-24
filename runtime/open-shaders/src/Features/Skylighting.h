@@ -61,9 +61,9 @@ public:
 		float MinSpecularVisibility = 0.1f;
 		float ProbeFieldSize = kDefaultProbeFieldSize;  // total camera-centered XY field width in game units
 		uint ProbeGridQuality = 2;                      // 2 = 256 x 256 x 128, the legacy fixed grid
-		bool EnableIncrementalProbeUpdates = false;
+		bool EnableIncrementalProbeUpdates = REL::Module::IsVR();
 		uint StableSliceCount = 8;
-		bool EnableReducedUpdateFrequency = false;
+		bool EnableReducedUpdateFrequency = REL::Module::IsVR();
 		uint OcclusionUpdateInterval = 2;
 		uint ProbeUpdateInterval = 2;
 	} settings;

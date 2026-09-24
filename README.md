@@ -1,6 +1,6 @@
-# OpenNR 2.16.0
+# OpenNR 2.17.0
 
-OpenNR is a VR neural-rendering development project combining the native Open Shaders integration, synchronized capture, and separate model research. **Adaptive NR, adaptive Crop, and the current Open Shaders development line are carried in 2.16.0.** The experimental routes retain their existing opt-in defaults; saved user settings are not rewritten.
+OpenNR is a VR neural-rendering development project combining the native Open Shaders integration, synchronized capture, and separate model research. **2.17.0 adds VR rendering-cost defaults to the 2.16.0 Open Shaders development line.** Adaptive NR and adaptive Crop retain their existing opt-in defaults. Saved user settings are not rewritten by the package.
 
 The canonical source is this repository. Large data and environments live outside D:. The runtime retains the `CommunityShaders.dll` filename and asset paths for compatibility.
 
@@ -9,8 +9,8 @@ The canonical source is this repository. Large data and environments live outsid
 - [Project map](docs/PROJECT_MAP.md): subsystem ownership and maintained entry points.
 - [Consolidation audit](docs/PROJECT_CONSOLIDATION_AUDIT.md): provenance, migration, tests, recovery and limitations.
 - [Setup and dependencies](docs/SETUP.md): external inputs and repeatable commands.
-- [2.16.0 changes](runtime/open-shaders/package/OPENNR-2.16.0-CHANGELOG.md).
-- [2.16.0 validation and local update](docs/OPENNR_2.16.0_RELEASE_20260922.md).
+- [2.17.0 changes](runtime/open-shaders/package/OPENNR-2.17.0-CHANGELOG.md).
+- [2.17.0 validation and local update](docs/OPENNR_2.17.0_RELEASE_20260924.md).
 - [Historical research status](docs/RESEARCH_STATUS_PRE_CONSOLIDATION.md): prior experiments and model-quality evidence.
 - [Experiment index](experiments/README.md): archived and reproducible research.
 
@@ -21,10 +21,10 @@ From PowerShell at the repository root:
 ```powershell
 .\tools\Build-OpenNR.ps1
 .\tools\Build-OpenNR.ps1 -Targets @('CommunityShaders','cpp_tests','Package-AIO-Manual')
-& 'E:\OpenNR_Builds\2.16.0\tests\cpp\Release\cpp_tests.exe'
+& 'E:\OpenNR_Builds\2.17.0\tests\cpp\Release\cpp_tests.exe'
 ```
 
-The standard local archive is `E:\OpenNR_Builds\2.16.0\dist\OpenNR 2.16.0.7z`.
+The standard local archive is `E:\OpenNR_Builds\2.17.0\dist\OpenNR 2.17.0.7z`.
 The build disables automatic deployment. It requires the declared external dependencies and local/private runtime inputs described in setup. This repository does not distribute NVIDIA's private carrier or recovered weights.
 
 ## Storage
@@ -35,9 +35,9 @@ Maintained training/cache/export writers reject destinations physically on D:, i
 
 ## Acceptance status
 
-2.16.0 has completed local source/build/package validation; exact evidence is recorded in the linked release note. The adaptive resource-envelope fallback is retained: rejection holds further crop tier changes until restart; NR can continue adapting. Live stereo, transitions, temporal appearance, frame pacing and sustained headset performance remain separate acceptance checks.
+2.17.0 source/build/package evidence is recorded in the linked release note. The adaptive resource-envelope fallback is retained: rejection holds further crop tier changes until restart; NR can continue adapting. Live stereo, transitions, temporal appearance, frame pacing and sustained headset performance remain separate acceptance checks.
 
-No learned model, recovered teacher, or generated target set is promoted. Native Feature 18 resources and capture provenance remain authoritative. The 2.15.1 AIO remains the last locally installed package; 2.16.0 is being built without deployment, and no remote release is published.
+No learned model, recovered teacher, or generated target set is promoted. Native Feature 18 resources and capture provenance remain authoritative. No remote release is published.
 
 ## Attribution
 

@@ -75,7 +75,7 @@ void VRS::DrawSettings()
 	bool enableVRS = settings.vrEnableVRS != 0;
 	if (ImGui::Checkbox("Enable NVAPI VRS", &enableVRS))
 		settings.vrEnableVRS = enableVRS ? 1u : 0u;
-	ImGui::TextDisabled("Optional VR pixel-shading reduction. Default: off.");
+	ImGui::TextDisabled("Optional VR pixel-shading reduction. Default: on when supported.");
 	if (!enableVRS)
 		Util::Text::WrappedInfo("VRS is idle: it does not initialize NVAPI or allocate a shading-rate surface until enabled.");
 	if (auto _tt = Util::HoverTooltipWrapper()) {
