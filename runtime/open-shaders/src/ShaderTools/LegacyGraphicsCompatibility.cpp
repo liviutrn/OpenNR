@@ -489,6 +489,11 @@ namespace LegacyGraphicsCompatibility
 
 		void InstallShadowBoundsExtentsAdapter()
 		{
+			if (globals::game::isVR) {
+				logger::warn("Legacy shadow bounds viewport adapter unavailable for VR address library; skipping");
+				return;
+			}
+
 			const auto callSite = REL::RelocationID(100979, 107762).address() + REL::Relocate(0x3B5, 0x360, 0x49B);
 			const auto expectedTarget = REL::RelocationID(75564, 77365).address();
 			constexpr auto callPattern = REL::make_pattern<"E8 ?? ?? ?? ??">();
