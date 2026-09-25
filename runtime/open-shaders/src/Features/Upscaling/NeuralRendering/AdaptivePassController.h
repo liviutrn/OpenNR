@@ -1,6 +1,7 @@
 #pragma once
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 
 namespace NeuralRendering
@@ -9,6 +10,19 @@ namespace NeuralRendering
 	class AdaptivePassController
 	{
 	public:
+		[[nodiscard]] static bool HasProjectedHeadroom(float currentWorkloadMs, float addedPassCostMs,
+			std::uint32_t addedPassCount, float deadlineMs, float guardTimeMs)
+		{
+			if (!std::isfinite(currentWorkloadMs) || !std::isfinite(addedPassCostMs) ||
+				!std::isfinite(deadlineMs) || !std::isfinite(guardTimeMs) || currentWorkloadMs <= 0.0f ||
+				deadlineMs <= 0.0f || addedPassCostMs < 0.0f)
+				return false;
+			const float reservedBudget = std::min(deadlineMs * 0.85f,
+				deadlineMs - std::max(0.0f, guardTimeMs) * 2.0f);
+			const float projected = currentWorkloadMs + addedPassCostMs * static_cast<float>(addedPassCount);
+			return reservedBudget > 0.0f && projected < reservedBudget;
+		}
+
 		void Reset()
 		{
 			initialized_ = false;

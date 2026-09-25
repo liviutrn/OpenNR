@@ -75,7 +75,7 @@ namespace FoveatedRenderImpl
 			uint32_t eyeWidthOut,
 			uint32_t eyeHeightOut);
 
-		// Display-space bridge used only while the adaptive regular crop changes.
+		// Display-space bridge for the adaptive crop transition.
 		// It keeps the existing foveated route and its per-eye guide contract
 		// intact, then hides the crop boundary/resource reset in a short history
 		// blend after the final SBS image is assembled.

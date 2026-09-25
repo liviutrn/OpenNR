@@ -124,6 +124,8 @@ struct FoveatedRender
 		// 0 = single pass, 1 = two, or 2 = three sequential Feature 18 evaluations.
 		uint neuralRenderingMultiPass = 0;
 		float neuralRenderingSecondPassContribution = 1.0f;
+		// Estimated additional GPU time for each added sequential NR pass.
+		float neuralRenderingAdaptiveSecondPassCostMs = 6.0f;
 		// Pass-two crop reductions are centered on the current selected/gaze crop.
 		uint neuralRenderingSecondPassCropReductionX = 0;
 		uint neuralRenderingSecondPassCropReductionY = 0;
@@ -168,11 +170,10 @@ struct FoveatedRender
 		// Optional companion for the shared foveated crop. Eye tracking owns the
 		// crop center; this controller changes its extent around that center.
 		bool neuralRenderingAdaptiveCropEnabled = false;
-		// Adaptive crop's upper tier is independent of the static crop preset. This
-		// lets a user compare against a smaller static preset, then re-arm adaptive
-		// crop at its normal 85% tier without silently changing the saved preset.
-		uint neuralRenderingAdaptiveCropMaximumCoverage = 85;
-		uint neuralRenderingAdaptiveCropMinimumCoverage = 30;
+		// Adaptive crop scales the saved crop independently; 100% preserves its
+		// configured size and smaller tiers are relative to that saved region.
+		uint neuralRenderingAdaptiveCropMaximumScalePercent = 100;
+		uint neuralRenderingAdaptiveCropMinimumScalePercent = 60;
 		uint neuralRenderingAdaptiveCropDownshiftFrames = 2;
 		uint neuralRenderingAdaptiveCropUpshiftFrames = 24;
 		uint neuralRenderingAdaptiveCropMinimumDwellFrames = 60;
@@ -258,7 +259,7 @@ struct FoveatedRender
 	Util::Subrect::UVRegion GetEffectiveRightUV() const;
 	bool IsAdaptiveCropRuntimeActive() const { return adaptiveCropController.IsRuntimeActive(); }
 	bool IsAdaptiveCropTransitioning() const { return adaptiveCropController.IsTransitioning(); }
-	std::uint32_t GetAdaptiveCropMaximumCoverage() const { return adaptiveCropController.MaximumCoverage(); }
+	std::uint32_t GetAdaptiveCropMaximumScalePercent() const { return adaptiveCropController.MaximumScalePercent(); }
 	std::uint32_t GetEffectiveMultiPassMode() const
 	{
 		return adaptiveController.IsEnabled() ? adaptivePassController.ActiveMode(settings.neuralRenderingMultiPass) :

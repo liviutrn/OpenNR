@@ -267,22 +267,28 @@ namespace NeuralRendering
 				std::abs(leftUV.h - rightUV.h) <= 0.0005f;
 			const auto configuredCrop = static_cast<std::uint32_t>(std::lround(std::clamp(
 				std::min({ leftUV.w, leftUV.h, rightUV.w, rightUV.h }) * 100.0f, 0.0f, 100.0f)));
-			const auto cropMaximum = std::min(settings.neuralRenderingAdaptiveCropMaximumCoverage, configuredCrop);
-			const auto cropMinimum = std::min(settings.neuralRenderingAdaptiveCropMinimumCoverage, cropMaximum);
+			const auto cropMaximum = settings.neuralRenderingAdaptiveCropMaximumScalePercent;
+			const auto cropMinimum = settings.neuralRenderingAdaptiveCropMinimumScalePercent;
 			const bool passesCanDown = adaptive && foveated.adaptivePassController.CanDecrease(requestedPassMode);
 			const bool cropCanDown = adaptive && settings.neuralRenderingAdaptiveCropEnabled && geometryCompatible &&
 				!FoveatedRenderImpl::Core::vrSubrectFixedEnvelopeRejected &&
 				!FoveatedRenderImpl::Core::vrSubrectNeuralFixedEnvelopeRejected && configuredCrop >= 30 &&
 				(foveated.IsAdaptiveCropRuntimeActive() ?
-					foveated.adaptiveCropController.ActiveCoverage() > foveated.adaptiveCropController.MinimumCoverage() :
+					foveated.adaptiveCropController.ActiveScalePercent() > foveated.adaptiveCropController.MinimumScalePercent() :
 					cropMaximum > cropMinimum);
 			const bool resolutionCanDown = adaptive && !controller.IsAtMinimum();
 			const auto downshiftAxis = SelectAdaptiveDownshift(settings.neuralRenderingAdaptiveQualityOrder,
 				passesCanDown, cropCanDown, resolutionCanDown);
-			const bool passesCanUp = adaptive && foveated.adaptivePassController.CanIncrease(requestedPassMode);
+			const auto passMode = foveated.adaptivePassController.ActiveMode(requestedPassMode);
+			const auto passModesToAdd = requestedPassMode > passMode ? requestedPassMode - passMode : 0u;
+			const bool passHeadroom = controller.LastSampleHadHeadroom() &&
+				AdaptivePassController::HasProjectedHeadroom(controller.SmoothedFrameTimeMs(),
+					settings.neuralRenderingAdaptiveSecondPassCostMs, passModesToAdd,
+					controller.ApplicationDeadlineMs(), settings.neuralRenderingAdaptiveGuardTimeMs);
+			const bool passesCanUp = adaptive && foveated.adaptivePassController.CanIncrease(requestedPassMode) && passHeadroom;
 			const bool cropCanUp = adaptive && settings.neuralRenderingAdaptiveCropEnabled &&
 				foveated.IsAdaptiveCropRuntimeActive() &&
-				foveated.adaptiveCropController.ActiveCoverage() < foveated.adaptiveCropController.MaximumCoverage();
+				foveated.adaptiveCropController.ActiveScalePercent() < foveated.adaptiveCropController.MaximumScalePercent();
 			const bool resolutionCanUp = adaptive && !controller.IsAtMaximum();
 			const auto upshiftAxis = SelectAdaptiveUpshift(settings.neuralRenderingAdaptiveQualityOrder,
 				passesCanUp, cropCanUp, resolutionCanUp);

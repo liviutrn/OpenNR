@@ -28,9 +28,8 @@ void FoveatedRenderImpl::Bridge::ComputeMvecScale(uint32_t eyeIndex, float& outX
 		return;
 
 	auto& enhancer = globals::features::upscaling.foveatedRender;
-	// Use the effective per-eye UV. Adaptive crop is deliberately a centered
-	// regular crop; a gaze/raw asymmetric region remains authoritative whenever
-	// the adaptive crop lockout is active.
+	// Use the effective per-eye UV. Adaptive crop scales the selected region, and
+	// eye tracking can recenter it around the live gaze before guides are resolved.
 	const auto uv = (eyeIndex == 1) ? enhancer.GetEffectiveRightUV() : enhancer.GetEffectiveLeftUV();
 	const bool isFullEye = uv.IsFullEye();
 

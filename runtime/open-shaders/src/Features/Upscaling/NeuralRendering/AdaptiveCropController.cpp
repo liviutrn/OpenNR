@@ -25,29 +25,29 @@ namespace NeuralRendering
 		}
 	}
 
-	std::uint32_t AdaptiveCropController::FindBucketAtOrBelow(std::uint32_t coverage)
+	std::uint32_t AdaptiveCropController::FindBucketAtOrBelow(std::uint32_t scalePercent)
 	{
-		for (const auto bucket : kCoverageBuckets)
-			if (bucket <= coverage)
+		for (const auto bucket : kScaleBuckets)
+			if (bucket <= scalePercent)
 				return bucket;
-		return kCoverageBuckets.back();
+		return kScaleBuckets.back();
 	}
 
-	std::uint32_t AdaptiveCropController::FindBucketIndexAtOrBelow(std::uint32_t coverage)
+	std::uint32_t AdaptiveCropController::FindBucketIndexAtOrBelow(std::uint32_t scalePercent)
 	{
-		const auto bucket = FindBucketAtOrBelow(coverage);
-		for (std::uint32_t index = 0; index < kCoverageBuckets.size(); ++index)
-			if (kCoverageBuckets[index] == bucket)
+		const auto bucket = FindBucketAtOrBelow(scalePercent);
+		for (std::uint32_t index = 0; index < kScaleBuckets.size(); ++index)
+			if (kScaleBuckets[index] == bucket)
 				return index;
-		return static_cast<std::uint32_t>(kCoverageBuckets.size() - 1);
+		return static_cast<std::uint32_t>(kScaleBuckets.size() - 1);
 	}
 
 	AdaptiveCropController::Config AdaptiveCropController::NormalizeConfig(const Config& config)
 	{
 		Config normalized = config;
-		normalized.maximumCoverage = FindBucketAtOrBelow(std::clamp(normalized.maximumCoverage, 30u, 85u));
-		normalized.minimumCoverage = FindBucketAtOrBelow(std::clamp(normalized.minimumCoverage, 30u,
-			normalized.maximumCoverage));
+		normalized.maximumScalePercent = FindBucketAtOrBelow(std::clamp(normalized.maximumScalePercent, 30u, 100u));
+		normalized.minimumScalePercent = FindBucketAtOrBelow(std::clamp(normalized.minimumScalePercent, 30u,
+			normalized.maximumScalePercent));
 		normalized.downshiftFrames = std::clamp(normalized.downshiftFrames, 1u, 16u);
 		normalized.upshiftFrames = std::clamp(normalized.upshiftFrames, 8u, 240u);
 		normalized.minimumDwellFrames = std::clamp(normalized.minimumDwellFrames, 8u, 600u);
@@ -61,7 +61,7 @@ namespace NeuralRendering
 		activeBucket_ = 0;
 		targetBucket_ = 0;
 		maximumBucket_ = 0;
-		minimumBucket_ = static_cast<std::uint32_t>(kCoverageBuckets.size() - 1);
+		minimumBucket_ = static_cast<std::uint32_t>(kScaleBuckets.size() - 1);
 		transitionFrame_ = 0;
 		transitionFrameCount_ = 0;
 		dwellFrames_ = 0;
@@ -83,7 +83,7 @@ namespace NeuralRendering
 	{
 		if (targetIndex == activeBucket_)
 			return;
-		previousCoverage_ = ActiveCoverage();
+		previousScalePercent_ = ActiveScalePercent();
 		activeBucket_ = targetIndex;
 		targetBucket_ = targetIndex;
 		transitionFrame_ = 0;
@@ -101,15 +101,13 @@ namespace NeuralRendering
 			return;
 		lastFrame_ = frame;
 
-		Config boundedConfig = requestedConfig;
-		boundedConfig.maximumCoverage = std::min(boundedConfig.maximumCoverage, configuredCoverage);
-		const Config config = NormalizeConfig(boundedConfig);
-		const std::uint32_t maximumBucket = FindBucketIndexAtOrBelow(config.maximumCoverage);
-		const std::uint32_t requestedFloorCoverage = std::min(config.minimumCoverage, config.maximumCoverage);
-		const std::uint32_t minimumBucket = std::max(maximumBucket, FindBucketIndexAtOrBelow(requestedFloorCoverage));
+		const Config config = NormalizeConfig(requestedConfig);
+		const std::uint32_t maximumBucket = FindBucketIndexAtOrBelow(config.maximumScalePercent);
+		const std::uint32_t minimumBucket = std::max(maximumBucket,
+			FindBucketIndexAtOrBelow(config.minimumScalePercent));
 		const bool configurationChanged = config.enabled != config_.enabled ||
-			config.maximumCoverage != config_.maximumCoverage ||
-			config.minimumCoverage != config_.minimumCoverage ||
+			config.maximumScalePercent != config_.maximumScalePercent ||
+			config.minimumScalePercent != config_.minimumScalePercent ||
 			config.downshiftFrames != config_.downshiftFrames ||
 			config.upshiftFrames != config_.upshiftFrames ||
 			config.minimumDwellFrames != config_.minimumDwellFrames ||
@@ -122,13 +120,13 @@ namespace NeuralRendering
 		const bool wasGeometryBlocked = geometryBlocked_;
 		// Eye tracking owns only the crop center. Adaptive crop changes the shared
 		// extent before the gaze provider recenters it for each eye.
-		geometryBlocked_ = !geometryCompatible || configuredCoverage < kCoverageBuckets.back();
+		geometryBlocked_ = !geometryCompatible || configuredCoverage < 30;
 		const bool shouldRun = eligible && config.enabled && !geometryBlocked_;
 		if (!shouldRun) {
 			ResetReason reason = ResetReason::EligibilityLoss;
 			if (!config.enabled)
 				reason = ResetReason::Disabled;
-			else if (configuredCoverage < kCoverageBuckets.back())
+			else if (configuredCoverage < 30)
 				reason = ResetReason::InvalidCoverage;
 			else if (!geometryCompatible)
 				reason = ResetReason::GeometryChange;
@@ -202,24 +200,24 @@ namespace NeuralRendering
 			StartTransition(activeBucket_ - 1, config.transitionFrames);
 	}
 
-	std::uint32_t AdaptiveCropController::ActiveCoverage() const
+	std::uint32_t AdaptiveCropController::ActiveScalePercent() const
 	{
-		return kCoverageBuckets[std::min(activeBucket_, static_cast<std::uint32_t>(kCoverageBuckets.size() - 1))];
+		return kScaleBuckets[std::min(activeBucket_, static_cast<std::uint32_t>(kScaleBuckets.size() - 1))];
 	}
 
-	std::uint32_t AdaptiveCropController::TargetCoverage() const
+	std::uint32_t AdaptiveCropController::TargetScalePercent() const
 	{
-		return kCoverageBuckets[std::min(targetBucket_, static_cast<std::uint32_t>(kCoverageBuckets.size() - 1))];
+		return kScaleBuckets[std::min(targetBucket_, static_cast<std::uint32_t>(kScaleBuckets.size() - 1))];
 	}
 
-	std::uint32_t AdaptiveCropController::MaximumCoverage() const
+	std::uint32_t AdaptiveCropController::MaximumScalePercent() const
 	{
-		return kCoverageBuckets[std::min(maximumBucket_, static_cast<std::uint32_t>(kCoverageBuckets.size() - 1))];
+		return kScaleBuckets[std::min(maximumBucket_, static_cast<std::uint32_t>(kScaleBuckets.size() - 1))];
 	}
 
-	std::uint32_t AdaptiveCropController::MinimumCoverage() const
+	std::uint32_t AdaptiveCropController::MinimumScalePercent() const
 	{
-		return kCoverageBuckets[std::min(minimumBucket_, static_cast<std::uint32_t>(kCoverageBuckets.size() - 1))];
+		return kScaleBuckets[std::min(minimumBucket_, static_cast<std::uint32_t>(kScaleBuckets.size() - 1))];
 	}
 
 	float AdaptiveCropController::HandoffAlpha() const
@@ -230,7 +228,7 @@ namespace NeuralRendering
 			static_cast<float>(transitionFrameCount_), 0.05f, 1.0f);
 	}
 
-	std::uint32_t AdaptiveCropController::RenderCoverage() const
+	std::uint32_t AdaptiveCropController::RenderScalePercent() const
 	{
 		// Keep the source and destination geometry on the tier that was already
 		// rendered for the entire handoff.  The visible mask may move gradually,
@@ -239,15 +237,15 @@ namespace NeuralRendering
 		// rule was safe for a downshift because the previous tier was larger, but
 		// made an upshift switch immediately to the new larger crop and produced
 		// the observed transient double vision.
-		return IsTransitioning() ? previousCoverage_ : ActiveCoverage();
+		return IsTransitioning() ? previousScalePercent_ : ActiveScalePercent();
 	}
 
-	float AdaptiveCropController::VisibleCoverage() const
+	float AdaptiveCropController::VisibleScalePercent() const
 	{
 		if (!IsTransitioning())
-			return static_cast<float>(ActiveCoverage());
+			return static_cast<float>(ActiveScalePercent());
 		const float t = HandoffAlpha();
 		const float smooth = t * t * (3.0f - 2.0f * t);
-		return previousCoverage_ + (static_cast<float>(ActiveCoverage()) - previousCoverage_) * smooth;
+		return previousScalePercent_ + (static_cast<float>(ActiveScalePercent()) - previousScalePercent_) * smooth;
 	}
 }

@@ -52,9 +52,8 @@ namespace FoveatedRenderImpl
 		p.transparencyMask = transparency;
 		p.motionVectors = mvec;
 
-		// Mode & subrect. Effective UVs include the optional regular centered
-		// adaptive-crop owner; gaze resolution below may still take ownership when
-		// eye-tracked foveation is explicitly enabled.
+		// Mode & subrect. Effective UVs scale the selected saved crop; gaze
+		// resolution below may recenter that extent when eye tracking is enabled.
 		auto& enhancer = globals::features::upscaling.foveatedRender;
 		auto& upscaling = globals::features::upscaling;
 		p.mode = enhancer.GetDlssMode();

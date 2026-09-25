@@ -550,7 +550,7 @@ namespace FoveatedRenderImpl::Ops
 		if (!colorSrc || !mvecSrc || !subInW || !subInH || !subOutW || !subOutH)
 			return false;
 
-		// Fixed envelope is used only by adaptive regular crop. It deliberately
+		// Fixed envelope is used by adaptive crop, including eye-tracked crop. It
 		// ignores changing UV origins and keeps the largest compatible set alive;
 		// the current crop is carried by valid extents and copy regions.
 		if (preferFixedEnvelope && !Core::vrSubrectFixedEnvelopeRejected) {
@@ -1323,7 +1323,8 @@ namespace FoveatedRenderImpl::Ops
 			cb->MaskRadiusX = std::max(0.5f, cb->MaskCenterX);
 			cb->MaskRadiusY = std::max(0.5f, cb->MaskCenterY);
 			const float maskScale = adaptiveMask ?
-				foveated.adaptiveCropController.VisibleCoverage() / foveated.adaptiveCropController.RenderCoverage() : 1.0f;
+				foveated.adaptiveCropController.VisibleScalePercent() /
+				foveated.adaptiveCropController.RenderScalePercent() : 1.0f;
 			cb->MaskRadiusX *= maskScale;
 			cb->MaskRadiusY *= maskScale;
 			cb->_pad0 = maskScale;

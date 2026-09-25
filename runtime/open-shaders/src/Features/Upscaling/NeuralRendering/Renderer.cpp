@@ -1317,6 +1317,22 @@ namespace NeuralRendering
 			return true;
 		}
 
+		[[nodiscard]] bool CanUseAdaptiveTier(std::uint32_t modelResolution, std::uint32_t passCount) const
+		{
+			if (IsAdaptiveTierReady(modelResolution, passCount))
+				return true;
+			if (recoveryAttempted || adaptivePrewarmTier >= kResolutionTierCount)
+				return false;
+
+			const auto requestedTier = ResolutionTierIndex(NormalizeModelResolution(modelResolution));
+			if (adaptivePrewarmDirection < 0 && adaptivePrewarmTier + 1 == requestedTier)
+				return adaptivePrewarmRejected[0];
+			if (adaptivePrewarmDirection > 0 && adaptivePrewarmTier > 0 &&
+				adaptivePrewarmTier - 1 == requestedTier)
+				return adaptivePrewarmRejected[1];
+			return false;
+		}
+
 		void RecoverIfReady(ID3D11Device* device)
 		{
 			if (!failureLatched || recoveryAttempted || !recoverableFailure || !device ||
@@ -2879,6 +2895,10 @@ namespace NeuralRendering
 	bool Renderer::IsAdaptiveTierReady(std::uint32_t modelResolution, std::uint32_t passCount) const
 	{
 		return state_->IsAdaptiveTierReady(modelResolution, passCount);
+	}
+	bool Renderer::CanUseAdaptiveTier(std::uint32_t modelResolution, std::uint32_t passCount) const
+	{
+		return state_->CanUseAdaptiveTier(modelResolution, passCount);
 	}
 	std::uint32_t Renderer::NgxResult() const { return Runtime::Instance().NgxResult(); }
 	std::uint64_t Renderer::SuccessfulFrames() const { return Runtime::Instance().SuccessfulFrames(); }

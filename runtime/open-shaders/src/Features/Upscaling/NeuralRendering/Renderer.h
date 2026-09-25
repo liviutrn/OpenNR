@@ -103,6 +103,8 @@ namespace NeuralRendering
 		 * the handoff can be made without an on-demand create stall.
 		 */
 		[[nodiscard]] bool IsAdaptiveTierReady(std::uint32_t modelResolution, std::uint32_t passCount) const;
+		/** @brief True when ready, or when prewarm failed and a one-time live create is the only fallback. */
+		[[nodiscard]] bool CanUseAdaptiveTier(std::uint32_t modelResolution, std::uint32_t passCount) const;
 		[[nodiscard]] std::uint32_t NgxResult() const;
 		[[nodiscard]] std::uint64_t SuccessfulFrames() const;
 		[[nodiscard]] const char* StatusText() const;

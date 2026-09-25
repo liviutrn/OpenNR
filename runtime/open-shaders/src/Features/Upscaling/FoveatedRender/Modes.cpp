@@ -19,6 +19,9 @@
 #include "../FidelityFX.h"
 #include "../Streamline.h"
 
+#include <algorithm>
+#include <cmath>
+
 namespace FoveatedRenderImpl
 {
 	using namespace Ops;
@@ -61,12 +64,12 @@ namespace FoveatedRenderImpl
 		Core::vrAdaptiveCropDepthSource = p.depthTexture;
 		Core::vrAdaptiveCropMotionSource = p.motionVectors;
 
-		// Adaptive regular crop uses a stable resource envelope. Its UVs are
-		// per-frame valid-region data, not a new Streamline resource identity.
-		// Gaze loss changes history, not resource identity: fixed-size crops
-		// retain their allocations across tracking and static fallback.
+		// Adaptive crop, including eye-tracked crop, uses a stable maximum-size
+		// envelope. Gaze changes the valid-region origin and adaptive crop changes
+		// its extent; neither change should recreate Streamline handles.
 		const bool fixedEnvelopeCandidate = globals::features::upscaling.foveatedRender.IsAdaptiveCropRuntimeActive() &&
-			!p.eyeTrackedGazeActive && !Core::vrSubrectFixedEnvelopeRejected;
+			std::abs(p.leftUV.w - p.rightUV.w) <= 0.0005f &&
+			std::abs(p.leftUV.h - p.rightUV.h) <= 0.0005f && !Core::vrSubrectFixedEnvelopeRejected;
 		const Util::Subrect::UVRegion envelopeUV{ 0.0f, 0.0f, 1.0f, 1.0f };
 		uint64_t uvHash = fixedEnvelopeCandidate ?
 			ComputeSubrectUVHash(envelopeUV, envelopeUV, (uint32_t)p.mode, false) :
@@ -138,12 +141,13 @@ namespace FoveatedRenderImpl
 		}
 
 		// ── Subrect path: crop per-eye, DLSS at subrect size, stretch back ──
-		const bool fixedEnvelopeCandidate = globals::features::upscaling.foveatedRender.IsAdaptiveCropRuntimeActive() &&
-			!p.eyeTrackedGazeActive && !Core::vrSubrectFixedEnvelopeRejected;
+		const auto& foveated = globals::features::upscaling.foveatedRender;
+		const bool fixedEnvelopeCandidate = foveated.IsAdaptiveCropRuntimeActive() &&
+			std::abs(p.leftUV.w - p.rightUV.w) <= 0.0005f &&
+			std::abs(p.leftUV.h - p.rightUV.h) <= 0.0005f && !Core::vrSubrectFixedEnvelopeRejected;
 
 		// The shared resource path requires symmetric eye extents. Fail closed rather
-		// than write out of bounds; regular centered crop is the supported adaptive
-		// mode, while gaze-owned geometry remains on the conservative exact path.
+		// than write out of bounds if the two per-eye crop shapes diverge.
 		if (p.leftUV.w != p.rightUV.w || p.leftUV.h != p.rightUV.h) {
 			logger::error("[FOVEATED] ExecuteDefaultMode: asymmetric-size stereo subrect (left {}x{}, right {}x{}) not supported — falling back",
 				p.leftUV.w, p.leftUV.h, p.rightUV.w, p.rightUV.h);
@@ -158,20 +162,28 @@ namespace FoveatedRenderImpl
 		uint32_t allocSubInH = std::max<uint32_t>(1, (uint32_t)(p.eyeHeightIn * p.leftUV.h));
 		uint32_t allocSubOutW = std::max<uint32_t>(1, (uint32_t)(p.eyeWidthOut * p.leftUV.w));
 		uint32_t allocSubOutH = std::max<uint32_t>(1, (uint32_t)(p.eyeHeightOut * p.leftUV.h));
-		const auto scaleDimension = [](std::uint32_t dimension, std::uint32_t percentage) {
-			return std::max<std::uint32_t>(1, static_cast<std::uint32_t>(
-				(static_cast<std::uint64_t>(dimension) * percentage + 50) / 100));
+		// Size the backing set from the saved crop and the adaptive maximum, not
+		// from this frame's smaller tier or moving gaze origin. The validated
+		// envelope then remains resident through all adaptive crop changes.
+		const auto baseLeftUV = foveated.subrectController.GetUV();
+		const auto baseRightUV = foveated.subrectController.GetRightEyeUV();
+		const float maximumScale = static_cast<float>(foveated.GetAdaptiveCropMaximumScalePercent()) / 100.0f;
+		const auto envelopeDimension = [](std::uint32_t dimension, float cropExtent, float scale) {
+			return std::max<std::uint32_t>(1, static_cast<std::uint32_t>(std::ceil(
+				static_cast<float>(dimension) * cropExtent * scale)));
 		};
-		// Re-anchor the envelope to the configured adaptive maximum, not to the
-		// current tier. This matters after a route/device reset while the controller
-		// is already at a reduced tier: restoration must not grow the backing set one
-		// tier at a time and recreate resources again.
-		const std::uint32_t envelopeCoverage = std::clamp(
-			globals::features::upscaling.foveatedRender.GetAdaptiveCropMaximumCoverage(), 60u, 85u);
-		const uint32_t envelopeSubInW = fixedEnvelopeCandidate ? scaleDimension(p.eyeWidthIn, envelopeCoverage) : allocSubInW;
-		const uint32_t envelopeSubInH = fixedEnvelopeCandidate ? scaleDimension(p.eyeHeightIn, envelopeCoverage) : allocSubInH;
-		const uint32_t envelopeSubOutW = fixedEnvelopeCandidate ? scaleDimension(p.eyeWidthOut, envelopeCoverage) : allocSubOutW;
-		const uint32_t envelopeSubOutH = fixedEnvelopeCandidate ? scaleDimension(p.eyeHeightOut, envelopeCoverage) : allocSubOutH;
+		const float gazePaddingX = foveated.settings.neuralRenderingEyeTrackedFoveation && p.eyeWidthIn > 0 ?
+			(2.0f * static_cast<float>(foveated.settings.neuralRenderingEyeTrackedCropPaddingPixels) /
+				static_cast<float>(p.eyeWidthIn)) : 0.0f;
+		const float gazePaddingY = foveated.settings.neuralRenderingEyeTrackedFoveation && p.eyeHeightIn > 0 ?
+			(2.0f * static_cast<float>(foveated.settings.neuralRenderingEyeTrackedCropPaddingPixels) /
+				static_cast<float>(p.eyeHeightIn)) : 0.0f;
+		const float maximumCropWidth = std::min(1.0f, std::max(baseLeftUV.w, baseRightUV.w) + gazePaddingX);
+		const float maximumCropHeight = std::min(1.0f, std::max(baseLeftUV.h, baseRightUV.h) + gazePaddingY);
+		const uint32_t envelopeSubInW = fixedEnvelopeCandidate ? envelopeDimension(p.eyeWidthIn, maximumCropWidth, maximumScale) : allocSubInW;
+		const uint32_t envelopeSubInH = fixedEnvelopeCandidate ? envelopeDimension(p.eyeHeightIn, maximumCropHeight, maximumScale) : allocSubInH;
+		const uint32_t envelopeSubOutW = fixedEnvelopeCandidate ? envelopeDimension(p.eyeWidthOut, maximumCropWidth, maximumScale) : allocSubOutW;
+		const uint32_t envelopeSubOutH = fixedEnvelopeCandidate ? envelopeDimension(p.eyeHeightOut, maximumCropHeight, maximumScale) : allocSubOutH;
 
 		const auto frame = globals::state ? globals::state->frameCount : 0;
 		if (!EnsureVRSubrectTextures(envelopeSubInW, envelopeSubInH, envelopeSubOutW, envelopeSubOutH,

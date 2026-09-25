@@ -35,3 +35,11 @@ TEST_CASE("adaptive pass count downshifts one mode per pressure step and restore
 	controller.Update(6, 2, true, false, true, false, true, 1, 1, 1);
 	REQUIRE(controller.ActiveMode(2) == 2);
 }
+
+TEST_CASE("adaptive pass restore reserves the configured cost of added passes", "[adaptive][passes]")
+{
+	REQUIRE(AdaptivePassController::HasProjectedHeadroom(10.0f, 6.0f, 1, 20.0f, 1.0f));
+	REQUIRE_FALSE(AdaptivePassController::HasProjectedHeadroom(11.0f, 6.0f, 1, 20.0f, 1.0f));
+	REQUIRE_FALSE(AdaptivePassController::HasProjectedHeadroom(10.0f, 6.0f, 2, 20.0f, 1.0f));
+	REQUIRE_FALSE(AdaptivePassController::HasProjectedHeadroom(-1.0f, 6.0f, 1, 20.0f, 1.0f));
+}
