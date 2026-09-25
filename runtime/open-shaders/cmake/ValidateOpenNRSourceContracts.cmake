@@ -58,11 +58,14 @@ if(NOT EXISTS "${_icon_loader_path}" OR NOT EXISTS "${_branding_path}" OR
    NOT EXISTS "${_skylighting_source_path}" OR NOT EXISTS "${_shared_data_path}" OR
    NOT EXISTS "${_skylighting_shader_path}" OR NOT EXISTS "${_skylighting_update_shader_path}" OR
    NOT EXISTS "${_presets_path}" OR NOT EXISTS "${_streamline_runtime_path}" OR
-   NOT EXISTS "${_temporal_shader_path}" OR NOT EXISTS "${_dlssnr_carrier_path}" OR
+   NOT EXISTS "${_temporal_shader_path}" OR
    NOT EXISTS "${_vr_helper_runtime_path}" OR NOT EXISTS "${_vr_helper_config_path}")
     message(FATAL_ERROR
         "OpenNR source contract validation could not find one or more release contracts"
     )
+endif()
+if(NOT OPENNR_EXTERNAL_DLSSNR_RUNTIME AND NOT EXISTS "${_dlssnr_carrier_path}")
+    message(FATAL_ERROR "OpenNR source contract validation could not find the Feature 18 carrier")
 endif()
 file(READ "${_icon_loader_path}" _icon_loader)
 file(READ "${_branding_path}" _branding)
