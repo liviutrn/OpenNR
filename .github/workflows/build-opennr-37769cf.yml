@@ -67,6 +67,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: OpenNR-2.15.1-37769cf
-          path: runtime/open-shaders/dist/*
+          path: runtime/open-shaders/build/OpenNR-Package/dist/*
           if-no-files-found: error
           retention-days: 14
