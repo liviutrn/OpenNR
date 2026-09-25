@@ -495,7 +495,7 @@ foreach(_contract IN ITEMS
 endforeach()
 
 foreach(_contract IN ITEMS
-    "VERSION 2.17.0"
+    "VERSION 2.18.0"
     "does not match OpenNR"
     "OPENNR_LEAN_PACKAGE"
 )

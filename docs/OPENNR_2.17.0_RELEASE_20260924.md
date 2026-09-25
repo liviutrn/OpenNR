@@ -56,3 +56,23 @@ be recorded below only after each action succeeds.
 No source or package check establishes delivered SkyrimVR Feature 18 frames,
 both-eye temporal stability, HMD appearance, frame pacing, or a performance
 gain. The user must compare the new profile against the preserved fallback.
+
+## Later VR test and corrected local build
+
+The first local launch exposed an old 2.15.1 DLL and shader in MO2's shared
+`overwrite` folder. Both were backed up and removed from that override path;
+the partial shader cache was also backed up before recompilation. A second
+launch exposed missing VR Address Library ID 100979 in the legacy shadow
+viewport adapter. Commit `e200f6f4` skips that adapter on VR. The rebuilt
+2.17.0 DLL SHA-256 was
+`D2443B646C23AC5B7BB8FE127C6C8DDD96B89B5E7287E4CC4EAC50DCA29D585B`;
+the corrected archive SHA-256 was
+`8DDBB8716687C619DA2C3612BB319D5D63F31A4BFA765423B36C14EF550CF66A`.
+These supersede the initial candidate hashes above for the installed test.
+
+The user subsequently played for roughly 40 minutes, reported better
+performance, and saw no visible problems. The OpenNR log showed successful
+DLSS NR creation for both eyes, no feature-load or shader-compile failures,
+and a normal launcher exit. Settings changed during the session, so the
+perceived improvement is not a controlled benchmark. See the 2.18.0 release
+note for the promotion decision and remaining compatibility warnings.
