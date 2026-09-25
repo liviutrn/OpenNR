@@ -1408,8 +1408,11 @@ const char* FoveatedRender::SubrectMaskModeName(SubrectMaskMode mode)
 				if (settings.neuralRenderingMultiPass == 1) {
 					ImGui::SliderFloat("Second-pass contribution", &settings.neuralRenderingSecondPassContribution,
 						0.0f, 1.0f, "%.2f");
+					ImGui::SameLine();
+					if (ImGui::SmallButton("Stability 0.65"))
+						settings.neuralRenderingSecondPassContribution = 0.65f;
 					if (auto _tt = Util::HoverTooltipWrapper())
-						drawWrapped("Blends pass two against pass one before the final NR composition. Zero skips pass two. This blend does not feed back into Feature 18 history.");
+						drawWrapped("Pass two has its own temporal history and uses the compensated game motion vectors. This blends its new output over pass one as P1 + strength * (P2 - P1). Try 0.60-0.75 to reduce stacked shimmer; 1.00 keeps full pass-two detail. Zero skips pass two.");
 				}
 				if (settings.neuralRenderingMultiPass >= 2)
 					drawWarningWrapped(T(TKEY("neural_rendering_multi_pass_warning"), "Experimental 3x: very large frame-time and VRAM increase."));
