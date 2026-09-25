@@ -98,6 +98,11 @@ option(
     "Skip redistributable runtime downloads for DLL-only development builds."
     OFF
 )
+option(
+    OPENNR_EXTERNAL_DLSSNR_RUNTIME
+    "Build an update package that preserves the user's already-installed nvngx_dlssnr.dll."
+    OFF
+)
 message("\tAuto plugin deployment: ${AUTO_PLUGIN_DEPLOYMENT}")
 message("\tZip to dist: ${ZIP_TO_DIST}")
 message("\tAIO Zip to dist: ${AIO_ZIP_TO_DIST}")
@@ -108,6 +113,7 @@ message("\tAIO include OpenNR Capture: ${AIO_INCLUDE_OPENNR_CAPTURE}")
 message("\tBuild OpenNR Capture: ${BUILD_OPENNR_CAPTURE}")
 message("\tOpenNR lean package: ${OPENNR_LEAN_PACKAGE}")
 message("\tSkip runtime downloads: ${SKIP_RUNTIME_DOWNLOADS}")
+message("\tExternal DLSSNR runtime: ${OPENNR_EXTERNAL_DLSSNR_RUNTIME}")
 message("\tEffects11: ${ENABLE_EFFECTS11}")
 
 # #######################################################################################################################
@@ -1632,6 +1638,7 @@ add_custom_target(
         -DEXPECT_OPENNR_CAPTURE=${_opennr_expect_capture}
         -DEXPECT_NATIVE_EYE_TRACKING=${_opennr_expect_native_eye_tracking}
         -DEXPECT_OPENNR_VERSION=${PROJECT_VERSION}
+        -DEXPECT_EXTERNAL_DLSSNR_RUNTIME=${OPENNR_EXTERNAL_DLSSNR_RUNTIME}
         -P
         "${CMAKE_SOURCE_DIR}/cmake/ValidateOpenNRPackage.cmake"
     DEPENDS AIO
@@ -1705,6 +1712,7 @@ list(
     "-DEXPECT_NATIVE_EYE_TRACKING=${_opennr_expect_native_eye_tracking}"
     "-DEXPECT_OPENNR_VERSION=${PROJECT_VERSION}"
     "-DEXPECT_LEAN_PACKAGE=${_opennr_expect_lean}"
+    "-DEXPECT_EXTERNAL_DLSSNR_RUNTIME=${OPENNR_EXTERNAL_DLSSNR_RUNTIME}"
     -P
     "${CMAKE_SOURCE_DIR}/cmake/ValidateOpenNRPackage.cmake"
 )

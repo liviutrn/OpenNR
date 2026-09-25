@@ -14,6 +14,9 @@ endif()
 if(NOT DEFINED EXPECT_OPENNR_VERSION)
     set(EXPECT_OPENNR_VERSION "")
 endif()
+if(NOT DEFINED EXPECT_EXTERNAL_DLSSNR_RUNTIME)
+    set(EXPECT_EXTERNAL_DLSSNR_RUNTIME OFF)
+endif()
 
 set(_required_paths
     "SKSE/Plugins/CommunityShaders.dll"
@@ -38,8 +41,10 @@ set(_required_paths
     "Shaders/WetnessEffects/WetnessEffects.hlsli"
     "Shaders/Upscaling/NeuralRendering/TemporalReuseCS.hlsl"
     "Shaders/Upscaling/Streamline/nvngx_dlss.dll"
-    "Shaders/Upscaling/Streamline/nvngx_dlssnr.dll"
 )
+if(NOT EXPECT_EXTERNAL_DLSSNR_RUNTIME)
+    list(APPEND _required_paths "Shaders/Upscaling/Streamline/nvngx_dlssnr.dll")
+endif()
 
 if(EXPECT_OPENNR_VERSION)
     set(_expected_changelog "OPENNR-${EXPECT_OPENNR_VERSION}-CHANGELOG.md")
@@ -184,18 +189,21 @@ if(_plugin_size LESS 1048576)
     )
 endif()
 
-file(SIZE "${PACKAGE_ROOT}/Shaders/Upscaling/Streamline/nvngx_dlssnr.dll" _dlssnr_size)
-if(_dlssnr_size LESS 1048576)
-    message(FATAL_ERROR
-        "OpenNR AIO manifest contains an implausibly small nvngx_dlssnr.dll (${_dlssnr_size} bytes)"
-    )
-endif()
-
 file(SHA256 "${PACKAGE_ROOT}/SKSE/Plugins/CommunityShaders.dll" _plugin_sha256)
-file(SHA256 "${PACKAGE_ROOT}/Shaders/Upscaling/Streamline/nvngx_dlssnr.dll" _dlssnr_sha256)
 message(STATUS "OpenNR AIO manifest validation passed")
 message(STATUS "  CommunityShaders.dll: ${_plugin_size} bytes, SHA-256 ${_plugin_sha256}")
-message(STATUS "  nvngx_dlssnr.dll: ${_dlssnr_size} bytes, SHA-256 ${_dlssnr_sha256}")
+if(EXPECT_EXTERNAL_DLSSNR_RUNTIME)
+    message(STATUS "  nvngx_dlssnr.dll: preserved from the existing OpenNR installation")
+else()
+    file(SIZE "${PACKAGE_ROOT}/Shaders/Upscaling/Streamline/nvngx_dlssnr.dll" _dlssnr_size)
+    if(_dlssnr_size LESS 1048576)
+        message(FATAL_ERROR
+            "OpenNR AIO manifest contains an implausibly small nvngx_dlssnr.dll (${_dlssnr_size} bytes)"
+        )
+    endif()
+    file(SHA256 "${PACKAGE_ROOT}/Shaders/Upscaling/Streamline/nvngx_dlssnr.dll" _dlssnr_sha256)
+    message(STATUS "  nvngx_dlssnr.dll: ${_dlssnr_size} bytes, SHA-256 ${_dlssnr_sha256}")
+endif()
 message(STATUS "  Capture payload: ${EXPECT_OPENNR_CAPTURE}")
 message(STATUS "  Native OpenVR eye-tracking: ${EXPECT_NATIVE_EYE_TRACKING}")
 message(STATUS "  Lean archive boundary: ${EXPECT_LEAN_PACKAGE}")
