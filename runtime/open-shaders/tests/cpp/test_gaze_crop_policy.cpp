@@ -66,6 +66,33 @@ TEST_CASE("Gaze guard absorbs jitter without accumulating crop drift", "[gaze]")
 	}
 }
 
+TEST_CASE("Gaze crop eases across the recenter guard", "[gaze]")
+{
+	float origin = 0.2f;
+	const float first = GazeCropPolicy::ResolveOrigin(origin, 0.55f, 0.6f, 2000, 8, true, 11.11f, 20.0f);
+	const float unquantized = GazeCropPolicy::ResolveOrigin(origin, 0.55f, 0.6f, 2000, 0, true, 11.11f, 20.0f);
+	REQUIRE(first == unquantized);
+	REQUIRE(first > origin);
+	REQUIRE(first - origin < 0.03f);
+	const float firstStep = first - origin;
+	origin = first;
+
+	const float second = GazeCropPolicy::ResolveOrigin(origin, 0.55f, 0.6f, 2000, 8, true, 11.11f, 20.0f);
+	REQUIRE(second > origin);
+	REQUIRE(second - origin < firstStep);
+
+	const float settled = GazeCropPolicy::ResolveOrigin(second, 0.55f, 0.6f, 2000, 8, true, 11.11f, 20.0f);
+	REQUIRE(settled == second);
+}
+
+TEST_CASE("A held short gaze dropout does not invalidate crop history", "[gaze]")
+{
+	REQUIRE_FALSE(GazeCropPolicy::ShouldResetHistory(true, true, false));
+	REQUIRE(GazeCropPolicy::ShouldResetHistory(false, true, false));
+	REQUIRE(GazeCropPolicy::ShouldResetHistory(true, false, false));
+	REQUIRE(GazeCropPolicy::ShouldResetHistory(true, true, true));
+}
+
 TEST_CASE("Gaze guard recenters immediately on escape and remains bounded", "[gaze]")
 {
 	for (const float extent : { 0.1f, 0.3f, 0.6f, 0.9f, 1.0f }) {

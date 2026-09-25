@@ -335,6 +335,11 @@ void VRS::UpdateVRShadingRateState()
 		const FoveatedRenderImpl::NativeOpenVRGaze::Config config{
 			.enabled = true,
 			.smoothingMs = foveated.settings.neuralRenderingEyeTrackedSmoothingMs,
+			.policy = foveated.settings.neuralRenderingEyeTrackedPolicy,
+			.catchupMs = foveated.settings.neuralRenderingEyeTrackedCatchupMs,
+			.deadbandPixels = foveated.settings.neuralRenderingEyeTrackedDeadbandPixels,
+			.holdMs = foveated.settings.neuralRenderingEyeTrackedHoldMs,
+			.predictionMs = foveated.settings.neuralRenderingEyeTrackedPredictionMs,
 			.quantizationPixels = foveated.settings.neuralRenderingEyeTrackedQuantizationPixels,
 			.cropPaddingPixels = foveated.settings.neuralRenderingEyeTrackedCropPaddingPixels,
 		};

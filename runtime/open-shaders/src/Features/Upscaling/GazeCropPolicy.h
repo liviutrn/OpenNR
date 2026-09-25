@@ -7,6 +7,11 @@
 
 namespace FoveatedRenderImpl::GazeCropPolicy
 {
+	inline bool ShouldResetHistory(bool hasGaze, bool cropWasDynamic, bool inputsChanged)
+	{
+		return !hasGaze || !cropWasDynamic || inputsChanged;
+	}
+
 	struct Region
 	{
 		float x = 0.0f;
@@ -91,17 +96,23 @@ namespace FoveatedRenderImpl::GazeCropPolicy
 			previous[1] + (sample[1] - previous[1]) * alpha };
 	}
 
-	/** Retain a stable crop inside a small central guard; recenter without slew outside it. */
+	/** Hold the crop inside its movement guard and ease toward the live origin outside it. */
 	inline float ResolveOrigin(float previous, float sample, float extent,
-		std::uint32_t pixels, std::uint32_t quantizationPixels, bool havePrevious)
+		std::uint32_t pixels, std::uint32_t quantizationPixels, bool havePrevious,
+		float deltaMs = 16.67f, float catchupMs = 0.0f)
 	{
 		const float maxOrigin = std::max(0.0f, 1.0f - extent);
 		const float desired = std::clamp(sample - extent * 0.5f, 0.0f, maxOrigin);
-		const float guard = std::min(0.02f, extent * 0.05f);
+		const float guard = std::max(std::min(0.02f, extent * 0.05f),
+			pixels ? static_cast<float>(quantizationPixels) / static_cast<float>(pixels) : 0.0f);
 		if (havePrevious && std::abs(desired - previous) <= guard)
 			return previous;
-		// Quantization must not place the tracked point outside the central guard.
-		const float step = pixels ? std::min(static_cast<float>(quantizationPixels) / static_cast<float>(pixels), guard) : 0.0f;
-		return step > 0.0f ? std::clamp(std::round(desired / step) * step, 0.0f, maxOrigin) : desired;
+		if (!havePrevious)
+			return desired;
+
+		const float dt = std::clamp(std::isfinite(deltaMs) ? deltaMs : 16.67f, 0.1f, 250.0f);
+		const float duration = std::clamp(std::isfinite(catchupMs) ? catchupMs : 0.0f, 0.0f, 100.0f);
+		const float alpha = duration > 0.0f ? 1.0f - std::exp(-dt / duration) : 1.0f;
+		return std::clamp(previous + (desired - previous) * alpha, 0.0f, maxOrigin);
 	}
 }

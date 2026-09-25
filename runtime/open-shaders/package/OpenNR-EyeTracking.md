@@ -13,19 +13,20 @@ settings. Enable `Native OpenVR gaze provider`. The experiment also requires
 VR rendering, DLSS upscaling, `Foveated Default`, and a cropped (non-full-eye)
 static region. It is disabled by default.
 
-Eye movements update immediately. Fixation smoothing applies only to noise within
-two input pixels; it defaults to zero and saved values do not delay larger moves.
-A small central guard and bounded quantization stabilize the crop during fixation.
-Crossing the guard recenters the crop without changing its dimensions. Both DLSS
-and NR history reset when the crop moves, rather than reusing misaligned history.
+Legacy response follows gaze immediately. Adaptive response adds a small fixation
+deadband and timed catch-up. That catch-up also eases crop recentering. The crop
+stays still while the gaze target remains inside its movement guard; outside it,
+the crop eases toward the live target instead of snapping between quantized pixels.
+Brief invalid samples keep the held crop and its temporal history. A longer loss
+returns to the saved static crop and resets history at the handoff.
 
 ## Safety and status
 
 The provider falls back to the persisted static crop when VR, focus, menu/loading
 state, the OpenVR interface, dimensions, or gaze validity are not acceptable.
-It holds the last crop for up to 50 ms after an invalid
-query, then switches once to the static crop. Fixed-size tracking/fallback changes
-retain GPU allocations. If enabled, VRS consumes the same frame's gaze crop.
+It holds the last crop for up to 50 ms after an invalid query, then switches to
+the static crop. Fixed-size tracking/fallback changes retain GPU allocations. If
+enabled, VRS consumes the same frame's gaze crop and filtering configuration.
 
 Diagnostics report query cost, valid-query count, time since the last valid query,
 filtered gaze, crop changes, fallback and reset state. The center API has no sensor

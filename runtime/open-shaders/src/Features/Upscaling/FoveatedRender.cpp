@@ -58,72 +58,93 @@ namespace
 	}
 }
 
-NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
-	FoveatedRender::Settings,
-	enabled,
-	dlssMode,
-	stretchMode,
-	peripheryBlurRadius,
-	debugVisualize,
-	peripheryAAMode,
-	peripheryTemporalAlpha,
-	subrectBlendMode,
-	subrectMaskMode,
-	subrectFeatherWidth,
-	subrectFalloffCurve,
-	subrectDitherStrength,
-	neuralRenderingEnabled,
-	neuralRenderingModelResolution,
-	neuralRenderingPreset,
-	neuralRenderingIntensity,
-	neuralRenderingLocalTone,
-	neuralRenderingLocalStructure,
-	neuralRenderingSkinStructure,
-	neuralRenderingStyle,
-	neuralRenderingAutoMask,
-	neuralRenderingUICorrection,
-	neuralRenderingResolveMode,
-	neuralRenderingMultiPass,
-	neuralRenderingSecondPassContribution,
-	neuralRenderingAdaptiveSecondPassCostMs,
-	neuralRenderingSecondPassCropReduction,
-	neuralRenderingSecondPassCropReductionX,
-	neuralRenderingSecondPassCropReductionY,
-	neuralRenderingSecondPassBlendMode,
-	neuralRenderingSecondPassMaskMode,
-	neuralRenderingSecondPassFeatherWidth,
-	neuralRenderingSecondPassFalloffCurve,
-	neuralRenderingSecondPassDitherStrength,
-	neuralRenderingAdaptiveEnabled,
-	neuralRenderingAdaptiveRefreshHz,
-	neuralRenderingAdaptiveBudgetMode,
-	neuralRenderingAdaptiveTargetFps,
-	neuralRenderingAdaptiveTargetFrameTimeMs,
-	neuralRenderingAdaptiveMinimumResolution,
-	neuralRenderingAdaptiveDownshiftFrames,
-	neuralRenderingAdaptiveUpshiftFrames,
-	neuralRenderingAdaptiveMinimumDwellFrames,
-	neuralRenderingAdaptiveGuardTimeMs,
-	neuralRenderingAdaptiveDiagnostics,
-	neuralRenderingAdaptiveQualityOrder,
-	neuralRenderingAdaptiveCropEnabled,
-	neuralRenderingAdaptiveCropMaximumScalePercent,
-	neuralRenderingAdaptiveCropMinimumScalePercent,
-	neuralRenderingAdaptiveCropDownshiftFrames,
-	neuralRenderingAdaptiveCropUpshiftFrames,
-	neuralRenderingAdaptiveCropMinimumDwellFrames,
-	neuralRenderingAdaptiveCropTransitionFrames,
-	neuralRenderingEyeTrackedFoveation,
-	neuralRenderingEyeTrackedSmoothingMs,
-	neuralRenderingEyeTrackedPolicy,
-	neuralRenderingEyeTrackedCatchupMs,
-	neuralRenderingEyeTrackedDeadbandPixels,
-	neuralRenderingEyeTrackedHoldMs,
-	neuralRenderingEyeTrackedPredictionMs,
-	neuralRenderingEyeTrackedQuantizationPixels,
-	neuralRenderingEyeTrackedCropPaddingPixels,
-	neuralRenderingNRContribution,
-	neuralRenderingDetailBoost);
+#define FOVEATED_SETTINGS_FIELDS(X) \
+	X(enabled) \
+	X(dlssMode) \
+	X(stretchMode) \
+	X(peripheryBlurRadius) \
+	X(debugVisualize) \
+	X(peripheryAAMode) \
+	X(peripheryTemporalAlpha) \
+	X(subrectBlendMode) \
+	X(subrectMaskMode) \
+	X(subrectFeatherWidth) \
+	X(subrectFalloffCurve) \
+	X(subrectDitherStrength) \
+	X(neuralRenderingEnabled) \
+	X(neuralRenderingModelResolution) \
+	X(neuralRenderingPreset) \
+	X(neuralRenderingIntensity) \
+	X(neuralRenderingLocalTone) \
+	X(neuralRenderingLocalStructure) \
+	X(neuralRenderingSkinStructure) \
+	X(neuralRenderingStyle) \
+	X(neuralRenderingAutoMask) \
+	X(neuralRenderingUICorrection) \
+	X(neuralRenderingResolveMode) \
+	X(neuralRenderingMultiPass) \
+	X(neuralRenderingSecondPassContribution) \
+	X(neuralRenderingAdaptiveSecondPassCostMs) \
+	X(neuralRenderingSecondPassCropReduction) \
+	X(neuralRenderingSecondPassCropReductionX) \
+	X(neuralRenderingSecondPassCropReductionY) \
+	X(neuralRenderingSecondPassBlendMode) \
+	X(neuralRenderingSecondPassMaskMode) \
+	X(neuralRenderingSecondPassFeatherWidth) \
+	X(neuralRenderingSecondPassFalloffCurve) \
+	X(neuralRenderingSecondPassDitherStrength) \
+	X(neuralRenderingAdaptiveEnabled) \
+	X(neuralRenderingAdaptiveRefreshHz) \
+	X(neuralRenderingAdaptiveBudgetMode) \
+	X(neuralRenderingAdaptiveTargetFps) \
+	X(neuralRenderingAdaptiveTargetFrameTimeMs) \
+	X(neuralRenderingAdaptiveMinimumResolution) \
+	X(neuralRenderingAdaptiveDownshiftFrames) \
+	X(neuralRenderingAdaptiveUpshiftFrames) \
+	X(neuralRenderingAdaptiveMinimumDwellFrames) \
+	X(neuralRenderingAdaptiveGuardTimeMs) \
+	X(neuralRenderingAdaptiveDiagnostics) \
+	X(neuralRenderingAdaptiveQualityOrder) \
+	X(neuralRenderingAdaptiveCropEnabled) \
+	X(neuralRenderingAdaptiveCropMaximumScalePercent) \
+	X(neuralRenderingAdaptiveCropMinimumScalePercent) \
+	X(neuralRenderingAdaptiveCropDownshiftFrames) \
+	X(neuralRenderingAdaptiveCropUpshiftFrames) \
+	X(neuralRenderingAdaptiveCropMinimumDwellFrames) \
+	X(neuralRenderingAdaptiveCropTransitionFrames) \
+	X(neuralRenderingEyeTrackedFoveation) \
+	X(neuralRenderingEyeTrackedSmoothingMs) \
+	X(neuralRenderingEyeTrackedPolicy) \
+	X(neuralRenderingEyeTrackedCatchupMs) \
+	X(neuralRenderingEyeTrackedDeadbandPixels) \
+	X(neuralRenderingEyeTrackedHoldMs) \
+	X(neuralRenderingEyeTrackedPredictionMs) \
+	X(neuralRenderingEyeTrackedQuantizationPixels) \
+	X(neuralRenderingEyeTrackedCropPaddingPixels) \
+	X(neuralRenderingNRContribution) \
+	X(neuralRenderingDetailBoost)
+
+#define FOVEATED_SETTINGS_TO_JSON(field) { #field, settings.field },
+#define FOVEATED_SETTINGS_FROM_JSON(field) \
+	if (const auto it = j.find(#field); it != j.end()) \
+		it->get_to(settings.field); \
+	else \
+		settings.field = defaults.field;
+
+void to_json(nlohmann::json& j, const FoveatedRender::Settings& settings)
+{
+	j = nlohmann::json{ FOVEATED_SETTINGS_FIELDS(FOVEATED_SETTINGS_TO_JSON) };
+}
+
+void from_json(const nlohmann::json& j, FoveatedRender::Settings& settings)
+{
+	const FoveatedRender::Settings defaults{};
+	FOVEATED_SETTINGS_FIELDS(FOVEATED_SETTINGS_FROM_JSON)
+}
+
+#undef FOVEATED_SETTINGS_FROM_JSON
+#undef FOVEATED_SETTINGS_TO_JSON
+#undef FOVEATED_SETTINGS_FIELDS
 
 // ============================================================================
 // Lifecycle
@@ -1443,7 +1464,7 @@ const char* FoveatedRender::SubrectMaskModeName(SubrectMaskMode mode)
 				if (ImGui::Combo("Gaze response", &gazePolicy, gazePolicies, IM_ARRAYSIZE(gazePolicies)))
 					settings.neuralRenderingEyeTrackedPolicy = static_cast<uint>(gazePolicy);
 				if (auto _tt = Util::HoverTooltipWrapper())
-					drawWrapped("Legacy keeps the existing immediate pursuit behavior. Adaptive adds a small fixation deadband and timed catch-up while keeping left and right eye samples independent.");
+					drawWrapped("Legacy keeps immediate gaze pursuit. Adaptive adds a fixation deadband and timed catch-up; catch-up also eases crop recentering. Left and right eye samples stay independent.");
 				ImGui::SliderFloat("Fixation smoothing", &settings.neuralRenderingEyeTrackedSmoothingMs,
 					0.0f, settings.neuralRenderingEyeTrackedPolicy == 1 ? 100.0f : 250.0f, "%.0f ms");
 				if (settings.neuralRenderingEyeTrackedPolicy == 1) {
@@ -1458,8 +1479,10 @@ const char* FoveatedRender::SubrectMaskModeName(SubrectMaskMode mode)
 				}
 				drawWrapped("Gaze filtering changes only crop placement, not head pose. History is re-anchored after tracking loss or a large crop jump.");
 				int quantizationPixels = static_cast<int>(std::min(settings.neuralRenderingEyeTrackedQuantizationPixels, 64u));
-				if (ImGui::SliderInt("Crop movement quantization", &quantizationPixels, 0, 64, quantizationPixels == 0 ? "Off" : "%d input px"))
+				if (ImGui::SliderInt("Crop movement dead zone", &quantizationPixels, 0, 64, quantizationPixels == 0 ? "Off" : "%d input px"))
 					settings.neuralRenderingEyeTrackedQuantizationPixels = static_cast<uint>(std::clamp(quantizationPixels, 0, 64));
+				if (auto _tt = Util::HoverTooltipWrapper())
+					drawWrapped("Keeps the crop still until its target moves beyond this many input pixels. The crop then eases toward the actual gaze position instead of snapping to a pixel grid.");
 				int cropPadding = static_cast<int>(std::min(settings.neuralRenderingEyeTrackedCropPaddingPixels, 128u));
 				if (ImGui::SliderInt("Gaze crop edge margin", &cropPadding, 0, 128, cropPadding == 0 ? "Off" : "%d input px"))
 					settings.neuralRenderingEyeTrackedCropPaddingPixels = static_cast<uint>(std::clamp(cropPadding, 0, 128));

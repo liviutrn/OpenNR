@@ -62,7 +62,6 @@ namespace FoveatedRenderImpl::NativeOpenVRGaze
 
 			bool sampleStateValid = false;
 			bool haveFiltered = false;
-			bool wasInvalid = false;
 			bool wasDynamic = false;
 			std::array<float, 2> filteredLeft{};
 			std::array<float, 2> filteredRight{};
@@ -79,6 +78,8 @@ namespace FoveatedRenderImpl::NativeOpenVRGaze
 			Config cachedConfig{};
 			Util::Subrect::UVRegion cachedBaseLeft{};
 			Util::Subrect::UVRegion cachedBaseRight{};
+			Util::Subrect::UVRegion cachedInputBaseLeft{};
+			Util::Subrect::UVRegion cachedInputBaseRight{};
 			std::uint32_t cachedEyeWidth = 0;
 			std::uint32_t cachedEyeHeight = 0;
 			bool cachedAllowDynamic = false;
@@ -116,7 +117,6 @@ namespace FoveatedRenderImpl::NativeOpenVRGaze
 		{
 			state.sampleStateValid = false;
 			state.haveFiltered = false;
-			state.wasInvalid = false;
 			state.wasDynamic = false;
 			state.filteredLeft = {};
 			state.filteredRight = {};
@@ -242,11 +242,14 @@ namespace FoveatedRenderImpl::NativeOpenVRGaze
 		Util::Subrect::UVRegion CropFromCenter(
 			const Util::Subrect::UVRegion& base, const std::array<float, 2>& center,
 			const Util::Subrect::UVRegion& previous, bool havePrevious,
-			std::uint32_t width, std::uint32_t height, std::uint32_t quantization)
+			std::uint32_t width, std::uint32_t height, std::uint32_t quantization,
+			float deltaMs, float catchupMs)
 		{
 			auto result = base;
-			result.x = GazeCropPolicy::ResolveOrigin(previous.x, center[0], base.w, width, quantization, havePrevious);
-			result.y = GazeCropPolicy::ResolveOrigin(previous.y, center[1], base.h, height, quantization, havePrevious);
+			result.x = GazeCropPolicy::ResolveOrigin(previous.x, center[0], base.w, width, quantization,
+				havePrevious, deltaMs, catchupMs);
+			result.y = GazeCropPolicy::ResolveOrigin(previous.y, center[1], base.h, height, quantization,
+				havePrevious, deltaMs, catchupMs);
 			return result;
 		}
 
@@ -381,7 +384,8 @@ namespace FoveatedRenderImpl::NativeOpenVRGaze
 				state.rawRight = rightUV;
 				++state.sampleSequence;
 
-				const bool reacquired = !state.haveFiltered || state.wasInvalid || inputKeyChanged;
+				const bool reacquired = GazeCropPolicy::ShouldResetHistory(
+					state.haveFiltered, state.wasDynamic, inputKeyChanged);
 				const auto previousLeft = state.filteredLeft;
 				const auto previousRight = state.filteredRight;
 				if (reacquired) {
@@ -402,14 +406,15 @@ namespace FoveatedRenderImpl::NativeOpenVRGaze
 					state.filteredRight = GazeCropPolicy::Filter(previousRight, rightUV, dtMs, a_config.smoothingMs, a_eyeWidth, a_eyeHeight);
 				}
 				state.haveFiltered = true;
-				state.wasInvalid = false;
 				state.lastValidAt = now;
 				state.wasDynamic = true;
 
 				result.leftUV = CropFromCenter(baseLeft, state.filteredLeft, state.cachedResult.leftUV,
-					state.cacheValid && !reacquired, a_eyeWidth, a_eyeHeight, a_config.quantizationPixels);
+					state.cacheValid && !reacquired, a_eyeWidth, a_eyeHeight, a_config.quantizationPixels,
+					dtMs, a_config.catchupMs);
 				result.rightUV = CropFromCenter(baseRight, state.filteredRight, state.cachedResult.rightUV,
-					state.cacheValid && !reacquired, a_eyeWidth, a_eyeHeight, a_config.quantizationPixels);
+					state.cacheValid && !reacquired, a_eyeWidth, a_eyeHeight, a_config.quantizationPixels,
+					dtMs, a_config.catchupMs);
 				result.dynamic = true;
 				result.diagnostics.dynamic = true;
 				result.diagnostics.usingFallback = false;
@@ -426,7 +431,6 @@ namespace FoveatedRenderImpl::NativeOpenVRGaze
 			result.diagnostics.filteredLeftUV = state.filteredLeft;
 			result.diagnostics.filteredRightUV = state.filteredRight;
 			if (state.haveFiltered) {
-				state.wasInvalid = true;
 				const float ageMs = ElapsedMs(state.lastValidAt, now);
 				result.diagnostics.sampleAgeMs = ageMs;
 				if (a_config.holdMs != 0 && ageMs <= static_cast<float>(a_config.holdMs)) {
@@ -511,8 +515,8 @@ namespace FoveatedRenderImpl::NativeOpenVRGaze
 		// VRS, DLSS and NR must share one crop despite input/output dimension differences.
 		// Resampling mid-frame would misalign color, native guides and the shading-rate map.
 		if (state.cacheValid && state.cachedFrame == a_frame &&
-			SameConfig(a_config, state.cachedConfig) && SameRegion(a_baseLeftUV, state.cachedBaseLeft) &&
-			SameRegion(a_baseRightUV, state.cachedBaseRight) && state.cachedAllowDynamic == a_allowDynamic)
+			SameConfig(a_config, state.cachedConfig) && SameRegion(a_baseLeftUV, state.cachedInputBaseLeft) &&
+			SameRegion(a_baseRightUV, state.cachedInputBaseRight) && state.cachedAllowDynamic == a_allowDynamic)
 			return state.cachedResult;
 
 		auto result = ResolveLocked(a_config, a_baseLeftUV, a_baseRightUV,
@@ -530,6 +534,8 @@ namespace FoveatedRenderImpl::NativeOpenVRGaze
 		result.diagnostics.historyReset = result.historyReset;
 		state.cachedResult = result;
 		state.cachedFrame = a_frame;
+		state.cachedInputBaseLeft = a_baseLeftUV;
+		state.cachedInputBaseRight = a_baseRightUV;
 		state.cacheValid = true;
 		return state.cachedResult;
 	}
