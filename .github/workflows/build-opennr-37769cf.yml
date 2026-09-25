@@ -1,6 +1,8 @@
 name: Build OpenNR 2.15.1 VR revision
 
 on:
+  push:
+    branches: ["codex/opennr-37769cf"]
   workflow_dispatch:
 
 permissions:
