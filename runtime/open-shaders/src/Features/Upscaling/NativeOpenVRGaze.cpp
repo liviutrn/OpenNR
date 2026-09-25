@@ -49,7 +49,6 @@ namespace FoveatedRenderImpl::NativeOpenVRGaze
 		constexpr std::size_t kEyeTrackedFoveationCenterVtableIndex = 35;
 		constexpr float kMaxAcceptedNdc = 1.25f;
 		constexpr float kDefaultFrameDeltaMs = 16.67f;
-		constexpr float kStaleHoldMs = 50.0f;
 
 		struct RuntimeState
 		{
@@ -106,7 +105,11 @@ namespace FoveatedRenderImpl::NativeOpenVRGaze
 		bool SameConfig(const Config& a_lhs, const Config& a_rhs)
 		{
 			return a_lhs.enabled == a_rhs.enabled && NearlyEqual(a_lhs.smoothingMs, a_rhs.smoothingMs) &&
-				a_lhs.quantizationPixels == a_rhs.quantizationPixels;
+				a_lhs.policy == a_rhs.policy && NearlyEqual(a_lhs.catchupMs, a_rhs.catchupMs) &&
+				a_lhs.deadbandPixels == a_rhs.deadbandPixels && a_lhs.holdMs == a_rhs.holdMs &&
+				NearlyEqual(a_lhs.predictionMs, a_rhs.predictionMs) &&
+				a_lhs.quantizationPixels == a_rhs.quantizationPixels &&
+				a_lhs.cropPaddingPixels == a_rhs.cropPaddingPixels;
 		}
 
 		void ClearSampleStateLocked()
@@ -277,8 +280,16 @@ namespace FoveatedRenderImpl::NativeOpenVRGaze
 			std::uint32_t a_frame,
 			bool a_allowDynamic)
 		{
-			const auto baseLeft = SanitizeRegion(a_baseLeftUV);
-			const auto baseRight = SanitizeRegion(a_baseRightUV);
+			auto baseLeft = SanitizeRegion(a_baseLeftUV);
+			auto baseRight = SanitizeRegion(a_baseRightUV);
+			if (a_config.enabled && a_config.cropPaddingPixels) {
+				const auto left = GazeCropPolicy::ExpandRegion(
+					{ baseLeft.x, baseLeft.y, baseLeft.w, baseLeft.h }, a_eyeWidth, a_eyeHeight, a_config.cropPaddingPixels);
+				const auto right = GazeCropPolicy::ExpandRegion(
+					{ baseRight.x, baseRight.y, baseRight.w, baseRight.h }, a_eyeWidth, a_eyeHeight, a_config.cropPaddingPixels);
+				baseLeft = { left.x, left.y, left.w, left.h };
+				baseRight = { right.x, right.y, right.w, right.h };
+			}
 			ResolvedCrop result{ .leftUV = baseLeft, .rightUV = baseRight };
 			FillDiagnosticsBase(result.diagnostics, a_config, a_frame, a_allowDynamic);
 
@@ -364,6 +375,8 @@ namespace FoveatedRenderImpl::NativeOpenVRGaze
 				result.diagnostics.gazeValid = true;
 				result.diagnostics.rawLeftUV = leftUV;
 				result.diagnostics.rawRightUV = rightUV;
+				const auto previousRawLeft = state.rawLeft;
+				const auto previousRawRight = state.rawRight;
 				state.rawLeft = leftUV;
 				state.rawRight = rightUV;
 				++state.sampleSequence;
@@ -375,6 +388,15 @@ namespace FoveatedRenderImpl::NativeOpenVRGaze
 					state.filteredLeft = leftUV;
 					state.filteredRight = rightUV;
 					result.historyReset = true;
+				} else if (a_config.policy == 1) {
+					const auto predictedLeft = GazeCropPolicy::Predict(previousRawLeft, leftUV, dtMs,
+						a_config.predictionMs, a_eyeWidth, a_eyeHeight);
+					const auto predictedRight = GazeCropPolicy::Predict(previousRawRight, rightUV, dtMs,
+						a_config.predictionMs, a_eyeWidth, a_eyeHeight);
+					state.filteredLeft = GazeCropPolicy::FilterAdaptive(previousLeft, predictedLeft, dtMs,
+						a_config.smoothingMs, a_config.catchupMs, a_config.deadbandPixels, a_eyeWidth, a_eyeHeight);
+					state.filteredRight = GazeCropPolicy::FilterAdaptive(previousRight, predictedRight, dtMs,
+						a_config.smoothingMs, a_config.catchupMs, a_config.deadbandPixels, a_eyeWidth, a_eyeHeight);
 				} else {
 					state.filteredLeft = GazeCropPolicy::Filter(previousLeft, leftUV, dtMs, a_config.smoothingMs, a_eyeWidth, a_eyeHeight);
 					state.filteredRight = GazeCropPolicy::Filter(previousRight, rightUV, dtMs, a_config.smoothingMs, a_eyeWidth, a_eyeHeight);
@@ -407,7 +429,7 @@ namespace FoveatedRenderImpl::NativeOpenVRGaze
 				state.wasInvalid = true;
 				const float ageMs = ElapsedMs(state.lastValidAt, now);
 				result.diagnostics.sampleAgeMs = ageMs;
-				if (ageMs <= kStaleHoldMs) {
+				if (a_config.holdMs != 0 && ageMs <= static_cast<float>(a_config.holdMs)) {
 					result.leftUV = state.cachedResult.leftUV;
 					result.rightUV = state.cachedResult.rightUV;
 					result.dynamic = true;
@@ -497,9 +519,7 @@ namespace FoveatedRenderImpl::NativeOpenVRGaze
 			a_eyeWidth, a_eyeHeight, a_frame, a_allowDynamic);
 		const bool cropChanged = state.cacheValid && (a_config.enabled || state.cachedResult.diagnostics.experimentEnabled) &&
 			(!SameRegion(result.leftUV, state.cachedResult.leftUV) || !SameRegion(result.rightUV, state.cachedResult.rightUV));
-		// Crop-local histories have no verified exposed-region validity mask.
-		// Any origin change must reset both reconstruction stages without freeing resources.
-		result.historyReset = result.historyReset || cropChanged;
+		// Each reconstruction stage compensates ordinary origin changes against its last successful frame.
 		state.cropChangeCount += cropChanged ? 1 : 0;
 		state.historyResetCount += result.historyReset ? 1 : 0;
 		result.diagnostics.cropChanged = cropChanged;

@@ -4,6 +4,13 @@
 
 namespace NeuralRendering
 {
+	/** @brief Clamp the selected cascade mode; crop and adaptive tiers are independent. */
+	[[nodiscard]] constexpr std::uint32_t ResolveMultiPassMode(std::uint32_t requestedMode,
+		bool, bool)
+	{
+		return requestedMode > 2 ? 2 : requestedMode;
+	}
+
 	/** @brief Separates a model-tier change from changes that invalidate display-space handoff history. */
 	struct TemporalHistoryConfig
 	{
@@ -13,6 +20,8 @@ namespace NeuralRendering
 		float depthThreshold = 0.05f;
 		float colorTolerance = 0.08f;
 		std::uint32_t passes = 1;
+		std::uint32_t secondPassCropReductionX = 0;
+		std::uint32_t secondPassCropReductionY = 0;
 
 		bool operator==(const TemporalHistoryConfig&) const = default;
 

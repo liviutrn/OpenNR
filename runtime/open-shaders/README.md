@@ -70,6 +70,18 @@ Install them manually only if you want them in everywhere.
 -   [VR Address Library for SKSEVR](https://www.nexusmods.com/skyrimspecialedition/mods/58101)
     -   Needed for VR
 
+## Experimental VR Neural Rendering controls
+
+The Upscaling settings expose optional DLSS Neural Rendering experiments:
+
+- Eye-tracked crops have independent response, deadband, hold, prediction, quantization, and edge-margin controls. Gaze controls crop placement; adaptive quality controls crop size.
+- Sequential NR supports one to three evaluations on cropped regions. Two-pass NR can reduce the width and height of its second-pass region independently, with its own edge shape, blend mode, feather width, falloff, and dither controls. The first-pass crop uses the selected/gaze region and the outer edge settings.
+- Adaptive quality can reduce pass count, crop coverage, and NR processing resolution together. Its configurable order defaults to reducing passes first, then crop coverage, then NR resolution; restoration uses the reverse order.
+- Adaptive budget can target headset half-refresh, a custom FPS value, or a custom frame-time budget such as 20 ms; custom targets show the remaining margin against the selected headset's half-refresh slot.
+- Output controls adjust NR contribution and local detail, plus DLSS sharpening strength (0–5) and whether sharpening runs before or after NR.
+
+NR model processing is capped at 100%; sequential passes are available for additional refinement. Experimental options remain opt-in. Validate them in-game on the target headset before relying on them for a regular playthrough.
+
 ## Build Instructions
 
 ### Clone the Repository with submodules

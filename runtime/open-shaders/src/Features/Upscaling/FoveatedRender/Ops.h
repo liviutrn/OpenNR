@@ -15,6 +15,15 @@ class Texture2D;
 // Faster strategies.
 namespace FoveatedRenderImpl::Ops
 {
+	struct SubrectBlendOverride
+	{
+		uint32_t blendMode = 0;
+		uint32_t maskMode = 1;
+		float featherWidth = 32.0f;
+		float falloffCurve = 1.0f;
+		float ditherStrength = 1.0f;
+	};
+
 	// Texture creation helper.
 	eastl::unique_ptr<Texture2D> CreateTextureFromSource(ID3D11Resource* src, uint32_t width, uint32_t height,
 		bool copyBindFlags = false, bool createSRV = false, bool createUAV = false, const char* name = nullptr);
@@ -87,7 +96,11 @@ namespace FoveatedRenderImpl::Ops
 	// kHardCopy fast-paths to CopySubresourceRegion; Feather/Dither dispatch
 	// SubrectBlendCS into dstUAV.
 	bool BlendSubrectToOutput(ID3D11Resource* dlssSrc, ID3D11Resource* dst, ID3D11UnorderedAccessView* dstUAV,
-		uint32_t dstOffsetX, uint32_t dstOffsetY, uint32_t subWidth, uint32_t subHeight, uint32_t srcOffsetX = 0);
+		uint32_t dstOffsetX, uint32_t dstOffsetY, uint32_t subWidth, uint32_t subHeight, uint32_t srcOffsetX = 0,
+		bool blendEdges = true,
+		uint32_t srcOffsetY = 0, bool forceFeather = false, float featherWidthOverride = 0.0f,
+		float sourceContribution = 1.0f, float detailBoost = 1.0f,
+		const SubrectBlendOverride* blendOverride = nullptr);
 
 	// Hash of per-eye UVs + mode for change detection (forces SL DLSS resource
 	// recreation). Both eyes are mixed in so asymmetric presets — e.g. Nasal

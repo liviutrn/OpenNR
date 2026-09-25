@@ -8,8 +8,11 @@
 struct RCASConfig
 {
 	float sharpness;
-	float3 pad;
+	float detailGain;
+	uint32_t stereo;
+	uint32_t pad;
 };
+static_assert(sizeof(RCASConfig) == 16);
 
 RCAS::~RCAS()
 {
@@ -33,11 +36,11 @@ void RCAS::CreateComputeShader()
 	rcasComputeShader.attach((ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\Upscaling\\RCAS\\RCAS.hlsl", defines, "cs_5_0"));
 }
 
-void RCAS::ApplySharpen(ID3D11ShaderResourceView* inputSRV, ID3D11UnorderedAccessView* outputUAV, float sharpness)
+bool RCAS::ApplySharpen(ID3D11ShaderResourceView* inputSRV, ID3D11UnorderedAccessView* outputUAV, float sharpness)
 {
-	if (!rcasComputeShader) {
+	if (!rcasComputeShader || !rcasConfigCB || !inputSRV || !outputUAV) {
 		logger::warn("[RCAS] Compute shader not compiled");
-		return;
+		return false;
 	}
 
 	CS_GPU_PASS("Upscaling::RCAS");
@@ -49,13 +52,16 @@ void RCAS::ApplySharpen(ID3D11ShaderResourceView* inputSRV, ID3D11UnorderedAcces
 	D3D11_TEXTURE2D_DESC outputDesc{};
 	if (!Util::GetTexture2DDesc(outputUAV, outputDesc)) {
 		logger::warn("[RCAS] Could not resolve output texture dimensions");
-		return;
+		return false;
 	}
 	uint32_t screenWidth = outputDesc.Width;
 	uint32_t screenHeight = outputDesc.Height;
 
 	RCASConfig config{};
-	config.sharpness = sharpness;
+	const auto strength = Sharpening::Resolve(sharpness);
+	config.sharpness = strength[0];
+	config.detailGain = strength[1];
+	config.stereo = globals::game::isVR ? 1u : 0u;
 
 	rcasConfigCB->Update(config);
 	auto bufferArray = rcasConfigCB->CB();
@@ -80,4 +86,5 @@ void RCAS::ApplySharpen(ID3D11ShaderResourceView* inputSRV, ID3D11UnorderedAcces
 	context->CSSetUnorderedAccessViews(0, 1, nullUAVs, nullptr);
 
 	context->CSSetShader(nullptr, nullptr, 0);
+	return true;
 }

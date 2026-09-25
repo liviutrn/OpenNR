@@ -11,8 +11,6 @@ namespace NeuralRendering
 			return "disabled";
 		case ResetReason::EligibilityLoss:
 			return "eligibility-loss";
-		case ResetReason::EyeTrackingOwnership:
-			return "eye-tracking-ownership";
 		case ResetReason::GeometryChange:
 			return "geometry-change";
 		case ResetReason::InvalidCoverage:
@@ -47,10 +45,9 @@ namespace NeuralRendering
 	AdaptiveCropController::Config AdaptiveCropController::NormalizeConfig(const Config& config)
 	{
 		Config normalized = config;
-		normalized.maximumCoverage = FindBucketAtOrBelow(std::clamp(normalized.maximumCoverage, 60u, 85u));
-		normalized.minimumCoverage = FindBucketAtOrBelow(std::max(normalized.minimumCoverage, 60u));
-		if (normalized.maximumCoverage < normalized.minimumCoverage)
-			normalized.maximumCoverage = normalized.minimumCoverage;
+		normalized.maximumCoverage = FindBucketAtOrBelow(std::clamp(normalized.maximumCoverage, 30u, 85u));
+		normalized.minimumCoverage = FindBucketAtOrBelow(std::clamp(normalized.minimumCoverage, 30u,
+			normalized.maximumCoverage));
 		normalized.downshiftFrames = std::clamp(normalized.downshiftFrames, 1u, 16u);
 		normalized.upshiftFrames = std::clamp(normalized.upshiftFrames, 8u, 240u);
 		normalized.minimumDwellFrames = std::clamp(normalized.minimumDwellFrames, 8u, 600u);
@@ -75,7 +72,6 @@ namespace NeuralRendering
 	void AdaptiveCropController::Reset()
 	{
 		config_ = {};
-		eyeTrackingBlocked_ = false;
 		geometryBlocked_ = false;
 		lastFrame_ = UINT32_MAX;
 		lastResetReason_ = ResetReason::ExplicitReset;
@@ -98,17 +94,16 @@ namespace NeuralRendering
 	}
 
 	void AdaptiveCropController::Update(std::uint32_t frame, const Config& requestedConfig, bool eligible,
-		std::uint32_t configuredCoverage, bool geometryCompatible, bool eyeTrackingEnabled,
-		bool allowDownshift, bool nrTransitioning, bool nrAtMaximum, bool overBudget, bool headroom)
+		std::uint32_t configuredCoverage, bool geometryCompatible,
+		bool allowDownshift, bool allowUpshift, bool nrTransitioning, bool overBudget, bool headroom)
 	{
 		if (lastFrame_ == frame)
 			return;
 		lastFrame_ = frame;
 
-		const Config config = NormalizeConfig(requestedConfig);
-		// The static crop preset supplies the stereo geometry and the eligibility
-		// floor. It is not the adaptive upper bound: otherwise a user who compares
-		// against a 60% preset can never re-arm the 85-to-60 adaptive ladder.
+		Config boundedConfig = requestedConfig;
+		boundedConfig.maximumCoverage = std::min(boundedConfig.maximumCoverage, configuredCoverage);
+		const Config config = NormalizeConfig(boundedConfig);
 		const std::uint32_t maximumBucket = FindBucketIndexAtOrBelow(config.maximumCoverage);
 		const std::uint32_t requestedFloorCoverage = std::min(config.minimumCoverage, config.maximumCoverage);
 		const std::uint32_t minimumBucket = std::max(maximumBucket, FindBucketIndexAtOrBelow(requestedFloorCoverage));
@@ -124,22 +119,20 @@ namespace NeuralRendering
 		minimumBucket_ = minimumBucket;
 
 		const bool wasEnabled = enabled_;
-		const bool wasEyeTrackingBlocked = eyeTrackingBlocked_;
 		const bool wasGeometryBlocked = geometryBlocked_;
-		eyeTrackingBlocked_ = eyeTrackingEnabled;
+		// Eye tracking owns only the crop center. Adaptive crop changes the shared
+		// extent before the gaze provider recenters it for each eye.
 		geometryBlocked_ = !geometryCompatible || configuredCoverage < kCoverageBuckets.back();
-		const bool shouldRun = eligible && config.enabled && !eyeTrackingBlocked_ && !geometryBlocked_;
+		const bool shouldRun = eligible && config.enabled && !geometryBlocked_;
 		if (!shouldRun) {
 			ResetReason reason = ResetReason::EligibilityLoss;
 			if (!config.enabled)
 				reason = ResetReason::Disabled;
-			else if (eyeTrackingBlocked_)
-				reason = ResetReason::EyeTrackingOwnership;
 			else if (configuredCoverage < kCoverageBuckets.back())
 				reason = ResetReason::InvalidCoverage;
 			else if (!geometryCompatible)
 				reason = ResetReason::GeometryChange;
-			if (wasEnabled || reason != lastResetReason_ || wasEyeTrackingBlocked != eyeTrackingBlocked_ || wasGeometryBlocked != geometryBlocked_)
+			if (wasEnabled || reason != lastResetReason_ || wasGeometryBlocked != geometryBlocked_)
 				++generation_;
 			lastResetReason_ = reason;
 			ResetDecisionState();
@@ -165,8 +158,8 @@ namespace NeuralRendering
 			++generation_;
 		}
 
-		// The adaptive maximum is an explicit setting. The static crop preset is
-		// intentionally not used as an implicit upper bound.
+		// The current preset is the maximum extent. Adaptive changes only reduce
+		// from that extent under pressure and restore to it with headroom.
 		activeBucket_ = std::clamp(activeBucket_, maximumBucket_, minimumBucket_);
 		targetBucket_ = std::clamp(targetBucket_, maximumBucket_, minimumBucket_);
 
@@ -190,7 +183,7 @@ namespace NeuralRendering
 			headroomFrames_ = 0;
 		} else if (headroom) {
 			overrunFrames_ = 0;
-			if (nrAtMaximum)
+			if (allowUpshift)
 				++headroomFrames_;
 			else
 				headroomFrames_ = 0;
@@ -204,8 +197,8 @@ namespace NeuralRendering
 				overrunFrames_ >= config.downshiftFrames && activeBucket_ < minimumBucket_)
 			StartTransition(activeBucket_ + 1, config.transitionFrames);
 		else if (dwellFrames_ >= config.minimumDwellFrames && transitionFrameCount_ == 0 &&
-			!nrTransitioning && nrAtMaximum &&
-				headroomFrames_ >= config.upshiftFrames && activeBucket_ > maximumBucket_)
+			!nrTransitioning && allowUpshift &&
+			headroomFrames_ >= config.upshiftFrames && activeBucket_ > maximumBucket_)
 			StartTransition(activeBucket_ - 1, config.transitionFrames);
 	}
 

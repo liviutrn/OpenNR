@@ -16,6 +16,10 @@ cbuffer BlendCB : register(b0)
 	uint MaskMode;         // 0 = Rectangle, 1 = Oval
 	uint FrameIndex;       // For dither noise animation
 	uint SrcOffsetX;       // Source X offset (0 for most modes, non-zero for Extreme strip)
+	uint SrcOffsetY;       // Source Y offset for centered subrect composites
+	uint PaddingUInt0;
+	uint PaddingUInt1;
+	uint PaddingUInt2;
 	float FeatherWidth;    // Feather band in pixels (default ~64)
 	float DitherStrength;  // 0 = pure smooth gradient, 1 = natural noise, 2 = aggressive dither
 	float FalloffCurve;    // 0.5 = earlier neural handoff, 1 = balanced, 2 = later handoff
@@ -24,6 +28,10 @@ cbuffer BlendCB : register(b0)
 	float MaskRadiusX;     // Subrect-local oval radii, in pixels
 	float MaskRadiusY;
 	float _pad0;
+	float SourceContribution;
+	float DetailBoost;
+	float2 padding1;
+	float4 padding2;
 };
 
 Texture2D<float4> SrcTex : register(t0);    // DLSS subrect output
@@ -69,10 +77,29 @@ float FalloffAlpha(float normalizedDistance, float curve)
 	if (tid.x >= SubWidth || tid.y >= SubHeight)
 		return;
 
-	uint2 srcPos = uint2(tid.x + SrcOffsetX, tid.y);
+	uint2 srcPos = uint2(tid.x + SrcOffsetX, tid.y + SrcOffsetY);
 	uint2 dstPos = uint2(tid.x + DstOffsetX, tid.y + DstOffsetY);
 
 	float4 dlss = SrcTex.Load(int3(srcPos, 0));
+	if (DetailBoost > 1.0 || SourceContribution < 1.0) {
+		float3 original = DstTex[dstPos].rgb;
+		if (DetailBoost > 1.0) {
+			const float3 lumaWeights = float3(0.2126, 0.7152, 0.0722);
+			const float originalY = dot(original, lumaWeights);
+			const float neuralY = dot(dlss.rgb, lumaWeights);
+			const float localRatio = clamp(neuralY / max(originalY, 0.04), 0.5, 1.5);
+			float3 detail = dlss.rgb - original;
+			detail *= lerp(1.0, localRatio, saturate(DetailBoost - 1.0));
+			dlss.rgb = max(original + detail, 0.0.xxx);
+		}
+		dlss.rgb = lerp(original, dlss.rgb,
+			saturate(SourceContribution));
+	}
+	if (BlendMode == 2) {
+		DstTex[dstPos] = dlss;
+		return;
+	}
+
 
 	// Distance from the selected mask edge in subrect-local space.
 	//

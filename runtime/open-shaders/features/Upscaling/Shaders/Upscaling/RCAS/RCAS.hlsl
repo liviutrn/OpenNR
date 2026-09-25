@@ -26,7 +26,9 @@
 cbuffer RCASConfig : register(b0)
 {
 	float sharpness;
-	float3 pad;
+	float detailGain;
+	uint stereo;
+	uint pad;
 };
 
 Texture2D<float4> Source : register(t0);
@@ -44,11 +46,23 @@ RWTexture2D<float4> Dest : register(u0);
 	//  d e f
 	//    h
 	int2 sp = int2(DTid.xy);
-	float3 b = Source.Load(int3(sp + int2(0, -1), 0)).rgb;
-	float3 d = Source.Load(int3(sp + int2(-1, 0), 0)).rgb;
-	float3 e = Source.Load(int3(sp, 0)).rgb;
-	float3 f = Source.Load(int3(sp + int2(1, 0), 0)).rgb;
-	float3 h = Source.Load(int3(sp + int2(0, 1), 0)).rgb;
+	int eyeWidth = stereo != 0 ? int(texDim.x / 2) : int(texDim.x);
+	int eyeLeft = stereo != 0 && sp.x >= eyeWidth ? eyeWidth : 0;
+	int2 lo = int2(eyeLeft, 0);
+	int2 hi = int2(eyeLeft + eyeWidth - 1, int(texDim.y) - 1);
+	float4 center = Source.Load(int3(sp, 0));
+	float3 b = Source.Load(int3(clamp(sp + int2(0, -1), lo, hi), 0)).rgb;
+	float3 d = Source.Load(int3(clamp(sp + int2(-1, 0), lo, hi), 0)).rgb;
+	float3 e = center.rgb;
+	float3 f = Source.Load(int3(clamp(sp + int2(1, 0), lo, hi), 0)).rgb;
+	float3 h = Source.Load(int3(clamp(sp + int2(0, 1), lo, hi), 0)).rgb;
+	float3 peak = max(max(max(b, d), max(e, f)), h);
+	float normalization = max(1.0, max(peak.r, max(peak.g, peak.b)));
+	b = max(b, 0.0) / normalization;
+	d = max(d, 0.0) / normalization;
+	e = max(e, 0.0) / normalization;
+	f = max(f, 0.0) / normalization;
+	h = max(h, 0.0) / normalization;
 
 	// Rename (32-bit) or regroup (16-bit).
 	float bR = b.r;
@@ -76,7 +90,7 @@ RWTexture2D<float4> Dest : register(u0);
 
 	// Noise detection.
 	float nz = 0.25 * bL + 0.25 * dL + 0.25 * fL + 0.25 * hL - eL;
-	nz = saturate(abs(nz) * rcp(max(max(max(bL, dL), max(eL, fL)), hL) - min(min(min(bL, dL), min(eL, fL)), hL)));
+	nz = saturate(abs(nz) * rcp(max(1e-6, max(max(max(bL, dL), max(eL, fL)), hL) - min(min(min(bL, dL), min(eL, fL)), hL))));
 	nz = -0.5 * nz + 1.0;
 
 	// Min and max of ring.
@@ -91,12 +105,12 @@ RWTexture2D<float4> Dest : register(u0);
 	float2 peakC = float2(1.0, -1.0 * 4.0);
 
 	// Limiters, these need to be high precision RCPs.
-	float hitMinR = min(mn4R, eR) * rcp(4.0 * mx4R);
-	float hitMinG = min(mn4G, eG) * rcp(4.0 * mx4G);
-	float hitMinB = min(mn4B, eB) * rcp(4.0 * mx4B);
-	float hitMaxR = (peakC.x - max(mx4R, eR)) * rcp(4.0 * mn4R + peakC.y);
-	float hitMaxG = (peakC.x - max(mx4G, eG)) * rcp(4.0 * mn4G + peakC.y);
-	float hitMaxB = (peakC.x - max(mx4B, eB)) * rcp(4.0 * mn4B + peakC.y);
+	float hitMinR = min(mn4R, eR) * rcp(max(1e-6, 4.0 * mx4R));
+	float hitMinG = min(mn4G, eG) * rcp(max(1e-6, 4.0 * mx4G));
+	float hitMinB = min(mn4B, eB) * rcp(max(1e-6, 4.0 * mx4B));
+	float hitMaxR = (peakC.x - max(mx4R, eR)) * rcp(min(-1e-6, 4.0 * mn4R + peakC.y));
+	float hitMaxG = (peakC.x - max(mx4G, eG)) * rcp(min(-1e-6, 4.0 * mn4G + peakC.y));
+	float hitMaxB = (peakC.x - max(mx4B, eB)) * rcp(min(-1e-6, 4.0 * mn4B + peakC.y));
 	float lobeR = max(-hitMinR, hitMaxR);
 	float lobeG = max(-hitMinG, hitMaxG);
 	float lobeB = max(-hitMinB, hitMaxB);
@@ -111,5 +125,6 @@ RWTexture2D<float4> Dest : register(u0);
 	float pixG = (lobe * bG + lobe * dG + lobe * hG + lobe * fG + eG) * rcpL;
 	float pixB = (lobe * bB + lobe * dB + lobe * hB + lobe * fB + eB) * rcpL;
 
-	Dest[DTid.xy] = float4(pixR, pixG, pixB, 1.0);
+	float3 resolved = e + clamp(detailGain, 1.0, 5.0) * (float3(pixR, pixG, pixB) - e);
+	Dest[DTid.xy] = float4(saturate(resolved) * normalization, center.a);
 }

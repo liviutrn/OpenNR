@@ -8,6 +8,17 @@
 
 namespace NeuralRendering
 {
+	namespace
+	{
+		// Every renderer stage must submit command lists and shared resources to
+		// the same D3D12 device used to initialize NGX. Keep one adapter-scoped
+		// device alive while the pre-SR and post-SR interop bridges own separate
+		// queues, fences, and command allocators.
+		Microsoft::WRL::ComPtr<ID3D12Device> g_sharedD3D12Device;
+		LUID g_sharedAdapterLuid{};
+		bool g_sharedAdapterValid = false;
+	}
+
 	D3D12Interop::~D3D12Interop() { Shutdown(); }
 
 	bool D3D12Interop::RecordFailure(HRESULT result)
@@ -26,8 +37,22 @@ namespace NeuralRendering
 		if (FAILED(result)) return RecordFailure(result);
 		result = context->QueryInterface(IID_PPV_ARGS(&context11_));
 		if (FAILED(result)) return RecordFailure(result);
-		result = D3D12CreateDevice(adapter, D3D_FEATURE_LEVEL_12_0, IID_PPV_ARGS(&device12_));
+		DXGI_ADAPTER_DESC adapterDesc{};
+		result = adapter->GetDesc(&adapterDesc);
 		if (FAILED(result)) return RecordFailure(result);
+		const bool sameAdapter = g_sharedAdapterValid &&
+			g_sharedAdapterLuid.LowPart == adapterDesc.AdapterLuid.LowPart &&
+			g_sharedAdapterLuid.HighPart == adapterDesc.AdapterLuid.HighPart;
+		if (sameAdapter && g_sharedD3D12Device && SUCCEEDED(g_sharedD3D12Device->GetDeviceRemovedReason())) {
+			device12_ = g_sharedD3D12Device;
+		} else {
+			g_sharedD3D12Device.Reset();
+			result = D3D12CreateDevice(adapter, D3D_FEATURE_LEVEL_12_0, IID_PPV_ARGS(&device12_));
+			if (FAILED(result)) return RecordFailure(result);
+			g_sharedD3D12Device = device12_;
+			g_sharedAdapterLuid = adapterDesc.AdapterLuid;
+			g_sharedAdapterValid = true;
+		}
 
 		D3D12_COMMAND_QUEUE_DESC queueDesc{};
 		queueDesc.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;

@@ -63,7 +63,13 @@ namespace FoveatedRenderImpl
 		const NativeOpenVRGaze::Config gazeConfig{
 			.enabled = enhancer.settings.neuralRenderingEyeTrackedFoveation,
 			.smoothingMs = enhancer.settings.neuralRenderingEyeTrackedSmoothingMs,
+			.policy = enhancer.settings.neuralRenderingEyeTrackedPolicy,
+			.catchupMs = enhancer.settings.neuralRenderingEyeTrackedCatchupMs,
+			.deadbandPixels = enhancer.settings.neuralRenderingEyeTrackedDeadbandPixels,
+			.holdMs = enhancer.settings.neuralRenderingEyeTrackedHoldMs,
+			.predictionMs = enhancer.settings.neuralRenderingEyeTrackedPredictionMs,
 			.quantizationPixels = enhancer.settings.neuralRenderingEyeTrackedQuantizationPixels,
+			.cropPaddingPixels = enhancer.settings.neuralRenderingEyeTrackedCropPaddingPixels,
 		};
 		const bool gazeRequested = gazeConfig.enabled && enhancer.settings.neuralRenderingEnabled &&
 			p.mode == FoveatedRender::DlssMode::kDefault &&

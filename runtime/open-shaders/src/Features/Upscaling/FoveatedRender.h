@@ -25,6 +25,7 @@
 #include "../../Utils/Subrect.h"
 #include "NeuralRendering/AdaptiveController.h"
 #include "NeuralRendering/AdaptiveCropController.h"
+#include "NeuralRendering/AdaptivePassController.h"
 
 #include <chrono>
 #include <cstdint>
@@ -118,49 +119,60 @@ struct FoveatedRender
 		uint neuralRenderingStyle = 0;  // 0 = Natural, 1 = Fabric Detail, 2 = Cinematic, 3 = Strong
 		bool neuralRenderingAutoMask = true;
 		bool neuralRenderingUICorrection = false;
-		// Experimental OptiScaler-inspired stage order. Default remains the
-		// post-upscale route; the pre-upscale route is full-eye only in VR and
-		// falls back to post-upscale when its guide contract is unavailable.
-		uint neuralRenderingPreUpscale = 0;
 		// 0 = classic bounded resolve, 1 = exact-area + matched residual.
 		uint neuralRenderingResolveMode = 0;
-		// Experimental screenshot/benchmark mode: 0 = single pass, 1 = two, or
-		// 2 = three sequential Feature 18 evaluations. Runtime-gated away from
-		// pre-upscale and cropped VR paths.
+		// 0 = single pass, 1 = two, or 2 = three sequential Feature 18 evaluations.
 		uint neuralRenderingMultiPass = 0;
-		// Experimental Feature 18 temporal reuse. 0 = off; 2/3/4 means a full
-		// neural pass every Nth frame, with exact-MV residual reprojection between
-		// full passes. Runtime-gated to native-size single-pass full-eye or stable
-		// fixed crop-local layouts; moving crop origins remain disabled.
+		float neuralRenderingSecondPassContribution = 1.0f;
+		// Pass-two crop reductions are centered on the current selected/gaze crop.
+		uint neuralRenderingSecondPassCropReductionX = 0;
+		uint neuralRenderingSecondPassCropReductionY = 0;
+		uint neuralRenderingSecondPassCropReduction = 0;  // legacy isotropic setting, migrated on load
+		// Pass two feathers its smaller region over pass one's result independently
+		// from the outer crop edge settings above.
+		uint neuralRenderingSecondPassBlendMode = static_cast<uint>(SubrectBlendMode::kFeather);
+		uint neuralRenderingSecondPassMaskMode = static_cast<uint>(SubrectMaskMode::kOval);
+		float neuralRenderingSecondPassFeatherWidth = 32.0f;
+		float neuralRenderingSecondPassFalloffCurve = 1.0f;
+		float neuralRenderingSecondPassDitherStrength = 1.0f;
+		// Retired experimental routes. These are intentionally not serialized or
+		// exposed and ClampSettings forces them off for old in-memory callers.
+		uint neuralRenderingPreUpscale = 0;
+		uint neuralRenderingPreUpscaleCropCoverage = 0;
 		uint neuralRenderingTemporalReuseCadence = 0;
 		float neuralRenderingTemporalDepthThreshold = 0.05f;
 		float neuralRenderingTemporalColorTolerance = 0.08f;
-		// Diagnostic only: keep the conservative reset after reused frames unless
-		// explicitly disabled for an isolated temporal-causality experiment.
-		bool neuralRenderingTemporalReuseResetAfterSkip = true;
+		bool neuralRenderingTemporalReuseResetAfterSkip = false;
 		// Opt-in in-game adaptive NR test. The controller derives a 2:1
 		// application budget from the selected headset refresh unless a custom FPS
 		// target is set, then moves through the short native ladder; it never changes
 		// the display/compositor mode.
 		bool neuralRenderingAdaptiveEnabled = false;
 		uint neuralRenderingAdaptiveRefreshHz = 80;
+		// 0 = headset budget, 1 = custom FPS, 2 = custom frame-time target.
+		uint neuralRenderingAdaptiveBudgetMode = 0;
 		// Zero keeps the refresh-derived budget for existing settings. When set,
 		// the controller uses this custom application target instead.
 		uint neuralRenderingAdaptiveTargetFps = 0;
+		// Used only in custom frame-time mode; defines the controller's workload cap.
+		float neuralRenderingAdaptiveTargetFrameTimeMs = 20.0f;
 		uint neuralRenderingAdaptiveMinimumResolution = 70;
 		uint neuralRenderingAdaptiveDownshiftFrames = 4;
 		uint neuralRenderingAdaptiveUpshiftFrames = 12;
 		uint neuralRenderingAdaptiveMinimumDwellFrames = 30;
 		float neuralRenderingAdaptiveGuardTimeMs = 1.0f;
 		bool neuralRenderingAdaptiveDiagnostics = false;
-		// Optional companion for the shared foveated crop. It is coordinated with
-		// adaptive NR and is hard-disabled while eye-tracked foveation owns UVs.
+		// Six possible pressure orders for sequential passes, crop coverage, and
+		// NR model resolution. Default prioritizes stopping extra passes first.
+		uint neuralRenderingAdaptiveQualityOrder = 0;
+		// Optional companion for the shared foveated crop. Eye tracking owns the
+		// crop center; this controller changes its extent around that center.
 		bool neuralRenderingAdaptiveCropEnabled = false;
 		// Adaptive crop's upper tier is independent of the static crop preset. This
 		// lets a user compare against a smaller static preset, then re-arm adaptive
 		// crop at its normal 85% tier without silently changing the saved preset.
 		uint neuralRenderingAdaptiveCropMaximumCoverage = 85;
-		uint neuralRenderingAdaptiveCropMinimumCoverage = 60;
+		uint neuralRenderingAdaptiveCropMinimumCoverage = 30;
 		uint neuralRenderingAdaptiveCropDownshiftFrames = 2;
 		uint neuralRenderingAdaptiveCropUpshiftFrames = 24;
 		uint neuralRenderingAdaptiveCropMinimumDwellFrames = 60;
@@ -171,7 +183,15 @@ struct FoveatedRender
 		// unavailable, stale, unfocused, or in a menu/loading context.
 		bool neuralRenderingEyeTrackedFoveation = false;
 		float neuralRenderingEyeTrackedSmoothingMs = 0.0f;
+		uint neuralRenderingEyeTrackedPolicy = 0;  // 0 = Legacy; 1 = Adaptive
+		float neuralRenderingEyeTrackedCatchupMs = 8.0f;
+		uint neuralRenderingEyeTrackedDeadbandPixels = 1;
+		uint neuralRenderingEyeTrackedHoldMs = 50;
+		float neuralRenderingEyeTrackedPredictionMs = 0.0f;
 		uint neuralRenderingEyeTrackedQuantizationPixels = 8;
+		uint neuralRenderingEyeTrackedCropPaddingPixels = 0;
+		float neuralRenderingNRContribution = 1.0f;
+		float neuralRenderingDetailBoost = 1.0f;
 	};
 
 	inline static constexpr Util::Settings::RestartTable<Settings, 1> kRestartFields{ {
@@ -197,10 +217,8 @@ struct FoveatedRender
 	Settings settings;
 	NeuralRendering::AdaptiveController adaptiveController;
 	NeuralRendering::AdaptiveCropController adaptiveCropController;
+	NeuralRendering::AdaptivePassController adaptivePassController;
 	Util::Subrect::Controller subrectController;
-	// Pressure alternates crop -> NR -> crop when both controllers can help.
-	// Restoration remains NR-first because crop is gated on NR maximum.
-	bool adaptiveNextDownshiftIsCrop = true;
 	std::uint64_t adaptiveCropDiagnosticGeneration = UINT64_MAX;
 
 	// Called from Upscaling::DrawSettings. DrawEnable renders the always-visible
@@ -233,7 +251,7 @@ struct FoveatedRender
 	void UpdateAdaptiveState(std::uint32_t frame, bool routeEligible);
 	/** @brief Reset adaptive state without changing persisted user settings. */
 	void ResetAdaptiveState();
-	/** @brief True when a gaze/eye-tracking route owns crop geometry. */
+	/** @brief True when a gaze/eye-tracking route owns the crop center. */
 	bool IsEyeTrackedFoveationEnabled() const;
 	/** @brief Effective UVs consumed by foveated DLSS, VRS, and NR. */
 	Util::Subrect::UVRegion GetEffectiveLeftUV() const;
@@ -241,6 +259,11 @@ struct FoveatedRender
 	bool IsAdaptiveCropRuntimeActive() const { return adaptiveCropController.IsRuntimeActive(); }
 	bool IsAdaptiveCropTransitioning() const { return adaptiveCropController.IsTransitioning(); }
 	std::uint32_t GetAdaptiveCropMaximumCoverage() const { return adaptiveCropController.MaximumCoverage(); }
+	std::uint32_t GetEffectiveMultiPassMode() const
+	{
+		return adaptiveController.IsEnabled() ? adaptivePassController.ActiveMode(settings.neuralRenderingMultiPass) :
+			settings.neuralRenderingMultiPass;
+	}
 
 	/** @brief True while drag-resizing the crop region, and for a few seconds after.
 	 *  Read by the stretch pass alongside settings.debugVisualize. */

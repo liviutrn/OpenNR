@@ -7,6 +7,7 @@
 #include <d3d12.h>
 #include <nvsdk_ngx.h>
 
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <cstring>
@@ -491,6 +492,14 @@ namespace NeuralRendering
 		featureInputWidth_[slot] = featureInputHeight_[slot] = 0;
 		featureOutputWidth_[slot] = featureOutputHeight_[slot] = 0;
 		featureMotionVectorsLowResolution_[slot] = false;
+	}
+
+	void Runtime::ResetFeatureRange(std::uint32_t firstSlot, std::uint32_t slotCount)
+	{
+		const auto endSlot = std::min<std::uint64_t>(
+			static_cast<std::uint64_t>(firstSlot) + slotCount, kFeatureSlotCount);
+		for (std::uint32_t slot = firstSlot; slot < endSlot; ++slot)
+			ResetFeature(slot);
 	}
 
 	void Runtime::ResetFeatures()

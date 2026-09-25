@@ -1,5 +1,6 @@
 #include "Core.h"
 #include "Ops.h"
+#include "../CropMotion.h"
 
 #include "../../../State.h"
 #include "../../../Util.h"
@@ -1120,6 +1121,10 @@ namespace FoveatedRenderImpl::Ops
 		uint32_t MaskMode;
 		uint32_t FrameIndex;
 		uint32_t SrcOffsetX;
+		uint32_t SrcOffsetY;
+		uint32_t PaddingUInt0;
+		uint32_t PaddingUInt1;
+		uint32_t PaddingUInt2;
 		float FeatherWidth;
 		float DitherStrength;
 		float FalloffCurve;
@@ -1128,8 +1133,11 @@ namespace FoveatedRenderImpl::Ops
 		float MaskRadiusX;
 		float MaskRadiusY;
 		float _pad0;
+		float SourceContribution;
+		float DetailBoost;
+		float padding2[6];
 	};
-	static_assert(sizeof(BlendCB) == 64);
+	static_assert(sizeof(BlendCB) == 112);
 
 	uint64_t ComputeSubrectUVHash(const Util::Subrect::UVRegion& leftUV,
 		const Util::Subrect::UVRegion& rightUV, uint32_t mode, bool includeOrigins)
@@ -1188,25 +1196,32 @@ namespace FoveatedRenderImpl::Ops
 	}
 
 	bool BlendSubrectToOutput(ID3D11Resource* dlssSrc, ID3D11Resource* dst, ID3D11UnorderedAccessView* dstUAV,
-		uint32_t dstOffsetX, uint32_t dstOffsetY, uint32_t subWidth, uint32_t subHeight, uint32_t srcOffsetX)
+		uint32_t dstOffsetX, uint32_t dstOffsetY, uint32_t subWidth, uint32_t subHeight, uint32_t srcOffsetX,
+		bool blendEdges,
+		uint32_t srcOffsetY, bool forceFeather, float featherWidthOverride,
+		float sourceContribution, float detailBoost,
+		const SubrectBlendOverride* blendOverride)
 	{
 		auto context = globals::d3d::context;
 		auto& foveated = globals::features::upscaling.foveatedRender;
-		auto blendMode = foveated.GetSubrectBlendMode();
-		const bool adaptiveMask = foveated.IsAdaptiveCropRuntimeActive();
+		auto blendMode = blendOverride ? static_cast<FoveatedRender::SubrectBlendMode>(std::min(blendOverride->blendMode, 2u)) :
+			(forceFeather ? FoveatedRender::SubrectBlendMode::kFeather : foveated.GetSubrectBlendMode());
+		const bool adaptiveMask = !blendOverride && !forceFeather && foveated.IsAdaptiveCropRuntimeActive();
 		if (adaptiveMask)
 			blendMode = FoveatedRender::SubrectBlendMode::kFeather;
-
+		if (!blendEdges && !forceFeather)
+			blendMode = FoveatedRender::SubrectBlendMode::kHardCopy;
 		// Fast path: hard copy (original behaviour)
-		if (blendMode == FoveatedRender::SubrectBlendMode::kHardCopy) {
-			D3D11_BOX srcBox = { srcOffsetX, 0, 0, srcOffsetX + subWidth, subHeight, 1 };
+		if (blendMode == FoveatedRender::SubrectBlendMode::kHardCopy &&
+			sourceContribution >= 1.0f && detailBoost <= 1.0f) {
+			D3D11_BOX srcBox = { srcOffsetX, srcOffsetY, 0, srcOffsetX + subWidth, srcOffsetY + subHeight, 1 };
 			context->CopySubresourceRegion(dst, 0, dstOffsetX, dstOffsetY, 0, dlssSrc, 0, &srcBox);
 			return true;
 		}
 
 		if (!dstUAV) {
 			// No UAV available — fall back to hard copy
-			D3D11_BOX srcBox = { srcOffsetX, 0, 0, srcOffsetX + subWidth, subHeight, 1 };
+			D3D11_BOX srcBox = { srcOffsetX, srcOffsetY, 0, srcOffsetX + subWidth, srcOffsetY + subHeight, 1 };
 			context->CopySubresourceRegion(dst, 0, dstOffsetX, dstOffsetY, 0, dlssSrc, 0, &srcBox);
 			return true;
 		}
@@ -1232,7 +1247,7 @@ namespace FoveatedRenderImpl::Ops
 				logger::error("[FOVEATED] Failed to create SubrectBlend constant buffer");
 				// Drop the CS so the next frame retries the full init block.
 				Core::vrSubrectBlendCS = nullptr;
-				D3D11_BOX srcBox = { srcOffsetX, 0, 0, srcOffsetX + subWidth, subHeight, 1 };
+				D3D11_BOX srcBox = { srcOffsetX, srcOffsetY, 0, srcOffsetX + subWidth, srcOffsetY + subHeight, 1 };
 				context->CopySubresourceRegion(dst, 0, dstOffsetX, dstOffsetY, 0, dlssSrc, 0, &srcBox);
 				return true;
 			}
@@ -1247,7 +1262,7 @@ namespace FoveatedRenderImpl::Ops
 			Core::vrBlendSrcSRV = nullptr;
 			winrt::com_ptr<ID3D11Texture2D> dlssTex;
 			if (FAILED(dlssSrc->QueryInterface(IID_PPV_ARGS(dlssTex.put())))) {
-				D3D11_BOX srcBox = { srcOffsetX, 0, 0, srcOffsetX + subWidth, subHeight, 1 };
+				D3D11_BOX srcBox = { srcOffsetX, srcOffsetY, 0, srcOffsetX + subWidth, srcOffsetY + subHeight, 1 };
 				context->CopySubresourceRegion(dst, 0, dstOffsetX, dstOffsetY, 0, dlssSrc, 0, &srcBox);
 				return true;
 			}
@@ -1259,7 +1274,7 @@ namespace FoveatedRenderImpl::Ops
 			srvDesc.Texture2D.MostDetailedMip = 0;
 			srvDesc.Texture2D.MipLevels = 1;
 			if (FAILED(device->CreateShaderResourceView(dlssSrc, &srvDesc, Core::vrBlendSrcSRV.put()))) {
-				D3D11_BOX srcBox = { srcOffsetX, 0, 0, srcOffsetX + subWidth, subHeight, 1 };
+				D3D11_BOX srcBox = { srcOffsetX, srcOffsetY, 0, srcOffsetX + subWidth, srcOffsetY + subHeight, 1 };
 				context->CopySubresourceRegion(dst, 0, dstOffsetX, dstOffsetY, 0, dlssSrc, 0, &srcBox);
 				return true;
 			}
@@ -1278,13 +1293,25 @@ namespace FoveatedRenderImpl::Ops
 			cb->DstOffsetY = dstOffsetY;
 			cb->SubWidth = subWidth;
 			cb->SubHeight = subHeight;
-			cb->BlendMode = (blendMode == FoveatedRender::SubrectBlendMode::kDither) ? 1 : 0;
-			cb->MaskMode = (foveated.GetSubrectMaskMode() == FoveatedRender::SubrectMaskMode::kOval) ? 1 : 0;
+			cb->BlendMode = blendMode == FoveatedRender::SubrectBlendMode::kHardCopy ? 2u :
+				(blendMode == FoveatedRender::SubrectBlendMode::kDither ? 1u : 0u);
+			cb->SourceContribution = std::clamp(sourceContribution, 0.0f, 1.0f);
+			cb->DetailBoost = std::clamp(detailBoost, 1.0f, 2.0f);
+			std::fill(std::begin(cb->padding2), std::end(cb->padding2), 0.0f);
+			cb->MaskMode = blendOverride ? std::min(blendOverride->maskMode, 1u) :
+				(!forceFeather && foveated.GetSubrectMaskMode() == FoveatedRender::SubrectMaskMode::kOval ? 1u : 0u);
 			cb->FrameIndex = globals::state->frameCount;
 			cb->SrcOffsetX = srcOffsetX;
-			cb->FeatherWidth = foveated.settings.subrectFeatherWidth;
-			cb->DitherStrength = foveated.settings.subrectDitherStrength;
-			cb->FalloffCurve = foveated.settings.subrectFalloffCurve;
+			cb->SrcOffsetY = srcOffsetY;
+			cb->PaddingUInt0 = 0;
+			cb->PaddingUInt1 = 0;
+			cb->PaddingUInt2 = 0;
+			cb->FeatherWidth = blendOverride ? std::clamp(blendOverride->featherWidth, 2.0f, 128.0f) :
+				(featherWidthOverride > 0.0f ? featherWidthOverride : foveated.settings.subrectFeatherWidth);
+			cb->DitherStrength = blendOverride ? std::clamp(blendOverride->ditherStrength, 0.0f, 2.0f) :
+				foveated.settings.subrectDitherStrength;
+			cb->FalloffCurve = blendOverride ? std::clamp(blendOverride->falloffCurve, 0.5f, 2.0f) :
+				foveated.settings.subrectFalloffCurve;
 			const float width = static_cast<float>(std::max(subWidth, 1u));
 			const float height = static_cast<float>(std::max(subHeight, 1u));
 			// Use the subrect's geometric center and half-extent so the ellipse is
@@ -1308,17 +1335,17 @@ namespace FoveatedRenderImpl::Ops
 		context->CSSetShader(Core::vrSubrectBlendCS.get(), nullptr, 0);
 		ID3D11Buffer* cbs[] = { Core::vrSubrectBlendCB.get() };
 		context->CSSetConstantBuffers(0, 1, cbs);
-		ID3D11ShaderResourceView* srvs[] = { Core::vrBlendSrcSRV.get() };
-		context->CSSetShaderResources(0, 1, srvs);
+		ID3D11ShaderResourceView* srvs[] = { Core::vrBlendSrcSRV.get(), nullptr };
+		context->CSSetShaderResources(0, 2, srvs);
 		ID3D11UnorderedAccessView* uavs[] = { dstUAV };
 		context->CSSetUnorderedAccessViews(0, 1, uavs, nullptr);
 
 		context->Dispatch((subWidth + 7) / 8, (subHeight + 7) / 8, 1);
 
-		ID3D11ShaderResourceView* nullSRV[1] = {};
+		ID3D11ShaderResourceView* nullSRV[2] = {};
 		ID3D11UnorderedAccessView* nullUAV[1] = {};
 		ID3D11Buffer* nullCB[1] = {};
-		context->CSSetShaderResources(0, 1, nullSRV);
+		context->CSSetShaderResources(0, 2, nullSRV);
 		context->CSSetUnorderedAccessViews(0, 1, nullUAV, nullptr);
 		context->CSSetConstantBuffers(0, 1, nullCB);
 		context->CSSetShader(nullptr, nullptr, 0);
@@ -1721,11 +1748,13 @@ namespace FoveatedRenderImpl
 
 		activeSubrectUVHash = 0;
 		neuralGuidesFrame = UINT32_MAX;
+		CropMotion::Clear();
 		ResetAdaptiveCropHandoff();
 	}
 
 	void Core::InvalidateTemporalState()
 	{
+		CropMotion::Invalidate();
 		// A crop can move without changing the intermediate dimensions. In that
 		// case resource recreation alone is insufficient: the old guide snapshot,
 		// periphery history, and DLSSNR history all describe the previous region.
@@ -1743,6 +1772,7 @@ namespace FoveatedRenderImpl
 
 	void Core::ClearShaderCache()
 	{
+		CropMotion::Clear();
 		vrSubrectStretchCS = nullptr;
 		vrSubrectStretchCB = nullptr;
 		vrSubrectStretchSampler = nullptr;

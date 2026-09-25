@@ -16,22 +16,35 @@ namespace NeuralRendering
 	class Renderer
 	{
 	public:
-			struct StereoEyeInput
+		struct StereoEyeInput
 		{
 			ID3D11Resource* depth = nullptr;
 			ID3D11ShaderResourceView* depthSRV = nullptr;
 			ID3D11Resource* motionVectors = nullptr;
+			// Optional crop-sized composite target used when the game's stereo
+			// destination has no UAV. The caller seeds it from the current crop;
+			// ApplyStereo blends locally and leaves copying the crop back to caller.
+			ID3D11Resource* writebackTarget = nullptr;
+			ID3D11UnorderedAccessView* writebackUAV = nullptr;
 			std::uint32_t sourceX = 0;
 			std::uint32_t sourceY = 0;
+			// Optional origin inside the input depth/motion guide textures. Used
+			// when the post-SR stage takes a smaller center crop from gaze guides.
+			std::uint32_t guideSourceX = 0;
+			std::uint32_t guideSourceY = 0;
+			std::uint32_t guideSourceWidth = 0;
+			std::uint32_t guideSourceHeight = 0;
+			bool forceFeatherComposite = false;
 			float motionVectorScaleX = 1.0f;
 			float motionVectorScaleY = 1.0f;
-			};
+			bool compensateCropMotion = false;
+		};
 
-			// Optional stable resource envelope for the adaptive regular-crop
-			// experiment. The current guide/color extents remain explicit in the
-			// ApplyStereo arguments; these dimensions describe only the backing
-			// resources that may safely be reused while that valid region changes.
-			struct StereoResourceEnvelope
+		// Optional stable resource envelope for adaptive crop extents. The current
+		// guide/color extents remain explicit in the
+		// ApplyStereo arguments; these dimensions describe only the backing
+		// resources that may safely be reused while that valid region changes.
+		struct StereoResourceEnvelope
 			{
 				bool enabled = false;
 				std::uint32_t guideWidth = 0;
@@ -47,6 +60,8 @@ namespace NeuralRendering
 			};
 
 		static Renderer& Instance();
+		/** @brief Separate persistent resources and Feature 18 slots for the pre-SR stage. */
+		static Renderer& PreUpscaleInstance();
 		~Renderer();
 
 		Renderer(const Renderer&) = delete;
@@ -63,11 +78,11 @@ namespace NeuralRendering
 			std::uint32_t guideWidth, std::uint32_t guideHeight,
 			std::uint32_t colorWidth, std::uint32_t colorHeight, const Tuning& tuning,
 			// Optional separate writeback target. The input remains `color`; this is
-				// needed when a cropped NR result must be feathered over its background.
-				ID3D11Resource* destination = nullptr,
-				ID3D11UnorderedAccessView* destinationUAV = nullptr,
-				bool blendSubrect = false,
-				const StereoResourceEnvelope& resourceEnvelope = {});
+			// needed when a cropped NR result must be feathered over its background.
+			ID3D11Resource* destination = nullptr,
+			ID3D11UnorderedAccessView* destinationUAV = nullptr,
+			bool blendSubrect = false,
+			const StereoResourceEnvelope& resourceEnvelope = {});
 		/** @brief Drops cached standalone neural-rendering shaders so they recompile on the next frame. */
 		void ClearShaderCache();
 		/** @brief Resets the native renderer; false means the GPU fence could not be drained safely. */
@@ -79,7 +94,7 @@ namespace NeuralRendering
 		/** @brief Holds adaptive upshifts after the session's bounded recovery attempt. */
 		[[nodiscard]] bool IsRecoveryLimited() const;
 		/**
-		 * @brief Returns whether an adaptive model tier is fully resident for both eyes.
+		 * @brief Returns whether an adaptive model tier and requested cascade capacity are resident for both eyes.
 		 *
 		 * Adaptive tier changes are only safe to expose at frame time when the
 		 * shared textures and native Feature 18 handles already exist.  The
@@ -87,14 +102,15 @@ namespace NeuralRendering
 		 * callers use this query to keep the controller on the current tier until
 		 * the handoff can be made without an on-demand create stall.
 		 */
-		[[nodiscard]] bool IsAdaptiveTierReady(std::uint32_t modelResolution) const;
+		[[nodiscard]] bool IsAdaptiveTierReady(std::uint32_t modelResolution, std::uint32_t passCount) const;
 		[[nodiscard]] std::uint32_t NgxResult() const;
 		[[nodiscard]] std::uint64_t SuccessfulFrames() const;
 		[[nodiscard]] const char* StatusText() const;
 
 	private:
-		Renderer();
+		explicit Renderer(std::uint32_t runtimeFeatureSlotBlock = 0, std::uint32_t cropMotionSlotBase = 2);
 		class State;
 		State* state_ = nullptr;
+		std::uint32_t cropMotionSlotBase_ = 2;
 	};
 }

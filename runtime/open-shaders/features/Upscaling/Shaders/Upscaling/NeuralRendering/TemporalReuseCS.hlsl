@@ -12,7 +12,7 @@
 // the OpenNR guide contract: current pixel p maps to the previous frame at
 // p + MV. The C++ caller gates this shader to single-pass, stable-layout
 // full-eye or crop-local resources and invalidates its history on reset or
-// route/crop changes. A moving crop is not transformed here yet.
+// route/crop changes. Crop-motion compensation is applied before these passes.
 
 cbuffer TemporalReuseParams : register(b0)
 {
@@ -68,6 +68,15 @@ float2 ColorUV(float2 colorPosition)
 	return (colorPosition + 0.5) / float2(max(gColorWidth, 1u), max(gColorHeight, 1u));
 }
 
+bool DepthMatches(float currentDepth, float previousDepth)
+{
+	if (currentDepth != currentDepth || previousDepth != previousDepth ||
+		abs(currentDepth) <= 1e-6 || abs(previousDepth) <= 1e-6)
+		return false;
+	const float depthScale = max(max(abs(currentDepth), abs(previousDepth)), 1e-5);
+	return abs(currentDepth - previousDepth) <= max(gDepthThreshold, 0.0) * depthScale;
+}
+
 [numthreads(8, 8, 1)]
 void Snapshot(uint3 dispatchThreadID : SV_DispatchThreadID)
 {
@@ -101,8 +110,11 @@ void Accumulate(uint3 dispatchThreadID : SV_DispatchThreadID)
 		gAccumulatedMotionTarget[pixel] = colorLimit * 2.0;
 		return;
 	}
-	const float2 previousUV = previousPosition / float2(max(gColorWidth, 1u), max(gColorHeight, 1u));
-	const float2 previousAccumulated = gPreviousAccumulatedMotion.SampleLevel(gLinear, previousUV, 0);
+	// Invalid vectors use a sentinel. A point load prevents filtering the
+	// sentinel into a plausible displacement at a surface or crop boundary.
+	const uint2 previousPixel = min(uint2(floor(previousPosition)),
+		uint2(gColorWidth - 1u, gColorHeight - 1u));
+	const float2 previousAccumulated = gPreviousAccumulatedMotion.Load(int3(previousPixel, 0));
 	if (!IsBoundedMotion(previousAccumulated, colorLimit))
 	{
 		gAccumulatedMotionTarget[pixel] = colorLimit * 2.0;
@@ -110,6 +122,22 @@ void Accumulate(uint3 dispatchThreadID : SV_DispatchThreadID)
 	}
 	const float2 accumulated = currentMotion + previousAccumulated;
 	gAccumulatedMotionTarget[pixel] = IsBoundedMotion(accumulated, colorLimit) ? accumulated : colorLimit * 2.0;
+}
+
+// Feature 18 consumes a guide-sized motion resource. Pack the accumulated
+// color-pixel displacement into its active guide region before the next anchor.
+[numthreads(8, 8, 1)]
+void PackNativeMotion(uint3 dispatchThreadID : SV_DispatchThreadID)
+{
+	if (dispatchThreadID.x >= gGuideWidth || dispatchThreadID.y >= gGuideHeight)
+		return;
+
+	const uint2 guidePixel = dispatchThreadID.xy;
+	const uint2 colorSize = uint2(max(gColorWidth, 1u), max(gColorHeight, 1u));
+	const uint2 guideSize = uint2(max(gGuideWidth, 1u), max(gGuideHeight, 1u));
+	const uint2 colorPixel = min(uint2((float2(guidePixel) + 0.5) * float2(colorSize) / float2(guideSize)), colorSize - 1u);
+	const float2 motion = gPreviousAccumulatedMotion.Load(int3(colorPixel, 0));
+	gAccumulatedMotionTarget[guidePixel] = IsBoundedMotion(motion, float2(colorSize)) ? motion : 0.0.xx;
 }
 
 [numthreads(8, 8, 1)]
@@ -129,25 +157,58 @@ void Reproject(uint3 dispatchThreadID : SV_DispatchThreadID)
 
 	const float4 currentColor = gColor0.Load(int3(pixel, 0));
 	bool accepted = inBounds;
-	if (accepted && gUseDepth != 0u)
-	{
-		const float currentDepth = gDepth0.Load(int3(GuidePixel(currentPosition), 0));
-		const float previousDepth = gPreviousDepth.Load(int3(GuidePixel(previousPosition), 0));
-		const bool validDepth = abs(currentDepth) > 1e-6 && abs(previousDepth) > 1e-6;
-		const float depthScale = max(max(abs(currentDepth), abs(previousDepth)), 1.0);
-		accepted = validDepth && abs(currentDepth - previousDepth) <= max(gDepthThreshold, 0.0) * depthScale;
-	}
-	if (accepted && gUseColor != 0u)
-	{
-		const float3 previousBase = gPreviousBase.SampleLevel(gLinear, ColorUV(previousPosition), 0).rgb;
-		const float currentLuma = dot(currentColor.rgb, kLuma);
-		const float previousLuma = dot(previousBase, kLuma);
-		const float lumaScale = max(max(abs(currentLuma), abs(previousLuma)), 0.05);
-		accepted = abs(currentLuma - previousLuma) / lumaScale <= max(gColorTolerance, 0.0);
-	}
-
 	float3 result = currentColor.rgb;
 	if (accepted)
-		result += gPreviousResidual.SampleLevel(gLinear, ColorUV(previousPosition), 0).rgb;
+	{
+		const uint2 first = uint2(floor(previousPosition));
+		const uint2 last = uint2(gColorWidth - 1u, gColorHeight - 1u);
+		const float2 fraction = frac(previousPosition);
+		const float currentDepth = gUseDepth != 0u ?
+			gDepth0.Load(int3(GuidePixel(currentPosition), 0)) : 0.0;
+		const float currentLuma = dot(currentColor.rgb, kLuma);
+		const float tolerance = max(gColorTolerance, 0.0);
+		float3 residual = 0.0;
+		float totalWeight = 0.0;
+		[unroll]
+		for (uint tapY = 0; tapY < 2; ++tapY) {
+			[unroll]
+			for (uint tapX = 0; tapX < 2; ++tapX) {
+				const uint2 tap = min(first + uint2(tapX, tapY), last);
+				const float2 axisWeight = float2(tapX ? fraction.x : 1.0 - fraction.x,
+					tapY ? fraction.y : 1.0 - fraction.y);
+				float weight = axisWeight.x * axisWeight.y;
+				if (weight <= 0.0)
+					continue;
+				if (gUseDepth != 0u) {
+					const float previousDepth = gPreviousDepth.Load(int3(GuidePixel(float2(tap)), 0));
+					if (!DepthMatches(currentDepth, previousDepth))
+						continue;
+				}
+				const float4 previousBase = gPreviousBase.Load(int3(tap, 0));
+				if (gUseColor != 0u) {
+					const float previousLuma = dot(previousBase.rgb, kLuma);
+					const float lumaScale = max(max(abs(currentLuma), abs(previousLuma)), 0.05);
+					const float relativeLumaError = abs(currentLuma - previousLuma) / lumaScale;
+					weight *= tolerance > 1e-5 ?
+						1.0 - smoothstep(tolerance * 0.65, tolerance, relativeLumaError) :
+						(relativeLumaError <= tolerance ? 1.0 : 0.0);
+				}
+				residual += gPreviousResidual.Load(int3(tap, 0)).rgb * weight;
+				totalWeight += weight;
+			}
+		}
+		if (totalWeight > 1e-5) {
+			residual /= totalWeight;
+			const float residualLuma = dot(residual, kLuma);
+			const float maxLumaDelta = max(abs(currentLuma) * 0.35, 0.015);
+			if (abs(residualLuma) > maxLumaDelta)
+				residual *= maxLumaDelta / abs(residualLuma);
+			const float maxChannelDelta = max(abs(currentLuma) * 0.75, 0.04);
+			const float maxChannel = max(abs(residual.x), max(abs(residual.y), abs(residual.z)));
+			if (maxChannel > maxChannelDelta)
+				residual *= maxChannelDelta / maxChannel;
+			result += residual;
+		}
+	}
 	gOutput[pixel] = float4(max(result, 0.0.xxx), currentColor.a);
 }

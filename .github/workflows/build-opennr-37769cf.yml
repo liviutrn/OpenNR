@@ -1,0 +1,61 @@
+name: Build OpenNR 2.15.1 VR revision
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build installable OpenNR package
+    runs-on: windows-2025
+    steps:
+      - name: Check out this build branch
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Verify the published OpenNR revision
+        shell: pwsh
+        run: |
+          git apply --reverse --check OpenNR-2.15.1-37769cf.patch
+          git diff --check HEAD~2 HEAD
+
+      - name: Set up MSVC
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Install CMake
+        uses: lukka/get-cmake@v4.3.3
+        with:
+          cmakeVersion: "~4.2.0"
+          useCloudCache: false
+
+      - name: Bootstrap vcpkg
+        shell: pwsh
+        run: |
+          $vcpkg = Join-Path $env:GITHUB_WORKSPACE "vcpkg"
+          git clone https://github.com/microsoft/vcpkg.git $vcpkg
+          Push-Location $vcpkg
+          $baseline = (Get-Content "$env:GITHUB_WORKSPACE/runtime/open-shaders/vcpkg.json" -Raw | ConvertFrom-Json).'builtin-baseline'
+          git checkout $baseline
+          & .\bootstrap-vcpkg.bat -disableMetrics
+          Pop-Location
+          "VCPKG_ROOT=$vcpkg" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Configure and package
+        shell: pwsh
+        working-directory: runtime/open-shaders
+        run: |
+          cmake --preset OpenNR-Package
+          cmake --build --preset Package --parallel
+
+      - name: Upload installable package
+        uses: actions/upload-artifact@v4
+        with:
+          name: OpenNR-2.15.1-37769cf
+          path: runtime/open-shaders/dist/*
+          if-no-files-found: error
+          retention-days: 14

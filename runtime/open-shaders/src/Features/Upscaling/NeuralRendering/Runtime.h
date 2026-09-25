@@ -23,23 +23,30 @@ namespace NeuralRendering
 		// 0 = current bounded full-resolution resolve; 1 = exact-area input plus
 		// conservative matched-residual composition for reduced model resolutions.
 		std::uint32_t modelResolveMode = 0;
-		// Experimental screenshot/benchmark cascade: 0 = single pass, 1 = 2x,
-		// 2 = 3x sequential Feature 18 evaluations. Each stage has separate
-		// resources/history; the renderer gates this away from cropped VR paths.
+		// 0 = single pass, 1 = 2x, 2 = 3x sequential Feature 18 evaluations.
+		// The adaptive controller may reduce this count under pressure.
 		std::uint32_t multiPass = 0;
-		// Experimental temporal reuse: 0 = disabled, otherwise run a full
-		// Feature 18 pass every Nth frame and reproject the saved residual on the
-		// intervening frames. The renderer enables this for single-pass, stable
-		// full-eye or fixed crop-local layouts with exact game motion vectors.
-		// Moving/gaze/adaptive crop origins remain disabled until an explicit
-		// origin transform and reset-qualified handoff are implemented.
+		float secondPassContribution = 1.0f;
+		// Reduce the centered second-pass region independently per axis in 2x mode.
+		std::uint32_t secondPassCropReductionX = 0;
+		std::uint32_t secondPassCropReductionY = 0;
+		std::uint32_t secondPassBlendMode = 0;
+		std::uint32_t secondPassMaskMode = 1;
+		float secondPassFeatherWidth = 32.0f;
+		float secondPassFalloffCurve = 1.0f;
+		float secondPassDitherStrength = 1.0f;
+		// Allocate up to this many pass resources when adaptive pass reduction is
+		// active, so a pressure response does not recreate the cascade resources.
+		std::uint32_t adaptiveMaxPassCount = 1;
+		// Experimental stereo mode: 0 = disabled, 2 = alternate native Feature 18
+		// anchors between eyes each host frame and reproject the other eye's saved
+		// residual using accumulated game motion vectors.
 		std::uint32_t temporalReuseCadence = 0;
 		float temporalReuseDepthThreshold = 0.05f;
 		float temporalReuseColorTolerance = 0.08f;
-		// Preserve the conservative post-skip reset by default. The isolated
-		// causal arm can disable it to test whether the reset itself causes the
-		// cadence discontinuity seen in native Feature 18 output.
-		bool temporalReuseResetAfterSkip = true;
+		// Comparison switch. Resetting after an eye's skipped frame prevents
+		// native history ghosting but can create a visible cadence discontinuity.
+		bool temporalReuseResetAfterSkip = false;
 		// Opt-in adaptive-resolution handoff. The controller changes only the
 		// native NR tier; the display/compositor cadence remains owned by VR.
 		bool adaptiveResolution = false;
@@ -52,6 +59,8 @@ namespace NeuralRendering
 		// -1 prepares lower quality, +1 prepares higher quality, 0 holds prewarming.
 		std::int32_t adaptivePrewarmDirection = 0;
 		std::uint32_t adaptiveMemoryCeiling = 100;
+		float nrContribution = 1.0f;
+		float detailBoost = 1.0f;
 	};
 
 	/**
@@ -148,6 +157,8 @@ namespace NeuralRendering
 			const Feature18GuideContract& guide);
 		[[nodiscard]] bool HasFeature(std::uint32_t slot) const;
 		void ResetFeature(std::uint32_t slot);
+		/** @brief Releases the native handles owned by one persistent renderer stage. */
+		void ResetFeatureRange(std::uint32_t firstSlot, std::uint32_t slotCount);
 		/** @brief Detects a live feature that must be retired after the GPU completes its last use. */
 		bool NeedsRecreation(std::uint32_t slot, std::uint32_t width, std::uint32_t height, bool lowResolutionMotion) const;
 		/** @brief Same check with separate native input and output creation extents. */
@@ -165,10 +176,9 @@ namespace NeuralRendering
 		[[nodiscard]] std::uint64_t SuccessfulFrames() const { return successfulFrames_; }
 
 	private:
-		// Two eyes x nine fixed resolution tiers x three cascade stages. The
-		// adaptive controller still targets only its conservative 100%-70%
-		// bucket ladder; 50% and 33% are isolated fixed experimental tiers.
-		static constexpr std::uint32_t kFeatureSlotCount = 54;
+		// Two renderer stages x two eyes x nine fixed
+		// resolution tiers x three cascade stages.
+		static constexpr std::uint32_t kFeatureSlotCount = 108;
 		Runtime() = default;
 		bool EnsureFeature(ID3D12GraphicsCommandList* commandList, std::uint32_t slot,
 			const Feature18GuideContract& guide, bool* created = nullptr);

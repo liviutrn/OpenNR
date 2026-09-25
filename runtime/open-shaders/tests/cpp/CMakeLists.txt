@@ -70,6 +70,14 @@ add_executable(cpp_tests
     test_adaptive_crop_controller.cpp
     test_adaptive_nr_controller.cpp
     test_gaze_crop_policy.cpp
+    test_crop_motion_history.cpp
+    test_temporal_stereo_schedule.cpp
+    test_sequential_nr_policy.cpp
+    test_sharpening_strength.cpp
+    test_adaptive_quality_order.cpp
+    test_second_pass_crop.cpp
+    test_stage_split_policy.cpp
+    test_pre_upscale_crop.cpp
     # Stub I18n::Get so units-under-test that call T() (Subrect's DrawEditor)
     # link without pulling the translation loader into the test binary.
     i18n_stub.cpp

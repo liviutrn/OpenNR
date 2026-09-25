@@ -1,62 +1,89 @@
 #include "Postprocess.h"
 
 #include "../../../Globals.h"
+#include "../../../GpuPass.h"
 #include "../../../State.h"
 #include "../../Upscaling.h"
-#include "../FoveatedRender.h"
-
-#include <cmath>
 
 namespace FoveatedRenderImpl
 {
+	namespace
+	{
+		eastl::unique_ptr<Texture2D> sharpenTarget;
+		D3D11_TEXTURE2D_DESC sharpenDesc{};
+		uint32_t sharpenFrame = UINT32_MAX;
+	}
+
+	void Postprocess::Reset()
+	{
+		sharpenTarget.reset();
+		sharpenDesc = {};
+		sharpenFrame = UINT32_MAX;
+	}
+
 	bool Postprocess::ApplyDlssSharpening(Upscaling& upscaling)
 	{
-		// sharpnessDLSS <= 0 is the single disable signal — sharpness lives on
-		// Upscaling::Settings so the route shares the global slider.
-		const float sharpnessSetting = upscaling.settings.sharpnessDLSS;
-		if (sharpnessSetting <= 0.0f) {
+		const float strength = Sharpening::Sanitize(upscaling.settings.sharpnessDLSS);
+		if (!upscaling.settings.sharpnessEnabledDLSS || strength == 0.0f)
 			return true;
-		}
-
-		if (!upscaling.sharpenerTexture || !upscaling.sharpenerTexture->uav || !upscaling.sharpenerTexture->resource) {
-			logger::error("[FOVEATED] Missing sharpener resources");
+		auto* context = globals::d3d::context;
+		auto* renderer = globals::game::renderer;
+		if (!context || !renderer || !globals::state)
 			return false;
-		}
-
-		auto context = globals::d3d::context;
-		auto renderer = globals::game::renderer;
-		if (!context || !renderer) {
-			logger::error("[FOVEATED] Missing D3D context or renderer for sharpening");
+		const auto frame = globals::state->frameCount;
+		if (sharpenFrame == frame)
+			return true;
+		auto& total = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kTOTAL];
+		if (!total.texture || !total.SRV)
 			return false;
-		}
-		auto& main = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN];
-
-		if (!main.SRV) {
-			logger::error("[FOVEATED] Missing main SRV for sharpening");
+		D3D11_TEXTURE2D_DESC desc{};
+		total.texture->GetDesc(&desc);
+		if (desc.SampleDesc.Count != 1 || desc.ArraySize != 1 || desc.MipLevels != 1 ||
+			!desc.Width || (desc.Width % 2) != 0 || !desc.Height)
 			return false;
+		if (!sharpenTarget || desc.Width != sharpenDesc.Width || desc.Height != sharpenDesc.Height || desc.Format != sharpenDesc.Format) {
+			sharpenTarget = Upscaling::CreateTextureFromSource(total.texture, desc.Width, desc.Height,
+				false, false, true, "FoveatedRender::FinalSharpen");
+			sharpenDesc = desc;
 		}
-
-		// Same exponential mapping Upscaling::ApplySharpening uses: lower
-		// setting = stronger sharpen.
-		float currentSharpness = (-2.0f * sharpnessSetting) + 2.0f;
-		currentSharpness = exp2(-currentSharpness);
-
-		// In-place RCAS on kMAIN through sharpenerTexture.
-		ID3D11Resource* mainResource = nullptr;
-		main.SRV->GetResource(&mainResource);
-		if (!mainResource) {
-			logger::error("[FOVEATED] Failed to acquire main resource for sharpening");
+		if (!sharpenTarget || !sharpenTarget->resource || !sharpenTarget->uav)
 			return false;
-		}
 
+		CS_GPU_PASS("FoveatedRender::SharpenFinalScene");
+		ID3D11RenderTargetView* oldRTVs[D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT]{};
+		ID3D11DepthStencilView* oldDSV = nullptr;
+		winrt::com_ptr<ID3D11ComputeShader> oldShader;
+		winrt::com_ptr<ID3D11ShaderResourceView> oldSource;
+		winrt::com_ptr<ID3D11UnorderedAccessView> oldOutput;
+		winrt::com_ptr<ID3D11Buffer> oldConstants;
+		ID3D11ClassInstance* classes[256]{};
+		UINT classCount = 256;
+		context->OMGetRenderTargets(D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT, oldRTVs, &oldDSV);
+		context->CSGetShader(oldShader.put(), classes, &classCount);
+		context->CSGetShaderResources(0, 1, oldSource.put());
+		context->CSGetUnorderedAccessViews(0, 1, oldOutput.put());
+		context->CSGetConstantBuffers(0, 1, oldConstants.put());
 		context->OMSetRenderTargets(0, nullptr, nullptr);
-		upscaling.rcas.ApplySharpen(main.SRV, upscaling.sharpenerTexture->uav.get(), currentSharpness);
-		context->CopyResource(mainResource, upscaling.sharpenerTexture->resource.get());
-		mainResource->Release();
-
-		if (globals::game::stateUpdateFlags) {
-			globals::game::stateUpdateFlags->set(RE::BSGraphics::ShaderFlags::DIRTY_RENDERTARGET);
+		ID3D11UnorderedAccessView* nullOutput = nullptr;
+		context->CSSetUnorderedAccessViews(0, 1, &nullOutput, nullptr);
+		const bool applied = upscaling.rcas.ApplySharpen(total.SRV, sharpenTarget->uav.get(), strength);
+		if (applied) {
+			context->CopyResource(total.texture, sharpenTarget->resource.get());
+			sharpenFrame = frame;
 		}
-		return true;
+		auto* oldSourceView = oldSource.get();
+		auto* oldOutputView = oldOutput.get();
+		auto* oldBuffer = oldConstants.get();
+		context->CSSetShaderResources(0, 1, &oldSourceView);
+		context->CSSetUnorderedAccessViews(0, 1, &oldOutputView, nullptr);
+		context->CSSetConstantBuffers(0, 1, &oldBuffer);
+		context->CSSetShader(oldShader.get(), classes, classCount);
+		for (UINT i = 0; i < classCount; ++i)
+			if (classes[i]) classes[i]->Release();
+		context->OMSetRenderTargets(D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT, oldRTVs, oldDSV);
+		for (auto* rtv : oldRTVs)
+			if (rtv) rtv->Release();
+		if (oldDSV) oldDSV->Release();
+		return applied;
 	}
 }

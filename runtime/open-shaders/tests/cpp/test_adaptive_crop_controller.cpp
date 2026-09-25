@@ -23,12 +23,12 @@ namespace
 	}
 
 	void Tick(Controller& controller, std::uint32_t frame, const Controller::Config& config,
-		bool overBudget = false, bool headroom = false, bool nrAtMaximum = true,
+		bool overBudget = false, bool headroom = false, bool allowUpshift = true,
 		bool nrTransitioning = false, bool allowDownshift = true, std::uint32_t configuredCoverage = 100,
-		bool eligible = true, bool geometryCompatible = true, bool eyeTracking = false)
+		bool eligible = true, bool geometryCompatible = true)
 	{
-		controller.Update(frame, config, eligible, configuredCoverage, geometryCompatible, eyeTracking,
-			allowDownshift, nrTransitioning, nrAtMaximum, overBudget, headroom);
+		controller.Update(frame, config, eligible, configuredCoverage, geometryCompatible,
+			allowDownshift, allowUpshift, nrTransitioning, overBudget, headroom);
 	}
 }
 
@@ -88,9 +88,9 @@ TEST_CASE("adaptive crop holds the previous geometry for both handoff directions
 	REQUIRE(controller.VisibleCoverage() < 85.0f);
 }
 
-TEST_CASE("adaptive crop exposes the six-tier 85-to-60 ladder", "[adaptive][crop]")
+TEST_CASE("adaptive crop exposes five percent tiers from 85 to 30", "[adaptive][crop]")
 {
-	const std::array<std::uint32_t, 6> expected{ 85, 80, 75, 70, 65, 60 };
+	const std::array<std::uint32_t, 12> expected{ 85, 80, 75, 70, 65, 60, 55, 50, 45, 40, 35, 30 };
 	REQUIRE(Controller::CoverageBuckets() == expected);
 }
 
@@ -107,28 +107,28 @@ TEST_CASE("adaptive crop starts at the explicit adaptive maximum", "[adaptive][c
 	Controller fromEighty;
 	Tick(fromEighty, 1, config, false, false, true, false, true, 80);
 	REQUIRE(fromEighty.IsRuntimeActive());
-	REQUIRE(fromEighty.ActiveCoverage() == 85);
-	REQUIRE(fromEighty.MaximumCoverage() == 85);
+	REQUIRE(fromEighty.ActiveCoverage() == 80);
+	REQUIRE(fromEighty.MaximumCoverage() == 80);
 
 	Controller fromSixty;
 	Tick(fromSixty, 1, config, false, false, true, false, true, 60);
 	REQUIRE(fromSixty.IsRuntimeActive());
-	REQUIRE(fromSixty.ActiveCoverage() == 85);
+	REQUIRE(fromSixty.ActiveCoverage() == 60);
 
 	auto limited = config;
 	limited.maximumCoverage = 75;
 	Controller fromExplicitMaximum;
-	Tick(fromExplicitMaximum, 1, limited, false, false, true, false, true, 60);
+	Tick(fromExplicitMaximum, 1, limited, false, false, true, false, true, 100);
 	REQUIRE(fromExplicitMaximum.IsRuntimeActive());
 	REQUIRE(fromExplicitMaximum.ActiveCoverage() == 75);
 	REQUIRE(fromExplicitMaximum.MaximumCoverage() == 75);
 }
 
-TEST_CASE("adaptive crop fails closed below the 60 percent floor", "[adaptive][crop]")
+TEST_CASE("adaptive crop fails closed below the 30 percent floor", "[adaptive][crop]")
 {
 	const auto config = FastConfig();
 	Controller controller;
-	Tick(controller, 1, config, false, false, true, false, true, 59);
+	Tick(controller, 1, config, false, false, true, false, true, 29);
 	REQUIRE_FALSE(controller.IsRuntimeActive());
 	REQUIRE(controller.LastResetReason() == Controller::ResetReason::InvalidCoverage);
 	REQUIRE(std::string(Controller::ResetReasonName(controller.LastResetReason())) == "invalid-coverage");
@@ -156,7 +156,7 @@ TEST_CASE("adaptive crop pressure advances one tier and waits for the handoff", 
 	REQUIRE_FALSE(controller.IsTransitioning());
 }
 
-TEST_CASE("adaptive crop restores one tier only after NR reaches a stable 100 percent", "[adaptive][crop]")
+TEST_CASE("adaptive crop restores one tier only when selected by the coordinator", "[adaptive][crop]")
 {
 	const auto config = FastConfig();
 	Controller controller;
@@ -165,12 +165,13 @@ TEST_CASE("adaptive crop restores one tier only after NR reaches a stable 100 pe
 		Tick(controller, frame, config, true);
 	REQUIRE(controller.ActiveCoverage() == 80);
 
-	// Headroom while NR is still below its maximum cannot expand the crop.
+	// Headroom cannot restore crop while another quality axis is selected.
 	for (std::uint32_t frame = 9; frame <= 40; ++frame)
 		Tick(controller, frame, config, false, true, false);
 	REQUIRE(controller.ActiveCoverage() == 80);
 
-	// Stable 100% NR permits one crop tier to restore. It must not jump to 85%.
+	// Once crop becomes the selected restoration axis, it can recover even if
+	// resolution remains below its configured maximum.
 	for (std::uint32_t frame = 41; frame <= 48; ++frame)
 		Tick(controller, frame, config, false, true, true);
 	REQUIRE(controller.ActiveCoverage() == 85);
@@ -206,18 +207,34 @@ TEST_CASE("adaptive crop preserves a legal tier across a soft configuration chan
 	REQUIRE(controller.MinimumCoverage() == 80);
 }
 
-TEST_CASE("eye tracking and incompatible geometry take ownership away cleanly", "[adaptive][crop]")
+TEST_CASE("eye tracking keeps crop sizing active while incompatible geometry fails closed", "[adaptive][crop]")
 {
 	const auto config = FastConfig();
 	Controller controller;
 	Tick(controller, 1, config);
 	REQUIRE(controller.IsRuntimeActive());
 
-	Tick(controller, 2, config, false, false, true, false, true, 100, true, true, true);
-	REQUIRE_FALSE(controller.IsRuntimeActive());
-	REQUIRE(controller.LastResetReason() == Controller::ResetReason::EyeTrackingOwnership);
+	Tick(controller, 2, config, false, false, true, false, true, 100, true, true);
+	REQUIRE(controller.IsRuntimeActive());
 
-	Tick(controller, 3, config, false, false, true, false, true, 100, true, false, false);
+	Tick(controller, 3, config, false, false, true, false, true, 100, true, false);
 	REQUIRE_FALSE(controller.IsRuntimeActive());
 	REQUIRE(controller.LastResetReason() == Controller::ResetReason::GeometryChange);
+}
+
+TEST_CASE("adaptive crop caps the maximum at a smaller gaze crop and can reduce to 30 percent", "[adaptive][crop][gaze]")
+{
+	auto config = FastConfig();
+	config.maximumCoverage = 85;
+	config.minimumCoverage = 30;
+	config.minimumDwellFrames = 1;
+	config.downshiftFrames = 1;
+	Controller controller;
+	Tick(controller, 1, config, false, false, true, false, true, 50, true, true);
+	REQUIRE(controller.IsRuntimeActive());
+	REQUIRE(controller.ActiveCoverage() == 50);
+	REQUIRE(controller.MaximumCoverage() == 50);
+	for (std::uint32_t frame = 2; frame <= 40; ++frame)
+		Tick(controller, frame, config, true, false, true, false, true, 50, true, true);
+	REQUIRE(controller.ActiveCoverage() == 30);
 }

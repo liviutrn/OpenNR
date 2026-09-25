@@ -2,6 +2,7 @@
 
 #include "../../../Buffer.h"
 #include "../../../State.h"
+#include "Strength.h"
 
 #include <d3d11_4.h>
 #include <winrt/base.h>
@@ -10,7 +11,7 @@
  * @brief Robust Contrast Adaptive Sharpening (RCAS) implementation.
  *
  * Standalone sharpening pass based on AMD FidelityFX FSR1 RCAS algorithm.
- * Used to apply sharpening to DLSS output in HDR space before tonemapping.
+ * Supports HDR input and the LDR scene before UI composition.
  */
 class RCAS
 {
@@ -30,9 +31,9 @@ public:
 	 *
 	 * @param inputTexture SRV of the texture to sharpen (typically kMAIN render target).
 	 * @param outputUAV UAV to write sharpened result to.
-	 * @param sharpness Sharpening strength (0.0 = no sharpening, higher = more sharp).
+	 * @param sharpness UI strength in [0, 5]; values above 1 amplify bounded RCAS detail.
 	 */
-	void ApplySharpen(ID3D11ShaderResourceView* inputTexture, ID3D11UnorderedAccessView* outputUAV, float sharpness);
+	bool ApplySharpen(ID3D11ShaderResourceView* inputTexture, ID3D11UnorderedAccessView* outputUAV, float sharpness);
 
 private:
 	void CreateComputeShader();

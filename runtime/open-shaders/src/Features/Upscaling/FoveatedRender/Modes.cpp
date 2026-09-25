@@ -11,6 +11,7 @@
 #include "Core.h"
 #include "Ops.h"
 #include "Params.h"
+#include "../CropMotion.h"
 
 #include "../../../Globals.h"
 #include "../../../Utils/Subrect.h"
@@ -90,6 +91,8 @@ namespace FoveatedRenderImpl
 		bool result = (p.mode == FoveatedRender::DlssMode::kFaster) ?
 		                  ExecuteFasterMode(streamline, p) :
 		                  ExecuteDefaultMode(streamline, p);
+		for (uint32_t eye = 0; eye < 2; ++eye)
+			CropMotion::Commit(eye, result && Core::neuralGuidesFrame == frame && p.eyeTrackedGazeConfigured && !p.isFullEye);
 		Bridge::foveatedEvaluating = false;
 		Bridge::gazeHistoryReset = false;
 		return result;
@@ -222,9 +225,23 @@ namespace FoveatedRenderImpl
 			if (p.transparencyMask)
 				context->CopySubresourceRegion(Core::vrSubrectTransparencyMask[i]->resource.get(), 0, 0, 0, 0, p.transparencyMask, 0, &sbsCrop);
 
+			ID3D11Resource* srMotion = Core::vrSubrectMotionVectors[i]->resource.get();
+			if (p.eyeTrackedGazeConfigured) {
+				float scaleX = 1.0f, scaleY = 1.0f;
+				Bridge::ComputeMvecScale(i, scaleX, scaleY);
+				bool reset = p.eyeTrackedGazeReset;
+				srMotion = CropMotion::Prepare(i, srMotion, { cropX, cropY, subInW, subInH },
+					subInW, subInH, { scaleX, scaleY }, frame, reset);
+				if (!srMotion) {
+					Core::InvalidateTemporalState();
+					return true;
+				}
+				Bridge::gazeHistoryReset = reset;
+			}
+
 			if (!DispatchUpscaleRegion(streamline, i,
 					Core::vrSubrectColorIn[i]->resource.get(), Core::vrSubrectColorOut[i]->resource.get(),
-					Core::vrSubrectDepth[i]->resource.get(), Core::vrSubrectMotionVectors[i]->resource.get(),
+					Core::vrSubrectDepth[i]->resource.get(), srMotion,
 					p.reactiveMask ? Core::vrSubrectReactiveMask[i]->resource.get() : nullptr,
 					p.transparencyMask ? Core::vrSubrectTransparencyMask[i]->resource.get() : nullptr,
 					subInW, subInH, subOutW, subOutH,

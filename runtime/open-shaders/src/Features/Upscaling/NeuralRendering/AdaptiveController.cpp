@@ -16,7 +16,16 @@ namespace NeuralRendering
 
 	float AdaptiveController::ResolveTargetFps(const Config& config)
 	{
+		if (std::isfinite(config.targetFrameTimeMs) && config.targetFrameTimeMs > 0.0f)
+			return 1000.0f / std::clamp(config.targetFrameTimeMs, 5.0f, 50.0f);
 		return config.targetFps != 0 ? static_cast<float>(config.targetFps) : static_cast<float>(config.refreshHz) * 0.5f;
+	}
+
+	float AdaptiveController::ResolveDeadlineMs(const Config& config)
+	{
+		if (std::isfinite(config.targetFrameTimeMs) && config.targetFrameTimeMs > 0.0f)
+			return std::clamp(config.targetFrameTimeMs, 5.0f, 50.0f);
+		return 1000.0f / std::max(ResolveTargetFps(config), 1.0f);
 	}
 
 	std::uint32_t AdaptiveController::FindNearestBucket(std::uint32_t resolution)
@@ -48,7 +57,12 @@ namespace NeuralRendering
 		normalized.refreshHz = NormalizeRefresh(normalized.refreshHz);
 		if (normalized.targetFps != 0)
 			normalized.targetFps = std::clamp(normalized.targetFps, 15u, 60u);
+		normalized.targetFrameTimeMs = std::isfinite(normalized.targetFrameTimeMs) && normalized.targetFrameTimeMs > 0.0f ?
+			std::clamp(normalized.targetFrameTimeMs, 5.0f, 50.0f) : 0.0f;
 		normalized.minimumResolution = FindNearestBucket(normalized.minimumResolution);
+		normalized.maximumResolution = FindNearestBucket(normalized.maximumResolution);
+		if (normalized.maximumResolution < normalized.minimumResolution)
+			normalized.minimumResolution = normalized.maximumResolution;
 		normalized.downshiftFrames = std::clamp(normalized.downshiftFrames, 1u, 16u);
 		normalized.upshiftFrames = std::clamp(normalized.upshiftFrames, 4u, 64u);
 		normalized.minimumDwellFrames = std::clamp(normalized.minimumDwellFrames, 4u, 240u);
@@ -62,6 +76,7 @@ namespace NeuralRendering
 		activeBucket_ = 0;
 		targetBucket_ = 0;
 		minimumBucket_ = 6;
+		maximumBucket_ = 0;
 		transitionFrame_ = 0;
 		transitionFrameCount_ = 0;
 		dwellFrames_ = 0;
@@ -121,12 +136,14 @@ namespace NeuralRendering
 		decisionReason_ = "hold";
 
 		const Config config = NormalizeConfig(requestedConfig);
-		const bool configurationChanged = config.enabled != config_.enabled ||
+		const bool initializeActive = config.enabled && eligible && !enabled_;
+		const bool configurationChanged = initializeActive || config.enabled != config_.enabled ||
 			config.refreshHz != config_.refreshHz || config.targetFps != config_.targetFps ||
+			config.targetFrameTimeMs != config_.targetFrameTimeMs ||
 			config.minimumResolution != config_.minimumResolution ||
+			config.maximumResolution != config_.maximumResolution ||
 			config.downshiftFrames != config_.downshiftFrames || config.upshiftFrames != config_.upshiftFrames ||
-			config.minimumDwellFrames != config_.minimumDwellFrames ||
-			std::abs(config.guardTimeMs - config_.guardTimeMs) > 0.001f;
+			config.minimumDwellFrames != config_.minimumDwellFrames;
 		config_ = config;
 
 		const bool shouldRun = config.enabled && eligible;
@@ -141,8 +158,10 @@ namespace NeuralRendering
 		}
 
 		enabled_ = true;
-		applicationDeadlineMs_ = 1000.0f / std::max(ResolveTargetFps(config), 1.0f);
+		applicationDeadlineMs_ = ResolveDeadlineMs(config);
 		minimumBucket_ = FindBucketIndex(config.minimumResolution);
+		maximumBucket_ = FindBucketIndex(std::min(config.maximumResolution, memoryCeiling_));
+		maximumBucket_ = std::min(maximumBucket_, minimumBucket_);
 		if (config.memoryPressure)
 			memoryCeiling_ = std::min(memoryCeiling_, ActiveResolution());
 		if (ActiveResolution() > memoryCeiling_)
@@ -153,6 +172,7 @@ namespace NeuralRendering
 			targetBucket_ = minimumBucket_;
 		if (configurationChanged) {
 			decisionReason_ = "configuration-change";
+			activeBucket_ = targetBucket_ = maximumBucket_;
 			transitionFrame_ = 0;
 			transitionFrameCount_ = 0;
 			dwellFrames_ = 0;
@@ -221,7 +241,7 @@ namespace NeuralRendering
 		}
 
 		if (config.allowUpshift && !config.memoryPressure && dwellFrames_ >= config.minimumDwellFrames &&
-			headroomFrames_ >= config.upshiftFrames && activeBucket_ > 0 &&
+			headroomFrames_ >= config.upshiftFrames && activeBucket_ > maximumBucket_ &&
 			kResolutionBuckets[activeBucket_ - 1] <= memoryCeiling_) {
 			decisionReason_ = "workload-headroom";
 			StartTransition(activeBucket_ - 1, config.upshiftFrames);

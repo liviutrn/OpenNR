@@ -99,6 +99,28 @@ float4 SampleExactArea(uint2 targetPixel)
 	return sum / max((end.x - begin.x) * (end.y - begin.y), 1e-6);
 }
 
+float4 SampleExactAreaModel(uint2 targetPixel)
+{
+	const float2 sourceSize = float2(max(gSourceWidth, 1u), max(gSourceHeight, 1u));
+	const float2 targetSize = float2(max(gWidth, 1u), max(gHeight, 1u));
+	const float2 begin = float2(targetPixel) * sourceSize / targetSize;
+	const float2 end = float2(targetPixel + 1u) * sourceSize / targetSize;
+	const uint2 sourceLast = uint2(max(gSourceWidth, 1u) - 1u, max(gSourceHeight, 1u) - 1u);
+	const uint2 first = min(uint2(floor(begin)), sourceLast);
+	const uint2 last = min(uint2(max(ceil(end) - 1.0, 0.0)), sourceLast);
+	float4 sum = 0.0;
+	[loop]
+	for (uint y = first.y; y <= last.y; ++y) {
+		const float yWeight = max(0.0, min(end.y, float(y + 1u)) - max(begin.y, float(y)));
+		[loop]
+		for (uint x = first.x; x <= last.x; ++x) {
+			const float xWeight = max(0.0, min(end.x, float(x + 1u)) - max(begin.x, float(x)));
+			sum += gModel.Load(int3(x, y, 0)) * (xWeight * yWeight);
+		}
+	}
+	return sum / max((end.x - begin.x) * (end.y - begin.y), 1e-6);
+}
+
 float4 SampleValidSource(Texture2D<float4> source, float2 uv)
 {
 	uint width, height;
@@ -124,6 +146,13 @@ void main(uint3 id : SV_DispatchThreadID)
 	if (gMode == 2)
 	{
 		gTarget[id.xy] = SampleExactArea(id.xy);
+		return;
+	}
+	if (gMode == 4)
+	{
+		const float4 original = gOriginal.Load(int3(id.xy, 0));
+		const float4 downsampled = SampleExactAreaModel(id.xy);
+		gTarget[id.xy] = float4(max(downsampled.rgb, float3(0.0, 0.0, 0.0)), original.a);
 		return;
 	}
 

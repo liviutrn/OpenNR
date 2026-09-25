@@ -33,6 +33,40 @@ TEST_CASE("VRAM pressure ceiling survives headroom and budget edits until explic
 	REQUIRE(controller.ActiveResolution() == 100);
 }
 
+TEST_CASE("Adaptive NR caps requested resolution at full scale", "[adaptive][nr]")
+{
+	NRController controller;
+	NRController::Config config;
+	config.enabled = true;
+	config.maximumResolution = 150;
+	config.minimumResolution = 70;
+	controller.Update(0, config, true);
+	REQUIRE(controller.ActiveResolution() == 100);
+	REQUIRE(controller.TargetResolution() == 100);
+	REQUIRE(controller.IsAtMaximum());
+}
+
+TEST_CASE("Adaptive NR respects experimental ceilings below its configured minimum", "[adaptive][nr]")
+{
+	NRController controller;
+	NRController::Config config;
+	config.enabled = true;
+	config.minimumResolution = 70;
+	config.maximumResolution = 50;
+	controller.Update(0, config, true);
+	REQUIRE(controller.ActiveResolution() == 50);
+	REQUIRE(controller.TargetResolution() == 50);
+	REQUIRE(controller.IsAtMaximum());
+	REQUIRE(controller.IsAtMinimum());
+
+	config.maximumResolution = 33;
+	controller.Update(1, config, true);
+	REQUIRE(controller.ActiveResolution() == 33);
+	REQUIRE(controller.TargetResolution() == 33);
+	REQUIRE(controller.IsAtMaximum());
+	REQUIRE(controller.IsAtMinimum());
+}
+
 TEST_CASE("Memory ceiling still permits recovery from ordinary workload downshifts", "[adaptive][nr]")
 {
 	NRController controller;
@@ -74,20 +108,28 @@ TEST_CASE("Adaptive tier changes preserve the handoff but route changes do not",
 	next = previous;
 	next.depthThreshold = 0.1f;
 	REQUIRE_FALSE(previous.PreservesHandoff(next));
+	next = previous;
+	next.secondPassCropReductionX = 20;
+	REQUIRE_FALSE(previous.PreservesHandoff(next));
+	next = previous;
+	next.secondPassCropReductionY = 25;
+	REQUIRE_FALSE(previous.PreservesHandoff(next));
 }
 
 TEST_CASE("NR residency stays bounded across a full ladder and repeated frames", "[adaptive][nr]")
 {
 	NeuralRendering::TierResidency residency;
-	for (unsigned tier = 0; tier < 7; ++tier) {
+	const auto tierCount = static_cast<unsigned>(NRController::ResolutionBuckets().size());
+	for (unsigned tier = 0; tier < tierCount; ++tier) {
 		REQUIRE(residency.Select(tier, true));
 		for (unsigned frame = 0; frame < 10; ++frame)
 			REQUIRE_FALSE(residency.Select(tier, true));
 		unsigned count = 0;
-		for (unsigned candidate = 0; candidate < 7; ++candidate)
+		for (unsigned candidate = 0; candidate < tierCount; ++candidate)
 			count += residency.Contains(candidate);
 		REQUIRE(count == (tier == 0 ? 1 : 2));
 	}
+	residency.Select(6, true);
 	residency.Select(5, true);
 	REQUIRE(residency.Contains(6));
 	REQUIRE(residency.Contains(5));
@@ -173,6 +215,26 @@ TEST_CASE("adaptive NR supports a custom FPS budget", "[adaptive][nr]")
 	controller.Update(1, config, true);
 	REQUIRE(controller.ApplicationTargetFps() == Catch::Approx(15.0f));
 	REQUIRE(controller.ApplicationDeadlineMs() == Catch::Approx(1000.0f / 15.0f));
+}
+
+TEST_CASE("adaptive NR accepts a direct frame-time budget", "[adaptive][nr]")
+{
+	NRController controller;
+	NRController::Config config;
+	config.enabled = true;
+	config.targetFrameTimeMs = 20.0f;
+	controller.Update(0, config, true);
+	REQUIRE(controller.ApplicationTargetFrameTimeMs() == Catch::Approx(20.0f));
+	REQUIRE(controller.ApplicationDeadlineMs() == Catch::Approx(20.0f));
+	REQUIRE(controller.ApplicationTargetFps() == Catch::Approx(50.0f));
+
+	config.targetFrameTimeMs = 2.0f;
+	controller.Update(1, config, true);
+	REQUIRE(controller.ApplicationTargetFrameTimeMs() == Catch::Approx(5.0f));
+
+	config.targetFrameTimeMs = 75.0f;
+	controller.Update(2, config, true);
+	REQUIRE(controller.ApplicationTargetFrameTimeMs() == Catch::Approx(50.0f));
 }
 
 TEST_CASE("adaptive NR clamps custom FPS budgets", "[adaptive][nr]")

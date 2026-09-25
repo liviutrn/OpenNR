@@ -4,6 +4,23 @@
 
 using namespace FoveatedRenderImpl;
 
+TEST_CASE("Gaze crop margin expands all edges in input-pixel units", "[gaze]")
+{
+	const auto region = GazeCropPolicy::ExpandRegion({ 0.2f, 0.2f, 0.6f, 0.6f }, 1000, 500, 20);
+	REQUIRE(region.x == Catch::Approx(0.18f));
+	REQUIRE(region.y == Catch::Approx(0.16f));
+	REQUIRE(region.w == Catch::Approx(0.64f));
+	REQUIRE(region.h == Catch::Approx(0.68f));
+
+	const auto edge = GazeCropPolicy::ExpandRegion({ 0.0f, 0.0f, 0.6f, 0.6f }, 1000, 500, 20);
+	REQUIRE(edge.x == Catch::Approx(0.0f));
+	REQUIRE(edge.y == Catch::Approx(0.0f));
+	REQUIRE(edge.x + edge.w <= 1.0f);
+	REQUIRE(edge.y + edge.h <= 1.0f);
+	REQUIRE(GazeCropPolicy::ExpandRegion(region, 0, 500, 20).w == region.w);
+	REQUIRE(GazeCropPolicy::ExpandRegion(region, 1000, 500, 0).w == region.w);
+}
+
 TEST_CASE("Gaze pursuit and saccades bypass saved smoothing", "[gaze]")
 {
 	for (const float smoothing : { 0.0f, 20.0f, 250.0f }) {
@@ -23,6 +40,20 @@ TEST_CASE("Gaze fixation noise is bounded and optional", "[gaze]")
 	REQUIRE(filtered[1] < 0.5f);
 	REQUIRE(filtered[1] > sample[1]);
 	REQUIRE(GazeCropPolicy::Filter({ 0.5f, 0.5f }, sample, 11.11f, 0.0f, 2000, 2000) == sample);
+}
+
+TEST_CASE("Adaptive gaze uses a pixel deadband and bounded prediction", "[gaze]")
+{
+	const std::array<float, 2> previous{ 0.5f, 0.5f };
+	const auto insideDeadband = GazeCropPolicy::FilterAdaptive(previous, { 0.50025f, 0.5f },
+		11.0f, 20.0f, 8.0f, 1, 2000, 2000);
+	REQUIRE(insideDeadband == previous);
+	const auto pursuit = GazeCropPolicy::FilterAdaptive(previous, { 0.502f, 0.5f },
+		11.0f, 20.0f, 8.0f, 1, 2000, 2000);
+	REQUIRE(pursuit[0] > previous[0]);
+	REQUIRE(pursuit[0] < 0.502f);
+	REQUIRE(GazeCropPolicy::Predict(previous, { 0.6f, 0.5f }, 1.0f, 15.0f, 2000, 2000)[0] < 0.625f);
+	REQUIRE(GazeCropPolicy::Predict(previous, { 0.6f, 0.5f }, 1.0f, 0.0f, 2000, 2000)[0] == 0.6f);
 }
 
 TEST_CASE("Gaze guard absorbs jitter without accumulating crop drift", "[gaze]")

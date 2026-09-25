@@ -48,6 +48,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	sharpnessFSR,
 	sharpnessEnabledDLSS,
 	sharpnessDLSS,
+	sharpnessAfterNR,
 	presetDLSS,
 	reflexLowLatencyMode,
 	reflexLowLatencyBoost,
@@ -398,8 +399,15 @@ void Upscaling::DrawDLSSNRSharedControls()
 		ImGui::Checkbox(T(TKEY("enable_sharpening"), "Enable Sharpening"), &settings.sharpnessEnabledDLSS);
 		if (auto _tt = Util::HoverTooltipWrapper())
 			ImGui::TextUnformatted(T(TKEY("enable_sharpening_tooltip"), "Applies RCAS sharpening to the DLSS output. Off by default; DLSS already resolves a sharp image."));
-		if (settings.sharpnessEnabledDLSS)
-			ImGui::SliderFloat(T(TKEY("sharpness"), "Sharpness"), &settings.sharpnessDLSS, 0.0f, 1.0f, "%.1f");
+		if (settings.sharpnessEnabledDLSS) {
+			ImGui::SliderFloat(T(TKEY("sharpness"), "Sharpness"), &settings.sharpnessDLSS, 0.0f, Sharpening::kMaximumStrength, "%.2f");
+			if (globals::game::isVR && foveatedRender.IsActive()) {
+				if (ImGui::Button(settings.sharpnessAfterNR ? "Sharpening: After NR" : "Sharpening: Before NR"))
+					settings.sharpnessAfterNR = !settings.sharpnessAfterNR;
+				if (auto _tt = Util::HoverTooltipWrapper())
+					ImGui::TextUnformatted("Click to change the order. After sharpens the final scene; Before sharpens the input NR sees. Strength above 1 amplifies detail and can emphasize halos.");
+			}
+		}
 
 		const char* presets[] = {
 			T(TKEY("dlss_model_preset_default"), "Default"),
@@ -671,6 +679,14 @@ std::string Upscaling::GetProfilePreviewText(PerfProfile profile) const
 
 void Upscaling::RegisterUxActions()
 {
+	FEATURE_COMMAND("setImageFinishing",
+		"Set image finishing live. Params: enabled (bool), strength (0..5), afterNR (bool). Omitted values are retained.",
+		[](Feature* a_self, const json& args) {
+			auto& upscaling = *static_cast<Upscaling*>(a_self);
+			upscaling.settings.sharpnessEnabledDLSS = args.value("enabled", upscaling.settings.sharpnessEnabledDLSS);
+			upscaling.settings.sharpnessDLSS = Sharpening::Sanitize(args.value("strength", upscaling.settings.sharpnessDLSS));
+			upscaling.settings.sharpnessAfterNR = args.value("afterNR", upscaling.settings.sharpnessAfterNR);
+		});
 	FEATURE_QUERY("eyeTrackingStatus",
 		"Read native OpenVR query validity/cost, last-valid-query age (not sensor age), raw/filtered gaze, resolved crops and history-reset counters. Params: none.",
 		[](const Feature*, const json&) -> json {
@@ -693,7 +709,8 @@ void Upscaling::RegisterUxActions()
 		"Read NR failure/recovery limits, successful evaluation count, NGX result and crop hold state. Params: none.",
 		[](const Feature*, const json&) -> json {
 			const auto& nr = NeuralRendering::Renderer::Instance();
-			return json({ { "failureLatched", nr.IsFailureLatched() }, { "recoveryLimited", nr.IsRecoveryLimited() },
+			return json({ { "failureLatched", nr.IsFailureLatched() },
+				{ "recoveryLimited", nr.IsRecoveryLimited() },
 				{ "successfulEvaluations", nr.SuccessfulFrames() }, { "ngxResult", nr.NgxResult() },
 				{ "cropHeld", FoveatedRenderImpl::Core::vrSubrectFixedEnvelopeRejected || FoveatedRenderImpl::Core::vrSubrectNeuralFixedEnvelopeRejected } });
 		});
@@ -856,8 +873,15 @@ void Upscaling::DrawSettings()
 									  "Off by default; DLSS already resolves a sharp image."));
 			}
 
-			if (settings.sharpnessEnabledDLSS)
-				ImGui::SliderFloat(T(TKEY("sharpness"), "Sharpness"), &settings.sharpnessDLSS, 0.0f, 1.0f, "%.1f");
+			if (settings.sharpnessEnabledDLSS) {
+				ImGui::SliderFloat(T(TKEY("sharpness"), "Sharpness"), &settings.sharpnessDLSS, 0.0f, Sharpening::kMaximumStrength, "%.2f");
+				if (globals::game::isVR && foveatedRender.IsActive()) {
+					if (ImGui::Button(settings.sharpnessAfterNR ? "Sharpening: After NR" : "Sharpening: Before NR"))
+						settings.sharpnessAfterNR = !settings.sharpnessAfterNR;
+					if (auto _tt = Util::HoverTooltipWrapper())
+						ImGui::TextUnformatted("Click to change the order. After sharpens the final scene; Before sharpens the input NR sees. Strength above 1 amplifies detail and can emphasize halos.");
+				}
+			}
 
 			const char* presets[] = {
 				T(TKEY("dlss_model_preset_default"), "Default"),
@@ -1278,6 +1302,7 @@ void Upscaling::LoadSettings(json& o_json)
 	// detect absence explicitly so a pre-existing config still runs the migration.
 	const bool hadFsr4SchemaVersion = o_json.contains("fsr4RuntimeSelectionSchemaVersion");
 	settings = o_json;
+	settings.sharpnessDLSS = Sharpening::Sanitize(settings.sharpnessDLSS);
 	if (!hadFsr4SchemaVersion)
 		settings.fsr4RuntimeSelectionSchemaVersion = 0;
 	ApplyLegacyFsr4RuntimeSelectionMigration(settings, fidelityFX.GetFsr4AdapterSupport());
@@ -3305,9 +3330,8 @@ void Upscaling::ApplySharpening()
 
 		CS_GPU_PASS("Upscaling::Sharpening");
 
-		float currentSharpness = (-2.0f * settings.sharpnessDLSS) + 2.0f;
-		currentSharpness = exp2(-currentSharpness);
-		rcas.ApplySharpen(perfMode.GetRefraTempSRV(), perfMode.GetTestTextureUAV(), currentSharpness);
+		if (!rcas.ApplySharpen(perfMode.GetRefraTempSRV(), perfMode.GetTestTextureUAV(), settings.sharpnessDLSS))
+			globals::d3d::context->CopyResource(perfMode.GetTestTexture(), perfMode.GetRefraTempTex());
 		return;
 	}
 
@@ -3327,14 +3351,9 @@ void Upscaling::ApplySharpening()
 	context->OMSetRenderTargets(0, nullptr, nullptr);
 
 	if (settings.sharpnessEnabledDLSS && settings.sharpnessDLSS > 0.0f && main.UAV) {
-		// Match FSR3's slider->RCAS conversion exactly (ffx_fsr3upscaler.cpp + FsrRcasCon):
-		//   sharpenessRemapped = -2*slider + 2   (sharpness in stops)
-		//   rcasAttenuation    = exp2(-sharpenessRemapped) = exp2(2*slider - 2)
-		float currentSharpness = (-2.0f * settings.sharpnessDLSS) + 2.0f;
-		currentSharpness = exp2(-currentSharpness);
-
 		// DLSS has already written to sharpenerTexture; sharpen directly into kMAIN.UAV.
-		rcas.ApplySharpen(sharpenerTexture->srv.get(), main.UAV, currentSharpness);
+		if (!rcas.ApplySharpen(sharpenerTexture->srv.get(), main.UAV, settings.sharpnessDLSS))
+			context->CopyResource(main.texture, sharpenerTexture->resource.get());
 	} else {
 		// Sharpening is disabled: resolve the DLSS output without altering it.
 		context->CopyResource(main.texture, sharpenerTexture->resource.get());
@@ -3372,12 +3391,6 @@ void Upscaling::Main_PostProcessing::thunk(RE::ImageSpaceManager* a_this, uint32
 		postProcessing.DrawBeforeUpscaling();
 	}
 
-	// Optional DLSSNR experiment: this is the last safe point before the normal
-	// DLSS/FSR dispatch. It mutates the native render image only when the user
-	// explicitly enabled pre-upscale NR; failures leave the standard upscaler
-	// untouched and the existing post-upscale NR route remains available.
-	NeuralRendering::ApplyPreUpscale();
-
 	auto& upscaling = globals::features::upscaling;
 	auto upscaleMethod = upscaling.GetUpscaleMethod();
 
@@ -3393,18 +3406,8 @@ void Upscaling::Main_PostProcessing::thunk(RE::ImageSpaceManager* a_this, uint32
 		upscaling.UpscaleDepth();
 	}
 
-	if (upscaleMethod == UpscaleMethod::kDLSS) {
-		// FoveatedRender's DLSS output doesn't land in sharpenerTexture the
-		// way dev's path does (the route writes to its own per-eye intermediates
-		// and copies back to kMAIN/testTexture), so dev's zero-copy
-		// ApplySharpening can't read sharpenerTexture. Route through
-		// Postprocess::ApplyDlssSharpening which does the kMAIN → sharpener →
-		// kMAIN round-trip. Both paths honor sharpnessDLSS=0 to disable RCAS.
-		if (FoveatedRenderImpl::Bridge::IsRouteActive()) {
-			FoveatedRenderImpl::Postprocess::ApplyDlssSharpening(upscaling);
-		} else {
-			upscaling.ApplySharpening();
-		}
+	if (upscaleMethod == UpscaleMethod::kDLSS && !FoveatedRenderImpl::Bridge::IsRouteActive()) {
+		upscaling.ApplySharpening();
 	}
 
 	Util::SetTemporal(upscaleMethod == UpscaleMethod::kTAA);

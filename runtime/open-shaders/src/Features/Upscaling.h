@@ -96,6 +96,7 @@ public:
 		float sharpnessFSR = 0.8f;
 		bool sharpnessEnabledDLSS = false;
 		float sharpnessDLSS = 0.0f;
+		bool sharpnessAfterNR = true;
 		uint presetDLSS = 0;  // 0=Default, 1=J, 2=K, 3=L, 4=M
 		bool reflexLowLatencyMode = false;
 		bool reflexLowLatencyBoost = false;
@@ -447,7 +448,7 @@ public:
 	 */
 	bool IsPerfModeSharpenRedirectActive() const
 	{
-		return perfMode.IsHookActive() && perfMode.GetTestTexture() && perfMode.GetTestTextureUAV() &&
+		return !foveatedRender.IsActive() && perfMode.IsHookActive() && perfMode.GetTestTexture() && perfMode.GetTestTextureUAV() &&
 		       perfMode.GetRefraTempTex() && perfMode.GetRefraTempSRV() && perfMode.GetRefraTempUAV() &&
 		       settings.sharpnessEnabledDLSS && settings.sharpnessDLSS > 0.0f;
 	}

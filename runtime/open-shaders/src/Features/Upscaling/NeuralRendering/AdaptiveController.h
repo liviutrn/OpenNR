@@ -24,7 +24,10 @@ namespace NeuralRendering
 			std::uint32_t refreshHz = 80;
 			// Zero derives the budget from refreshHz; otherwise use 15–60 FPS.
 			std::uint32_t targetFps = 0;
+			// Positive values override FPS and set an explicit workload deadline.
+			float targetFrameTimeMs = 0.0f;
 			std::uint32_t minimumResolution = 70;
+			std::uint32_t maximumResolution = 100;
 			std::uint32_t downshiftFrames = 4;
 			std::uint32_t upshiftFrames = 12;
 			std::uint32_t minimumDwellFrames = 30;
@@ -43,12 +46,13 @@ namespace NeuralRendering
 		[[nodiscard]] float SmoothedFrameTimeMs() const { return smoothedFrameTimeMs_; }
 		[[nodiscard]] float ApplicationDeadlineMs() const { return applicationDeadlineMs_; }
 		[[nodiscard]] float ApplicationTargetFps() const;
+		[[nodiscard]] float ApplicationTargetFrameTimeMs() const { return applicationDeadlineMs_; }
 		[[nodiscard]] bool IsTransitioning() const { return transitionFrameCount_ != 0; }
 		[[nodiscard]] bool IsEnabled() const { return enabled_; }
 		[[nodiscard]] bool LastSampleOverBudget() const { return lastSampleOverBudget_; }
 		[[nodiscard]] bool LastSampleHadHeadroom() const { return lastSampleHadHeadroom_; }
 		[[nodiscard]] bool IsAtMinimum() const { return activeBucket_ >= minimumBucket_; }
-		[[nodiscard]] bool IsAtMaximum() const { return activeBucket_ == 0; }
+		[[nodiscard]] bool IsAtMaximum() const { return activeBucket_ == maximumBucket_; }
 		/** @brief Session memory ceiling; only an explicit Reset clears learned pressure. */
 		[[nodiscard]] std::uint32_t MemoryCeiling() const { return memoryCeiling_; }
 
@@ -59,17 +63,18 @@ namespace NeuralRendering
 		}
 
 		/** @brief Returns the native buckets used by the adaptive test. */
-		static constexpr const std::array<std::uint32_t, 7>& ResolutionBuckets()
+		static constexpr const std::array<std::uint32_t, 9>& ResolutionBuckets()
 		{
 			return kResolutionBuckets;
 		}
 
 	private:
 		static constexpr std::array<std::uint32_t, 4> kRefreshTargets{ 70, 72, 80, 90 };
-		static constexpr std::array<std::uint32_t, 7> kResolutionBuckets{ 100, 95, 90, 85, 80, 75, 70 };
+		static constexpr std::array<std::uint32_t, 9> kResolutionBuckets{ 100, 95, 90, 85, 80, 75, 70, 50, 33 };
 
 		static std::uint32_t NormalizeRefresh(std::uint32_t refreshHz);
 		static float ResolveTargetFps(const Config& config);
+		static float ResolveDeadlineMs(const Config& config);
 		static std::uint32_t FindNearestBucket(std::uint32_t resolution);
 		static std::uint32_t FindBucketIndex(std::uint32_t resolution);
 		static Config NormalizeConfig(const Config& config);
@@ -86,6 +91,7 @@ namespace NeuralRendering
 		std::uint32_t activeBucket_ = 0;
 		std::uint32_t targetBucket_ = 0;
 		std::uint32_t minimumBucket_ = 6;
+		std::uint32_t maximumBucket_ = 3;
 		std::uint32_t transitionFrame_ = 0;
 		std::uint32_t transitionFrameCount_ = 0;
 		std::uint32_t dwellFrames_ = 0;

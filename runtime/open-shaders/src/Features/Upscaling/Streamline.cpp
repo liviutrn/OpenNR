@@ -778,7 +778,7 @@ void Streamline::Upscale(ID3D11Resource* a_upscalingTexture, ID3D11Resource* a_r
 	const bool dlssperfSharpen = upscaling.IsPerfModeSharpenRedirectActive();
 	ID3D11Resource* colorOut =
 		dlssperfActive ? (dlssperfSharpen ? static_cast<ID3D11Resource*>(perfMode.GetRefraTempTex()) : static_cast<ID3D11Resource*>(perfMode.GetTestTexture())) :
-						 ((upscaling.settings.sharpnessEnabledDLSS && upscaling.settings.sharpnessDLSS > 0.0f && upscaling.sharpenerTexture) ? upscaling.sharpenerTexture->resource.get() : a_upscalingTexture);
+						 ((!FoveatedRenderImpl::Bridge::IsRouteActive() && upscaling.settings.sharpnessEnabledDLSS && upscaling.settings.sharpnessDLSS > 0.0f && upscaling.sharpenerTexture) ? upscaling.sharpenerTexture->resource.get() : a_upscalingTexture);
 
 	// VR stereo DLSS: NGX D3D11 only accepts zero-offset subrects. Non-zero offsets return
 	// FAIL_InvalidParameter because Streamline's dlssEntry.cpp never sets

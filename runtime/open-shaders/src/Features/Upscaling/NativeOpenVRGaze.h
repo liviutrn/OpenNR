@@ -33,7 +33,13 @@ namespace FoveatedRenderImpl::NativeOpenVRGaze
 	{
 		bool enabled = false;
 		float smoothingMs = 0.0f;
+		std::uint32_t policy = 0;
+		float catchupMs = 8.0f;
+		std::uint32_t deadbandPixels = 1;
+		std::uint32_t holdMs = 50;
+		float predictionMs = 0.0f;
 		std::uint32_t quantizationPixels = 8;
+		std::uint32_t cropPaddingPixels = 0;
 	};
 
 	struct Diagnostics

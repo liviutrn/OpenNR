@@ -7,10 +7,9 @@ namespace FoveatedRenderImpl
 	class Postprocess
 	{
 	public:
-		// Sharpening pass for the FoveatedRender route. Mirrors what
-		// Upscaling::ApplySharpening does but is invoked from
-		// Main_PostProcessing only when the FoveatedRender route is active.
-		// Only the kRCAS path is wired.
+		/** Sharpens the current LDR stereo scene once per frame, before UI composition. */
 		static bool ApplyDlssSharpening(Upscaling& upscaling);
+		/** Releases the sharpening target and clears the frame guard. */
+		static void Reset();
 	};
 }

@@ -336,6 +336,7 @@ void VRS::UpdateVRShadingRateState()
 			.enabled = true,
 			.smoothingMs = foveated.settings.neuralRenderingEyeTrackedSmoothingMs,
 			.quantizationPixels = foveated.settings.neuralRenderingEyeTrackedQuantizationPixels,
+			.cropPaddingPixels = foveated.settings.neuralRenderingEyeTrackedCropPaddingPixels,
 		};
 		const auto gaze = FoveatedRenderImpl::NativeOpenVRGaze::ResolveForFrame(config, leftUV, rightUV,
 			frameInfo.renderWidth / 2, frameInfo.renderHeight, globals::state->frameCount,

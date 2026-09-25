@@ -14,12 +14,14 @@ namespace NeuralRendering
 	void ResetHistory();
 
 	/**
-	 * Runs the opt-in experimental pre-upscale route at Skyrim's native render
-	 * resolution, immediately before the normal DLSS/FSR dispatch. A false
-	 * result means the caller should continue with the normal upscaler; the
-	 * post-upscale NR route remains the safe fallback.
+	 * Runs the opt-in first NR stage at Skyrim's native render resolution,
+	 * immediately before the normal DLSS dispatch. A false result means the
+	 * post-upscale hook should run the complete configured cascade as fallback.
 	 */
 	bool ApplyPreUpscale();
+
+	/** Reports whether pre-upscale NR failed and is held off until toggled or reset. */
+	bool IsPreUpscaleExecutionFailed();
 
 	/** Runs DLSS Neural Rendering on the LDR foveated regions immediately before UI composite. */
 	bool ApplyFoveatedLdr();
