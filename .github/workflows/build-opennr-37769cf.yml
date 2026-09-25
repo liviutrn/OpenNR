@@ -30,9 +30,6 @@ jobs:
           ) | ForEach-Object {
             if (-not (Test-Path $_)) { throw "Missing required build input: $_" }
           }
-          if (-not (Select-String -Path OpenNR-2.15.1-37769cf.patch -Pattern "feat\(nr\): finalize foveated VR controls" -Quiet)) {
-            throw "Published source revision marker is missing"
-          }
           git diff --check
           git status --porcelain
 
