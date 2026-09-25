@@ -60,7 +60,7 @@ jobs:
         shell: pwsh
         working-directory: runtime/open-shaders
         run: |
-          cmake --preset OpenNR-Package
+          cmake --preset OpenNR-Package -DOPENNR_EXTERNAL_DLSSNR_RUNTIME=ON
           cmake --build --preset Package --parallel
 
       - name: Upload installable package
