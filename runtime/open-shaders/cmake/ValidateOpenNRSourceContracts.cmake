@@ -285,11 +285,13 @@ foreach(_contract IN ITEMS
     endif()
 endforeach()
 
-file(SIZE "${_dlssnr_carrier_path}" _source_dlssnr_size)
-if(_source_dlssnr_size LESS 1048576)
-    message(FATAL_ERROR
-        "OpenNR source contract found an implausibly small native Feature 18 carrier: ${_source_dlssnr_size} bytes"
-    )
+if(NOT OPENNR_EXTERNAL_DLSSNR_RUNTIME)
+    file(SIZE "${_dlssnr_carrier_path}" _source_dlssnr_size)
+    if(_source_dlssnr_size LESS 1048576)
+        message(FATAL_ERROR
+            "OpenNR source contract found an implausibly small native Feature 18 carrier: ${_source_dlssnr_size} bytes"
+        )
+    endif()
 endif()
 
 file(SIZE "${_vr_helper_runtime_path}" _source_vr_helper_size)
