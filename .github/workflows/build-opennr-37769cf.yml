@@ -18,11 +18,22 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Verify the published OpenNR revision
+      - name: Verify source and package inputs
         shell: pwsh
         run: |
-          git apply --reverse --check OpenNR-2.15.1-37769cf.patch
-          git diff --check HEAD~2 HEAD
+          $expected = "496a70b2112e8168c0127e945c0dac614f03812aca1876c40b9056698b4447f8"
+          $actual = (Get-FileHash -Algorithm SHA256 OpenNR-2.15.1-37769cf.patch).Hash.ToLower()
+          if ($actual -ne $expected) { throw "Source patch checksum mismatch: $actual" }
+          @(
+            "runtime/open-shaders/CMakePresets.json",
+            "runtime/open-shaders/vcpkg.json",
+            "runtime/open-shaders/src/Features/Upscaling/FoveatedRender.cpp",
+            "runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Integration.cpp"
+          ) | ForEach-Object {
+            if (-not (Test-Path $_)) { throw "Missing required build input: $_" }
+          }
+          git diff --check
+          git status --porcelain
 
       - name: Set up MSVC
         uses: ilammy/msvc-dev-cmd@v1
