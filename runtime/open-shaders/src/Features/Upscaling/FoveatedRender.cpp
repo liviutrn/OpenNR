@@ -1459,6 +1459,7 @@ const char* FoveatedRender::SubrectMaskModeName(SubrectMaskMode mode)
 					ImGui::TextDisabled("Pass 2 crop and feather controls apply to 2x only; 3x uses full selected crops for each pass.");
 				}
 			}
+			}
 
 			ImGui::SeparatorText("Eye-tracked Foveation");
 			bool eyeTrackedFoveation = settings.neuralRenderingEyeTrackedFoveation;
