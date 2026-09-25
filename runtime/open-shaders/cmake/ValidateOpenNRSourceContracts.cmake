@@ -458,7 +458,6 @@ endforeach()
 
 foreach(_contract IN ITEMS
     "void Upscaling::DrawDLSSNRPage()"
-    "Temporal Stability"
     "neuralRenderingTemporalReuseCadence"
     "neuralRenderingTemporalReuseResetAfterSkip"
 )
