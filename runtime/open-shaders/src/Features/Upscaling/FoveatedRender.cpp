@@ -93,6 +93,8 @@ namespace
 	X(neuralRenderingSecondPassFeatherWidth) \
 	X(neuralRenderingSecondPassFalloffCurve) \
 	X(neuralRenderingSecondPassDitherStrength) \
+	X(neuralRenderingStereoResidualReprojection) \
+	X(neuralRenderingStereoResidualAnchorEye) \
 	X(neuralRenderingAdaptiveEnabled) \
 	X(neuralRenderingAdaptiveRefreshHz) \
 	X(neuralRenderingAdaptiveBudgetMode) \
@@ -362,6 +364,7 @@ void FoveatedRender::ClampSettings()
 	settings.neuralRenderingSecondPassFeatherWidth = std::clamp(settings.neuralRenderingSecondPassFeatherWidth, 2.0f, 128.0f);
 	settings.neuralRenderingSecondPassFalloffCurve = std::clamp(settings.neuralRenderingSecondPassFalloffCurve, 0.5f, 2.0f);
 	settings.neuralRenderingSecondPassDitherStrength = std::clamp(settings.neuralRenderingSecondPassDitherStrength, 0.0f, 2.0f);
+	settings.neuralRenderingStereoResidualAnchorEye = std::min(settings.neuralRenderingStereoResidualAnchorEye, 1u);
 	switch (settings.neuralRenderingAdaptiveRefreshHz) {
 	case 70:
 	case 72:
@@ -1453,6 +1456,21 @@ const char* FoveatedRender::SubrectMaskModeName(SubrectMaskMode mode)
 					ImGui::TextDisabled("Pass 2 crop and feather controls apply to 2x only; 3x uses full selected crops for each pass.");
 				}
 			}
+			}
+
+			if (globals::game::isVR) {
+				ImGui::SeparatorText("Experimental Stereo NR");
+				ImGui::Checkbox("One-eye NR + residual reprojection", &settings.neuralRenderingStereoResidualReprojection);
+				ImGui::TextDisabled("Status: %s", NeuralRendering::Renderer::Instance().StereoResidualStatusText());
+				if (auto _tt = Util::HoverTooltipWrapper())
+					drawWrapped("Runs DLSS 5 NR on one eye, then depth-reprojects only the NR-minus-SR residual into the other eye. Disocclusions and pixels that fail depth/color checks keep their original SR image. Eye-tracked crops are supported. Experimental: reflections, water, and other view-dependent effects may differ between eyes.");
+				if (settings.neuralRenderingStereoResidualReprojection) {
+					static const char* anchorEyes[] = { "Left eye", "Right eye" };
+					int anchorEye = static_cast<int>(std::min(settings.neuralRenderingStereoResidualAnchorEye, 1u));
+					if (ImGui::Combo("Native NR anchor eye", &anchorEye, anchorEyes, IM_ARRAYSIZE(anchorEyes)))
+						settings.neuralRenderingStereoResidualAnchorEye = static_cast<uint>(anchorEye);
+					drawWarningWrapped("Experimental same-frame stereo reprojection. Compare both anchor-eye choices and disable it if reflections, water, or disocclusion edges look wrong.");
+				}
 			}
 
 			ImGui::SeparatorText("Eye-tracked Foveation");

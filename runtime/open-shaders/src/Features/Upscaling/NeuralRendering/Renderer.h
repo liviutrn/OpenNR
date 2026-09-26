@@ -108,6 +108,7 @@ namespace NeuralRendering
 		[[nodiscard]] std::uint32_t NgxResult() const;
 		[[nodiscard]] std::uint64_t SuccessfulFrames() const;
 		[[nodiscard]] const char* StatusText() const;
+		[[nodiscard]] const char* StereoResidualStatusText() const;
 
 	private:
 		explicit Renderer(std::uint32_t runtimeFeatureSlotBlock = 0, std::uint32_t cropMotionSlotBase = 2);

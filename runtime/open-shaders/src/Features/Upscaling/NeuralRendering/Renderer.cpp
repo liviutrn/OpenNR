@@ -390,6 +390,29 @@ namespace NeuralRendering
 		};
 		static_assert(sizeof(TemporalReuseConstants) == 48);
 
+		struct alignas(16) StereoResidualConstants
+		{
+			std::uint32_t colorWidth = 0;
+			std::uint32_t colorHeight = 0;
+			std::uint32_t guideWidth = 0;
+			std::uint32_t guideHeight = 0;
+			std::uint32_t eyeWidth = 0;
+			std::uint32_t eyeHeight = 0;
+			std::uint32_t sourceCropX = 0;
+			std::uint32_t sourceCropY = 0;
+			std::uint32_t targetCropX = 0;
+			std::uint32_t targetCropY = 0;
+			float depthTolerance = 0.005f;
+			float colorTolerance = 0.12f;
+			float residualStrength = 1.0f;
+			float padding0 = 0.0f;
+			float padding1 = 0.0f;
+			float padding2 = 0.0f;
+			Matrix targetInverseViewProjection{};
+			Matrix sourceViewProjection{};
+		};
+		static_assert(sizeof(StereoResidualConstants) == 192);
+
 		struct HandoffTexture
 		{
 			Microsoft::WRL::ComPtr<ID3D11Texture2D> resource;
@@ -782,9 +805,16 @@ namespace NeuralRendering
 			ID3D11Resource* destination, ID3D11UnorderedAccessView* destinationUAV,
 			bool blendSubrect, const StereoResourceEnvelope& resourceEnvelope)
 		{
+			if (!tuning.stereoResidualReprojection)
+				stereoResidualDispatchRejected = false;
+			stereoResidualStatus = tuning.stereoResidualReprojection ?
+				"Waiting for valid stereo inputs" : "Off";
 			RecoverIfReady(device);
-			if (failureLatched || !device || !context || !color)
+			if (failureLatched || !device || !context || !color) {
+				if (tuning.stereoResidualReprojection)
+					stereoResidualStatus = "Unavailable: NR renderer is not ready";
 				return false;
+			}
 			ID3D11Resource* writeback = destination ? destination : color;
 			const auto& finishing = globals::features::upscaling.foveatedRender.settings;
 			const bool finishNR = finishing.neuralRenderingNRContribution < 1.0f ||
@@ -793,6 +823,8 @@ namespace NeuralRendering
 				return false;
 			CS_GPU_PASS("NeuralRendering::EvaluateStereo");
 			if (tuning.nrContribution <= 0.0f) {
+				if (tuning.stereoResidualReprojection)
+					stereoResidualStatus = "Inactive: NR contribution is zero";
 				for (auto& eyeReset : resetPending)
 					eyeReset.fill(true);
 				InvalidateTemporalHistory();
@@ -874,11 +906,68 @@ namespace NeuralRendering
 				}
 			}
 
+			const std::uint32_t stereoAnchorEye = std::min(tuning.stereoResidualAnchorEye, 1u);
+			const std::uint32_t stereoTargetEye = 1u - stereoAnchorEye;
+			const bool stereoAtlasLayoutValid = (colorDesc.Width % 2u) == 0 &&
+				colorDesc.Width / 2u >= colorWidth && colorDesc.Height >= colorHeight;
+			bool stereoResidualActive = tuning.stereoResidualReprojection && globals::game::isVR &&
+				stereoAtlasLayoutValid && !stereoResidualDispatchRejected;
+			bool stereoEyeCropsValid = true;
+			if (tuning.stereoResidualReprojection) {
+				if (!globals::game::isVR)
+					stereoResidualStatus = "Unavailable: requires VR mode";
+				else if (!stereoAtlasLayoutValid)
+					stereoResidualStatus = "Unavailable: expected side-by-side stereo input";
+				else if (stereoResidualDispatchRejected)
+					stereoResidualStatus = "Unavailable: transfer failed; evaluating both eyes natively";
+			}
+			if (stereoResidualActive) {
+				for (std::uint32_t eyeIndex = 0; eyeIndex < inputs.size(); ++eyeIndex) {
+					const std::uint32_t eyeStart = eyeIndex * (colorDesc.Width / 2u);
+					const auto& input = inputs[eyeIndex];
+					if (input.sourceX < eyeStart || input.sourceX + colorWidth > eyeStart + colorDesc.Width / 2u ||
+						input.sourceY + colorHeight > colorDesc.Height) {
+						stereoResidualActive = false;
+						stereoEyeCropsValid = false;
+						break;
+					}
+				}
+			}
+			if (tuning.stereoResidualReprojection && stereoResidualActive &&
+				!stereoResidualDispatchRejected && !EnsureStereoResidualResources(device)) {
+				stereoResidualActive = false;
+				stereoResidualDispatchRejected = true;
+				stereoResidualStatus = "Unavailable: reprojection shader or resources failed";
+			}
+			if (tuning.stereoResidualReprojection && globals::game::isVR && stereoAtlasLayoutValid &&
+				!stereoResidualDispatchRejected && !stereoEyeCropsValid)
+				stereoResidualStatus = "Unavailable: eye crop is outside its stereo view";
+			if (stereoResidualActive)
+				stereoResidualStatus = stereoAnchorEye == 0 ? "Active: left eye is the native anchor" :
+					"Active: right eye is the native anchor";
+			if (!stereoResidualConfigInitialized || stereoResidualConfigEnabled != stereoResidualActive ||
+				(stereoResidualActive && stereoResidualConfigAnchor != stereoAnchorEye)) {
+				if (stereoResidualConfigInitialized) {
+					for (auto& eyeReset : resetPending)
+						eyeReset.fill(true);
+					InvalidateTemporalHistory();
+				}
+				stereoResidualConfigInitialized = true;
+				stereoResidualConfigEnabled = stereoResidualActive;
+				stereoResidualConfigAnchor = stereoAnchorEye;
+			}
+			if (tuning.stereoResidualReprojection && !stereoResidualActive && !stereoResidualWarningLogged) {
+				logger::warn("[DLSSNR] one-eye stereo residual mode unavailable ({}); evaluating both eyes natively",
+					stereoResidualStatus);
+				stereoResidualWarningLogged = true;
+			}
+
 			const auto adaptivePrewarm = PrepareAdjacentPrewarmResources(device, tierIndex,
 				colorWidth, colorHeight, guideWidth, guideHeight, resourcePassCount, modelResolution,
 				stableColorWidth, stableColorHeight, tuning);
 
-			const bool temporalTierSupported = IsTemporalReuseSupported(tuning, eyes[0].tiers[tierIndex], passCount) &&
+			const bool temporalTierSupported = !stereoResidualActive &&
+				IsTemporalReuseSupported(tuning, eyes[0].tiers[tierIndex], passCount) &&
 				IsTemporalReuseSupported(tuning, eyes[1].tiers[tierIndex], passCount);
 			const bool fullEyeTemporalLayout = IsFullEyeTemporalLayout(colorDesc, inputs, colorWidth, colorHeight);
 			const bool stableTemporalLayout = IsTemporalLayoutStable(colorDesc, inputs, colorWidth, colorHeight);
@@ -909,7 +998,7 @@ namespace NeuralRendering
 					inputs[0].sourceX, inputs[0].sourceY, inputs[0].compensateCropMotion) &&
 				CanAttemptTemporalReuse(eyes[1], colorWidth, colorHeight, guideWidth, guideHeight,
 					inputs[1].sourceX, inputs[1].sourceY, inputs[1].compensateCropMotion) &&
-				!tuning.adaptiveResolution && !resetPending[0][tierIndex] && !resetPending[1][tierIndex] &&
+				!stereoResidualActive && !tuning.adaptiveResolution && !resetPending[0][tierIndex] && !resetPending[1][tierIndex] &&
 				tuning.temporalReuseCadence == 2;
 			if (temporalCandidate) {
 				const std::uint32_t anchorEye = TemporalStereoSchedule::AnchorEye(temporalFrameIndex);
@@ -948,6 +1037,8 @@ namespace NeuralRendering
 					temporalSkippedSinceFull = false;
 				}
 			}
+			if (stereoResidualActive)
+				runNative[stereoTargetEye] = false;
 
 			// Skip model-input generation for the eye receiving residual reuse. Capture
 			// mode may request both inputs, so keep its diagnostic path complete.
@@ -1125,24 +1216,26 @@ namespace NeuralRendering
 				return LatchFailure("Feature 18 stereo", static_cast<HRESULT>(Runtime::Instance().NgxResult()));
 			}
 
-			D3D11_BOX outputBox{ 0, 0, 0, colorWidth, colorHeight, 1 };
+			// Resolve both native outputs before the stereo residual pass. This keeps
+			// the anchor-eye source valid regardless of which eye is selected as anchor.
+			std::array<bool, 2> outputPrepared{};
 			for (std::uint32_t eyeIndex = 0; eyeIndex < inputs.size(); ++eyeIndex) {
-				const auto& input = inputs[eyeIndex];
+				if (!runNative[eyeIndex])
+					continue;
 				auto& eye = eyes[eyeIndex];
 				auto& tier = eye.tiers[tierIndex];
-				if (runNative[eyeIndex] && passCount == 2 &&
+				if (passCount == 2 &&
 					(tuning.secondPassCropReductionX != 0 || tuning.secondPassCropReductionY != 0 ||
 						tuning.secondPassContribution < 1.0f) &&
 					!CompositeSecondPassCrop(context, tier, modelWidth, modelHeight,
-						tuning, guideWidth, guideHeight,
-						secondPassCropFallback[eyeIndex])) {
+						tuning, guideWidth, guideHeight, secondPassCropFallback[eyeIndex])) {
 #if defined(OPENNR_CAPTURE_ENABLED)
 					if (captureFrame)
 						globals::features::openNRCapture.AbortFrame();
 #endif
 					return LatchFailure("second-pass crop composite stereo", E_FAIL);
 				}
-				if (runNative[eyeIndex] && tier.reducedResolution &&
+				if (tier.reducedResolution &&
 					!DispatchModelResolve(device, context, eye, tier, colorWidth, colorHeight, resolveSettings,
 						tuning.modelResolveMode == 1)) {
 #if defined(OPENNR_CAPTURE_ENABLED)
@@ -1151,6 +1244,54 @@ namespace NeuralRendering
 #endif
 					return LatchFailure("model output resolve stereo", E_FAIL);
 				}
+				outputPrepared[eyeIndex] = true;
+			}
+
+			bool stereoResidualFallbackThisFrame = false;
+			if (stereoResidualActive) {
+				auto& sourceEye = eyes[stereoAnchorEye];
+				auto& sourceTier = sourceEye.tiers[tierIndex];
+				auto& targetEye = eyes[stereoTargetEye];
+				auto& targetTier = targetEye.tiers[tierIndex];
+				ID3D11Resource* sourceTeacher = sourceTier.reducedResolution ?
+					sourceTier.resolved.Get() : sourceTier.output.resource11.Get();
+				ID3D11ShaderResourceView* sourceTeacherSRV = sourceTier.reducedResolution ?
+					sourceTier.resolvedSRV.Get() : sourceTier.output.srv11.Get();
+				ID3D11Resource* targetOutput = targetTier.reducedResolution ?
+					targetTier.resolved.Get() : targetTier.output.resource11.Get();
+				ID3D11UnorderedAccessView* targetOutputUAV = targetTier.reducedResolution ?
+					targetTier.resolvedUAV.Get() : targetTier.output.uav11.Get();
+				const auto eyeStart = stereoTargetEye * (colorDesc.Width / 2u);
+				const auto sourceEyeStart = stereoAnchorEye * (colorDesc.Width / 2u);
+				const bool residualApplied = outputPrepared[stereoAnchorEye] &&
+					DispatchStereoResidual(device, context, sourceEye, sourceTeacherSRV, targetEye,
+						targetOutput, targetOutputUAV, colorWidth, colorHeight, guideWidth, guideHeight,
+						colorDesc.Width / 2u, colorDesc.Height,
+						inputs[stereoAnchorEye].sourceX - sourceEyeStart, inputs[stereoAnchorEye].sourceY,
+						inputs[stereoTargetEye].sourceX - eyeStart, inputs[stereoTargetEye].sourceY,
+						stereoTargetEye);
+				if (!residualApplied) {
+					// Keep stereo presentation coherent if the transfer cannot produce
+					// this frame: restore the native anchor too, so both eyes use SR.
+					ID3D11Resource* sourceOutput = sourceTier.reducedResolution ?
+						sourceTier.resolved.Get() : sourceTier.output.resource11.Get();
+					context->CopyResource(sourceOutput, sourceEye.color.resource11.Get());
+					context->CopyResource(targetOutput, targetEye.color.resource11.Get());
+					stereoResidualFallbackThisFrame = true;
+					stereoResidualDispatchRejected = true;
+					stereoResidualStatus = "Frame fallback: both eyes use SR; native evaluation resumes next frame";
+					if (!stereoResidualWarningLogged) {
+						logger::warn("[DLSSNR] stereo residual dispatch unavailable; both eyes fall back to current SR image and native evaluation resumes next frame");
+						stereoResidualWarningLogged = true;
+					}
+				}
+			}
+
+			D3D11_BOX outputBox{ 0, 0, 0, colorWidth, colorHeight, 1 };
+			for (std::uint32_t eyeIndex = 0; eyeIndex < inputs.size(); ++eyeIndex) {
+				const auto& input = inputs[eyeIndex];
+				auto& eye = eyes[eyeIndex];
+				auto& tier = eye.tiers[tierIndex];
 #if defined(OPENNR_CAPTURE_ENABLED)
 				if (captureFrame && globals::features::openNRCapture.settings.capturePostNR) {
 					const bool writeColorPreview = globals::features::openNRCapture.settings.writeColorPreviews;
@@ -1192,6 +1333,11 @@ namespace NeuralRendering
 						writebackOutput, 0, &outputBox);
 				}
 				resetPending[eyeIndex][tierIndex] = false;
+			}
+			if (stereoResidualFallbackThisFrame) {
+				for (auto& eyeReset : resetPending)
+					eyeReset[tierIndex] = true;
+				InvalidateTemporalHistory();
 			}
 			if (temporalTierSupported) {
 				bool recorded = true;
@@ -1254,6 +1400,7 @@ namespace NeuralRendering
 			failureLatched = false;
 			copyDepthGuideCS.Reset();
 			modelResolutionCS.Reset();
+			stereoResidualReprojectCS.Reset();
 			temporalSnapshotCS.Reset();
 			temporalAccumulateCS.Reset();
 			temporalPackNativeMotionCS.Reset();
@@ -1261,6 +1408,7 @@ namespace NeuralRendering
 			adaptiveHandoffCS.Reset();
 			modelResolutionCB.Reset();
 			modelResolutionSampler.Reset();
+			stereoResidualCB.Reset();
 			temporalReuseCB.Reset();
 			temporalReuseSampler.Reset();
 			temporalConfigInitialized = false;
@@ -1270,6 +1418,12 @@ namespace NeuralRendering
 			temporalReuseCropActiveLogged = false;
 			temporalEyeAlternationLogged = false;
 			temporalReuseWarningLogged = false;
+			stereoResidualConfigInitialized = false;
+			stereoResidualConfigEnabled = false;
+			stereoResidualConfigAnchor = 0;
+			stereoResidualWarningLogged = false;
+			stereoResidualDispatchRejected = false;
+			stereoResidualStatus = "Off";
 			return true;
 		}
 
@@ -1280,10 +1434,13 @@ namespace NeuralRendering
 			InvalidateTemporalHistory();
 		}
 
+		[[nodiscard]] const char* StereoResidualStatusText() const { return stereoResidualStatus; }
+
 		void ClearShaderCache()
 		{
 			copyDepthGuideCS.Reset();
 			modelResolutionCS.Reset();
+			stereoResidualReprojectCS.Reset();
 			temporalSnapshotCS.Reset();
 			temporalAccumulateCS.Reset();
 			temporalPackNativeMotionCS.Reset();
@@ -1559,6 +1716,93 @@ namespace NeuralRendering
 					return false;
 				Util::SetResourceName(temporalReuseSampler.Get(), "NeuralRendering::TemporalReuseSampler");
 			}
+			return true;
+		}
+
+		bool EnsureStereoResidualResources(ID3D11Device* device)
+		{
+			if (!device || !stereoResidualReprojectCS.Get(
+				L"Data\\Shaders\\Upscaling\\NeuralRendering\\StereoResidualReprojectCS.hlsl", {},
+				"cs_5_0", "main", "NeuralRendering::StereoResidualReprojectCS"))
+				return false;
+			if (!stereoResidualCB) {
+				D3D11_BUFFER_DESC bufferDesc{};
+				bufferDesc.ByteWidth = sizeof(StereoResidualConstants);
+				bufferDesc.Usage = D3D11_USAGE_DEFAULT;
+				bufferDesc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+				if (FAILED(device->CreateBuffer(&bufferDesc, nullptr, stereoResidualCB.GetAddressOf())))
+					return false;
+				Util::SetResourceName(stereoResidualCB.Get(), "NeuralRendering::StereoResidualCB");
+			}
+			return true;
+		}
+
+		void ClearStereoResidualBindings(ID3D11DeviceContext* context)
+		{
+			if (!context)
+				return;
+			std::array<ID3D11ShaderResourceView*, 5> nullSources{};
+			ID3D11UnorderedAccessView* nullTarget = nullptr;
+			ID3D11Buffer* nullBuffer = nullptr;
+			context->CSSetShaderResources(0, static_cast<UINT>(nullSources.size()), nullSources.data());
+			context->CSSetUnorderedAccessViews(0, 1, &nullTarget, nullptr);
+			context->CSSetConstantBuffers(0, 1, &nullBuffer);
+			context->CSSetShader(nullptr, nullptr, 0);
+		}
+
+		bool DispatchStereoResidual(ID3D11Device* device, ID3D11DeviceContext* context,
+			const EyeResources& sourceEye, ID3D11ShaderResourceView* sourceTeacher,
+			const EyeResources& targetEye, ID3D11Resource* targetOutput,
+			ID3D11UnorderedAccessView* targetOutputUAV,
+			std::uint32_t colorWidth, std::uint32_t colorHeight,
+			std::uint32_t guideWidth, std::uint32_t guideHeight,
+			std::uint32_t eyeWidth, std::uint32_t eyeHeight,
+			std::uint32_t sourceCropX, std::uint32_t sourceCropY,
+			std::uint32_t targetCropX, std::uint32_t targetCropY,
+			std::uint32_t targetEyeIndex)
+		{
+			if (!EnsureStereoResidualResources(device) || !context || !sourceEye.color.srv11 ||
+				!sourceTeacher || !sourceEye.depth.srv11 || !targetEye.color.srv11 ||
+				!targetEye.depth.srv11 || !targetOutput || !targetOutputUAV)
+				return false;
+			D3D11_TEXTURE2D_DESC inputDesc{}, outputDesc{};
+			if (!GetTextureDesc(targetEye.color.resource11.Get(), inputDesc) ||
+				!GetTextureDesc(targetOutput, outputDesc) || inputDesc.Width != outputDesc.Width ||
+				inputDesc.Height != outputDesc.Height || inputDesc.Format != outputDesc.Format)
+				return false;
+
+			ClearStereoResidualBindings(context);
+			// The shader writes the target base plus valid residual into every output
+			// pixel, so a separate full-frame initialization copy is unnecessary.
+			CS_GPU_PASS("NeuralRendering::StereoResidualReproject");
+			const StereoResidualConstants constants{
+				.colorWidth = colorWidth,
+				.colorHeight = colorHeight,
+				.guideWidth = guideWidth,
+				.guideHeight = guideHeight,
+				.eyeWidth = eyeWidth,
+				.eyeHeight = eyeHeight,
+				.sourceCropX = sourceCropX,
+				.sourceCropY = sourceCropY,
+				.targetCropX = targetCropX,
+				.targetCropY = targetCropY,
+				.depthTolerance = 0.005f,
+				.colorTolerance = 0.12f,
+				.residualStrength = 1.0f,
+				.targetInverseViewProjection = globals::game::frameBufferCached.GetCameraViewProjInverse(targetEyeIndex),
+				.sourceViewProjection = globals::game::frameBufferCached.GetCameraViewProj(1u - targetEyeIndex),
+			};
+			context->UpdateSubresource(stereoResidualCB.Get(), 0, nullptr, &constants, 0, 0);
+			std::array<ID3D11ShaderResourceView*, 5> sources{
+				sourceEye.color.srv11.Get(), sourceTeacher, sourceEye.depth.srv11.Get(),
+				targetEye.color.srv11.Get(), targetEye.depth.srv11.Get() };
+			ID3D11Buffer* constantBuffer = stereoResidualCB.Get();
+			context->CSSetShader(stereoResidualReprojectCS.get(), nullptr, 0);
+			context->CSSetConstantBuffers(0, 1, &constantBuffer);
+			context->CSSetShaderResources(0, static_cast<UINT>(sources.size()), sources.data());
+			context->CSSetUnorderedAccessViews(0, 1, &targetOutputUAV, nullptr);
+			context->Dispatch((colorWidth + 7) / 8, (colorHeight + 7) / 8, 1);
+			ClearStereoResidualBindings(context);
 			return true;
 		}
 
@@ -2810,6 +3054,7 @@ namespace NeuralRendering
 		D3D12Interop interop;
 		Util::LazyShader<ID3D11ComputeShader> copyDepthGuideCS;
 		Util::LazyShader<ID3D11ComputeShader> modelResolutionCS;
+		Util::LazyShader<ID3D11ComputeShader> stereoResidualReprojectCS;
 		Util::LazyShader<ID3D11ComputeShader> temporalSnapshotCS;
 		Util::LazyShader<ID3D11ComputeShader> temporalAccumulateCS;
 		Util::LazyShader<ID3D11ComputeShader> temporalPackNativeMotionCS;
@@ -2817,6 +3062,7 @@ namespace NeuralRendering
 		Util::LazyShader<ID3D11ComputeShader> adaptiveHandoffCS;
 		Microsoft::WRL::ComPtr<ID3D11Buffer> modelResolutionCB;
 		Microsoft::WRL::ComPtr<ID3D11SamplerState> modelResolutionSampler;
+		Microsoft::WRL::ComPtr<ID3D11Buffer> stereoResidualCB;
 		Microsoft::WRL::ComPtr<ID3D11Buffer> temporalReuseCB;
 		Microsoft::WRL::ComPtr<ID3D11SamplerState> temporalReuseSampler;
 		Microsoft::WRL::ComPtr<ID3D11Buffer> adaptiveHandoffCB;
@@ -2832,6 +3078,12 @@ namespace NeuralRendering
 		bool temporalReuseCropActiveLogged = false;
 		bool temporalEyeAlternationLogged = false;
 		bool temporalReuseWarningLogged = false;
+		bool stereoResidualConfigInitialized = false;
+		bool stereoResidualConfigEnabled = false;
+		std::uint32_t stereoResidualConfigAnchor = 0;
+		bool stereoResidualWarningLogged = false;
+		bool stereoResidualDispatchRejected = false;
+		const char* stereoResidualStatus = "Off";
 		std::uint32_t runtimeFeatureSlotBase = 0;
 		std::uint32_t cropMotionSlotBase = 2;
 		std::uint32_t adaptivePrewarmTier = UINT32_MAX;
@@ -2903,4 +3155,5 @@ namespace NeuralRendering
 	std::uint32_t Renderer::NgxResult() const { return Runtime::Instance().NgxResult(); }
 	std::uint64_t Renderer::SuccessfulFrames() const { return Runtime::Instance().SuccessfulFrames(); }
 	const char* Renderer::StatusText() const { return ToString(Runtime::Instance().Status()); }
+	const char* Renderer::StereoResidualStatusText() const { return state_->StereoResidualStatusText(); }
 }

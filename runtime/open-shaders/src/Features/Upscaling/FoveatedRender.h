@@ -137,6 +137,8 @@ struct FoveatedRender
 		float neuralRenderingSecondPassFeatherWidth = 32.0f;
 		float neuralRenderingSecondPassFalloffCurve = 1.0f;
 		float neuralRenderingSecondPassDitherStrength = 1.0f;
+		bool neuralRenderingStereoResidualReprojection = false;
+		uint neuralRenderingStereoResidualAnchorEye = 0;
 		// Retired experimental routes. These are intentionally not serialized or
 		// exposed and ClampSettings forces them off for old in-memory callers.
 		uint neuralRenderingPreUpscale = 0;

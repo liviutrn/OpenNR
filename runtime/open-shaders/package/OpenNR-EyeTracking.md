@@ -36,3 +36,21 @@ timestamp: query age is not tracker age. The `Upscaling` devbench query
 The gaze provider remains experimental. A compatible eye-tracking headset and OpenVR
 runtime are required for live validation; no headset acceptance was performed
 as part of packaging.
+
+## Experimental one-eye NR
+
+The optional `One-eye NR + residual reprojection` mode evaluates DLSS 5 NR for
+one eye, then reprojects only the difference between that eye's NR result and
+its SR input into the other eye. The target keeps its own SR image; depth,
+color, and crop-edge checks reject pixels that cannot be matched safely. This
+avoids a second Feature 18 evaluation and does not copy the anchor eye's finished
+image. The mode is disabled by default and adds one residual-reprojection
+compute pass. Water, reflections, disocclusions, and other view-dependent
+effects still need headset testing; disable the mode if those areas show stereo
+differences.
+
+Sequential NR keeps a separate Feature 18 history for each pass, so each pass
+receives the game's motion vectors once. Gaze crop-origin motion is compensated
+once per eye before the pass cascade. The second-pass contribution control
+limits the added pass's result without replacing the first-pass image; values
+below 100% use an extra composite pass.

@@ -314,8 +314,11 @@ namespace NeuralRendering
 				.secondPassFeatherWidth = settings.neuralRenderingSecondPassFeatherWidth,
 				.secondPassFalloffCurve = settings.neuralRenderingSecondPassFalloffCurve,
 				.secondPassDitherStrength = settings.neuralRenderingSecondPassDitherStrength,
+				.stereoResidualReprojection = settings.neuralRenderingStereoResidualReprojection && globals::game::isVR,
+				.stereoResidualAnchorEye = settings.neuralRenderingStereoResidualAnchorEye,
 				.adaptiveMaxPassCount = requestedPassMode + 1,
 				.temporalReuseCadence = (adaptive || !globals::game::isVR || settings.neuralRenderingPreUpscale != 0 ||
+					settings.neuralRenderingStereoResidualReprojection ||
 					settings.neuralRenderingMultiPass != 0) ? 0u : settings.neuralRenderingTemporalReuseCadence,
 				.temporalReuseDepthThreshold = settings.neuralRenderingTemporalDepthThreshold,
 				.temporalReuseColorTolerance = settings.neuralRenderingTemporalColorTolerance,
@@ -599,6 +602,7 @@ namespace NeuralRendering
 		foveated.UpdateAdaptiveState(frame, true);
 		Tuning tuning = GetTuning(foveated, true);
 		tuning.temporalReuseCadence = 0;
+		tuning.stereoResidualReprojection = false;
 		bool succeeded = false;
 		if (!globals::game::isVR) {
 			CS_GPU_PASS("NeuralRendering::FlatPreUpscale");

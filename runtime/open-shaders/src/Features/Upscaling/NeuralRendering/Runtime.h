@@ -35,6 +35,8 @@ namespace NeuralRendering
 		float secondPassFeatherWidth = 32.0f;
 		float secondPassFalloffCurve = 1.0f;
 		float secondPassDitherStrength = 1.0f;
+		bool stereoResidualReprojection = false;
+		std::uint32_t stereoResidualAnchorEye = 0;
 		// Allocate up to this many pass resources when adaptive pass reduction is
 		// active, so a pressure response does not recreate the cascade resources.
 		std::uint32_t adaptiveMaxPassCount = 1;
