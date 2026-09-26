@@ -11,6 +11,7 @@ on:
       - "runtime/open-shaders/CMakeLists.txt"
       - "runtime/open-shaders/CMakePresets.json"
       - "runtime/open-shaders/vcpkg.json"
+      - ".github/scripts/prepare-frozen-external-runtime.ps1"
       - ".github/workflows/build-dlss-fast.yml"
   workflow_dispatch:
 
@@ -34,53 +35,9 @@ jobs:
           submodules: recursive
           fetch-depth: 2
 
-      - name: Apply packaging-only external carrier compatibility
+      - name: Apply frozen-source external-runtime compatibility
         shell: pwsh
-        run: |
-          $path = "runtime/open-shaders/cmake/Streamline-Runtime.cmake"
-          $text = Get-Content $path -Raw
-          if ($text.Contains('OpenNR update package will preserve the installed nvngx_dlssnr.dll')) {
-              Write-Host "Packaging compatibility already present."
-          } else {
-              $startMarker = 'if(NOT EXISTS "${OPENNR_DLSSNR_RUNTIME_SOURCE}")'
-              $endMarker = 'list(APPEND STREAMLINE_RUNTIME_FILES "${_opennr_dlssnr_runtime_destination}")'
-              $start = $text.IndexOf($startMarker)
-              $end = if ($start -ge 0) { $text.IndexOf($endMarker, $start) } else { -1 }
-              if ($start -lt 0 -or $end -lt 0) { throw "Expected frozen Feature 18 packaging block not found; refusing to patch" }
-              $end += $endMarker.Length
-              $new = @'
-          if(NOT EXISTS "${OPENNR_DLSSNR_RUNTIME_SOURCE}")
-              if(OPENNR_EXTERNAL_DLSSNR_RUNTIME)
-                  message(STATUS "OpenNR update package will preserve the installed nvngx_dlssnr.dll")
-              else()
-                  message(FATAL_ERROR
-                      "OpenNR Feature 18 carrier is missing: ${OPENNR_DLSSNR_RUNTIME_SOURCE}. "
-                      "Supply the validated nvngx_dlssnr.dll before packaging."
-                  )
-              endif()
-          else()
-              file(SIZE "${OPENNR_DLSSNR_RUNTIME_SOURCE}" _opennr_dlssnr_runtime_size)
-              if(_opennr_dlssnr_runtime_size LESS 1048576)
-                  message(FATAL_ERROR
-                      "OpenNR Feature 18 carrier is implausibly small: ${_opennr_dlssnr_runtime_size} bytes"
-                  )
-              endif()
-              set(_opennr_dlssnr_runtime_destination
-                  "${STREAMLINE_RUNTIME_DIRECTORY}/nvngx_dlssnr.dll"
-              )
-              file(COPY_FILE
-                  "${OPENNR_DLSSNR_RUNTIME_SOURCE}"
-                  "${_opennr_dlssnr_runtime_destination}"
-                  ONLY_IF_DIFFERENT
-              )
-              list(APPEND STREAMLINE_RUNTIME_FILES "${_opennr_dlssnr_runtime_destination}")
-          endif()
-          '@
-              $text = $text.Substring(0, $start) + $new + $text.Substring($end)
-              Set-Content -Path $path -Value $text -Encoding utf8 -NoNewline
-              Write-Host "Applied CI-only packaging compatibility."
-          }
-          git diff --check -- $path
+        run: ./.github/scripts/prepare-frozen-external-runtime.ps1
 
       - name: Set up MSVC x64
         uses: ilammy/msvc-dev-cmd@v1
@@ -101,9 +58,10 @@ jobs:
             build-fast
             .cache/vcpkg
             vcpkg
-          key: opennr-dlss-fast-v5-${{ runner.os }}-${{ hashFiles('runtime/open-shaders/vcpkg.json') }}-${{ github.sha }}
+          key: opennr-dlss-fast-v6-${{ runner.os }}-${{ hashFiles('runtime/open-shaders/vcpkg.json') }}-${{ github.sha }}
           restore-keys: |
-            opennr-dlss-fast-v5-${{ runner.os }}-${{ hashFiles('runtime/open-shaders/vcpkg.json') }}-
+            opennr-dlss-fast-v6-${{ runner.os }}-${{ hashFiles('runtime/open-shaders/vcpkg.json') }}-
+          save-always: true
 
       - name: Bootstrap pinned vcpkg only when needed
         shell: pwsh
