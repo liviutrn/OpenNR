@@ -2902,6 +2902,7 @@ namespace NeuralRendering
 				for (std::uint32_t passIndex = 0; passIndex < kCascadePassCount; ++passIndex)
 					Runtime::Instance().ResetFeature(FeatureSlot(eyeIndex, tierIndex, passIndex));
 			}
+			secondPassCropFallback[eyeIndex][tierIndex].Reset();
 			tier = {};
 			const std::string suffix = eyeIndex == 0 ? "Left" : "Right";
 			const std::string tierSuffix = suffix + "_" + std::to_string(modelResolution);
@@ -2985,6 +2986,8 @@ namespace NeuralRendering
 						for (std::uint32_t passIndex = 0; passIndex < kCascadePassCount; ++passIndex)
 							Runtime::Instance().ResetFeature(FeatureSlot(eyeIndex, oldTier, passIndex));
 				}
+				for (auto& latch : secondPassCropFallback[eyeIndex])
+					latch.Reset();
 				ResetAdaptivePrewarmState();
 				eye = {};
 				const std::string suffix = eyeIndex == 0 ? "Left" : "Right";
@@ -3028,6 +3031,7 @@ namespace NeuralRendering
 				waited = true;
 				for (std::uint32_t pass = 0; pass < kCascadePassCount; ++pass)
 					Runtime::Instance().ResetFeature(FeatureSlot(eyeIndex, resident, pass));
+				secondPassCropFallback[eyeIndex][resident].Reset();
 				eye.tiers[resident] = {};
 				resetPending[eyeIndex][resident] = true;
 			}
@@ -3048,6 +3052,7 @@ namespace NeuralRendering
 				if (!Runtime::Instance().NeedsRecreation(slot, featureInputWidth, featureInputHeight,
 					resourceModelWidth, resourceModelHeight, lowResolutionMotion))
 					continue;
+				secondPassCropFallback[eyeIndex][tierIndex].Reset();
 				if (!waited && !interop.WaitForIdle())
 					return false;
 				waited = true;

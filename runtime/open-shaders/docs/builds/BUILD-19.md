@@ -1,5 +1,7 @@
 # Build 19 — gaze crop stability and per-pass NR tuning
 
+Superseded before delivery by [Build 20](./BUILD-20.md), which also clears the second-pass fallback latch when NR runtime resources are recreated or a resolution tier is evicted.
+
 ## Changes and reasons
 
 - Uses one per-frame, per-eye crop plan for DLSS input/output rectangles and post-NR placement. This keeps the pixel rectangles consistent across stages when UV coordinates land between pixels.
@@ -14,4 +16,3 @@
 Check steady fixation, small gaze movement, saccades, gaze reacquisition, crop padding, both eyes, and odd/non-integer crop ratios. Compare the adaptive and static crop routes, and verify that a rejected second-pass crop continues using the full-region retry without repeated per-frame retries. Test pass-specific presets both with and without pre-upscale NR.
 
 The common crop plan removes independent rectangle calculations, but it does not fully correct fractional sampling-phase changes as gaze moves. Astra advised deferring any guessed jitter-phase offset until it can be validated against runtime projection/jitter behavior or handled by coordinate-aware reconstruction.
-
