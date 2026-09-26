@@ -7,6 +7,7 @@ on:
     paths:
       - '.github/workflows/psvr2toolkit-custom.yml'
       - 'tools/patch_psvr2toolkit_custom.py'
+      - 'tools/patch_psvr2_height_2174.py'
   workflow_dispatch:
 
 env:
@@ -27,9 +28,11 @@ jobs:
           git checkout $env:PSVR2_COMMIT
           git submodule update --init --recursive
 
-      - name: Apply user custom patches
+      - name: Apply exact user custom patches
         shell: pwsh
-        run: python tools/patch_psvr2toolkit_custom.py
+        run: |
+          python tools/patch_psvr2toolkit_custom.py
+          python tools/patch_psvr2_height_2174.py
 
       - name: Configure
         shell: pwsh
@@ -48,29 +51,31 @@ jobs:
           PSVR2Toolkit custom driver - render target override
           Base upstream commit: 5daea3856fda4399bbe61b7f9bc872ea7b321a43
 
-          Preserved user modifications:
-          - 3x final PCM haptics gain with saturation
-          - Right R2 raw 0..128 -> 0, 129..255 remapped to 2..255
-          - Stick curve: first 20% linear, then quadratic
+          Preserved exactly from the user's prior custom DLL:
+          - recovered nonlinear haptics gain LUT
+          - right R2 half-range/semi-press remap
+          - recovered 256-entry stick curve LUT, active-controller axes only
 
-          New SteamVR settings under "playstation_vr2_ex":
+          Render-target override:
             "renderTargetOverride" : true,
             "renderTargetWidth" : 2568,
-            "renderTargetHeight" : 2268
+            "renderTargetHeight" : 2174
 
-          These defaults are pre-compensated for the current Advanced FOV crop:
+          Current Advanced FOV crop:
           - 80% total binocular horizontal FOV remaining
           - 10% total VFOV removed from top
           - 25% total VFOV removed from bottom
 
-          Reference native PSVR2 recommendation: 3400 x 3468.
-          Expected post-crop target: approximately 2568 x 1844.
+          The 2174 pre-crop height is based on the user's measured SteamVR transform:
+          2268 -> 1924 under this crop (factor 0.848325).
+          Target post-crop height: ~1844.
+          Expected post-crop recommendation: approximately 2568 x 1844.
 
-          Restart SteamVR after changing these settings. Verify with:
+          Restart SteamVR completely after replacing the DLL, then verify with:
             hmdq.exe geom --openvr -v 1
           '@ | Set-Content -Encoding UTF8 artifact/README_RENDER_TARGET.txt
 
       - uses: actions/upload-artifact@v7
         with:
-          name: PSVR2Toolkit_RenderTargetOverride
+          name: PSVR2Toolkit_RenderTargetOverride_2174
           path: artifact
