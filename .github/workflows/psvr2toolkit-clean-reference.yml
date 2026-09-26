@@ -1,0 +1,36 @@
+name: Build clean PSVR2Toolkit reference
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - psvr2-render-target-override
+    paths:
+      - '.github/workflows/psvr2toolkit-clean-reference.yml'
+
+env:
+  BUILD_TYPE: RelWithDebInfo
+  PSVR2_COMMIT: 5daea3856fda4399bbe61b7f9bc872ea7b321a43
+
+jobs:
+  build:
+    runs-on: windows-2025-vs2026
+    steps:
+      - uses: actions/checkout@v7
+      - name: Clone exact upstream
+        shell: pwsh
+        run: |
+          git clone --recursive https://github.com/BnuuySolutions/PSVR2Toolkit.git clean_psvr2
+          cd clean_psvr2
+          git checkout $env:PSVR2_COMMIT
+          git submodule update --init --recursive
+      - name: Configure
+        shell: pwsh
+        run: cmake -B clean_psvr2/build -S clean_psvr2 -DCMAKE_BUILD_TYPE=$env:BUILD_TYPE
+      - name: Build driver only
+        shell: pwsh
+        run: cmake --build clean_psvr2/build --config $env:BUILD_TYPE --target psvr2_openvr_driver_ex
+      - uses: actions/upload-artifact@v7
+        with:
+          name: PSVR2Toolkit_CleanReference
+          path: clean_psvr2/build/bin/RelWithDebInfo/driver_playstation_vr2.dll
