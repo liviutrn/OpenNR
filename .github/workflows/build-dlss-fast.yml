@@ -52,16 +52,16 @@ jobs:
           useCloudCache: false
 
       - name: Restore persistent compile/dependency cache
-        uses: actions/cache@v4
+        id: fast-cache
+        uses: actions/cache/restore@v4
         with:
           path: |
             build-fast
             .cache/vcpkg
             vcpkg
-          key: opennr-dlss-fast-v6-${{ runner.os }}-${{ hashFiles('runtime/open-shaders/vcpkg.json') }}-${{ github.sha }}
+          key: opennr-dlss-fast-v7-${{ runner.os }}-${{ hashFiles('runtime/open-shaders/vcpkg.json') }}-${{ github.sha }}
           restore-keys: |
-            opennr-dlss-fast-v6-${{ runner.os }}-${{ hashFiles('runtime/open-shaders/vcpkg.json') }}-
-          save-always: true
+            opennr-dlss-fast-v7-${{ runner.os }}-${{ hashFiles('runtime/open-shaders/vcpkg.json') }}-
 
       - name: Bootstrap pinned vcpkg only when needed
         shell: pwsh
@@ -150,3 +150,13 @@ jobs:
           path: fast-artifact/*
           if-no-files-found: error
           retention-days: 30
+
+      - name: Save persistent compile/dependency cache
+        if: always() && steps.fast-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            build-fast
+            .cache/vcpkg
+            vcpkg
+          key: opennr-dlss-fast-v7-${{ runner.os }}-${{ hashFiles('runtime/open-shaders/vcpkg.json') }}-${{ github.sha }}
