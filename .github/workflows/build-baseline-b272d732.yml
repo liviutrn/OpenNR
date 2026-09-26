@@ -8,11 +8,10 @@ on:
 
 permissions:
   contents: read
-  actions: read
 
 jobs:
   package:
-    name: Build unchanged 2.15.1 package
+    name: Build unchanged 2.15.1 update package
     runs-on: windows-2025
     timeout-minutes: 120
 
@@ -32,31 +31,67 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "Baseline source differs from $baseline" }
           "OPENNR_BASELINE_SHA=$baseline" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
-      - name: Recover validated Feature 18 carrier from successful build 21
-        uses: actions/download-artifact@v4
-        with:
-          name: OpenNR-2.15.1-37769cf
-          path: ${{ runner.temp }}/carrier-artifact
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          run-id: 36237786454
-
-      - name: Extract and validate Feature 18 carrier
+      - name: Apply packaging-only external carrier compatibility
         shell: pwsh
         run: |
-          $archive = Join-Path $env:RUNNER_TEMP "carrier-artifact\OpenNR 2.15.1.7z"
-          if (-not (Test-Path $archive)) { throw "Build 21 package archive not found: $archive" }
-          $carrierDir = Join-Path $env:RUNNER_TEMP "opennr-feature18-carrier"
-          New-Item -ItemType Directory -Force -Path $carrierDir | Out-Null
-          & 7z e $archive "-o$carrierDir" -r -y "nvngx_dlssnr.dll"
-          if ($LASTEXITCODE -ne 0) { throw "Could not extract nvngx_dlssnr.dll from validated build 21 package" }
-          $carrier = Get-ChildItem $carrierDir -File -Filter "nvngx_dlssnr.dll" | Select-Object -First 1
-          if (-not $carrier) { throw "nvngx_dlssnr.dll not found in validated build 21 package" }
-          if ($carrier.Length -lt 1048576) { throw "Extracted Feature 18 carrier is implausibly small" }
-          $carrierHash = (Get-FileHash $carrier.FullName -Algorithm SHA256).Hash
-          Write-Host "Validated carrier: $($carrier.FullName)"
-          Write-Host "Carrier SHA-256: $carrierHash"
-          "OPENNR_CARRIER_DLL=$($carrier.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-          "OPENNR_CARRIER_SHA256=$carrierHash" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          $path = "runtime/open-shaders/cmake/Streamline-Runtime.cmake"
+          $text = Get-Content $path -Raw
+          $old = @'
+          if(NOT EXISTS "${OPENNR_DLSSNR_RUNTIME_SOURCE}")
+              message(FATAL_ERROR
+                  "OpenNR Feature 18 carrier is missing: ${OPENNR_DLSSNR_RUNTIME_SOURCE}. "
+                  "Supply the validated nvngx_dlssnr.dll before packaging."
+              )
+          endif()
+          file(SIZE "${OPENNR_DLSSNR_RUNTIME_SOURCE}" _opennr_dlssnr_runtime_size)
+          if(_opennr_dlssnr_runtime_size LESS 1048576)
+              message(FATAL_ERROR
+                  "OpenNR Feature 18 carrier is implausibly small: ${_opennr_dlssnr_runtime_size} bytes"
+              )
+          endif()
+          set(_opennr_dlssnr_runtime_destination
+              "${STREAMLINE_RUNTIME_DIRECTORY}/nvngx_dlssnr.dll"
+          )
+          file(COPY_FILE
+              "${OPENNR_DLSSNR_RUNTIME_SOURCE}"
+              "${_opennr_dlssnr_runtime_destination}"
+              ONLY_IF_DIFFERENT
+          )
+          list(APPEND STREAMLINE_RUNTIME_FILES "${_opennr_dlssnr_runtime_destination}")
+          '@
+          $new = @'
+          if(NOT EXISTS "${OPENNR_DLSSNR_RUNTIME_SOURCE}")
+              if(OPENNR_EXTERNAL_DLSSNR_RUNTIME)
+                  message(STATUS "OpenNR update package will preserve the installed nvngx_dlssnr.dll")
+              else()
+                  message(FATAL_ERROR
+                      "OpenNR Feature 18 carrier is missing: ${OPENNR_DLSSNR_RUNTIME_SOURCE}. "
+                      "Supply the validated nvngx_dlssnr.dll before packaging."
+                  )
+              endif()
+          else()
+              file(SIZE "${OPENNR_DLSSNR_RUNTIME_SOURCE}" _opennr_dlssnr_runtime_size)
+              if(_opennr_dlssnr_runtime_size LESS 1048576)
+                  message(FATAL_ERROR
+                      "OpenNR Feature 18 carrier is implausibly small: ${_opennr_dlssnr_runtime_size} bytes"
+                  )
+              endif()
+              set(_opennr_dlssnr_runtime_destination
+                  "${STREAMLINE_RUNTIME_DIRECTORY}/nvngx_dlssnr.dll"
+              )
+              file(COPY_FILE
+                  "${OPENNR_DLSSNR_RUNTIME_SOURCE}"
+                  "${_opennr_dlssnr_runtime_destination}"
+                  ONLY_IF_DIFFERENT
+              )
+              list(APPEND STREAMLINE_RUNTIME_FILES "${_opennr_dlssnr_runtime_destination}")
+          endif()
+          '@
+          if (-not $text.Contains($old)) { throw "Expected frozen packaging block not found; refusing to patch" }
+          $text = $text.Replace($old, $new)
+          Set-Content -Path $path -Value $text -Encoding utf8 -NoNewline
+          git diff --check -- $path
+          Write-Host "Applied CI-only packaging compatibility. No C++/shader source was changed."
 
       - name: Set up MSVC x64
         uses: ilammy/msvc-dev-cmd@v1
@@ -85,7 +120,7 @@ jobs:
           Pop-Location
           "VCPKG_ROOT=$vcpkg" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
-      - name: Configure unchanged release package
+      - name: Configure frozen release source
         shell: pwsh
         working-directory: runtime/open-shaders
         run: |
@@ -93,11 +128,10 @@ jobs:
           $build = Join-Path $env:GITHUB_WORKSPACE "build-package"
           cmake --preset OpenNR-Package -B "$build" `
             -DOPENNR_EXTERNAL_DLSSNR_RUNTIME=ON `
-            "-DOPENNR_DLSSNR_RUNTIME_SOURCE=$env:OPENNR_CARRIER_DLL" `
             "-DDIST_PATH=$dist"
           if ($LASTEXITCODE -ne 0) { throw "CMake configure failed" }
 
-      - name: Build unchanged package
+      - name: Build frozen update package
         shell: pwsh
         run: |
           $build = Join-Path $env:GITHUB_WORKSPACE "build-package"
@@ -109,19 +143,18 @@ jobs:
         run: |
           $dist = Join-Path $env:GITHUB_WORKSPACE "dist"
           @"
-          OpenNR unchanged baseline test build
-          Source commit: b272d732bd22d3ae6e320e03a5f06957492b916d
+          OpenNR frozen baseline test build
+          Compiled source commit: b272d732bd22d3ae6e320e03a5f06957492b916d
           Source version: 2.15.1
-          CI-only branch: build/opennr-2.15.1-b272d732
-          Runtime/source modifications: NONE
-          Feature 18 carrier source: successful build 21 artifact (run 36237786454)
-          Feature 18 carrier SHA-256: $env:OPENNR_CARRIER_SHA256
+          C++/shader/runtime logic modifications: NONE
+          CI packaging compatibility only: preserve already-installed nvngx_dlssnr.dll
+          Package type: update package; install over an existing OpenNR 2.15.1 installation with a working Feature 18 carrier.
           "@ | Set-Content -Path (Join-Path $dist "BASELINE_BUILD_INFO.txt") -Encoding utf8
 
       - name: Upload test package
         uses: actions/upload-artifact@v4
         with:
-          name: OpenNR-2.15.1-UNCHANGED-b272d732
+          name: OpenNR-2.15.1-FROZEN-b272d732
           path: dist/*
           if-no-files-found: error
           retention-days: 30
