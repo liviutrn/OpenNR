@@ -11,7 +11,6 @@ on:
       - "runtime/open-shaders/CMakeLists.txt"
       - "runtime/open-shaders/CMakePresets.json"
       - "runtime/open-shaders/vcpkg.json"
-      - ".github/scripts/prepare-frozen-external-runtime.ps1"
       - ".github/workflows/build-dlss-fast.yml"
   workflow_dispatch:
 
@@ -35,10 +34,6 @@ jobs:
           submodules: recursive
           fetch-depth: 2
 
-      - name: Apply frozen-source external-runtime compatibility
-        shell: pwsh
-        run: ./.github/scripts/prepare-frozen-external-runtime.ps1
-
       - name: Set up MSVC x64
         uses: ilammy/msvc-dev-cmd@v1
         with:
@@ -51,7 +46,7 @@ jobs:
           ninjaVersion: latest
           useCloudCache: false
 
-      - name: Restore persistent compile/dependency cache
+      - name: Restore persistent compile/dependency/runtime cache
         id: fast-cache
         uses: actions/cache/restore@v4
         with:
@@ -59,9 +54,43 @@ jobs:
             build-fast
             .cache/vcpkg
             vcpkg
-          key: opennr-dlss-fast-v7-${{ runner.os }}-${{ hashFiles('runtime/open-shaders/vcpkg.json') }}-${{ github.sha }}
+            external-runtime
+          key: opennr-dlss-fast-v8-${{ runner.os }}-${{ hashFiles('runtime/open-shaders/vcpkg.json') }}-${{ github.sha }}
           restore-keys: |
-            opennr-dlss-fast-v7-${{ runner.os }}-${{ hashFiles('runtime/open-shaders/vcpkg.json') }}-
+            opennr-dlss-fast-v8-${{ runner.os }}-${{ hashFiles('runtime/open-shaders/vcpkg.json') }}-
+
+      - name: Ensure exact working DLSS-NR 310.8.0 carrier
+        shell: pwsh
+        run: |
+          $runtimeDir = Join-Path $env:GITHUB_WORKSPACE "external-runtime"
+          New-Item -ItemType Directory -Force -Path $runtimeDir | Out-Null
+          $dll = Join-Path $runtimeDir "nvngx_dlssnr.dll"
+          $expectedDll = "E16BCF15E16E13F527491CDF7845B2FE6521A738D8F7C9C721866A8496E1FC8E"
+          $valid = $false
+          if (Test-Path $dll) {
+            $hash = (Get-FileHash $dll -Algorithm SHA256).Hash.ToUpperInvariant()
+            $valid = ($hash -eq $expectedDll) -and ((Get-Item $dll).Length -eq 165840496)
+          }
+          if (-not $valid) {
+            $zip = Join-Path $runtimeDir "nvngx_dlssnr_310.8.0.zip"
+            $url = "https://github.com/RankFTW/rhi-repo/releases/download/dlssnr-310.8.0/nvngx_dlssnr_310.8.0.zip"
+            Invoke-WebRequest -Uri $url -OutFile $zip
+            $zipHash = (Get-FileHash $zip -Algorithm SHA256).Hash.ToUpperInvariant()
+            if ($zipHash -ne "388C0A7912E15EC911B9C9E11A692142B11FE387DDF2B637D8C358138FFFB3AC") {
+              throw "DLSS-NR archive SHA-256 mismatch: $zipHash"
+            }
+            $extract = Join-Path $runtimeDir "extract"
+            if (Test-Path $extract) { Remove-Item $extract -Recurse -Force }
+            Expand-Archive -Path $zip -DestinationPath $extract -Force
+            $found = Get-ChildItem $extract -Recurse -File -Filter "nvngx_dlssnr.dll" | Select-Object -First 1
+            if (-not $found) { throw "nvngx_dlssnr.dll not found after extraction" }
+            Copy-Item $found.FullName $dll -Force
+          }
+          $dllHash = (Get-FileHash $dll -Algorithm SHA256).Hash.ToUpperInvariant()
+          if ($dllHash -ne $expectedDll) { throw "DLSS-NR DLL SHA-256 mismatch: $dllHash" }
+          if ((Get-Item $dll).Length -ne 165840496) { throw "Unexpected DLSS-NR DLL size" }
+          "OPENNR_DLSSNR_RUNTIME_SOURCE=$dll" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          Write-Host "Verified exact working nvngx_dlssnr.dll: $dllHash"
 
       - name: Bootstrap pinned vcpkg only when needed
         shell: pwsh
@@ -92,7 +121,7 @@ jobs:
         run: |
           $build = Join-Path $env:GITHUB_WORKSPACE "build-fast"
           cmake --preset OpenNR-Package -B "$build" `
-            -DOPENNR_EXTERNAL_DLSSNR_RUNTIME=ON `
+            "-DOPENNR_DLSSNR_RUNTIME_SOURCE=$env:OPENNR_DLSSNR_RUNTIME_SOURCE" `
             -DSKIP_RUNTIME_DOWNLOADS=ON `
             -DZIP_TO_DIST=OFF `
             -DAIO_ZIP_TO_DIST=OFF `
@@ -135,12 +164,13 @@ jobs:
           Target: CommunityShaders only
           Configuration: Release optimized, no LTO
           Full package generation: skipped
-          nvngx_dlssnr.dll: preserved from existing OpenNR installation; not part of this artifact
+          DLSS-NR carrier used only to satisfy/validate the original build contract; not included in artifact.
+          Carrier SHA-256: E16BCF15E16E13F527491CDF7845B2FE6521A738D8F7C9C721866A8496E1FC8E
           DLL SHA-256: $sha256
 
           Install for testing by replacing only:
           SKSE/Plugins/CommunityShaders.dll
-          in an existing matching OpenNR 2.15.1 installation.
+          in the verified OpenNR 2.15.1 installation.
           "@ | Set-Content (Join-Path $env:GITHUB_WORKSPACE "fast-artifact\BUILD_INFO.txt") -Encoding utf8
 
       - name: Upload drop-in DLL
@@ -151,7 +181,7 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-      - name: Save persistent compile/dependency cache
+      - name: Save persistent compile/dependency/runtime cache
         if: always() && steps.fast-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
         with:
@@ -159,4 +189,5 @@ jobs:
             build-fast
             .cache/vcpkg
             vcpkg
-          key: opennr-dlss-fast-v7-${{ runner.os }}-${{ hashFiles('runtime/open-shaders/vcpkg.json') }}-${{ github.sha }}
+            external-runtime
+          key: opennr-dlss-fast-v8-${{ runner.os }}-${{ hashFiles('runtime/open-shaders/vcpkg.json') }}-${{ github.sha }}
