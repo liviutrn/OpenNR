@@ -48,13 +48,17 @@ endif()
     Set-Content -Path $streamlinePath -Value $streamline -Encoding utf8 -NoNewline
 }
 
-# 2. Validator: match the already-successful build-21 behavior. The carrier is
-# mandatory only for self-contained packages, not external-runtime update builds.
+# 2. Validator: backport the complete external-carrier behavior from the
+# already-successful build 21 validator. No C++ or shader source is changed.
 $validator = Get-Content $validatorPath -Raw
+$validatorChanged = $false
+
 $genericCarrier = 'NOT EXISTS "${_temporal_shader_path}" OR NOT EXISTS "${_dlssnr_carrier_path}" OR'
 if ($validator.Contains($genericCarrier)) {
     $validator = $validator.Replace($genericCarrier, 'NOT EXISTS "${_temporal_shader_path}" OR')
+    $validatorChanged = $true
 }
+
 $conditionalCarrier = 'if(NOT OPENNR_EXTERNAL_DLSSNR_RUNTIME AND NOT EXISTS "${_dlssnr_carrier_path}")'
 if (-not $validator.Contains($conditionalCarrier)) {
     $readMarker = 'file(READ "${_icon_loader_path}" _icon_loader)'
@@ -67,6 +71,33 @@ if(NOT OPENNR_EXTERNAL_DLSSNR_RUNTIME AND NOT EXISTS "${_dlssnr_carrier_path}")
 endif()
 '@
     $validator = $validator.Replace($readMarker, $carrierCheck + "`n" + $readMarker)
+    $validatorChanged = $true
+}
+
+$oldSizeBlock = @'
+file(SIZE "${_dlssnr_carrier_path}" _source_dlssnr_size)
+if(_source_dlssnr_size LESS 1048576)
+    message(FATAL_ERROR
+        "OpenNR source contract found an implausibly small native Feature 18 carrier: ${_source_dlssnr_size} bytes"
+    )
+endif()
+'@
+$guardedSizeBlock = @'
+if(NOT OPENNR_EXTERNAL_DLSSNR_RUNTIME)
+    file(SIZE "${_dlssnr_carrier_path}" _source_dlssnr_size)
+    if(_source_dlssnr_size LESS 1048576)
+        message(FATAL_ERROR
+            "OpenNR source contract found an implausibly small native Feature 18 carrier: ${_source_dlssnr_size} bytes"
+        )
+    endif()
+endif()
+'@
+if ($validator.Contains($oldSizeBlock) -and -not $validator.Contains($guardedSizeBlock)) {
+    $validator = $validator.Replace($oldSizeBlock, $guardedSizeBlock)
+    $validatorChanged = $true
+}
+
+if ($validatorChanged) {
     Set-Content -Path $validatorPath -Value $validator -Encoding utf8 -NoNewline
 }
 
