@@ -35,9 +35,9 @@ jobs:
         shell: pwsh
         run: cmake -B psvr2toolkit/build -S psvr2toolkit -DCMAKE_BUILD_TYPE=$env:BUILD_TYPE
 
-      - name: Build
+      - name: Build driver only
         shell: pwsh
-        run: cmake --build psvr2toolkit/build --config $env:BUILD_TYPE
+        run: cmake --build psvr2toolkit/build --config $env:BUILD_TYPE --target psvr2_openvr_driver_ex
 
       - name: Prepare artifact
         shell: pwsh
