@@ -43,14 +43,16 @@ jobs:
           ninjaVersion: latest
           useCloudCache: false
 
-      - name: Bootstrap pinned vcpkg
+      - name: Bootstrap pinned complete vcpkg checkout
         shell: pwsh
         run: |
           $vcpkg = Join-Path $env:GITHUB_WORKSPACE "vcpkg"
-          git clone --filter=blob:none https://github.com/microsoft/vcpkg.git $vcpkg
-          Push-Location $vcpkg
           $baseline = (Get-Content "$env:GITHUB_WORKSPACE/runtime/open-shaders/vcpkg.json" -Raw | ConvertFrom-Json).'builtin-baseline'
+          git clone https://github.com/microsoft/vcpkg.git $vcpkg
+          if ($LASTEXITCODE -ne 0) { throw "vcpkg clone failed" }
+          Push-Location $vcpkg
           git checkout $baseline
+          if ($LASTEXITCODE -ne 0) { throw "vcpkg baseline checkout failed" }
           & .\bootstrap-vcpkg.bat -disableMetrics
           if ($LASTEXITCODE -ne 0) { throw "vcpkg bootstrap failed" }
           Pop-Location
