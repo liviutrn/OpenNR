@@ -2,6 +2,11 @@
 
 This revision includes the Build 19 changes and additionally clears a rejected second-pass crop latch whenever its runtime resources are recreated or its resolution tier is evicted.
 
+## Package status
+
+The Build 20 Windows packaging run failed during compilation and produced no artifact. MSVC warning C4458 flagged two local variables named `secondPassCropFallback` because they hid the `State` member; the project treats warnings as errors. Build 21 renames those local variables only and rebuilds the same feature set.
+
+
 ## Changes and reasons
 
 - Uses one per-frame, per-eye crop plan for DLSS input/output rectangles and post-NR placement. This keeps the pixel rectangles consistent across stages when UV coordinates land between pixels.
