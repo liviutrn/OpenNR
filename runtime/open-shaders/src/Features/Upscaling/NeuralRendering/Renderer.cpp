@@ -719,7 +719,7 @@ namespace NeuralRendering
 #endif
 				return LatchFailure("BeginD3D12", interop.LastError());
 			}
-			bool secondPassCropFallback = false;
+			bool secondPassCropFallbackWasRetried = false;
 			const bool succeeded = ExecuteCascade(commandList, eyeIndex, tierIndex,
 				tier.reducedResolution ? tier.modelInput.resource12.Get() : eye.color.resource12.Get(),
 				eye.depth.resource12.Get(), eye.motionVectors.resource12.Get(),
@@ -737,7 +737,7 @@ namespace NeuralRendering
 				tuning, passCount, resetForAnchor, tuning.secondPassCropReductionX,
 				tuning.secondPassCropReductionY,
 				tuning.secondPassContribution,
-				&secondPassCropFallback);
+				&secondPassCropFallbackWasRetried);
 			if (!interop.EndD3D12()) {
 #if defined(OPENNR_CAPTURE_ENABLED)
 				if (captureFrame)
@@ -755,7 +755,7 @@ namespace NeuralRendering
 			if (passCount == 2 && (tuning.secondPassCropReductionX != 0 || tuning.secondPassCropReductionY != 0 ||
 				tuning.secondPassContribution < 1.0f) &&
 				!CompositeSecondPassCrop(context, tier, modelWidth, modelHeight,
-					tuning, guideWidth, guideHeight, secondPassCropFallback))
+					tuning, guideWidth, guideHeight, secondPassCropFallbackWasRetried))
 				return LatchFailure("second-pass crop composite", E_FAIL);
 
 			if (tier.reducedResolution && !DispatchModelResolve(device, context, eye, tier, colorWidth, colorHeight, resolveSettings,
@@ -1171,7 +1171,7 @@ namespace NeuralRendering
 				stableColorWidth, stableColorHeight);
 
 			bool succeeded = true;
-			std::array<bool, 2> secondPassCropFallback{};
+			std::array<bool, 2> secondPassCropFallbackForEye{};
 			for (std::uint32_t eyeIndex = 0; eyeIndex < inputs.size(); ++eyeIndex) {
 				if (!runNative[eyeIndex])
 					continue;
@@ -1201,7 +1201,7 @@ namespace NeuralRendering
 						(eyeSkippedSinceFull[eyeIndex] && tuning.temporalReuseResetAfterSkip),
 					tuning.secondPassCropReductionX, tuning.secondPassCropReductionY,
 					tuning.secondPassContribution,
-					&secondPassCropFallback[eyeIndex]);
+					&secondPassCropFallbackForEye[eyeIndex]);
 				if (!eyeSucceeded) {
 					succeeded = false;
 					break;
@@ -1235,7 +1235,7 @@ namespace NeuralRendering
 					(tuning.secondPassCropReductionX != 0 || tuning.secondPassCropReductionY != 0 ||
 						tuning.secondPassContribution < 1.0f) &&
 					!CompositeSecondPassCrop(context, tier, modelWidth, modelHeight,
-						tuning, guideWidth, guideHeight, secondPassCropFallback[eyeIndex])) {
+						tuning, guideWidth, guideHeight, secondPassCropFallbackForEye[eyeIndex])) {
 #if defined(OPENNR_CAPTURE_ENABLED)
 					if (captureFrame)
 						globals::features::openNRCapture.AbortFrame();
