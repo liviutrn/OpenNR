@@ -10,7 +10,7 @@ Build 21 only renames the two local result variables to avoid the shadowing warn
 
 ## Build and test
 
-[Windows package run #21](https://github.com/liviutrn/OpenNR/actions/runs/36237786454)
+Windows package run #21 succeeded, including the configure/package and upload steps. The artifact is `OpenNR-2.15.1-37769cf.zip` (110,877,420 bytes), retained until 2026-10-10 11:40 UTC. [Open the workflow run and download the artifact](https://github.com/liviutrn/OpenNR/actions/runs/36237786454). SHA-256: `07415b14eff70e5069e8472579c0f1d963a65a3eddd1e9952d9ed24fe061988f`.
 
-After a successful build, test the full set of scenarios listed in [Build 20](./BUILD-20.md): fixation, small gaze motion, saccades and reacquisition, crop padding, both eyes, odd crop ratios, adaptive/static routes, rejected-crop fallback, and per-pass presets with and without pre-upscale NR.
+The successful build confirms compilation and packaging; gameplay behavior still needs runtime testing. Test the full set of scenarios listed in [Build 20](./BUILD-20.md): fixation, small gaze motion, saccades and reacquisition, crop padding, both eyes, odd crop ratios, adaptive/static routes, rejected-crop fallback, and per-pass presets with and without pre-upscale NR.
 
