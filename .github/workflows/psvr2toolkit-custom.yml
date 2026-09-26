@@ -1,0 +1,76 @@
+name: Build custom PSVR2Toolkit driver
+
+on:
+  push:
+    branches:
+      - psvr2-render-target-override
+    paths:
+      - '.github/workflows/psvr2toolkit-custom.yml'
+      - 'tools/patch_psvr2toolkit_custom.py'
+  workflow_dispatch:
+
+env:
+  BUILD_TYPE: RelWithDebInfo
+  PSVR2_COMMIT: 5daea3856fda4399bbe61b7f9bc872ea7b321a43
+
+jobs:
+  build:
+    runs-on: windows-2025-vs2026
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Clone exact PSVR2Toolkit source
+        shell: pwsh
+        run: |
+          git clone --recursive https://github.com/BnuuySolutions/PSVR2Toolkit.git psvr2toolkit
+          cd psvr2toolkit
+          git checkout $env:PSVR2_COMMIT
+          git submodule update --init --recursive
+
+      - name: Apply user custom patches
+        shell: pwsh
+        run: python tools/patch_psvr2toolkit_custom.py
+
+      - name: Configure
+        shell: pwsh
+        run: cmake -B psvr2toolkit/build -S psvr2toolkit -DCMAKE_BUILD_TYPE=$env:BUILD_TYPE
+
+      - name: Build
+        shell: pwsh
+        run: cmake --build psvr2toolkit/build --config $env:BUILD_TYPE
+
+      - name: Prepare artifact
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path artifact | Out-Null
+          Copy-Item psvr2toolkit/build/bin/$env:BUILD_TYPE/driver_playstation_vr2.dll artifact/driver_playstation_vr2.dll
+          @'
+          PSVR2Toolkit custom driver - render target override
+          Base upstream commit: 5daea3856fda4399bbe61b7f9bc872ea7b321a43
+
+          Preserved user modifications:
+          - 3x final PCM haptics gain with saturation
+          - Right R2 raw 0..128 -> 0, 129..255 remapped to 2..255
+          - Stick curve: first 20% linear, then quadratic
+
+          New SteamVR settings under "playstation_vr2_ex":
+            "renderTargetOverride" : true,
+            "renderTargetWidth" : 2568,
+            "renderTargetHeight" : 2268
+
+          These defaults are pre-compensated for the current Advanced FOV crop:
+          - 80% total binocular horizontal FOV remaining
+          - 10% total VFOV removed from top
+          - 25% total VFOV removed from bottom
+
+          Reference native PSVR2 recommendation: 3400 x 3468.
+          Expected post-crop target: approximately 2568 x 1844.
+
+          Restart SteamVR after changing these settings. Verify with:
+            hmdq.exe geom --openvr -v 1
+          '@ | Set-Content -Encoding UTF8 artifact/README_RENDER_TARGET.txt
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: PSVR2Toolkit_RenderTargetOverride
+          path: artifact
