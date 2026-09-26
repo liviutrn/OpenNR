@@ -1,0 +1,144 @@
+name: OpenNR fast DLSS DLL
+
+on:
+  push:
+    branches:
+      - "dev/dlss-fast"
+    paths:
+      - "runtime/open-shaders/src/Features/Upscaling/**"
+      - "runtime/open-shaders/cmake/Streamline/**"
+      - "runtime/open-shaders/cmake/NVAPI/**"
+      - "runtime/open-shaders/CMakeLists.txt"
+      - "runtime/open-shaders/CMakePresets.json"
+      - "runtime/open-shaders/vcpkg.json"
+      - ".github/workflows/build-dlss-fast.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: opennr-dlss-fast
+  cancel-in-progress: true
+
+jobs:
+  dll:
+    name: Optimized CommunityShaders.dll only
+    runs-on: windows-2025
+    timeout-minutes: 90
+
+    steps:
+      - name: Check out development source
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 2
+
+      - name: Set up MSVC x64
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Install CMake and Ninja
+        uses: lukka/get-cmake@v4.3.3
+        with:
+          cmakeVersion: "~4.2.0"
+          ninjaVersion: latest
+          useCloudCache: false
+
+      - name: Restore persistent compile/dependency cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            build-fast
+            .cache/vcpkg
+            vcpkg
+          key: opennr-dlss-fast-${{ runner.os }}-${{ hashFiles('runtime/open-shaders/vcpkg.json') }}-${{ github.sha }}
+          restore-keys: |
+            opennr-dlss-fast-${{ runner.os }}-${{ hashFiles('runtime/open-shaders/vcpkg.json') }}-
+
+      - name: Bootstrap pinned vcpkg only when needed
+        shell: pwsh
+        run: |
+          $vcpkg = Join-Path $env:GITHUB_WORKSPACE "vcpkg"
+          $baseline = (Get-Content "$env:GITHUB_WORKSPACE/runtime/open-shaders/vcpkg.json" -Raw | ConvertFrom-Json).'builtin-baseline'
+          if (-not (Test-Path (Join-Path $vcpkg ".git"))) {
+            if (Test-Path $vcpkg) { Remove-Item $vcpkg -Recurse -Force }
+            git clone --filter=blob:none https://github.com/microsoft/vcpkg.git $vcpkg
+          }
+          Push-Location $vcpkg
+          git fetch --depth 1 origin $baseline
+          git checkout --force $baseline
+          if (-not (Test-Path ".\vcpkg.exe")) {
+            & .\bootstrap-vcpkg.bat -disableMetrics
+            if ($LASTEXITCODE -ne 0) { throw "vcpkg bootstrap failed" }
+          }
+          Pop-Location
+          $binaryCache = Join-Path $env:GITHUB_WORKSPACE ".cache\vcpkg"
+          New-Item -ItemType Directory -Force -Path $binaryCache | Out-Null
+          "VCPKG_ROOT=$vcpkg" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "VCPKG_BINARY_SOURCES=clear;files,$binaryCache,readwrite" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Configure optimized DLL-only build
+        shell: pwsh
+        working-directory: runtime/open-shaders
+        run: |
+          $build = Join-Path $env:GITHUB_WORKSPACE "build-fast"
+          cmake --preset OpenNR-Package -B "$build" `
+            -DOPENNR_EXTERNAL_DLSSNR_RUNTIME=ON `
+            -DSKIP_RUNTIME_DOWNLOADS=ON `
+            -DZIP_TO_DIST=OFF `
+            -DAIO_ZIP_TO_DIST=OFF `
+            -DBUILD_SHADER_TESTS=OFF `
+            -DCMAKE_INTERPROCEDURAL_OPTIMIZATION=OFF
+          if ($LASTEXITCODE -ne 0) { throw "CMake configure failed" }
+
+      - name: Compile only CommunityShaders.dll
+        shell: pwsh
+        run: |
+          $build = Join-Path $env:GITHUB_WORKSPACE "build-fast"
+          cmake --build "$build" --target CommunityShaders --parallel
+          if ($LASTEXITCODE -ne 0) { throw "DLL build failed" }
+
+      - name: Stage drop-in test DLL
+        shell: pwsh
+        run: |
+          $build = Join-Path $env:GITHUB_WORKSPACE "build-fast"
+          $stage = Join-Path $env:GITHUB_WORKSPACE "fast-artifact\SKSE\Plugins"
+          New-Item -ItemType Directory -Force -Path $stage | Out-Null
+
+          $dll = Get-ChildItem $build -Recurse -File -Filter "CommunityShaders.dll" |
+            Where-Object { $_.FullName -notmatch "vcpkg_installed|_deps" } |
+            Sort-Object LastWriteTimeUtc -Descending |
+            Select-Object -First 1
+          if (-not $dll) { throw "CommunityShaders.dll not found" }
+          Copy-Item $dll.FullName (Join-Path $stage "CommunityShaders.dll") -Force
+
+          $pdb = Get-ChildItem $build -Recurse -File -Filter "CommunityShaders.pdb" -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -notmatch "vcpkg_installed|_deps" } |
+            Sort-Object LastWriteTimeUtc -Descending |
+            Select-Object -First 1
+          if ($pdb) { Copy-Item $pdb.FullName (Join-Path $stage "CommunityShaders.pdb") -Force }
+
+          $sha256 = (Get-FileHash (Join-Path $stage "CommunityShaders.dll") -Algorithm SHA256).Hash
+          @"
+          OpenNR fast optimized DLL build
+          Branch: $env:GITHUB_REF_NAME
+          Commit: $env:GITHUB_SHA
+          Target: CommunityShaders only
+          Configuration: Release optimized, no LTO
+          Runtime downloads/package generation: skipped
+          DLL SHA-256: $sha256
+
+          Install for testing by replacing only:
+          SKSE/Plugins/CommunityShaders.dll
+          in an existing matching OpenNR 2.15.1 installation.
+          "@ | Set-Content (Join-Path $env:GITHUB_WORKSPACE "fast-artifact\BUILD_INFO.txt") -Encoding utf8
+
+      - name: Upload drop-in DLL
+        uses: actions/upload-artifact@v4
+        with:
+          name: OpenNR-DLSS-FAST-${{ github.run_number }}-${{ github.sha }}
+          path: fast-artifact/*
+          if-no-files-found: error
+          retention-days: 30
