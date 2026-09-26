@@ -31,53 +31,9 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "Baseline source differs from $baseline" }
           "OPENNR_BASELINE_SHA=$baseline" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
-      - name: Apply packaging-only external carrier compatibility
+      - name: Apply frozen-source external-runtime compatibility
         shell: pwsh
-        run: |
-          $path = "runtime/open-shaders/cmake/Streamline-Runtime.cmake"
-          $text = Get-Content $path -Raw
-          if ($text.Contains('OpenNR update package will preserve the installed nvngx_dlssnr.dll')) {
-              Write-Host "Packaging compatibility already present."
-          } else {
-              $startMarker = 'if(NOT EXISTS "${OPENNR_DLSSNR_RUNTIME_SOURCE}")'
-              $endMarker = 'list(APPEND STREAMLINE_RUNTIME_FILES "${_opennr_dlssnr_runtime_destination}")'
-              $start = $text.IndexOf($startMarker)
-              $end = if ($start -ge 0) { $text.IndexOf($endMarker, $start) } else { -1 }
-              if ($start -lt 0 -or $end -lt 0) { throw "Expected frozen Feature 18 packaging block not found; refusing to patch" }
-              $end += $endMarker.Length
-              $new = @'
-          if(NOT EXISTS "${OPENNR_DLSSNR_RUNTIME_SOURCE}")
-              if(OPENNR_EXTERNAL_DLSSNR_RUNTIME)
-                  message(STATUS "OpenNR update package will preserve the installed nvngx_dlssnr.dll")
-              else()
-                  message(FATAL_ERROR
-                      "OpenNR Feature 18 carrier is missing: ${OPENNR_DLSSNR_RUNTIME_SOURCE}. "
-                      "Supply the validated nvngx_dlssnr.dll before packaging."
-                  )
-              endif()
-          else()
-              file(SIZE "${OPENNR_DLSSNR_RUNTIME_SOURCE}" _opennr_dlssnr_runtime_size)
-              if(_opennr_dlssnr_runtime_size LESS 1048576)
-                  message(FATAL_ERROR
-                      "OpenNR Feature 18 carrier is implausibly small: ${_opennr_dlssnr_runtime_size} bytes"
-                  )
-              endif()
-              set(_opennr_dlssnr_runtime_destination
-                  "${STREAMLINE_RUNTIME_DIRECTORY}/nvngx_dlssnr.dll"
-              )
-              file(COPY_FILE
-                  "${OPENNR_DLSSNR_RUNTIME_SOURCE}"
-                  "${_opennr_dlssnr_runtime_destination}"
-                  ONLY_IF_DIFFERENT
-              )
-              list(APPEND STREAMLINE_RUNTIME_FILES "${_opennr_dlssnr_runtime_destination}")
-          endif()
-          '@
-              $text = $text.Substring(0, $start) + $new + $text.Substring($end)
-              Set-Content -Path $path -Value $text -Encoding utf8 -NoNewline
-              Write-Host "Applied CI-only packaging compatibility. No C++/shader source was changed."
-          }
-          git diff --check -- $path
+        run: ./.github/scripts/prepare-frozen-external-runtime.ps1
 
       - name: Set up MSVC x64
         uses: ilammy/msvc-dev-cmd@v1
@@ -133,7 +89,7 @@ jobs:
           Compiled source commit: b272d732bd22d3ae6e320e03a5f06957492b916d
           Source version: 2.15.1
           C++/shader/runtime logic modifications: NONE
-          CI packaging compatibility only: preserve already-installed nvngx_dlssnr.dll
+          CI build-system compatibility only: preserve already-installed nvngx_dlssnr.dll and validate external-runtime mode exactly as successful build 21 does.
           Package type: update package; install over an existing OpenNR 2.15.1 installation with a working Feature 18 carrier.
           "@ | Set-Content -Path (Join-Path $dist "BASELINE_BUILD_INFO.txt") -Encoding utf8
 
