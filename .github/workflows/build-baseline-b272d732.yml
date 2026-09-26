@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   package:
-    name: Build unchanged 2.15.1 update package
+    name: Build unchanged 2.15.1 package
     runs-on: windows-2025
     timeout-minutes: 120
 
@@ -31,9 +31,30 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "Baseline source differs from $baseline" }
           "OPENNR_BASELINE_SHA=$baseline" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
-      - name: Apply frozen-source external-runtime compatibility
+      - name: Download exact working DLSS-NR 310.8.0 carrier
         shell: pwsh
-        run: ./.github/scripts/prepare-frozen-external-runtime.ps1
+        run: |
+          $runtimeDir = Join-Path $env:GITHUB_WORKSPACE "external-runtime"
+          New-Item -ItemType Directory -Force -Path $runtimeDir | Out-Null
+          $zip = Join-Path $runtimeDir "nvngx_dlssnr_310.8.0.zip"
+          $url = "https://github.com/RankFTW/rhi-repo/releases/download/dlssnr-310.8.0/nvngx_dlssnr_310.8.0.zip"
+          Invoke-WebRequest -Uri $url -OutFile $zip
+
+          $zipHash = (Get-FileHash $zip -Algorithm SHA256).Hash.ToUpperInvariant()
+          $expectedZip = "388C0A7912E15EC911B9C9E11A692142B11FE387DDF2B637D8C358138FFFB3AC"
+          if ($zipHash -ne $expectedZip) { throw "DLSS-NR archive SHA-256 mismatch: $zipHash" }
+
+          Expand-Archive -Path $zip -DestinationPath $runtimeDir -Force
+          $dll = Get-ChildItem $runtimeDir -Recurse -File -Filter "nvngx_dlssnr.dll" | Select-Object -First 1
+          if (-not $dll) { throw "nvngx_dlssnr.dll not found after extraction" }
+
+          $dllHash = (Get-FileHash $dll.FullName -Algorithm SHA256).Hash.ToUpperInvariant()
+          $expectedDll = "E16BCF15E16E13F527491CDF7845B2FE6521A738D8F7C9C721866A8496E1FC8E"
+          if ($dllHash -ne $expectedDll) { throw "DLSS-NR DLL SHA-256 mismatch: $dllHash" }
+          if ($dll.Length -ne 165840496) { throw "Unexpected DLSS-NR DLL size: $($dll.Length)" }
+
+          "OPENNR_DLSSNR_RUNTIME_SOURCE=$($dll.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          Write-Host "Verified exact working nvngx_dlssnr.dll: $dllHash ($($dll.Length) bytes)"
 
       - name: Set up MSVC x64
         uses: ilammy/msvc-dev-cmd@v1
@@ -62,18 +83,18 @@ jobs:
           Pop-Location
           "VCPKG_ROOT=$vcpkg" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
-      - name: Configure frozen release source
+      - name: Configure frozen release source unchanged
         shell: pwsh
         working-directory: runtime/open-shaders
         run: |
           $dist = Join-Path $env:GITHUB_WORKSPACE "dist"
           $build = Join-Path $env:GITHUB_WORKSPACE "build-package"
           cmake --preset OpenNR-Package -B "$build" `
-            -DOPENNR_EXTERNAL_DLSSNR_RUNTIME=ON `
+            "-DOPENNR_DLSSNR_RUNTIME_SOURCE=$env:OPENNR_DLSSNR_RUNTIME_SOURCE" `
             "-DDIST_PATH=$dist"
           if ($LASTEXITCODE -ne 0) { throw "CMake configure failed" }
 
-      - name: Build frozen update package
+      - name: Build frozen package
         shell: pwsh
         run: |
           $build = Join-Path $env:GITHUB_WORKSPACE "build-package"
@@ -89,8 +110,9 @@ jobs:
           Compiled source commit: b272d732bd22d3ae6e320e03a5f06957492b916d
           Source version: 2.15.1
           C++/shader/runtime logic modifications: NONE
-          CI build-system compatibility only: preserve already-installed nvngx_dlssnr.dll and validate external-runtime mode exactly as successful build 21 does.
-          Package type: update package; install over an existing OpenNR 2.15.1 installation with a working Feature 18 carrier.
+          DLSS-NR carrier SHA-256: E16BCF15E16E13F527491CDF7845B2FE6521A738D8F7C9C721866A8496E1FC8E
+          DLSS-NR carrier size: 165840496 bytes
+          Carrier source: RankFTW/rhi-repo dlssnr-310.8.0 (byte-identical to uploaded working package)
           "@ | Set-Content -Path (Join-Path $dist "BASELINE_BUILD_INFO.txt") -Encoding utf8
 
       - name: Upload test package
