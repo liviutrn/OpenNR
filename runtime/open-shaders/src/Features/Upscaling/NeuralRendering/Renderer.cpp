@@ -1253,8 +1253,6 @@ namespace NeuralRendering
 				auto& sourceTier = sourceEye.tiers[tierIndex];
 				auto& targetEye = eyes[stereoTargetEye];
 				auto& targetTier = targetEye.tiers[tierIndex];
-				ID3D11Resource* sourceTeacher = sourceTier.reducedResolution ?
-					sourceTier.resolved.Get() : sourceTier.output.resource11.Get();
 				ID3D11ShaderResourceView* sourceTeacherSRV = sourceTier.reducedResolution ?
 					sourceTier.resolvedSRV.Get() : sourceTier.output.srv11.Get();
 				ID3D11Resource* targetOutput = targetTier.reducedResolution ?
