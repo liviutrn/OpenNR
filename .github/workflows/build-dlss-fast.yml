@@ -53,9 +53,9 @@ jobs:
             build-fast
             .cache/vcpkg
             vcpkg
-          key: opennr-dlss-fast-${{ runner.os }}-${{ hashFiles('runtime/open-shaders/vcpkg.json') }}-${{ github.sha }}
+          key: opennr-dlss-fast-v2-${{ runner.os }}-${{ hashFiles('runtime/open-shaders/vcpkg.json') }}-${{ github.sha }}
           restore-keys: |
-            opennr-dlss-fast-${{ runner.os }}-${{ hashFiles('runtime/open-shaders/vcpkg.json') }}-
+            opennr-dlss-fast-v2-${{ runner.os }}-${{ hashFiles('runtime/open-shaders/vcpkg.json') }}-
 
       - name: Bootstrap pinned vcpkg only when needed
         shell: pwsh
@@ -64,11 +64,12 @@ jobs:
           $baseline = (Get-Content "$env:GITHUB_WORKSPACE/runtime/open-shaders/vcpkg.json" -Raw | ConvertFrom-Json).'builtin-baseline'
           if (-not (Test-Path (Join-Path $vcpkg ".git"))) {
             if (Test-Path $vcpkg) { Remove-Item $vcpkg -Recurse -Force }
-            git clone --filter=blob:none https://github.com/microsoft/vcpkg.git $vcpkg
+            git clone https://github.com/microsoft/vcpkg.git $vcpkg
+            if ($LASTEXITCODE -ne 0) { throw "vcpkg clone failed" }
           }
           Push-Location $vcpkg
-          git fetch --depth 1 origin $baseline
           git checkout --force $baseline
+          if ($LASTEXITCODE -ne 0) { throw "vcpkg baseline checkout failed" }
           if (-not (Test-Path ".\vcpkg.exe")) {
             & .\bootstrap-vcpkg.bat -disableMetrics
             if ($LASTEXITCODE -ne 0) { throw "vcpkg bootstrap failed" }
