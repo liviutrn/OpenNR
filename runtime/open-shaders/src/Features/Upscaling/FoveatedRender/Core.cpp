@@ -1749,6 +1749,8 @@ namespace FoveatedRenderImpl
 
 		activeSubrectUVHash = 0;
 		neuralGuidesFrame = UINT32_MAX;
+		neuralCropPlanFrame = UINT32_MAX;
+		neuralCropPlan = {};
 		CropMotion::Clear();
 		ResetAdaptiveCropHandoff();
 	}
@@ -1762,6 +1764,7 @@ namespace FoveatedRenderImpl
 		vrTemporalFrameIdx = 0;
 		vrTemporalHistoryValid = false;
 		neuralGuidesFrame = UINT32_MAX;
+		neuralCropPlanFrame = UINT32_MAX;
 		// Keep the displayed image only while the adaptive crop controller is in
 		// its short transition. Ordinary crop/menu/history resets must fail closed
 		// rather than blend against an unrelated frame.

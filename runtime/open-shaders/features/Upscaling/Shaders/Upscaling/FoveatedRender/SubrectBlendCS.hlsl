@@ -14,7 +14,7 @@ cbuffer BlendCB : register(b0)
 	uint SubHeight;        // DLSS output height (subrect)
 	uint BlendMode;        // 0 = Feather, 1 = Dither
 	uint MaskMode;         // 0 = Rectangle, 1 = Oval
-	uint FrameIndex;       // For dither noise animation
+	uint FrameIndex;       // Reserved for constant-buffer compatibility
 	uint SrcOffsetX;       // Source X offset (0 for most modes, non-zero for Extreme strip)
 	uint SrcOffsetY;       // Source Y offset for centered subrect composites
 	uint PaddingUInt0;
@@ -38,11 +38,11 @@ Texture2D<float4> SrcTex : register(t0);    // DLSS subrect output
 RWTexture2D<float4> DstTex : register(u0);  // kMAIN (already has stretched background)
 
 // Simple hash-based blue noise (no texture needed, near zero cost)
-float BlueNoise(uint2 pos, uint frame)
+float BlueNoise(uint2 pos)
 {
 	// Interleaved gradient noise (Jimenez 2014) — good spatial distribution
-	float x = float(pos.x) + 5.588238 * float(frame);
-	float y = float(pos.y) + 5.588238 * float(frame);
+	float x = float(pos.x);
+	float y = float(pos.y);
 	return frac(52.9829189 * frac(0.06711056 * x + 0.00583715 * y));
 }
 
@@ -144,8 +144,10 @@ float FalloffAlpha(float normalizedDistance, float curve)
 		// Dither: noise-perturbed continuous gradient
 		// Noise shifts the blend threshold per-pixel → natural irregular boundary
 		float t = edgeDist / featherDistance;  // 0 at edge, 1 at band end
-		float noise = BlueNoise(srcPos, FrameIndex);
-		float alpha = saturate(FalloffAlpha(t, FalloffCurve) + (noise - 0.5) * DitherStrength);
+		float baseAlpha = FalloffAlpha(t, FalloffCurve);
+		float noise = BlueNoise(dstPos);
+		float noiseWeight = 4.0 * baseAlpha * (1.0 - baseAlpha);
+		float alpha = saturate(baseAlpha + (noise - 0.5) * DitherStrength * noiseWeight);
 		DstTex[dstPos] = lerp(bg, dlss, alpha);
 	} else {
 		// Feather (default): tunable smooth alpha ramp

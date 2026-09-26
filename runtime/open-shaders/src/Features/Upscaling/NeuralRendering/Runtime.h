@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <cstdint>
 #include <filesystem>
 #include <string>
@@ -10,6 +11,17 @@ struct ID3D12Resource;
 
 namespace NeuralRendering
 {
+	struct PassParameters
+	{
+		float intensity = 1.70f;
+		float localToneStrength = 1.00f;
+		float localStructureStrength = 1.70f;
+		float skinStructureStrength = -1.0f;
+		std::uint32_t style = 0;
+		bool useAutoMask = true;
+		bool uiCorrection = false;
+	};
+
 	struct Tuning
 	{
 		float intensity = 1.70f;
@@ -19,6 +31,9 @@ namespace NeuralRendering
 		std::uint32_t style = 0;
 		bool useAutoMask = true;
 		bool uiCorrection = false;
+		std::array<PassParameters, 3> passParameters{};
+		// Post-SR continuation after a successful pre-SR pass starts at pass two.
+		std::uint32_t passParameterOffset = 0;
 		std::uint32_t modelResolutionPercent = 100;
 		// 0 = current bounded full-resolution resolve; 1 = exact-area input plus
 		// conservative matched-residual composition for reduced model resolutions.
@@ -63,7 +78,26 @@ namespace NeuralRendering
 		std::uint32_t adaptiveMemoryCeiling = 100;
 		float nrContribution = 1.0f;
 		float detailBoost = 1.0f;
+
+		[[nodiscard]] Tuning ForPass(std::uint32_t passIndex) const;
 	};
+
+	inline Tuning Tuning::ForPass(std::uint32_t passIndex) const
+	{
+		passIndex += passParameterOffset;
+		if (passIndex >= passParameters.size())
+			return *this;
+		Tuning result = *this;
+		const auto& parameters = passParameters[passIndex];
+		result.intensity = parameters.intensity;
+		result.localToneStrength = parameters.localToneStrength;
+		result.localStructureStrength = parameters.localStructureStrength;
+		result.skinStructureStrength = parameters.skinStructureStrength;
+		result.style = parameters.style;
+		result.useAutoMask = parameters.useAutoMask;
+		result.uiCorrection = parameters.uiCorrection;
+		return result;
+	}
 
 	/**
 	 * Describes the exact resource extents presented to native Feature 18.

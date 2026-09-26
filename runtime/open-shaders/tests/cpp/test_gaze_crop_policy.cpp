@@ -60,7 +60,7 @@ TEST_CASE("Gaze guard absorbs jitter without accumulating crop drift", "[gaze]")
 {
 	float origin = 0.2f;
 	for (int frame = 0; frame < 1000; ++frame) {
-		const float sample = 0.5f + (frame % 2 ? 0.005f : -0.005f);
+		const float sample = 0.5f + (frame % 2 ? 0.0035f : -0.0035f);
 		origin = GazeCropPolicy::ResolveOrigin(origin, sample, 0.6f, 2000, 8, true);
 		REQUIRE(origin == 0.2f);
 	}
@@ -71,8 +71,8 @@ TEST_CASE("Gaze crop eases across the recenter guard", "[gaze]")
 	float origin = 0.2f;
 	const float first = GazeCropPolicy::ResolveOrigin(origin, 0.55f, 0.6f, 2000, 8, true, 11.11f, 20.0f);
 	const float unquantized = GazeCropPolicy::ResolveOrigin(origin, 0.55f, 0.6f, 2000, 0, true, 11.11f, 20.0f);
-	REQUIRE(first == unquantized);
 	REQUIRE(first > origin);
+	REQUIRE(first < unquantized);
 	REQUIRE(first - origin < 0.03f);
 	const float firstStep = first - origin;
 	origin = first;
@@ -81,8 +81,10 @@ TEST_CASE("Gaze crop eases across the recenter guard", "[gaze]")
 	REQUIRE(second > origin);
 	REQUIRE(second - origin < firstStep);
 
-	const float settled = GazeCropPolicy::ResolveOrigin(second, 0.55f, 0.6f, 2000, 8, true, 11.11f, 20.0f);
-	REQUIRE(settled == second);
+	float settled = second;
+	for (int frame = 0; frame < 32; ++frame)
+		settled = GazeCropPolicy::ResolveOrigin(settled, 0.55f, 0.6f, 2000, 8, true, 11.11f, 20.0f);
+	REQUIRE(std::abs((0.25f - settled) * 2000.0f - 8.0f) < 0.2f);
 }
 
 TEST_CASE("A held short gaze dropout does not invalidate crop history", "[gaze]")
@@ -103,11 +105,21 @@ TEST_CASE("Gaze guard recenters immediately on escape and remains bounded", "[ga
 				const float desired = std::clamp(sample - extent * 0.5f, 0.0f, 1.0f - extent);
 				REQUIRE(origin >= 0.0f);
 				REQUIRE(origin + extent <= 1.000001f);
-				REQUIRE(std::abs(origin - desired) <= std::min(0.02f, extent * 0.05f) + 0.000001f);
+				REQUIRE(std::abs(origin - desired) <= static_cast<float>(quantization) / 1664.0f + 0.000001f);
 			}
 		}
 	}
 	REQUIRE(GazeCropPolicy::ResolveOrigin(0.2f, 0.7f, 0.6f, 2000, 0, true) == Catch::Approx(0.4f));
+}
+
+TEST_CASE("Crop movement dead-zone is truthful and consumes only excess motion", "[gaze]")
+{
+	const float desired = 0.21f;
+	const float unfiltered = GazeCropPolicy::ResolveOrigin(0.2f, desired + 0.3f, 0.6f, 2000, 0, true);
+	const float eightPixelZone = GazeCropPolicy::ResolveOrigin(0.2f, desired + 0.3f, 0.6f, 2000, 8, true);
+	REQUIRE(unfiltered == Catch::Approx(desired));
+	REQUIRE(eightPixelZone == Catch::Approx(desired - 8.0f / 2000.0f));
+	REQUIRE(GazeCropPolicy::ResolveOrigin(0.2f, 0.202f + 0.3f, 0.6f, 2000, 8, true) == Catch::Approx(0.2f));
 }
 
 TEST_CASE("Moving gaze remains inside the crop during continuous pursuit", "[gaze]")

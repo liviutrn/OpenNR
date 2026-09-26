@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../FoveatedRender.h"
+#include "CropGeometry.h"
 #include "Utils/Subrect.h"
 #include <d3d11.h>
 
@@ -33,6 +34,7 @@ namespace FoveatedRenderImpl
 		FoveatedRender::DlssMode mode;
 		Util::Subrect::UVRegion leftUV;
 		Util::Subrect::UVRegion rightUV;
+		CropGeometry::FramePlan cropPlan;
 		bool isFullEye;
 		bool eyeTrackedGazeActive = false;
 		bool eyeTrackedGazeConfigured = false;

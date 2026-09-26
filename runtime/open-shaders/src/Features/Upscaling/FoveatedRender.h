@@ -28,6 +28,7 @@
 #include "NeuralRendering/AdaptivePassController.h"
 
 #include <chrono>
+#include <array>
 #include <cstdint>
 
 struct FoveatedRender
@@ -69,6 +70,18 @@ struct FoveatedRender
 		kBilinear = 0,      // Default bilinear sampling (clean upscale)
 		kPoint = 1,         // Nearest-neighbor / point (cheapest, VRS-like broadcast)
 		kGaussianBlur = 2,  // 3x3 Gaussian blur (soft periphery)
+	};
+
+	struct NeuralRenderingPassSettings
+	{
+		uint preset = 0;
+		float intensity = 1.70f;
+		float localTone = 1.00f;
+		float localStructure = 1.70f;
+		float skinStructure = -1.0f;
+		uint style = 0;
+		bool autoMask = true;
+		bool uiCorrection = false;
 	};
 
 	/** @brief Translated display names for the enums above -- single source shared by
@@ -123,6 +136,7 @@ struct FoveatedRender
 		uint neuralRenderingResolveMode = 0;
 		// 0 = single pass, 1 = two, or 2 = three sequential Feature 18 evaluations.
 		uint neuralRenderingMultiPass = 0;
+		std::array<NeuralRenderingPassSettings, 2> neuralRenderingAdditionalPasses{};
 		float neuralRenderingSecondPassContribution = 1.0f;
 		// Estimated additional GPU time for each added sequential NR pass.
 		float neuralRenderingAdaptiveSecondPassCostMs = 6.0f;

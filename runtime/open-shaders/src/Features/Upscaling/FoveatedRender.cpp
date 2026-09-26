@@ -56,6 +56,47 @@ namespace
 		}
 		return resolution;
 	}
+
+	void ApplyNeuralRenderingPassPreset(FoveatedRender::NeuralRenderingPassSettings& pass, uint preset)
+	{
+		pass.preset = std::min(preset, 5u);
+		switch (pass.preset) {
+		case 0:
+			pass.intensity = 1.70f;
+			pass.localTone = 1.00f;
+			pass.localStructure = 1.70f;
+			pass.skinStructure = -1.0f;
+			pass.style = 0;
+			pass.autoMask = true;
+			break;
+		case 1:
+			pass.intensity = 1.0f;
+			pass.localTone = 1.0f;
+			pass.localStructure = 1.0f;
+			pass.skinStructure = 1.0f;
+			break;
+		case 2:
+			pass.intensity = 1.35f;
+			pass.localTone = 0.9f;
+			pass.localStructure = 1.6f;
+			pass.skinStructure = 1.15f;
+			break;
+		case 3:
+			pass.intensity = 0.8f;
+			pass.localTone = 0.75f;
+			pass.localStructure = 0.9f;
+			pass.skinStructure = 0.9f;
+			break;
+		case 4:
+			pass.intensity = 1.75f;
+			pass.localTone = 1.25f;
+			pass.localStructure = 1.5f;
+			pass.skinStructure = 1.3f;
+			break;
+		case 5:
+			break;
+		}
+	}
 }
 
 #define FOVEATED_SETTINGS_FIELDS(X) \
@@ -83,6 +124,7 @@ namespace
 	X(neuralRenderingUICorrection) \
 	X(neuralRenderingResolveMode) \
 	X(neuralRenderingMultiPass) \
+	X(neuralRenderingAdditionalPasses) \
 	X(neuralRenderingSecondPassContribution) \
 	X(neuralRenderingAdaptiveSecondPassCostMs) \
 	X(neuralRenderingSecondPassCropReduction) \
@@ -132,6 +174,33 @@ namespace
 		it->get_to(settings.field); \
 	else \
 		settings.field = defaults.field;
+
+void to_json(nlohmann::json& j, const FoveatedRender::NeuralRenderingPassSettings& settings)
+{
+	j = {
+		{ "preset", settings.preset },
+		{ "intensity", settings.intensity },
+		{ "localTone", settings.localTone },
+		{ "localStructure", settings.localStructure },
+		{ "skinStructure", settings.skinStructure },
+		{ "style", settings.style },
+		{ "autoMask", settings.autoMask },
+		{ "uiCorrection", settings.uiCorrection },
+	};
+}
+
+void from_json(const nlohmann::json& j, FoveatedRender::NeuralRenderingPassSettings& settings)
+{
+	const FoveatedRender::NeuralRenderingPassSettings defaults{};
+	settings.preset = j.value("preset", defaults.preset);
+	settings.intensity = j.value("intensity", defaults.intensity);
+	settings.localTone = j.value("localTone", defaults.localTone);
+	settings.localStructure = j.value("localStructure", defaults.localStructure);
+	settings.skinStructure = j.value("skinStructure", defaults.skinStructure);
+	settings.style = j.value("style", defaults.style);
+	settings.autoMask = j.value("autoMask", defaults.autoMask);
+	settings.uiCorrection = j.value("uiCorrection", defaults.uiCorrection);
+}
 
 void to_json(nlohmann::json& j, const FoveatedRender::Settings& settings)
 {
@@ -338,6 +407,14 @@ void FoveatedRender::ClampSettings()
 	settings.neuralRenderingLocalStructure = std::clamp(settings.neuralRenderingLocalStructure, 0.0f, 2.0f);
 	settings.neuralRenderingSkinStructure = std::clamp(settings.neuralRenderingSkinStructure, -1.0f, 2.0f);
 	settings.neuralRenderingStyle = std::min(settings.neuralRenderingStyle, 3u);
+	for (auto& pass : settings.neuralRenderingAdditionalPasses) {
+		pass.preset = std::min(pass.preset, 5u);
+		pass.intensity = std::isfinite(pass.intensity) ? std::clamp(pass.intensity, 0.0f, 2.0f) : 1.70f;
+		pass.localTone = std::isfinite(pass.localTone) ? std::clamp(pass.localTone, 0.0f, 2.0f) : 1.0f;
+		pass.localStructure = std::isfinite(pass.localStructure) ? std::clamp(pass.localStructure, 0.0f, 2.0f) : 1.70f;
+		pass.skinStructure = std::isfinite(pass.skinStructure) ? std::clamp(pass.skinStructure, -1.0f, 2.0f) : -1.0f;
+		pass.style = std::min(pass.style, 3u);
+	}
 	settings.neuralRenderingPreUpscale = 0;
 	settings.neuralRenderingPreUpscaleCropCoverage = 0;
 	settings.neuralRenderingTemporalReuseCadence = 0;
@@ -1117,10 +1194,32 @@ const char* FoveatedRender::SubrectMaskModeName(SubrectMaskMode mode)
 				T(TKEY("neural_rendering_style_cinematic_desc"), "More character and local contrast."),
 				T(TKEY("neural_rendering_style_strong_desc"), "Most aggressive reconstruction and detail.")
 			};
+			auto drawAdditionalPassSettings = [&](const char* treeLabel,
+				FoveatedRender::NeuralRenderingPassSettings& pass) {
+				if (!ImGui::TreeNode(treeLabel))
+					return;
+				static const char* passPresets[] = { "Default", "Balanced", "Fabric Detail", "Natural", "Strong", "Custom" };
+				int passPreset = static_cast<int>(pass.preset);
+				if (ImGui::Combo("NR preset", &passPreset, passPresets, IM_ARRAYSIZE(passPresets)))
+					ApplyNeuralRenderingPassPreset(pass, static_cast<uint>(passPreset));
+				int passStyle = static_cast<int>(pass.style);
+				bool customPass = ImGui::Combo("Visual style", &passStyle, styleLabels, IM_ARRAYSIZE(styleLabels));
+				if (customPass)
+					pass.style = static_cast<uint>(passStyle);
+				customPass |= ImGui::SliderFloat("Intensity", &pass.intensity, 0.0f, 2.0f, "%.2f");
+				customPass |= ImGui::SliderFloat("Local tone", &pass.localTone, 0.0f, 2.0f, "%.2f");
+				customPass |= ImGui::SliderFloat("Local structure", &pass.localStructure, 0.0f, 2.0f, "%.2f");
+				customPass |= ImGui::SliderFloat("Skin structure", &pass.skinStructure, -1.0f, 2.0f, "%.2f");
+				customPass |= ImGui::Checkbox("Automatic mask", &pass.autoMask);
+				customPass |= ImGui::Checkbox("UI correction", &pass.uiCorrection);
+				if (customPass)
+					pass.preset = 5;
+				ImGui::TreePop();
+			};
 			const int activeStyle = static_cast<int>(std::min(settings.neuralRenderingStyle, 3u));
 			bool custom = false;
 
-			ImGui::SeparatorText(T(TKEY("neural_rendering_visual_style"), "Visual Style"));
+			ImGui::SeparatorText(T(TKEY("neural_rendering_visual_style"), "Pass 1 visual style"));
 			if (auto _tt = Util::HoverTooltipWrapper())
 				drawWrapped(T(TKEY("neural_rendering_visual_style_tooltip"), "Select a style. Fine intensity and structure controls remain below."));
 
@@ -1154,7 +1253,7 @@ const char* FoveatedRender::SubrectMaskModeName(SubrectMaskMode mode)
 				}
 				ImGui::EndTable();
 			}
-			ImGui::TextDisabled("%s %s", T(TKEY("neural_rendering_active_style"), "Active style:"), styleLabels[activeStyle]);
+			ImGui::TextDisabled("%s %s", T(TKEY("neural_rendering_active_style"), "Pass 1 style:"), styleLabels[activeStyle]);
 
 			ImGui::SeparatorText("NR Cost / Model Resolution");
 			static const char* modelResolutions[] = {
@@ -1408,6 +1507,11 @@ const char* FoveatedRender::SubrectMaskModeName(SubrectMaskMode mode)
 			if (auto _tt = Util::HoverTooltipWrapper())
 				drawWrapped(T(TKEY("neural_rendering_multi_pass_tooltip"), "Runs NR two or three times on each eye's current region, including eye-tracked crops. With adaptive NR enabled, the pass count can be reduced under pressure according to the selected quality order. Resources are retained at the configured maximum pass count."));
 			if (settings.neuralRenderingMultiPass) {
+				ImGui::SeparatorText("Per-pass NR tuning");
+				drawWrapped("Each sequential pass has its own DLSSNR preset, style, intensity, and structure controls. Pass 1 keeps the controls above.");
+				drawAdditionalPassSettings("Pass 2", settings.neuralRenderingAdditionalPasses[0]);
+				if (settings.neuralRenderingMultiPass >= 2)
+					drawAdditionalPassSettings("Pass 3", settings.neuralRenderingAdditionalPasses[1]);
 				if (settings.neuralRenderingMultiPass == 1) {
 					ImGui::SliderFloat("Second-pass contribution", &settings.neuralRenderingSecondPassContribution,
 						0.0f, 1.0f, "%.2f");
@@ -1503,7 +1607,7 @@ const char* FoveatedRender::SubrectMaskModeName(SubrectMaskMode mode)
 				if (ImGui::SliderInt("Crop movement dead zone", &quantizationPixels, 0, 64, quantizationPixels == 0 ? "Off" : "%d input px"))
 					settings.neuralRenderingEyeTrackedQuantizationPixels = static_cast<uint>(std::clamp(quantizationPixels, 0, 64));
 				if (auto _tt = Util::HoverTooltipWrapper())
-					drawWrapped("Keeps the crop still until its target moves beyond this many input pixels. The crop then eases toward the actual gaze position instead of snapping to a pixel grid.");
+				drawWrapped("The crop holds while its target stays within this many input pixels, then follows only the movement beyond the threshold. Off removes the movement threshold.");
 				int cropPadding = static_cast<int>(std::min(settings.neuralRenderingEyeTrackedCropPaddingPixels, 128u));
 				if (ImGui::SliderInt("Gaze crop edge margin", &cropPadding, 0, 128, cropPadding == 0 ? "Off" : "%d input px"))
 					settings.neuralRenderingEyeTrackedCropPaddingPixels = static_cast<uint>(std::clamp(cropPadding, 0, 128));
@@ -1530,25 +1634,25 @@ const char* FoveatedRender::SubrectMaskModeName(SubrectMaskMode mode)
 					static_cast<unsigned long long>(gaze.sampleSequence));
 			}
 
-			ImGui::SeparatorText("Advanced NR Tuning");
+			ImGui::SeparatorText("Pass 1 NR preset and tuning");
 			static const char* presets[] = { "Default", "Balanced", "Fabric Detail", "Natural", "Strong", "Custom" };
 			int preset = static_cast<int>(settings.neuralRenderingPreset);
-			if (ImGui::Combo(T(TKEY("neural_rendering_preset"), "Model Preset"), &preset, presets, IM_ARRAYSIZE(presets))) {
+			if (ImGui::Combo(T(TKEY("neural_rendering_preset"), "Pass 1 preset"), &preset, presets, IM_ARRAYSIZE(presets))) {
 				static constexpr std::string_view presetNames[] = { "Default", "Balanced", "Fabric Detail", "Natural", "Strong", "Custom" };
 				ApplyNeuralRenderingPreset(presetNames[std::clamp(preset, 0, IM_ARRAYSIZE(presetNames) - 1)]);
 			}
-			custom |= ImGui::SliderFloat(T(TKEY("neural_rendering_intensity"), "Intensity"), &settings.neuralRenderingIntensity, 0.0f, 2.0f, "%.2f");
-			custom |= ImGui::SliderFloat(T(TKEY("neural_rendering_local_tone"), "Local Tone"), &settings.neuralRenderingLocalTone, 0.0f, 2.0f, "%.2f");
-			custom |= ImGui::SliderFloat(T(TKEY("neural_rendering_local_structure"), "Local Structure"), &settings.neuralRenderingLocalStructure, 0.0f, 2.0f, "%.2f");
+			custom |= ImGui::SliderFloat(T(TKEY("neural_rendering_intensity"), "Pass 1 intensity"), &settings.neuralRenderingIntensity, 0.0f, 2.0f, "%.2f");
+			custom |= ImGui::SliderFloat(T(TKEY("neural_rendering_local_tone"), "Pass 1 local tone"), &settings.neuralRenderingLocalTone, 0.0f, 2.0f, "%.2f");
+			custom |= ImGui::SliderFloat(T(TKEY("neural_rendering_local_structure"), "Pass 1 local structure"), &settings.neuralRenderingLocalStructure, 0.0f, 2.0f, "%.2f");
 			ImGui::SliderFloat("NR contribution", &settings.neuralRenderingNRContribution, 0.0f, 1.0f, "%.2f");
 			if (auto _tt = Util::HoverTooltipWrapper())
 				drawWrapped("Blends the native NR image over its current input. Zero skips NR and marks native histories for reset before the next evaluation.");
 			ImGui::SliderFloat("Detail boost", &settings.neuralRenderingDetailBoost, 1.0f, 2.0f, "%.2f");
 			if (auto _tt = Util::HoverTooltipWrapper())
 				drawWrapped("Raises local NR detail with a guarded luminance ratio. 1.0 preserves the existing image exactly; higher values are clamped to limit dark-scene excursions.");
-			custom |= ImGui::SliderFloat(T(TKEY("neural_rendering_skin_structure"), "Skin Structure"), &settings.neuralRenderingSkinStructure, -1.0f, 2.0f, "%.2f");
-			custom |= ImGui::Checkbox(T(TKEY("neural_rendering_auto_mask"), "Automatic Mask"), &settings.neuralRenderingAutoMask);
-			custom |= ImGui::Checkbox(T(TKEY("neural_rendering_ui_correction"), "UI Correction"), &settings.neuralRenderingUICorrection);
+			custom |= ImGui::SliderFloat(T(TKEY("neural_rendering_skin_structure"), "Pass 1 skin structure"), &settings.neuralRenderingSkinStructure, -1.0f, 2.0f, "%.2f");
+			custom |= ImGui::Checkbox(T(TKEY("neural_rendering_auto_mask"), "Pass 1 automatic mask"), &settings.neuralRenderingAutoMask);
+			custom |= ImGui::Checkbox(T(TKEY("neural_rendering_ui_correction"), "Pass 1 UI correction"), &settings.neuralRenderingUICorrection);
 			if (custom)
 				settings.neuralRenderingPreset = 5;
 

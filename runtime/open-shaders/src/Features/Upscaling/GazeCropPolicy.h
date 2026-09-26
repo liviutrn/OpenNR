@@ -103,16 +103,18 @@ namespace FoveatedRenderImpl::GazeCropPolicy
 	{
 		const float maxOrigin = std::max(0.0f, 1.0f - extent);
 		const float desired = std::clamp(sample - extent * 0.5f, 0.0f, maxOrigin);
-		const float guard = std::max(std::min(0.02f, extent * 0.05f),
-			pixels ? static_cast<float>(quantizationPixels) / static_cast<float>(pixels) : 0.0f);
-		if (havePrevious && std::abs(desired - previous) <= guard)
+		const float deadZone = pixels ? static_cast<float>(quantizationPixels) / static_cast<float>(pixels) : 0.0f;
+		const float delta = desired - previous;
+		const float distance = std::abs(delta);
+		if (havePrevious && distance <= deadZone)
 			return previous;
 		if (!havePrevious)
 			return desired;
+		const float target = desired - std::copysign(deadZone, delta);
 
 		const float dt = std::clamp(std::isfinite(deltaMs) ? deltaMs : 16.67f, 0.1f, 250.0f);
 		const float duration = std::clamp(std::isfinite(catchupMs) ? catchupMs : 0.0f, 0.0f, 100.0f);
 		const float alpha = duration > 0.0f ? 1.0f - std::exp(-dt / duration) : 1.0f;
-		return std::clamp(previous + (desired - previous) * alpha, 0.0f, maxOrigin);
+		return std::clamp(previous + (target - previous) * alpha, 0.0f, maxOrigin);
 	}
 }

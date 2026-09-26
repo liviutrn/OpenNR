@@ -26,6 +26,12 @@ void FoveatedRenderImpl::Bridge::ComputeMvecScale(uint32_t eyeIndex, float& outX
 
 	if (!IsRouteActive())
 		return;
+	const auto frame = globals::state ? globals::state->frameCount : UINT32_MAX;
+	if (frame == mvecScaleFrame && eyeIndex < mvecScales.size()) {
+		outX = mvecScales[eyeIndex][0];
+		outY = mvecScales[eyeIndex][1];
+		return;
+	}
 
 	auto& enhancer = globals::features::upscaling.foveatedRender;
 	// Use the effective per-eye UV. Adaptive crop scales the selected region, and
@@ -40,4 +46,11 @@ void FoveatedRenderImpl::Bridge::ComputeMvecScale(uint32_t eyeIndex, float& outX
 	// motion vectors scale by 1/UV.w on x.
 	outX = (uv.w > 0.0f) ? (1.0f / uv.w) : 1.0f;
 	outY = (uv.h > 0.0f) ? (1.0f / uv.h) : 1.0f;
+}
+
+void FoveatedRenderImpl::Bridge::SetMvecScaleForFrame(uint32_t frame,
+	const std::array<std::array<float, 2>, 2>& scales)
+{
+	mvecScales = scales;
+	mvecScaleFrame = frame;
 }

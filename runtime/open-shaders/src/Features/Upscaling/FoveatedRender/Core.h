@@ -178,6 +178,8 @@ namespace FoveatedRenderImpl
 		// Subrect UV hash for resource recreation detection
 		static inline uint64_t activeSubrectUVHash = 0;
 		static inline uint32_t neuralGuidesFrame = UINT32_MAX;
+		static inline uint32_t neuralCropPlanFrame = UINT32_MAX;
+		static inline CropGeometry::FramePlan neuralCropPlan{};
 
 		// Full-SBS history for the optional adaptive crop transition. These are
 		// allocated lazily and reused; steady-state crop frames use copies only.

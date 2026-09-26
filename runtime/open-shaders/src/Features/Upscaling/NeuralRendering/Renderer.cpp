@@ -4,6 +4,7 @@
 #include "D3D12Interop.h"
 #include "RuntimePolicy.h"
 #include "SecondPassCrop.h"
+#include "SecondPassCropFallback.h"
 #include "TemporalStereoSchedule.h"
 #include "Deferred.h"
 #if defined(OPENNR_CAPTURE_ENABLED)
@@ -484,6 +485,9 @@ namespace NeuralRendering
 		{
 			for (auto& eyeReset : resetPending)
 				eyeReset.fill(true);
+			for (auto& eyeLatches : secondPassCropFallback)
+				for (auto& latch : eyeLatches)
+					latch.Reset();
 		}
 
 		bool Apply(ID3D11Device* device, ID3D11DeviceContext* context, std::uint32_t eyeIndex,
@@ -565,13 +569,14 @@ namespace NeuralRendering
 					captureInfo.temporalFrameIndex = temporalFrameIndex;
 					captureInfo.temporalSkippedSinceFull = temporalSkippedSinceFull;
 					captureInfo.temporalNextAnchorReset = tuning.temporalReuseResetAfterSkip;
-					captureInfo.intensity = tuning.intensity;
-					captureInfo.localToneStrength = tuning.localToneStrength;
-					captureInfo.localStructureStrength = tuning.localStructureStrength;
-					captureInfo.skinStructureStrength = tuning.skinStructureStrength;
-					captureInfo.style = tuning.style;
-					captureInfo.useAutoMask = tuning.useAutoMask;
-					captureInfo.uiCorrection = tuning.uiCorrection;
+					const auto captureTuning = tuning.ForPass(0);
+					captureInfo.intensity = captureTuning.intensity;
+					captureInfo.localToneStrength = captureTuning.localToneStrength;
+					captureInfo.localStructureStrength = captureTuning.localStructureStrength;
+					captureInfo.skinStructureStrength = captureTuning.skinStructureStrength;
+					captureInfo.style = captureTuning.style;
+					captureInfo.useAutoMask = captureTuning.useAutoMask;
+					captureInfo.uiCorrection = captureTuning.uiCorrection;
 					captureInfo.route = "feature18_temporal_reuse";
 					const bool captureFrame = globals::features::openNRCapture.BeginFrame(captureInfo);
 					if (captureFrame) {
@@ -650,13 +655,14 @@ namespace NeuralRendering
 				captureInfo.temporalFrameIndex = temporalFrameIndex;
 				captureInfo.temporalSkippedSinceFull = temporalSkippedSinceFull;
 				captureInfo.temporalNextAnchorReset = false;
-				captureInfo.intensity = tuning.intensity;
-				captureInfo.localToneStrength = tuning.localToneStrength;
-				captureInfo.localStructureStrength = tuning.localStructureStrength;
-				captureInfo.skinStructureStrength = tuning.skinStructureStrength;
-				captureInfo.style = tuning.style;
-				captureInfo.useAutoMask = tuning.useAutoMask;
-				captureInfo.uiCorrection = tuning.uiCorrection;
+				const auto captureTuning = tuning.ForPass(0);
+				captureInfo.intensity = captureTuning.intensity;
+				captureInfo.localToneStrength = captureTuning.localToneStrength;
+				captureInfo.localStructureStrength = captureTuning.localStructureStrength;
+				captureInfo.skinStructureStrength = captureTuning.skinStructureStrength;
+				captureInfo.style = captureTuning.style;
+				captureInfo.useAutoMask = captureTuning.useAutoMask;
+				captureInfo.uiCorrection = captureTuning.uiCorrection;
 				captureInfo.route = "feature18";
 			#if defined(OPENNR_CAPTURE_ENABLED)
 			AppendRendererConditioningAvailability(captureInfo, 0, 0, colorWidth, colorHeight);
@@ -1086,13 +1092,14 @@ namespace NeuralRendering
 				captureInfo.temporalFrameIndex = temporalFrameIndex;
 				captureInfo.temporalSkippedSinceFull = temporalSkippedSinceFull;
 				captureInfo.temporalNextAnchorReset = tuning.temporalReuseResetAfterSkip;
-				captureInfo.intensity = tuning.intensity;
-				captureInfo.localToneStrength = tuning.localToneStrength;
-				captureInfo.localStructureStrength = tuning.localStructureStrength;
-				captureInfo.skinStructureStrength = tuning.skinStructureStrength;
-				captureInfo.style = tuning.style;
-				captureInfo.useAutoMask = tuning.useAutoMask;
-				captureInfo.uiCorrection = tuning.uiCorrection;
+				const auto captureTuning = tuning.ForPass(0);
+				captureInfo.intensity = captureTuning.intensity;
+				captureInfo.localToneStrength = captureTuning.localToneStrength;
+				captureInfo.localStructureStrength = captureTuning.localStructureStrength;
+				captureInfo.skinStructureStrength = captureTuning.skinStructureStrength;
+				captureInfo.style = captureTuning.style;
+				captureInfo.useAutoMask = captureTuning.useAutoMask;
+				captureInfo.uiCorrection = captureTuning.uiCorrection;
 				captureInfo.route = alternatingEyeFrame ? "feature18_alternating_eye" :
 					(cropTemporalLayout ? "feature18_crop" : "feature18_stereo");
 				#if defined(OPENNR_CAPTURE_ENABLED)
@@ -1393,6 +1400,9 @@ namespace NeuralRendering
 			eyes = {};
 			for (auto& eyeReset : resetPending)
 				eyeReset.fill(true);
+			for (auto& eyeLatches : secondPassCropFallback)
+				for (auto& latch : eyeLatches)
+					latch.Reset();
 			eyeSkippedSinceFull.fill(false);
 			ResetAdaptivePrewarmState();
 			failureLatched = false;
@@ -2162,6 +2172,10 @@ namespace NeuralRendering
 				(secondPassCropReductionX != 0 || secondPassCropReductionY != 0 || secondPassContribution < 1.0f);
 			const bool croppedSecondPass = passCount == 2 &&
 				(secondPassCropReductionX != 0 || secondPassCropReductionY != 0);
+			const SecondPassCropConfig cropConfig{ outputWidth, outputHeight, guideWidth, guideHeight,
+				secondPassCropReductionX, secondPassCropReductionY };
+			auto& cropFallbackLatch = secondPassCropFallback[eyeIndex][tierIndex];
+			const bool cropAlreadyRejected = croppedSecondPass && cropFallbackLatch.IsRejected(cropConfig);
 			D3D12_RESOURCE_STATES initialInputState = commonState;
 			D3D12_RESOURCE_STATES depthState = commonState;
 			D3D12_RESOURCE_STATES motionState = commonState;
@@ -2238,7 +2252,7 @@ namespace NeuralRendering
 				guide.motionVectorsLowResolution =
 					guide.motionWidth <= guide.colorWidth && guide.motionHeight <= guide.colorHeight;
 				const auto fullGuide = guide;
-				if (croppedSecondPass && passIndex == 1) {
+				if (croppedSecondPass && passIndex == 1 && !cropAlreadyRejected) {
 					const auto crop = MakeSecondPassCropPlan(outputWidth, outputHeight,
 						guideWidth, guideHeight, secondPassCropReductionX, secondPassCropReductionY);
 					if (!crop.enabled) {
@@ -2268,24 +2282,28 @@ namespace NeuralRendering
 				// Preserve the full-guide resolution classification. Rounding a small
 				// evaluation subrect can make unlike full-resource extents appear equal.
 				guide.motionVectorsLowResolution = fullGuide.motionVectorsLowResolution;
+				const auto passTuning = tuning.ForPass(passIndex);
 				bool succeeded = Runtime::Instance().Execute(commandList, FeatureSlot(eyeIndex, tierIndex, passIndex),
-					input, depth, motionVectors, output, guide, tuning, reset);
-				if (!succeeded && croppedSecondPass && passIndex == 1) {
+					input, depth, motionVectors, output, guide, passTuning, reset);
+				if (!succeeded && croppedSecondPass && passIndex == 1 && !cropAlreadyRejected) {
 					// Some Feature 18 runtime builds reject an evaluation subrect even when
 					// their create envelope is stable. Retry that pass on the full region so
 					// opting into the smaller crop never disables sequential NR entirely.
 					succeeded = Runtime::Instance().Execute(commandList, FeatureSlot(eyeIndex, tierIndex, passIndex),
-						input, depth, motionVectors, output, fullGuide, tuning, true);
+						input, depth, motionVectors, output, fullGuide, passTuning, true);
 					if (succeeded) {
+						cropFallbackLatch.MarkRejected();
 						if (cropFallbackUsed)
 							*cropFallbackUsed = true;
 						static bool fallbackLogged = false;
 						if (!fallbackLogged) {
 							fallbackLogged = true;
-							logger::warn("[DLSSNR] second-pass subrect was rejected; retrying that pass at full crop size");
+							logger::warn("[DLSSNR] second-pass subrect was rejected; using the full-region fallback for this eye/config");
 						}
 					}
 				}
+				if (succeeded && cropAlreadyRejected && passIndex == 1 && cropFallbackUsed)
+					*cropFallbackUsed = true;
 				if (!succeeded) {
 					logger::warn("[DLSSNR] cascade pass failed eye={} pass={} of {}", eyeIndex, passIndex + 1, passCount);
 					cascadeSucceeded = false;
@@ -3067,6 +3085,7 @@ namespace NeuralRendering
 		Microsoft::WRL::ComPtr<ID3D11SamplerState> adaptiveHandoffSampler;
 		std::array<EyeResources, 2> eyes;
 		std::array<std::array<bool, kResolutionTierCount>, 2> resetPending{};
+		std::array<std::array<SecondPassCropFallbackLatch, kResolutionTierCount>, kEyeCount> secondPassCropFallback{};
 		std::array<bool, 2> eyeSkippedSinceFull{};
 		bool temporalConfigInitialized = false;
 		TemporalHistoryConfig temporalConfig;

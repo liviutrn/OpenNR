@@ -9,6 +9,7 @@
 // sequence, mvec scale, execute-frame flag).
 
 #include <cstdint>
+#include <array>
 
 namespace FoveatedRenderImpl::Bridge
 {
@@ -23,6 +24,7 @@ namespace FoveatedRenderImpl::Bridge
 	// presets (e.g. Nasal Convergence) can size the two eyes' subrects differently.
 	// Returns {1,1} when route is inactive or that eye's subrect is full-eye.
 	void ComputeMvecScale(uint32_t eyeIndex, float& outX, float& outY);
+	void SetMvecScaleForFrame(uint32_t frame, const std::array<std::array<float, 2>, 2>& scales);
 
 	// Set/cleared by ExecuteFoveatedRoute to indicate that the foveated subrect
 	// execute path is actually running this frame. SetConstants checks this so
@@ -30,4 +32,6 @@ namespace FoveatedRenderImpl::Bridge
 	// (e.g. menus, frames where foveated is skipped).
 	inline bool foveatedEvaluating = false;
 	inline bool gazeHistoryReset = false;
+	inline uint32_t mvecScaleFrame = UINT32_MAX;
+	inline std::array<std::array<float, 2>, 2> mvecScales{};
 }

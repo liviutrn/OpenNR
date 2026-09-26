@@ -82,6 +82,8 @@ The Upscaling settings expose optional DLSS Neural Rendering experiments:
 
 NR model processing is capped at 100%; sequential passes are available for additional refinement. Experimental options remain opt-in. Validate them in-game on the target headset before relying on them for a regular playthrough.
 
+Build-specific change summaries for the experimental VR NR packages are indexed in [docs/builds](./docs/builds/README.md).
+
 ## Build Instructions
 
 ### Clone the Repository with submodules

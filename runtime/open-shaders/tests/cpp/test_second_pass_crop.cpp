@@ -1,8 +1,11 @@
 #include "Features/Upscaling/NeuralRendering/SecondPassCrop.h"
+#include "Features/Upscaling/NeuralRendering/SecondPassCropFallback.h"
 
 #include <catch2/catch_test_macros.hpp>
 
 using NeuralRendering::MakeSecondPassCropPlan;
+using NeuralRendering::SecondPassCropConfig;
+using NeuralRendering::SecondPassCropFallbackLatch;
 
 TEST_CASE("second-pass crop retains the configured centered fraction", "[nr][crop]")
 {
@@ -56,4 +59,24 @@ TEST_CASE("second-pass crop clamps small extents and preserves mapped guide boun
 	REQUIRE(plan.guides.height >= 1);
 	REQUIRE(plan.guides.x + plan.guides.width <= 3);
 	REQUIRE(plan.guides.y + plan.guides.height <= 2);
+}
+
+TEST_CASE("rejected second-pass crop is latched per configuration", "[nr][crop][fallback]")
+{
+	SecondPassCropFallbackLatch latch;
+	const SecondPassCropConfig config{ 1000, 800, 500, 400, 20, 10 };
+	REQUIRE_FALSE(latch.IsRejected(config));
+	REQUIRE(latch.MarkRejected());
+	REQUIRE(latch.IsRejected(config));
+	REQUIRE_FALSE(latch.MarkRejected());
+
+	const SecondPassCropConfig changedReduction{ 1000, 800, 500, 400, 25, 10 };
+	REQUIRE_FALSE(latch.IsRejected(changedReduction));
+	REQUIRE(latch.MarkRejected());
+	const SecondPassCropConfig changedResources{ 1002, 800, 501, 400, 25, 10 };
+	REQUIRE_FALSE(latch.IsRejected(changedResources));
+
+	latch.MarkRejected();
+	latch.Reset();
+	REQUIRE_FALSE(latch.IsRejected(changedResources));
 }

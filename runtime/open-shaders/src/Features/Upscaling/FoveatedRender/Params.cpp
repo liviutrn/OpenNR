@@ -79,6 +79,14 @@ namespace FoveatedRenderImpl
 			gazeRequested && NativeOpenVRGaze::IsDynamicGazeAllowed());
 		p.leftUV = gaze.leftUV;
 		p.rightUV = gaze.rightUV;
+		p.cropPlan.fullInputWidth = p.eyeWidthIn;
+		p.cropPlan.fullInputHeight = p.eyeHeightIn;
+		p.cropPlan.fullOutputWidth = p.eyeWidthOut;
+		p.cropPlan.fullOutputHeight = p.eyeHeightOut;
+		p.cropPlan.eyes[0] = CropGeometry::MakeEyePlan(p.leftUV.x, p.leftUV.y, p.leftUV.w, p.leftUV.h,
+			p.eyeWidthIn, p.eyeHeightIn, p.eyeWidthOut, p.eyeHeightOut);
+		p.cropPlan.eyes[1] = CropGeometry::MakeEyePlan(p.rightUV.x, p.rightUV.y, p.rightUV.w, p.rightUV.h,
+			p.eyeWidthIn, p.eyeHeightIn, p.eyeWidthOut, p.eyeHeightOut);
 		p.eyeTrackedGazeActive = gaze.dynamic;
 		p.eyeTrackedGazeConfigured = gazeRequested;
 		p.eyeTrackedGazeReset = gaze.historyReset;

@@ -303,6 +303,25 @@ namespace NeuralRendering
 				.style = settings.neuralRenderingStyle,
 				.useAutoMask = settings.neuralRenderingAutoMask,
 				.uiCorrection = settings.neuralRenderingUICorrection,
+				.passParameters = {
+					PassParameters{ settings.neuralRenderingIntensity, settings.neuralRenderingLocalTone,
+						settings.neuralRenderingLocalStructure, settings.neuralRenderingSkinStructure,
+						settings.neuralRenderingStyle, settings.neuralRenderingAutoMask, settings.neuralRenderingUICorrection },
+					PassParameters{ settings.neuralRenderingAdditionalPasses[0].intensity,
+						settings.neuralRenderingAdditionalPasses[0].localTone,
+						settings.neuralRenderingAdditionalPasses[0].localStructure,
+						settings.neuralRenderingAdditionalPasses[0].skinStructure,
+						settings.neuralRenderingAdditionalPasses[0].style,
+						settings.neuralRenderingAdditionalPasses[0].autoMask,
+						settings.neuralRenderingAdditionalPasses[0].uiCorrection },
+					PassParameters{ settings.neuralRenderingAdditionalPasses[1].intensity,
+						settings.neuralRenderingAdditionalPasses[1].localTone,
+						settings.neuralRenderingAdditionalPasses[1].localStructure,
+						settings.neuralRenderingAdditionalPasses[1].skinStructure,
+						settings.neuralRenderingAdditionalPasses[1].style,
+						settings.neuralRenderingAdditionalPasses[1].autoMask,
+						settings.neuralRenderingAdditionalPasses[1].uiCorrection },
+				},
 				.modelResolutionPercent = adaptive ? controller.ActiveResolution() : settings.neuralRenderingModelResolution,
 				.modelResolveMode = settings.neuralRenderingResolveMode,
 				.multiPass = activePassMode,
@@ -851,8 +870,19 @@ namespace NeuralRendering
 		if (leftUV.w != rightUV.w || leftUV.h != rightUV.h)
 			return false;
 		const std::uint32_t eyeWidth = totalDesc.Width / 2;
-		const std::uint32_t baseOutWidth = std::max<std::uint32_t>(1, static_cast<std::uint32_t>(eyeWidth * leftUV.w));
-		const std::uint32_t baseOutHeight = std::max<std::uint32_t>(1, static_cast<std::uint32_t>(totalDesc.Height * leftUV.h));
+		const auto& publishedCropPlan = FoveatedRenderImpl::Core::neuralCropPlan;
+		const bool publishedPlanValid = FoveatedRenderImpl::Core::neuralCropPlanFrame == frame &&
+			publishedCropPlan.fullOutputWidth == eyeWidth && publishedCropPlan.fullOutputHeight == totalDesc.Height;
+		std::array<FoveatedRenderImpl::CropGeometry::PixelRect, 2> outputCrops{};
+		for (std::uint32_t eye = 0; eye < outputCrops.size(); ++eye) {
+			const auto& uv = eye ? rightUV : leftUV;
+			outputCrops[eye] = publishedPlanValid ? publishedCropPlan.eyes[eye].output :
+				FoveatedRenderImpl::CropGeometry::MakePixelRect(uv.x, uv.y, uv.w, uv.h, eyeWidth, totalDesc.Height);
+		}
+		const std::uint32_t baseOutWidth = outputCrops[0].width;
+		const std::uint32_t baseOutHeight = outputCrops[0].height;
+		if (outputCrops[1].width != baseOutWidth || outputCrops[1].height != baseOutHeight)
+			return false;
 			// The fixed crop envelope is a backing-resource contract only. Feature
 			// 18 still receives the current valid native guide extent so a smaller
 			// crop never exposes stale tail data from the envelope.
@@ -910,12 +940,11 @@ namespace NeuralRendering
 		context->OMGetRenderTargets(D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT, savedRTVs, &savedDSV);
 		context->OMSetRenderTargets(0, nullptr, nullptr);
 
-		const Util::Subrect::UVRegion* eyeUVs[2]{ &leftUV, &rightUV };
 		std::array<Renderer::StereoEyeInput, 2> inputs{};
 		for (std::uint32_t eye = 0; eye < 2; ++eye) {
-			const auto& uv = *eyeUVs[eye];
-			const std::uint32_t cropBaseX = (eye ? eyeWidth : 0) + static_cast<std::uint32_t>(eyeWidth * uv.x);
-			const std::uint32_t cropBaseY = static_cast<std::uint32_t>(totalDesc.Height * uv.y);
+			const auto& crop = outputCrops[eye];
+			const std::uint32_t cropBaseX = (eye ? eyeWidth : 0) + crop.x;
+			const std::uint32_t cropBaseY = crop.y;
 			const std::uint32_t x = cropBaseX + (splitSecondPassCrop ? splitCrop.output.x : 0u);
 			const std::uint32_t y = cropBaseY + (splitSecondPassCrop ? splitCrop.output.y : 0u);
 			float motionScaleX = 1.0f;
@@ -975,6 +1004,7 @@ namespace NeuralRendering
 			// did not, the post-SR route runs the full configured cascade as fallback.
 			tuning.multiPass = stagePlan.postMultiPassMode;
 			tuning.adaptiveMaxPassCount = stagePlan.postResourcePassCount;
+			tuning.passParameterOffset = stagePlan.runPreStage ? 1u : 0u;
 		}
 		if (splitPostStage && activePassMode == 1) {
 			// In the 1-before/1-after split, the post-SR evaluation is pass two;

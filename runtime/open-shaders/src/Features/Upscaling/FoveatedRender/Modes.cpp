@@ -60,6 +60,11 @@ namespace FoveatedRenderImpl
 		const auto frame = globals::state ? globals::state->frameCount : 0;
 		globals::features::upscaling.foveatedRender.UpdateAdaptiveState(frame, true);
 		auto p = VRDlssParams::Resolve(upscalingTexture, depthTexture, reactiveMask, transparencyMask, motionVectors);
+		Core::neuralCropPlanFrame = UINT32_MAX;
+		std::array<std::array<float, 2>, 2> motionScales{};
+		for (std::uint32_t eye = 0; eye < motionScales.size(); ++eye)
+			motionScales[eye] = CropGeometry::MotionVectorScale(p.eyeWidthIn, p.eyeHeightIn, p.cropPlan.eyes[eye].input);
+		Bridge::SetMvecScaleForFrame(frame, motionScales);
 		// Preserve the source guides for the optional display-space crop handoff.
 		Core::vrAdaptiveCropDepthSource = p.depthTexture;
 		Core::vrAdaptiveCropMotionSource = p.motionVectors;
@@ -96,6 +101,10 @@ namespace FoveatedRenderImpl
 		                  ExecuteDefaultMode(streamline, p);
 		for (uint32_t eye = 0; eye < 2; ++eye)
 			CropMotion::Commit(eye, result && Core::neuralGuidesFrame == frame && p.eyeTrackedGazeConfigured && !p.isFullEye);
+		if (result && Core::neuralGuidesFrame == frame) {
+			Core::neuralCropPlan = p.cropPlan;
+			Core::neuralCropPlanFrame = frame;
+		}
 		Bridge::foveatedEvaluating = false;
 		Bridge::gazeHistoryReset = false;
 		return result;
@@ -154,14 +163,12 @@ namespace FoveatedRenderImpl
 			return false;
 		}
 
-		const Util::Subrect::UVRegion* eyeUVs[2] = { &p.leftUV, &p.rightUV };
-
 		// EnsureVRSubrectTextures allocates a shared per-eye envelope. The per-eye
 		// loop below still uses each eye's UV for the valid copy/dispatch extent.
-		uint32_t allocSubInW = std::max<uint32_t>(1, (uint32_t)(p.eyeWidthIn * p.leftUV.w));
-		uint32_t allocSubInH = std::max<uint32_t>(1, (uint32_t)(p.eyeHeightIn * p.leftUV.h));
-		uint32_t allocSubOutW = std::max<uint32_t>(1, (uint32_t)(p.eyeWidthOut * p.leftUV.w));
-		uint32_t allocSubOutH = std::max<uint32_t>(1, (uint32_t)(p.eyeHeightOut * p.leftUV.h));
+		uint32_t allocSubInW = p.cropPlan.eyes[0].input.width;
+		uint32_t allocSubInH = p.cropPlan.eyes[0].input.height;
+		uint32_t allocSubOutW = p.cropPlan.eyes[0].output.width;
+		uint32_t allocSubOutH = p.cropPlan.eyes[0].output.height;
 		// Size the backing set from the saved crop and the adaptive maximum, not
 		// from this frame's smaller tier or moving gaze origin. The validated
 		// envelope then remains resident through all adaptive crop changes.
@@ -213,15 +220,14 @@ namespace FoveatedRenderImpl
 		// Crop subrect per-eye from mask-cleared snapshot (not kMAIN which was overwritten by stretch)
 		auto context = globals::d3d::context;
 		for (uint32_t i = 0; i < 2; ++i) {
-			const auto& uv = *eyeUVs[i];
-			// Per-eye sizing — right eye uses rightUV.w/h, not leftUV.
-			uint32_t subInW = std::max<uint32_t>(1, (uint32_t)(p.eyeWidthIn * uv.w));
-			uint32_t subInH = std::max<uint32_t>(1, (uint32_t)(p.eyeHeightIn * uv.h));
-			uint32_t subOutW = std::max<uint32_t>(1, (uint32_t)(p.eyeWidthOut * uv.w));
-			uint32_t subOutH = std::max<uint32_t>(1, (uint32_t)(p.eyeHeightOut * uv.h));
+			const auto& crop = p.cropPlan.eyes[i];
+			uint32_t subInW = crop.input.width;
+			uint32_t subInH = crop.input.height;
+			uint32_t subOutW = crop.output.width;
+			uint32_t subOutH = crop.output.height;
 
-			uint32_t cropX = (uint32_t)(uv.x * p.eyeWidthIn);
-			uint32_t cropY = (uint32_t)(uv.y * p.eyeHeightIn);
+			uint32_t cropX = crop.input.x;
+			uint32_t cropY = crop.input.y;
 			uint32_t sbsX = (i == 1 ? p.eyeWidthIn : 0) + cropX;
 			D3D11_BOX sbsCrop = { sbsX, cropY, 0, sbsX + subInW, cropY + subInH, 1 };
 
@@ -239,11 +245,10 @@ namespace FoveatedRenderImpl
 
 			ID3D11Resource* srMotion = Core::vrSubrectMotionVectors[i]->resource.get();
 			if (p.eyeTrackedGazeConfigured) {
-				float scaleX = 1.0f, scaleY = 1.0f;
-				Bridge::ComputeMvecScale(i, scaleX, scaleY);
+				const auto scale = CropGeometry::MotionVectorScale(p.eyeWidthIn, p.eyeHeightIn, crop.input);
 				bool reset = p.eyeTrackedGazeReset;
 				srMotion = CropMotion::Prepare(i, srMotion, { cropX, cropY, subInW, subInH },
-					subInW, subInH, { scaleX, scaleY }, frame, reset);
+					subInW, subInH, scale, frame, reset);
 				if (!srMotion) {
 					Core::InvalidateTemporalState();
 					return true;
@@ -278,13 +283,12 @@ namespace FoveatedRenderImpl
 
 		// Write DLSS output back at subrect position (with optional blend)
 		for (uint32_t i = 0; i < 2; ++i) {
-			const auto& uv = *eyeUVs[i];
-			// Per-eye sizing.
-			uint32_t subOutW = std::max<uint32_t>(1, (uint32_t)(p.eyeWidthOut * uv.w));
-			uint32_t subOutH = std::max<uint32_t>(1, (uint32_t)(p.eyeHeightOut * uv.h));
+			const auto& crop = p.cropPlan.eyes[i];
+			uint32_t subOutW = crop.output.width;
+			uint32_t subOutH = crop.output.height;
 
-			uint32_t dstCropX = (uint32_t)(uv.x * p.eyeWidthOut);
-			uint32_t dstCropY = (uint32_t)(uv.y * p.eyeHeightOut);
+			uint32_t dstCropX = crop.output.x;
+			uint32_t dstCropY = crop.output.y;
 			uint32_t dstX = (i == 1 ? p.eyeWidthOut : 0) + dstCropX;
 			if (!BlendSubrectToOutput(Core::vrSubrectColorOut[i]->resource.get(), p.colorDst, p.colorDstUAV,
 					dstX, dstCropY, subOutW, subOutH)) {
@@ -310,14 +314,12 @@ namespace FoveatedRenderImpl
 			logger::error("[FOVEATED] ExecuteFasterMode subrect path missing colorDstUAV — falling back");
 			return false;
 		}
-		const Util::Subrect::UVRegion* eyeUVs[2] = { &p.leftUV, &p.rightUV };
-
 		// NOTE: EnsureFasterOutputTextures allocates one per-eye texture set
 		// sized to LEFT-eye subrect dimensions. Correct only while Util::Subrect
 		// auto-mirror keeps leftUV.w/h == rightUV.w/h. Per-eye DLSS extents
 		// below use the eye's own uv.
-		uint32_t allocSubOutW = p.isFullEye ? p.eyeWidthOut : std::max<uint32_t>(1, (uint32_t)(p.eyeWidthOut * p.leftUV.w));
-		uint32_t allocSubOutH = p.isFullEye ? p.eyeHeightOut : std::max<uint32_t>(1, (uint32_t)(p.eyeHeightOut * p.leftUV.h));
+		uint32_t allocSubOutW = p.isFullEye ? p.eyeWidthOut : p.cropPlan.eyes[0].output.width;
+		uint32_t allocSubOutH = p.isFullEye ? p.eyeHeightOut : p.cropPlan.eyes[0].output.height;
 
 		// Step 1: Ensure per-eye output textures
 		EnsureFasterOutputTextures(allocSubOutW, allocSubOutH, p.colorSrc);
@@ -335,15 +337,14 @@ namespace FoveatedRenderImpl
 		// Step 2b: DLSS reads from the mask-cleared SBS snapshot via extent offsets
 		// → per-eye output. sl::Extent field order is {top, left, width, height}.
 		for (uint32_t i = 0; i < 2; ++i) {
-			const auto& uv = *eyeUVs[i];
-			// Per-eye sizing.
-			uint32_t subInW = p.isFullEye ? p.eyeWidthIn : std::max<uint32_t>(1, (uint32_t)(p.eyeWidthIn * uv.w));
-			uint32_t subInH = p.isFullEye ? p.eyeHeightIn : std::max<uint32_t>(1, (uint32_t)(p.eyeHeightIn * uv.h));
-			uint32_t subOutW = p.isFullEye ? p.eyeWidthOut : std::max<uint32_t>(1, (uint32_t)(p.eyeWidthOut * uv.w));
-			uint32_t subOutH = p.isFullEye ? p.eyeHeightOut : std::max<uint32_t>(1, (uint32_t)(p.eyeHeightOut * uv.h));
+			const auto& crop = p.cropPlan.eyes[i];
+			uint32_t subInW = p.isFullEye ? p.eyeWidthIn : crop.input.width;
+			uint32_t subInH = p.isFullEye ? p.eyeHeightIn : crop.input.height;
+			uint32_t subOutW = p.isFullEye ? p.eyeWidthOut : crop.output.width;
+			uint32_t subOutH = p.isFullEye ? p.eyeHeightOut : crop.output.height;
 
-			uint32_t cropX = p.isFullEye ? 0 : (uint32_t)(uv.x * p.eyeWidthIn);
-			uint32_t cropY = p.isFullEye ? 0 : (uint32_t)(uv.y * p.eyeHeightIn);
+			uint32_t cropX = p.isFullEye ? 0 : crop.input.x;
+			uint32_t cropY = p.isFullEye ? 0 : crop.input.y;
 			uint32_t inOffsetX = (i == 1 ? p.eyeWidthIn : 0) + cropX;
 			uint32_t inOffsetY = cropY;
 
@@ -371,13 +372,12 @@ namespace FoveatedRenderImpl
 
 		// Step 4: Copy DLSS output back (with optional blend)
 		for (uint32_t i = 0; i < 2; ++i) {
-			const auto& uv = *eyeUVs[i];
-			// Per-eye sizing.
-			uint32_t subOutW = p.isFullEye ? p.eyeWidthOut : std::max<uint32_t>(1, (uint32_t)(p.eyeWidthOut * uv.w));
-			uint32_t subOutH = p.isFullEye ? p.eyeHeightOut : std::max<uint32_t>(1, (uint32_t)(p.eyeHeightOut * uv.h));
+			const auto& crop = p.cropPlan.eyes[i];
+			uint32_t subOutW = p.isFullEye ? p.eyeWidthOut : crop.output.width;
+			uint32_t subOutH = p.isFullEye ? p.eyeHeightOut : crop.output.height;
 
-			uint32_t dstCropX = p.isFullEye ? 0 : (uint32_t)(uv.x * p.eyeWidthOut);
-			uint32_t dstCropY = p.isFullEye ? 0 : (uint32_t)(uv.y * p.eyeHeightOut);
+			uint32_t dstCropX = p.isFullEye ? 0 : crop.output.x;
+			uint32_t dstCropY = p.isFullEye ? 0 : crop.output.y;
 			uint32_t dstX = (i == 1 ? p.eyeWidthOut : 0) + dstCropX;
 			if (!BlendSubrectToOutput(Core::vrFasterColorOut[i]->resource.get(), p.colorDst, p.colorDstUAV,
 					dstX, dstCropY, subOutW, subOutH)) {
