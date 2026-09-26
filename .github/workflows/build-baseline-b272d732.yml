@@ -1,0 +1,93 @@
+name: Build unchanged OpenNR 2.15.1 baseline b272d732
+
+on:
+  push:
+    branches:
+      - "build/opennr-2.15.1-b272d732"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    name: Build unchanged 2.15.1 package
+    runs-on: windows-2025
+    timeout-minutes: 120
+
+    steps:
+      - name: Check out exact baseline-derived branch
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Verify runtime source is unchanged from b272d732
+        shell: pwsh
+        run: |
+          $baseline = "b272d732bd22d3ae6e320e03a5f06957492b916d"
+          git cat-file -e "$baseline^{commit}"
+          git diff --exit-code $baseline HEAD -- runtime/open-shaders tools VERSION README.md
+          if ($LASTEXITCODE -ne 0) { throw "Baseline source differs from $baseline" }
+          "OPENNR_BASELINE_SHA=$baseline" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Set up MSVC x64
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Install CMake and Ninja
+        uses: lukka/get-cmake@v4.3.3
+        with:
+          cmakeVersion: "~4.2.0"
+          ninjaVersion: latest
+          useCloudCache: false
+
+      - name: Bootstrap pinned vcpkg
+        shell: pwsh
+        run: |
+          $vcpkg = Join-Path $env:GITHUB_WORKSPACE "vcpkg"
+          git clone --filter=blob:none https://github.com/microsoft/vcpkg.git $vcpkg
+          Push-Location $vcpkg
+          $baseline = (Get-Content "$env:GITHUB_WORKSPACE/runtime/open-shaders/vcpkg.json" -Raw | ConvertFrom-Json).'builtin-baseline'
+          git checkout $baseline
+          & .\bootstrap-vcpkg.bat -disableMetrics
+          if ($LASTEXITCODE -ne 0) { throw "vcpkg bootstrap failed" }
+          Pop-Location
+          "VCPKG_ROOT=$vcpkg" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Configure unchanged release package
+        shell: pwsh
+        working-directory: runtime/open-shaders
+        run: |
+          $dist = Join-Path $env:GITHUB_WORKSPACE "dist"
+          $build = Join-Path $env:GITHUB_WORKSPACE "build-package"
+          cmake --preset OpenNR-Package -B "$build" -DOPENNR_EXTERNAL_DLSSNR_RUNTIME=ON "-DDIST_PATH=$dist"
+          if ($LASTEXITCODE -ne 0) { throw "CMake configure failed" }
+
+      - name: Build unchanged package
+        shell: pwsh
+        run: |
+          $build = Join-Path $env:GITHUB_WORKSPACE "build-package"
+          cmake --build "$build" --target CommunityShaders Package-AIO-Manual --parallel
+          if ($LASTEXITCODE -ne 0) { throw "Build failed" }
+
+      - name: Record build identity
+        shell: pwsh
+        run: |
+          $dist = Join-Path $env:GITHUB_WORKSPACE "dist"
+          @"
+          OpenNR unchanged baseline test build
+          Source commit: b272d732bd22d3ae6e320e03a5f06957492b916d
+          Source version: 2.15.1
+          CI-only branch: build/opennr-2.15.1-b272d732
+          Runtime/source modifications: NONE
+          "@ | Set-Content -Path (Join-Path $dist "BASELINE_BUILD_INFO.txt") -Encoding utf8
+
+      - name: Upload test package
+        uses: actions/upload-artifact@v4
+        with:
+          name: OpenNR-2.15.1-UNCHANGED-b272d732
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 30
