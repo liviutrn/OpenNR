@@ -4,5 +4,6 @@ Short notes for test packages built from the OpenNR task branch. Each note recor
 
 | Build | Summary | Package |
 | --- | --- | --- |
+| 24 | [Adaptive crop/pass policy cleanup](./BUILD-24.md) | OpenNR 2.15.1 run24-reviewed artifact |
 | 20 | [Gaze crop stability and per-pass NR tuning](./BUILD-20.md) | OpenNR 2.15.1 task-branch artifact |
 | 19 | [Superseded revision](./BUILD-19.md) | Superseded before delivery by Build 20 |
