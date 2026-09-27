@@ -155,7 +155,10 @@ TEST_CASE("adaptive crop pressure advances one tier and waits for the handoff", 
 	REQUIRE(controller.ActiveScalePercent() == 100);
 	REQUIRE(controller.TargetScalePercent() == 95);
 
-	Tick(controller, 10, config, true);
+	// Block a new crop decision on the exact completion frame so this assertion
+	// observes the committed intermediate tier rather than immediately chaining
+	// into the next valid crop step under sustained pressure.
+	Tick(controller, 10, config, true, false, true, false, false);
 	REQUIRE_FALSE(controller.IsTransitioning());
 	REQUIRE(controller.ActiveScalePercent() == 95);
 }
@@ -193,8 +196,10 @@ TEST_CASE("adaptive crop preserves a legal tier across a soft configuration chan
 	auto config = FastConfig();
 	Controller controller;
 	Tick(controller, 1, config);
-	for (std::uint32_t frame = 2; frame <= 10; ++frame)
+	for (std::uint32_t frame = 2; frame <= 8; ++frame)
 		Tick(controller, frame, config, true);
+	Tick(controller, 9, config, true);
+	Tick(controller, 10, config, true, false, true, false, false);
 	REQUIRE(controller.ActiveScalePercent() == 95);
 
 	// Changing only timing is a soft edit; the current tier remains 95%.
