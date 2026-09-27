@@ -986,7 +986,14 @@ namespace NeuralRendering
 						return LatchFailure("crop motion preparation", E_FAIL);
 					resetPending[eyeIndex][tierIndex] = reset;
 				}
-				if (guideCrop) {
+				D3D11_TEXTURE2D_DESC motionSourceDesc{};
+				if (!GetTextureDesc(nrMotion, motionSourceDesc) ||
+					static_cast<std::uint64_t>(input.guideSourceX) + guideWidth > motionSourceDesc.Width ||
+					static_cast<std::uint64_t>(input.guideSourceY) + guideHeight > motionSourceDesc.Height)
+					return LatchFailure("motion guide source bounds", E_INVALIDARG);
+				const bool motionGuideCrop = guideCrop || motionSourceDesc.Width != guideWidth ||
+					motionSourceDesc.Height != guideHeight;
+				if (motionGuideCrop) {
 					const D3D11_BOX guideBox{ input.guideSourceX, input.guideSourceY, 0,
 						input.guideSourceX + guideWidth, input.guideSourceY + guideHeight, 1 };
 					context->CopySubresourceRegion(eye.motionVectors.resource11.Get(), 0, 0, 0, 0,
