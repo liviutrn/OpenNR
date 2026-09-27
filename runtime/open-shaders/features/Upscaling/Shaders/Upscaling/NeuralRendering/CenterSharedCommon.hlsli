@@ -32,9 +32,9 @@ float LinearDepth(float raw)
 		max(DepthRange.y - raw * (DepthRange.y - DepthRange.x), 1e-5);
 }
 
-float RawDepth(float linear)
+float RawDepth(float linearDepth)
 {
-	return (DepthRange.y - DepthRange.x * DepthRange.y / max(linear, 1e-5)) /
+	return (DepthRange.y - DepthRange.x * DepthRange.y / max(linearDepth, 1e-5)) /
 		(DepthRange.y - DepthRange.x);
 }
 
