@@ -39,7 +39,8 @@ TEST_CASE("crop boundary fade keeps the previous geometry without old display hi
 	config.transitionFrames = 8;
 	for (unsigned frame = 0; frame < 8; ++frame)
 		Tick(controller, frame, config, true);
-	REQUIRE(controller.ActiveScalePercent() == 95);
+	REQUIRE(controller.ActiveScalePercent() == 100);
+	REQUIRE(controller.TargetScalePercent() == 95);
 	REQUIRE(controller.RenderScalePercent() == 100);
 	REQUIRE(controller.VisibleScalePercent() > 95.0f);
 	REQUIRE(controller.VisibleScalePercent() < 100.0f);
@@ -64,7 +65,8 @@ TEST_CASE("adaptive crop holds the previous geometry for both handoff directions
 	// Force one downshift from the selected crop to a 95% size scale.
 	for (std::uint32_t frame = 2; frame <= 8; ++frame)
 		Tick(controller, frame, config, true);
-	REQUIRE(controller.ActiveScalePercent() == 95);
+	REQUIRE(controller.ActiveScalePercent() == 100);
+	REQUIRE(controller.TargetScalePercent() == 95);
 	REQUIRE(controller.IsTransitioning());
 	REQUIRE(controller.RenderScalePercent() == 100);
 
@@ -75,13 +77,13 @@ TEST_CASE("adaptive crop holds the previous geometry for both handoff directions
 	REQUIRE(controller.ActiveScalePercent() == 95);
 	REQUIRE(controller.RenderScalePercent() == 95);
 
-	// Restore one tier. The active tier changes immediately for controller
-	// decisions, but the rendered geometry remains at 95% until the
-	// handoff completes, just as it did for the downshift.
+	// Restore one tier. The target changes immediately, but the committed active
+	// tier and rendered geometry remain at 95% until the handoff completes.
 	config.hold = false;
 	for (std::uint32_t frame = 17; frame <= 24; ++frame)
 		Tick(controller, frame, config, false, true);
-	REQUIRE(controller.ActiveScalePercent() == 100);
+	REQUIRE(controller.ActiveScalePercent() == 95);
+	REQUIRE(controller.TargetScalePercent() == 100);
 	REQUIRE(controller.IsTransitioning());
 	REQUIRE(controller.RenderScalePercent() == 95);
 	REQUIRE(controller.VisibleScalePercent() > 95.0f);
@@ -142,18 +144,20 @@ TEST_CASE("adaptive crop pressure advances one tier and waits for the handoff", 
 
 	for (std::uint32_t frame = 2; frame <= 8; ++frame)
 		Tick(controller, frame, config, true);
-	REQUIRE(controller.ActiveScalePercent() == 95);
+	REQUIRE(controller.ActiveScalePercent() == 100);
 	REQUIRE(controller.TargetScalePercent() == 95);
 	REQUIRE(controller.IsTransitioning());
 
-	// A short transition must not be replaced by another downshift on the next
-	// over-budget frame, even when the minimum dwell is small enough to allow it.
+	// While the handoff is active, ActiveScalePercent deliberately remains at
+	// the committed 100% tier. The global coordinator therefore keeps selecting
+	// Crop instead of starting a pass downshift halfway through the fade.
 	Tick(controller, 9, config, true);
-	REQUIRE(controller.ActiveScalePercent() == 95);
+	REQUIRE(controller.ActiveScalePercent() == 100);
 	REQUIRE(controller.TargetScalePercent() == 95);
 
 	Tick(controller, 10, config, true);
 	REQUIRE_FALSE(controller.IsTransitioning());
+	REQUIRE(controller.ActiveScalePercent() == 95);
 }
 
 TEST_CASE("adaptive crop restores one tier only when selected by the coordinator", "[adaptive][crop]")
@@ -163,25 +167,25 @@ TEST_CASE("adaptive crop restores one tier only when selected by the coordinator
 	Tick(controller, 1, config);
 	for (std::uint32_t frame = 2; frame <= 8; ++frame)
 		Tick(controller, frame, config, true);
-	REQUIRE(controller.ActiveScalePercent() == 95);
+	REQUIRE(controller.TargetScalePercent() == 95);
 
-	// Headroom cannot restore crop while another quality axis is selected.
+	// Headroom cannot restore crop while another quality axis is selected. The
+	// pending downshift first finishes and commits at 95%.
 	for (std::uint32_t frame = 9; frame <= 40; ++frame)
 		Tick(controller, frame, config, false, true, false);
 	REQUIRE(controller.ActiveScalePercent() == 95);
 
-	// Once crop becomes the selected restoration axis, it can recover even if
-	// resolution remains below its configured maximum.
+	// Once crop becomes the selected restoration axis, it can recover.
 	for (std::uint32_t frame = 41; frame <= 48; ++frame)
 		Tick(controller, frame, config, false, true, true);
-	REQUIRE(controller.ActiveScalePercent() == 100);
+	REQUIRE(controller.ActiveScalePercent() == 95);
 	REQUIRE(controller.TargetScalePercent() == 100);
 	REQUIRE(controller.IsTransitioning());
 
-	// The controller cannot skip directly to another tier while the first
-	// restoration handoff is still in progress.
+	// The committed active tier cannot skip ahead while the restoration handoff
+	// is still in progress.
 	Tick(controller, 49, config, false, true, true);
-	REQUIRE(controller.ActiveScalePercent() == 100);
+	REQUIRE(controller.ActiveScalePercent() == 95);
 }
 
 TEST_CASE("adaptive crop preserves a legal tier across a soft configuration change", "[adaptive][crop]")
@@ -189,20 +193,20 @@ TEST_CASE("adaptive crop preserves a legal tier across a soft configuration chan
 	auto config = FastConfig();
 	Controller controller;
 	Tick(controller, 1, config);
-	for (std::uint32_t frame = 2; frame <= 8; ++frame)
+	for (std::uint32_t frame = 2; frame <= 10; ++frame)
 		Tick(controller, frame, config, true);
 	REQUIRE(controller.ActiveScalePercent() == 95);
 
 	// Changing only timing is a soft edit; the current tier remains 95%.
 	config.transitionFrames = 6;
-	Tick(controller, 9, config, false, false);
+	Tick(controller, 11, config, false, false);
 	REQUIRE(controller.ActiveScalePercent() == 95);
 	REQUIRE(controller.MaximumScalePercent() == 100);
 
-	// Raising the configured minimum makes 80% the nearest legal tier, not a
-	// reset to the 85% maximum.
+	// Raising the configured minimum keeps 95% as the nearest legal tier rather
+	// than resetting to the maximum.
 	config.minimumScalePercent = 95;
-	Tick(controller, 10, config, false, false);
+	Tick(controller, 12, config, false, false);
 	REQUIRE(controller.ActiveScalePercent() == 95);
 	REQUIRE(controller.MinimumScalePercent() == 95);
 }
@@ -234,7 +238,7 @@ TEST_CASE("adaptive crop scale is relative to a smaller gaze crop", "[adaptive][
 	REQUIRE(controller.IsRuntimeActive());
 	REQUIRE(controller.ActiveScalePercent() == 100);
 	REQUIRE(controller.MaximumScalePercent() == 100);
-	for (std::uint32_t frame = 2; frame <= 40; ++frame)
+	for (std::uint32_t frame = 2; frame <= 60; ++frame)
 		Tick(controller, frame, config, true, false, true, false, true, 50, true, true);
 	REQUIRE(controller.ActiveScalePercent() == 30);
 }
