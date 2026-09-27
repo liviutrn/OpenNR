@@ -216,6 +216,11 @@ jobs:
           $shaderFiles | Copy-Item -Destination $shaderDir
           $dllHash = (Get-FileHash $dll -Algorithm SHA256).Hash
           @"
+          [Settings]
+          DLSSNR.StereoMode=1
+          DLSSNR.CenterSharedDebug=0
+          "@ | Set-Content (Join-Path $pluginDir "OpenNR_CenterShared.ini") -Encoding ascii
+          @"
           # OpenNR Feature18 CENTER_SHARED Test01
 
           Feature18 runs once on a synthetic center view reconstructed from BOTH eyes. Only the signed center neural residual is reprojected onto the real Skyrim left and right images. Original per-eye geometry remains the final stereo baseline.
@@ -230,7 +235,7 @@ jobs:
 
           Extract this ZIP into the Skyrim VR Data folder, replacing the existing SKSE/Plugins/CommunityShaders.dll. Keep a backup of your baseline DLL. The included Shaders folder contains the five runtime compiled CENTER_SHARED shaders.
 
-          In the OpenNR Upscaling menu set DLSSNR.StereoMode to Per Eye (0) or Center Shared (1). The persisted Upscaling JSON uses foveatedRender.neuralRenderingStereoMode with the same values. DLSSNR.CenterSharedDebug maps to foveatedRender.neuralRenderingCenterSharedDebug: 0 final; 1 center color; 2 center depth; 3 center confidence; 4 signed residual; 5 left confidence; 6 right confidence.
+          Edit SKSE/Plugins/OpenNR_CenterShared.ini: DLSSNR.StereoMode=0 uses Per Eye; DLSSNR.StereoMode=1 uses Center Shared. The OpenNR Upscaling menu can also switch modes live; the INI value is reapplied when settings load. The persisted Upscaling JSON uses foveatedRender.neuralRenderingStereoMode with the same values. DLSSNR.CenterSharedDebug maps to foveatedRender.neuralRenderingCenterSharedDebug: 0 final; 1 center color; 2 center depth; 3 center confidence; 4 signed residual; 5 left confidence; 6 right confidence.
 
           ## A/B test
 
@@ -246,7 +251,7 @@ jobs:
 
           ## Rollback
 
-          Set DLSSNR.StereoMode to Per Eye (0), or restore the baseline DLL and shader installation.
+          Set DLSSNR.StereoMode=0 in OpenNR_CenterShared.ini or choose Per Eye in the menu. To restore the baseline installation, replace the DLL and remove the five CENTER_SHARED shaders.
           "@ | Set-Content (Join-Path $root "README_CENTER_SHARED.md") -Encoding utf8
           @"
           OpenNR Feature18 CENTER_SHARED Test01

@@ -79,6 +79,16 @@ namespace NeuralRendering::CenterShared
 
 		State state;
 
+		DXGI_FORMAT ColorViewFormat(DXGI_FORMAT format)
+		{
+			switch (format) {
+			case DXGI_FORMAT_R8G8B8A8_TYPELESS: return DXGI_FORMAT_R8G8B8A8_UNORM;
+			case DXGI_FORMAT_R16G16B16A16_TYPELESS: return DXGI_FORMAT_R16G16B16A16_FLOAT;
+			case DXGI_FORMAT_R10G10B10A2_TYPELESS: return DXGI_FORMAT_R10G10B10A2_UNORM;
+			default: return format;
+			}
+		}
+
 		bool CreateSurface(ID3D11Device* device, Surface& surface, std::uint32_t width,
 			std::uint32_t height, DXGI_FORMAT resourceFormat, DXGI_FORMAT viewFormat,
 			bool unorderedAccess, const char* name)
@@ -177,7 +187,11 @@ namespace NeuralRendering::CenterShared
 			std::uint32_t frameHeight, std::uint32_t cropWidth, std::uint32_t cropHeight,
 			std::uint32_t guideWidth, std::uint32_t guideHeight, DXGI_FORMAT colorFormat)
 		{
-			if (state.originalStereo.texture && state.frameWidth == frameWidth &&
+			if (state.originalStereo.srv && state.centerBase.uav && state.centerNeural.srv &&
+				state.centerDepthColor.uav && state.centerConfidence.uav &&
+				state.centerDepthGuide.uav && state.centerMotionGuide.uav &&
+				state.centerResidual.uav && state.finalStereo.uav &&
+				state.frameWidth == frameWidth &&
 				state.frameHeight == frameHeight && state.cropWidth == cropWidth &&
 				state.cropHeight == cropHeight && state.guideWidth == guideWidth &&
 				state.guideHeight == guideHeight && state.colorFormat == colorFormat)
@@ -202,11 +216,11 @@ namespace NeuralRendering::CenterShared
 		state.previousCropValid = false;
 			return
 				CreateSurface(device, state.originalStereo, frameWidth, frameHeight,
-					colorFormat, colorFormat, false, "NeuralRendering::OriginalStereo") &&
+					colorFormat, ColorViewFormat(colorFormat), false, "NeuralRendering::OriginalStereo") &&
 				CreateSurface(device, state.centerBase, cropWidth, cropHeight,
-					colorFormat, colorFormat, true, "NeuralRendering::CenterBase") &&
+					colorFormat, ColorViewFormat(colorFormat), true, "NeuralRendering::CenterBase") &&
 				CreateSurface(device, state.centerNeural, cropWidth, cropHeight,
-					colorFormat, colorFormat, true, "NeuralRendering::CenterNeural") &&
+					colorFormat, ColorViewFormat(colorFormat), true, "NeuralRendering::CenterNeural") &&
 				CreateSurface(device, state.centerDepthColor, cropWidth, cropHeight,
 					DXGI_FORMAT_R32_FLOAT, DXGI_FORMAT_R32_FLOAT, true,
 					"NeuralRendering::CenterDepthColor") &&
@@ -223,7 +237,7 @@ namespace NeuralRendering::CenterShared
 					DXGI_FORMAT_R16G16B16A16_FLOAT, DXGI_FORMAT_R16G16B16A16_FLOAT, true,
 					"NeuralRendering::CenterResidual") &&
 				CreateSurface(device, state.finalStereo, frameWidth, frameHeight,
-					colorFormat, colorFormat, true, "NeuralRendering::CenterFinalStereo");
+					colorFormat, ColorViewFormat(colorFormat), true, "NeuralRendering::CenterFinalStereo");
 		}
 
 		bool LoadGeometry(Constants& constants, const std::array<EyeInput, 2>& eyes)
@@ -239,6 +253,10 @@ namespace NeuralRendering::CenterShared
 					&constants.eyeFrustum[eye][0], &constants.eyeFrustum[eye][1],
 					&constants.eyeFrustum[eye][2], &constants.eyeFrustum[eye][3]);
 				const auto eyeToHead = openVR->vrSystem->GetEyeToHeadTransform(vrEye);
+				for (std::uint32_t row = 0; row < 3; ++row)
+					for (std::uint32_t column = 0; column < 3; ++column)
+						if (std::abs(eyeToHead.m[row][column] - (row == column ? 1.0f : 0.0f)) > 0.02f)
+							return false;
 				for (std::uint32_t axis = 0; axis < 3; ++axis)
 					eyeTranslation[eye][axis] = eyeToHead.m[axis][3];
 				const auto& crop = eyes[eye].crop;
@@ -248,6 +266,10 @@ namespace NeuralRendering::CenterShared
 				constants.eyeCrop[eye][3] = crop.h;
 			}
 			const float openVRSeparation = std::abs(eyeTranslation[1][0] - eyeTranslation[0][0]);
+			for (std::uint32_t eye = 0; eye < 2; ++eye)
+				if (constants.eyeFrustum[eye][1] <= constants.eyeFrustum[eye][0] ||
+					std::abs(constants.eyeFrustum[eye][3] - constants.eyeFrustum[eye][2]) < 0.01f)
+					return false;
 			const auto leftWorld = Util::GetEyePosition(0);
 			const auto rightWorld = Util::GetEyePosition(1);
 			const float dx = rightWorld.x - leftWorld.x;
@@ -300,7 +322,7 @@ namespace NeuralRendering::CenterShared
 		void Dispatch(ID3D11DeviceContext* context, ID3D11ComputeShader* shader,
 			const std::array<ID3D11ShaderResourceView*, 9>& sources,
 			const std::array<ID3D11UnorderedAccessView*, 3>& targets,
-			std::uint32_t width, std::uint32_t height)
+			std::uint32_t width, std::uint32_t height, std::uint32_t layers = 1)
 		{
 			context->CSSetShader(shader, nullptr, 0);
 			ID3D11Buffer* cb = state.constants.Get();
@@ -309,7 +331,7 @@ namespace NeuralRendering::CenterShared
 			context->CSSetSamplers(0, 2, samplers);
 			context->CSSetShaderResources(0, static_cast<UINT>(sources.size()), sources.data());
 			context->CSSetUnorderedAccessViews(0, static_cast<UINT>(targets.size()), targets.data(), nullptr);
-			context->Dispatch((width + 7) / 8, (height + 7) / 8, 1);
+			context->Dispatch((width + 7) / 8, (height + 7) / 8, layers);
 			std::array<ID3D11ShaderResourceView*, 9> nullSources{};
 			std::array<ID3D11UnorderedAccessView*, 3> nullTargets{};
 			context->CSSetShaderResources(0, static_cast<UINT>(nullSources.size()), nullSources.data());
@@ -430,8 +452,9 @@ namespace NeuralRendering::CenterShared
 				eyes[1].guide.depthSRV, eyes[0].motionSRV, eyes[1].motionSRV,
 				state.centerResidual.srv.Get(), state.centerDepthColor.srv.Get(),
 				state.centerConfidence.srv.Get(), state.centerBase.srv.Get() };
+			context->CopyResource(state.finalStereo.texture.Get(), state.originalStereo.texture.Get());
 			Dispatch(context, state.warpShader.Get(), warpSources,
-				{ state.finalStereo.uav.Get() }, sourceDesc.Width, sourceDesc.Height);
+				{ state.finalStereo.uav.Get() }, cropWidth, cropHeight, 2);
 			context->CopyResource(stereoColor, state.finalStereo.texture.Get());
 		}
 		return true;

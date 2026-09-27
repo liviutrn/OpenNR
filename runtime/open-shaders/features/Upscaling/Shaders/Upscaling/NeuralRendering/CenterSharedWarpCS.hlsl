@@ -22,26 +22,21 @@ float CenterDepthEdge(float2 uv)
 [numthreads(8, 8, 1)]
 void main(uint3 id : SV_DispatchThreadID)
 {
-	uint width, height;
-	FinalStereo.GetDimensions(width, height);
-	if (id.x >= width || id.y >= height)
+	uint eye = id.z;
+	if (eye > 1 || id.x >= SourceRect[eye].z || id.y >= SourceRect[eye].w)
 		return;
-	uint eye = id.x < width / 2 ? 0 : 1;
-	float4 original = OriginalStereo.Load(int3(id.xy, 0));
-	float2 eyeUV = (float2(id.xy) + 0.5 - SourceRect[eye].xy) / SourceRect[eye].zw;
-	if (!Inside(eyeUV)) {
-		FinalStereo[id.xy] = original;
-		return;
-	}
+	uint2 pixel = uint2(SourceRect[eye].xy) + id.xy;
+	float4 original = OriginalStereo.Load(int3(pixel, 0));
+	float2 eyeUV = (float2(id.xy) + 0.5) / SourceRect[eye].zw;
 	float rawDepth = EyeDepthAt(eyeUV, eye);
 	if (rawDepth <= 0.00001 || rawDepth >= 0.99999) {
-		FinalStereo[id.xy] = original;
+		FinalStereo[pixel] = original;
 		return;
 	}
 	float centerZ;
 	float2 centerUV = EyeToCenter(eyeUV, rawDepth, eye, centerZ);
-	if (!Inside(centerUV)) {
-		FinalStereo[id.xy] = original;
+	if (!Inside(centerUV) || centerZ <= DepthRange.x * 1.001 || centerZ >= DepthRange.y) {
+		FinalStereo[pixel] = original;
 		return;
 	}
 
@@ -53,7 +48,7 @@ void main(uint3 id : SV_DispatchThreadID)
 		(1.0 - 0.85 * CenterDepthEdge(centerUV));
 	float4 centerBase = CenterBase.SampleLevel(LinearSampler, centerUV, 0);
 	float colorDifference = length(centerBase.rgb - original.rgb);
-	float colorConfidence = 1.0 - 0.8 * smoothstep(0.12, 0.35, colorDifference);
+	float colorConfidence = 1.0 - smoothstep(0.12, 0.4, colorDifference);
 	float nearConfidence = lerp(0.35, 1.0,
 		saturate((centerZ - DepthRange.x * 2.0) / max(DepthRange.x * 10.0, 0.01)));
 	float cropConfidence = saturate(min(min(eyeUV.x, eyeUV.y),
@@ -74,5 +69,5 @@ void main(uint3 id : SV_DispatchThreadID)
 		result = float4(residual.rgb * 0.5 + 0.5, 1.0);
 	else if ((DebugMode == 5 && eye == 0) || (DebugMode == 6 && eye == 1))
 		result = float4(confidence, confidence, confidence, 1.0);
-	FinalStereo[id.xy] = result;
+	FinalStereo[pixel] = result;
 }

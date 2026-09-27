@@ -104,7 +104,12 @@ struct Candidate
 
 Candidate FindCandidate(float2 centerUV, uint eye, float2 centerPixelSize)
 {
-	Candidate candidate = (Candidate)0;
+	Candidate candidate;
+	candidate.uv = 0.0;
+	candidate.centerUV = 0.0;
+	candidate.centerZ = 0.0;
+	candidate.rawDepth = 0.0;
+	candidate.confidence = 0.0;
 	float2 centerFullUV = CenterCrop.xy + centerUV * CenterCrop.zw;
 	float2 centerTangent = FullToTan(centerFullUV, CenterFrustum);
 	float2 eyeFullUV = TanToFull(centerTangent, EyeFrustum[eye]);
@@ -132,6 +137,8 @@ Candidate FindCandidate(float2 centerUV, uint eye, float2 centerPixelSize)
 
 	float centerZ;
 	float2 projectedCenterUV = EyeToCenter(eyeUV, rawDepth, eye, centerZ);
+	if (centerZ <= DepthRange.x * 1.001 || centerZ >= DepthRange.y)
+		return candidate;
 	float2 errorPixels = (projectedCenterUV - centerUV) / centerPixelSize;
 	float error = length(errorPixels);
 	float confidence = 1.0 - smoothstep(0.75, 2.5, error);
@@ -149,14 +156,10 @@ float2 CenterMotion(Candidate candidate, uint eye)
 {
 	float2 eyeMotion = EyeMotionAt(candidate.uv, eye);
 	eyeMotion *= EyeMotionScale[eye].xy;
+	float2 previousEyeUV = candidate.uv + eyeMotion;
+	if (!Inside(previousEyeUV))
+		return 0.0;
 	float previousZ;
-	float2 previousCenterUV = EyeToCenter(candidate.uv + eyeMotion, candidate.rawDepth, eye, previousZ);
-	return previousCenterUV - candidate.centerUV;
-}
-
-float CandidateWeight(Candidate candidate, float centerZ)
-{
-	float agreement = 1.0 - smoothstep(0.01, 0.04,
-		abs(candidate.centerZ - centerZ) / max(centerZ, 0.01));
-	return candidate.confidence * agreement;
+	float2 previousCenterUV = EyeToCenter(previousEyeUV, candidate.rawDepth, eye, previousZ);
+	return clamp(previousCenterUV - candidate.centerUV, -0.1, 0.1);
 }

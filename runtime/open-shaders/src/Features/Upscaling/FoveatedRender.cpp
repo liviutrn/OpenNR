@@ -16,6 +16,11 @@
 
 #include <algorithm>
 #include <cmath>
+#include <filesystem>
+#ifndef NOMINMAX
+#	define NOMINMAX
+#endif
+#include <Windows.h>
 
 #define I18N_KEY_PREFIX "feature.upscaling."
 
@@ -199,6 +204,19 @@ void FoveatedRender::SaveSettings(json& o_json)
 void FoveatedRender::LoadSettings(const json& o_json)
 {
 	settings = o_json;
+	wchar_t executablePath[MAX_PATH]{};
+	if (GetModuleFileNameW(nullptr, executablePath, MAX_PATH) != 0) {
+		const auto iniPath = std::filesystem::path(executablePath).parent_path() /
+			L"Data" / L"SKSE" / L"Plugins" / L"OpenNR_CenterShared.ini";
+		if (std::filesystem::exists(iniPath)) {
+			settings.neuralRenderingStereoMode = GetPrivateProfileIntW(
+				L"Settings", L"DLSSNR.StereoMode", settings.neuralRenderingStereoMode,
+				iniPath.c_str());
+			settings.neuralRenderingCenterSharedDebug = GetPrivateProfileIntW(
+				L"Settings", L"DLSSNR.CenterSharedDebug",
+				settings.neuralRenderingCenterSharedDebug, iniPath.c_str());
+		}
+	}
 	// Util::Subrect::Controller::LoadSettings takes `const json&` (Subrect.h:68)
 	// so no const_cast is needed — keeping it would imply mutation that never
 	// happens.
