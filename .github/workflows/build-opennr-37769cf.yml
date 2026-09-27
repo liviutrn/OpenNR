@@ -68,8 +68,9 @@ jobs:
         working-directory: runtime/open-shaders
         run: |
           cmake --build --preset Package --target cpp_tests --parallel
-          $testExe = Get-ChildItem -Path "E:\OpenNR_Builds\2.15.1\presets\OpenNR-Package" -Filter cpp_tests.exe -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
-          if (-not $testExe) { throw "cpp_tests.exe was not produced" }
+          $testRoot = Join-Path $env:GITHUB_WORKSPACE "runtime/open-shaders/build/OpenNR-Package"
+          $testExe = Get-ChildItem -Path $testRoot -Filter cpp_tests.exe -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $testExe) { throw "cpp_tests.exe was not produced under $testRoot" }
           & $testExe.FullName
           if ($LASTEXITCODE -ne 0) { throw "cpp_tests failed with exit code $LASTEXITCODE" }
 
