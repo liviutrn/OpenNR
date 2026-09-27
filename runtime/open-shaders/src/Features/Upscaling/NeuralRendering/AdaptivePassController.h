@@ -1,5 +1,7 @@
 #pragma once
 
+#include "AdaptiveQualityOrder.h"
+
 #include <algorithm>
 #include <chrono>
 #include <cstdint>
@@ -22,6 +24,7 @@ namespace NeuralRendering
 			overrunFrames_ = 0;
 			headroomFrames_ = 0;
 			headroomMs_ = 0.0f;
+			SetAdaptivePassRecoveryStage(AdaptivePassRecoveryStage::None);
 		}
 
 		void Update(std::uint32_t frame, std::uint32_t requestedMode, bool adaptiveEnabled,
@@ -39,6 +42,7 @@ namespace NeuralRendering
 				headroomMs_ = 0.0f;
 				lastFrame_ = frame;
 				lastUpdateTime_ = now;
+				SetAdaptivePassRecoveryStage(AdaptivePassRecoveryStage::None);
 				return;
 			}
 			if (lastFrame_ == frame)
@@ -55,6 +59,7 @@ namespace NeuralRendering
 				neuralEnabled_ = true;
 				headroomMs_ = 0.0f;
 				overrunFrames_ = headroomFrames_ = dwellFrames_ = 0;
+				SetAdaptivePassRecoveryStage(AdaptivePassRecoveryStage::None);
 				return;
 			}
 
@@ -105,7 +110,16 @@ namespace NeuralRendering
 		}
 		[[nodiscard]] bool CanIncrease(std::uint32_t fallback) const
 		{
-			return !IsNeuralEnabled() || ActiveMode(fallback) < std::min(fallback, 2u);
+			if (!IsNeuralEnabled()) {
+				SetAdaptivePassRecoveryStage(AdaptivePassRecoveryStage::RestorePrimary);
+				return true;
+			}
+			if (ActiveMode(fallback) < std::min(fallback, 2u)) {
+				SetAdaptivePassRecoveryStage(AdaptivePassRecoveryStage::RestoreExtra);
+				return true;
+			}
+			SetAdaptivePassRecoveryStage(AdaptivePassRecoveryStage::None);
+			return false;
 		}
 
 	private:
