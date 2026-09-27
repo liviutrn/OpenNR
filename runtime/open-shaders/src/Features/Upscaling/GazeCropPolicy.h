@@ -96,7 +96,7 @@ namespace FoveatedRenderImpl::GazeCropPolicy
 			previous[1] + (sample[1] - previous[1]) * alpha };
 	}
 
-	/** Hold the crop inside its movement dead zone; recenter fully once crossed. */
+	/** Hold inside the movement dead zone; outside it, consume only excess motion. */
 	inline float ResolveOrigin(float previous, float sample, float extent,
 		std::uint32_t pixels, std::uint32_t deadZonePixels, bool havePrevious)
 	{
@@ -104,8 +104,11 @@ namespace FoveatedRenderImpl::GazeCropPolicy
 		const float desired = std::clamp(sample - extent * 0.5f, 0.0f, maxOrigin);
 		const float deadZone = pixels ? static_cast<float>(deadZonePixels) / static_cast<float>(pixels) : 0.0f;
 		const float delta = desired - previous;
-		if (havePrevious && std::abs(delta) <= deadZone)
+		if (!havePrevious || deadZone <= 0.0f)
+			return desired;
+		if (std::abs(delta) <= deadZone)
 			return previous;
-		return desired;
+		const float excess = std::abs(delta) - deadZone;
+		return std::clamp(previous + std::copysign(excess, delta), 0.0f, maxOrigin);
 	}
 }
