@@ -52,6 +52,27 @@ namespace NeuralRendering
 		// -1 prepares lower quality, +1 prepares higher quality, 0 holds prewarming.
 		std::int32_t adaptivePrewarmDirection = 0;
 		std::uint32_t adaptiveMemoryCeiling = 100;
+		bool resultShapingEnabled = false;
+		float resultEditStrength = 1.0f;
+		float resultBrightening = 1.0f;
+		float resultDarkening = 1.0f;
+		float resultColor = 1.0f;
+		float resultHueShiftStrength = 1.0f;
+		float resultShadows = 1.0f;
+		float resultMidtones = 1.0f;
+		float resultHighlights = 1.0f;
+		float resultMaxBrighteningStops = 0.0f;
+		float resultMaxDarkeningStops = 0.0f;
+		float resultMaxColorChangeStops = 0.0f;
+		float resultLargeScaleTone = 1.0f;
+		float resultFineDetail = 1.0f;
+		float resultDetailRadius = 1.0f;
+		float resultHaloSuppression = 0.0f;
+		std::uint32_t stabilizeMode = 0;
+		float stabilizeTimeMs = 60.0f;
+		bool stabilizeDetail = false;
+		float stabilizeDepthThreshold = 0.05f;
+		float stabilizeColorTolerance = 0.08f;
 	};
 
 	/**

@@ -193,8 +193,13 @@ namespace Util
 	{
 		hovered = ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal | ImGuiHoveredFlags_AllowWhenDisabled);
 		if (hovered) {
+			const float viewportWidth = ImGui::GetMainViewport()->WorkSize.x;
+			const float tooltipMaxWidth = std::max(1.0f,
+				std::min(ImGui::GetFontSize() * 28.0f, viewportWidth * 0.5f));
+			ImGui::SetNextWindowSizeConstraints(ImVec2(0.0f, 0.0f),
+				ImVec2(tooltipMaxWidth, std::numeric_limits<float>::max()));
 			ImGui::BeginTooltip();
-			ImGui::PushTextWrapPos(ImGui::GetFontSize() * 35.0f);
+			ImGui::PushTextWrapPos(tooltipMaxWidth - ImGui::GetStyle().WindowPadding.x);
 			// Apply Subtext font for consistent tooltip styling
 			if (auto* menu = globals::menu) {
 				if (auto* subtextFont = menu->GetFont(Menu::FontRole::Subtext)) {

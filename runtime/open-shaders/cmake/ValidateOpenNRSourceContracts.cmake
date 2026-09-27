@@ -36,6 +36,7 @@ set(_cmake_path "${SOURCE_ROOT}/CMakeLists.txt")
 set(_presets_path "${SOURCE_ROOT}/CMakePresets.json")
 set(_streamline_runtime_path "${SOURCE_ROOT}/cmake/Streamline-Runtime.cmake")
 set(_temporal_shader_path "${SOURCE_ROOT}/features/Upscaling/Shaders/Upscaling/NeuralRendering/TemporalReuseCS.hlsl")
+set(_result_shaping_shader_path "${SOURCE_ROOT}/features/Upscaling/Shaders/Upscaling/NeuralRendering/ResultShapingCS.hlsl")
 set(_dlssnr_carrier_path "${SOURCE_ROOT}/package/Shaders/Upscaling/Streamline/nvngx_dlssnr.dll")
 set(_vr_helper_runtime_path "${SOURCE_ROOT}/package/SKSE/Plugins/imgui-vr-helper.dll")
 if(DEFINED OPENNR_DLSSNR_RUNTIME_SOURCE)
@@ -58,7 +59,8 @@ if(NOT EXISTS "${_icon_loader_path}" OR NOT EXISTS "${_branding_path}" OR
    NOT EXISTS "${_skylighting_source_path}" OR NOT EXISTS "${_shared_data_path}" OR
    NOT EXISTS "${_skylighting_shader_path}" OR NOT EXISTS "${_skylighting_update_shader_path}" OR
    NOT EXISTS "${_presets_path}" OR NOT EXISTS "${_streamline_runtime_path}" OR
-   NOT EXISTS "${_temporal_shader_path}" OR NOT EXISTS "${_dlssnr_carrier_path}" OR
+   NOT EXISTS "${_temporal_shader_path}" OR NOT EXISTS "${_result_shaping_shader_path}" OR
+   NOT EXISTS "${_dlssnr_carrier_path}" OR
    NOT EXISTS "${_vr_helper_runtime_path}" OR NOT EXISTS "${_vr_helper_config_path}")
     message(FATAL_ERROR
         "OpenNR source contract validation could not find one or more release contracts"
@@ -80,6 +82,7 @@ file(READ "${_future_pipeline_path}" _future_pipeline)
 file(READ "${_runtime_header_path}" _runtime_header)
 file(READ "${_runtime_source_path}" _runtime_source)
 file(READ "${_renderer_path}" _renderer)
+file(READ "${_result_shaping_shader_path}" _result_shaping_shader)
 file(READ "${_skylighting_header_path}" _skylighting_header)
 file(READ "${_skylighting_source_path}" _skylighting_source)
 file(READ "${_shared_data_path}" _shared_data)
@@ -132,6 +135,34 @@ foreach(_contract IN ITEMS
         message(FATAL_ERROR
             "OpenNR renderer guide wiring missing: ${_contract}\n"
             "The Feature 18 cascade would lose its exact first-input or MV-resolution metadata."
+        )
+    endif()
+endforeach()
+
+foreach(_contract IN ITEMS
+    "ApplyResultShaping"
+    "SyncResultShapingConfig"
+)
+	string(FIND "${_renderer}" "${_contract}" _contract_index)
+	if(_contract_index EQUAL -1)
+		message(FATAL_ERROR
+			"OpenNR result-shaping renderer integration missing: ${_contract}\n"
+			"The new output stage must be wired into the per-eye rendering path."
+		)
+	endif()
+endforeach()
+
+foreach(_contract IN ITEMS
+    "gPreviousDepth"
+    "gStabilizeMode == 2u"
+    "IsBoundedMotion"
+    "gHaloSuppression"
+)
+    string(FIND "${_result_shaping_shader}" "${_contract}" _contract_index)
+    if(_contract_index EQUAL -1)
+        message(FATAL_ERROR
+            "OpenNR result-shaping safety contract missing: ${_contract}\n"
+            "The optional post-NR pass must retain depth, motion-vector and halo guards."
         )
     endif()
 endforeach()
@@ -495,7 +526,7 @@ foreach(_contract IN ITEMS
 endforeach()
 
 foreach(_contract IN ITEMS
-    "VERSION 2.18.0"
+    "VERSION 2.19.1"
     "does not match OpenNR"
     "OPENNR_LEAN_PACKAGE"
 )

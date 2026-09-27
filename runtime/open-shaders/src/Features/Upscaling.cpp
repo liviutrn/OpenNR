@@ -28,6 +28,7 @@
 #include <cmath>
 #include <directx/d3dx12.h>
 #include <format>
+#include <stdexcept>
 
 #include "Features/PostProcessing.h"
 
@@ -436,7 +437,8 @@ void Upscaling::DrawDLSSNRSharedControls()
 // FoveatedRender: foveated subrect DLSS, VR-only, opt-in. Enable lives at the top level
 // for discoverability; the dedicated Neural Rendering page can keep the full tuning body open
 // so first-time VR users see the primary coverage controls immediately.
-void Upscaling::DrawFoveationControls(bool showTuning, bool showSharedPanelNote, bool tuningDefaultOpen)
+void Upscaling::DrawFoveationControls(bool showTuning, bool showSharedPanelNote,
+	bool tuningDefaultOpen, bool showNeuralRenderingStatusButton)
 {
 	ImGui::Separator();
 	foveatedRender.DrawEnable();
@@ -450,7 +452,7 @@ void Upscaling::DrawFoveationControls(bool showTuning, bool showSharedPanelNote,
 	if (ImGui::TreeNodeEx(T(TKEY("foveated_tuning"), "Foveated Rendering Controls"), tuningFlags)) {
 		// Keep the Neural Rendering section at the top of the shared panel. The
 		// dedicated page controls whether the foveated container starts expanded.
-		foveatedRender.DrawSettings(showSharedPanelNote, false);
+		foveatedRender.DrawSettings(showSharedPanelNote, false, showNeuralRenderingStatusButton);
 		ImGui::TreePop();
 	}
 	if (!enabled)
@@ -463,11 +465,12 @@ void Upscaling::DrawDLSSNRPage()
 	ImGui::TextUnformatted(T("menu.dlssnr.title", "Neural Rendering"));
 	ImGui::TextWrapped("%s", T("menu.dlssnr.description",
 		"Neural Rendering and optional VR foveation. Shared upscaling settings stay in sync."));
+	foveatedRender.DrawNeuralRenderingStatusButton();
 	if (globals::game::isVR) {
 		ImGui::TextUnformatted(T("menu.dlssnr.foveation_header", "Foveated Rendering"));
 		ImGui::TextWrapped("%s", T("menu.dlssnr.foveation_description",
 			"Enable foveation, choose a coverage preset, then adjust the edge blend."));
-		DrawFoveationControls(true, false, true);
+		DrawFoveationControls(true, false, true, false);
 		ImGui::Separator();
 		ImGui::TextUnformatted(T("menu.dlssnr.shared_header", "DLSS and Upscaling"));
 		ImGui::TextWrapped("%s", T("menu.dlssnr.shared_description",
@@ -479,7 +482,7 @@ void Upscaling::DrawDLSSNRPage()
 		ImGui::TextUnformatted(T("menu.dlssnr.neural_header", "Neural Rendering"));
 		ImGui::TextWrapped("%s", T("menu.dlssnr.flat_description",
 			"Feature 18 controls for flat rendering."));
-		foveatedRender.DrawSettings(false);
+		foveatedRender.DrawSettings(false, false, false);
 	}
 	ImGui::PopID();
 }
@@ -697,13 +700,39 @@ void Upscaling::RegisterUxActions()
 				{ "successfulEvaluations", nr.SuccessfulFrames() }, { "ngxResult", nr.NgxResult() },
 				{ "cropHeld", FoveatedRenderImpl::Core::vrSubrectFixedEnvelopeRejected || FoveatedRenderImpl::Core::vrSubrectNeuralFixedEnvelopeRejected } });
 		});
+	FEATURE_QUERY("neuralRenderingOutputStatus",
+		"Read optional result-shaping and stabilization settings and whether temporal residual reuse suppresses stabilization. This reports configuration eligibility, not live GPU effectiveness. Params: none.",
+		[](const Feature*, const json&) -> json {
+			const auto& settings = foveatedRender.settings;
+			const auto& nr = NeuralRendering::Renderer::Instance();
+			const bool adaptiveNR = settings.neuralRenderingAdaptiveEnabled &&
+				foveatedRender.adaptiveController.IsEnabled();
+			const bool alternateRouteDisablesReuse = adaptiveNR || settings.neuralRenderingPreUpscale != 0;
+			const std::uint32_t effectiveTemporalReuseCadence = alternateRouteDisablesReuse ? 0u :
+				settings.neuralRenderingTemporalReuseCadence;
+			return json({ { "resultShapingEnabled", settings.neuralRenderingResultShapingEnabled },
+				{ "stabilizationConfigured", settings.neuralRenderingStabilizeMode != 0 },
+				{ "stabilizeMode", settings.neuralRenderingStabilizeMode },
+				{ "stabilizationSuppressedByTemporalReuse", settings.neuralRenderingStabilizeMode != 0 &&
+					effectiveTemporalReuseCadence != 0 },
+				{ "temporalReuseCadence", effectiveTemporalReuseCadence },
+				{ "runtimeStatus", nr.StatusText() }, { "successfulEvaluations", nr.SuccessfulFrames() } });
+		});
+	FEATURE_COMMAND("setNeuralRenderingResultShaping",
+		"Enable or disable the optional post-NR result-shaping pass. Params: enabled (boolean). Requests a safe NR history reset after the change.",
+		[](Feature*, const json& args) {
+			if (!args.contains("enabled") || !args["enabled"].is_boolean())
+				throw std::invalid_argument("enabled must be a boolean");
+			foveatedRender.settings.neuralRenderingResultShapingEnabled = args["enabled"].get<bool>();
+			NeuralRendering::RequestHistoryReset();
+		});
 	FEATURE_COMMAND("applyFoveationPreset",
 		"Apply a named foveation crop preset (see openshaders.feature get shortName=Upscaling -> foveatedRender.CropPresets[].name, e.g. \"Center 75%\") -- the same code path as clicking the preset dropdown, including right-eye auto-mirror. Params: name (string).",
 		[](Feature*, const json& args) {
 			foveatedRender.subrectController.ApplyPresetByName(args.value("name", std::string{}));
 		});
 	FEATURE_COMMAND("applyNeuralRenderingPreset",
-		"Apply a Neural Rendering tuning preset from the dedicated Neural Rendering page. Params: name (string): Default, Balanced, Fabric Detail, Natural, Strong, or Custom.",
+		"Apply a Neural Rendering tuning preset from the dedicated Neural Rendering page. Params: name (string): Default, Balanced, Fabric Detail, Natural, or Custom.",
 		[](Feature*, const json& args) {
 			foveatedRender.ApplyNeuralRenderingPreset(args.value("name", std::string("Default")));
 		});

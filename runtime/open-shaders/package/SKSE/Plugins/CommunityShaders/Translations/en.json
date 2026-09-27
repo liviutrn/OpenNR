@@ -2959,8 +2959,6 @@
     "feature.upscaling.neural_rendering_style_fabric_detail_desc": "Emphasizes fine materials and surface texture.",
     "feature.upscaling.neural_rendering_style_natural": "Natural",
     "feature.upscaling.neural_rendering_style_natural_desc": "Neutral detail with restrained contrast.",
-    "feature.upscaling.neural_rendering_style_strong": "Strong",
-    "feature.upscaling.neural_rendering_style_strong_desc": "Most aggressive reconstruction and detail.",
     "feature.upscaling.neural_rendering_temporal_color_tolerance": "Color rejection tolerance",
     "feature.upscaling.neural_rendering_temporal_depth_threshold": "Depth rejection threshold",
     "feature.upscaling.neural_rendering_temporal_header": "Temporal Stability",

@@ -257,7 +257,8 @@ public:
 	/// @brief Renders the Foveated DLSS enable + tuning tree. Shared by the upscaler
 	/// panel and the Performance hub. VR-only; self-gates via IsRuntimeSupported()
 	/// (shown disabled off-VR rather than hidden).
-	void DrawFoveationControls(bool showTuning = true, bool showSharedPanelNote = true, bool tuningDefaultOpen = false);
+	void DrawFoveationControls(bool showTuning = true, bool showSharedPanelNote = true,
+		bool tuningDefaultOpen = false, bool showNeuralRenderingStatusButton = true);
 	/// @brief Draws the method, preset, sharpening and DLSS model controls shared by
 /// Upscaling and the dedicated Neural Rendering page.
 	void DrawDLSSNRSharedControls();

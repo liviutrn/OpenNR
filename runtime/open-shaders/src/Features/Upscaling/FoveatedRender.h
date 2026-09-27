@@ -115,9 +115,33 @@ struct FoveatedRender
 		float neuralRenderingLocalTone = 1.00f;
 		float neuralRenderingLocalStructure = 1.70f;
 		float neuralRenderingSkinStructure = -1.0f;
-		uint neuralRenderingStyle = 0;  // 0 = Natural, 1 = Fabric Detail, 2 = Cinematic, 3 = Strong
+		uint neuralRenderingStyle = 0;  // 0 = Natural, 1 = Fabric Detail, 2 = Cinematic
 		bool neuralRenderingAutoMask = true;
 		bool neuralRenderingUICorrection = false;
+		// Optional display-space edits applied after Feature 18. Neutral values
+		// preserve the native NR result when the stage is enabled.
+		bool neuralRenderingResultShapingEnabled = false;
+		float neuralRenderingResultEditStrength = 1.0f;
+		float neuralRenderingResultBrightening = 1.0f;
+		float neuralRenderingResultDarkening = 1.0f;
+		float neuralRenderingResultColor = 1.0f;
+		float neuralRenderingResultHueShiftStrength = 1.0f;
+		float neuralRenderingResultShadows = 1.0f;
+		float neuralRenderingResultMidtones = 1.0f;
+		float neuralRenderingResultHighlights = 1.0f;
+		float neuralRenderingResultMaxBrighteningStops = 0.0f;
+		float neuralRenderingResultMaxDarkeningStops = 0.0f;
+		float neuralRenderingResultMaxColorChangeStops = 0.0f;
+		float neuralRenderingResultLargeScaleTone = 1.0f;
+		float neuralRenderingResultFineDetail = 1.0f;
+		float neuralRenderingResultDetailRadius = 1.0f;
+		float neuralRenderingResultHaloSuppression = 0.0f;
+		// 0 = off, 1 = static-pixel, 2 = game-motion-vector reprojection.
+		std::uint32_t neuralRenderingStabilizeMode = 0;
+		float neuralRenderingStabilizeTimeMs = 60.0f;
+		bool neuralRenderingStabilizeDetail = false;
+		float neuralRenderingStabilizeDepthThreshold = 0.05f;
+		float neuralRenderingStabilizeColorTolerance = 0.08f;
 		// Experimental OptiScaler-inspired stage order. Default remains the
 		// post-upscale route; the pre-upscale route is full-eye only in VR and
 		// falls back to post-upscale when its guide contract is unavailable.
@@ -208,7 +232,9 @@ struct FoveatedRender
 	// the body knobs inside a collapsible TreeNode (Upscaling wraps it in
 	// BeginDisabled when settings.enabled == 0).
 	void DrawEnable();
-	void DrawSettings(bool showSharedPanelNote = true, bool vrControlsFirst = false);
+	void DrawSettings(bool showSharedPanelNote = true, bool vrControlsFirst = false,
+		bool showNeuralRenderingStatusButton = true);
+	void DrawNeuralRenderingStatusButton();
 	// Called from Upscaling::SaveSettings / LoadSettings to round-trip JSON.
 	void SaveSettings(json& o_json);
 	void LoadSettings(const json& o_json);

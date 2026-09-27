@@ -37,6 +37,7 @@ set(_required_paths
     "Shaders/Skylighting/Skylighting.hlsli"
     "Shaders/WetnessEffects/WetnessEffects.hlsli"
     "Shaders/Upscaling/NeuralRendering/TemporalReuseCS.hlsl"
+    "Shaders/Upscaling/NeuralRendering/ResultShapingCS.hlsl"
     "Shaders/Upscaling/Streamline/nvngx_dlss.dll"
     "Shaders/Upscaling/Streamline/nvngx_dlssnr.dll"
 )

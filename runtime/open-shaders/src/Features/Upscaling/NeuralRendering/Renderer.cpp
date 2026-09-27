@@ -382,6 +382,37 @@ namespace NeuralRendering
 			bool valid = false;
 		};
 
+		struct ResultShapingEyeState
+		{
+			TemporalTexture output;
+			TemporalTexture previousOutput;
+			TemporalTexture previousBase;
+			TemporalTexture previousDepth;
+			std::uint32_t width = 0;
+			std::uint32_t height = 0;
+			std::uint32_t guideWidth = 0;
+			std::uint32_t guideHeight = 0;
+			std::uint32_t regionX = 0;
+			std::uint32_t regionY = 0;
+			std::uint32_t modelResolution = 0;
+			DXGI_FORMAT format = DXGI_FORMAT_UNKNOWN;
+			bool valid = false;
+			bool historyAllocationFailed = false;
+		};
+
+		struct ResultShapingConfigKey
+		{
+			std::array<float, 22> floats{};
+			std::array<std::uint32_t, 6> integers{};
+			bool enabled = false;
+			bool stabilizeDetail = false;
+			bool useAutoMask = false;
+			bool uiCorrection = false;
+			bool adaptiveResolution = false;
+			bool adaptiveHandoff = false;
+			bool operator==(const ResultShapingConfigKey&) const = default;
+		};
+
 		struct alignas(16) TemporalReuseConstants
 		{
 			std::uint32_t colorWidth = 0;
@@ -398,6 +429,72 @@ namespace NeuralRendering
 			std::uint32_t padding1 = 0;
 		};
 		static_assert(sizeof(TemporalReuseConstants) == 48);
+
+		struct alignas(16) ResultShapingConstants
+		{
+			std::uint32_t colorWidth = 0;
+			std::uint32_t colorHeight = 0;
+			std::uint32_t guideWidth = 0;
+			std::uint32_t guideHeight = 0;
+			float motionScaleX = 1.0f;
+			float motionScaleY = 1.0f;
+			float frameDeltaSeconds = 1.0f / 90.0f;
+			float stabilizeTimeMs = 60.0f;
+			float editStrength = 1.0f;
+			float brightening = 1.0f;
+			float darkening = 1.0f;
+			float colorStrength = 1.0f;
+			float hueShiftStrength = 1.0f;
+			float shadows = 1.0f;
+			float midtones = 1.0f;
+			float highlights = 1.0f;
+			float largeScaleTone = 1.0f;
+			float fineDetail = 1.0f;
+			float detailRadius = 1.0f;
+			float haloSuppression = 0.0f;
+			float maxBrighteningStops = 0.0f;
+			float maxDarkeningStops = 0.0f;
+			float maxColorChangeStops = 0.0f;
+			float depthThreshold = 0.05f;
+			float colorTolerance = 0.08f;
+			std::uint32_t shapeEnabled = 0;
+			std::uint32_t stabilizeMode = 0;
+			std::uint32_t stabilizeDetail = 0;
+		};
+		static_assert(sizeof(ResultShapingConstants) == 112);
+
+		ResultShapingConfigKey MakeResultShapingConfigKey(const Tuning& tuning)
+		{
+			return {
+				.floats = {
+					tuning.resultEditStrength, tuning.resultBrightening, tuning.resultDarkening, tuning.resultColor,
+					tuning.resultHueShiftStrength, tuning.resultShadows, tuning.resultMidtones, tuning.resultHighlights,
+					tuning.resultMaxBrighteningStops, tuning.resultMaxDarkeningStops, tuning.resultMaxColorChangeStops,
+					tuning.resultLargeScaleTone, tuning.resultFineDetail, tuning.resultDetailRadius,
+					tuning.resultHaloSuppression, tuning.stabilizeTimeMs, tuning.stabilizeDepthThreshold,
+					tuning.stabilizeColorTolerance, tuning.intensity, tuning.localToneStrength,
+					tuning.localStructureStrength, tuning.skinStructureStrength },
+				.integers = { tuning.stabilizeMode, tuning.modelResolutionPercent, tuning.modelResolveMode,
+					tuning.multiPass, tuning.style, tuning.temporalReuseCadence },
+				.enabled = tuning.resultShapingEnabled,
+				.stabilizeDetail = tuning.stabilizeDetail,
+				.useAutoMask = tuning.useAutoMask,
+				.uiCorrection = tuning.uiCorrection,
+				.adaptiveResolution = tuning.adaptiveResolution,
+				.adaptiveHandoff = tuning.adaptiveHandoff,
+			};
+		}
+
+		bool HasResultShapingEffect(const Tuning& tuning)
+		{
+			return tuning.resultEditStrength != 1.0f || tuning.resultBrightening != 1.0f ||
+				tuning.resultDarkening != 1.0f || tuning.resultColor != 1.0f ||
+				tuning.resultHueShiftStrength != 1.0f || tuning.resultShadows != 1.0f ||
+				tuning.resultMidtones != 1.0f || tuning.resultHighlights != 1.0f ||
+				tuning.resultMaxBrighteningStops > 0.0f || tuning.resultMaxDarkeningStops > 0.0f ||
+				tuning.resultMaxColorChangeStops > 0.0f || tuning.resultLargeScaleTone != 1.0f ||
+				tuning.resultFineDetail != 1.0f || tuning.resultHaloSuppression > 0.0f;
+		}
 
 		struct HandoffTexture
 		{
@@ -444,6 +541,7 @@ namespace NeuralRendering
 			SharedTexture motionVectors;
 			std::array<TierResources, kResolutionTierCount> tiers;
 			TemporalEyeState temporal;
+			ResultShapingEyeState resultShaping;
 				std::uint32_t colorWidth = 0;
 				std::uint32_t colorHeight = 0;
 				std::uint32_t guideWidth = 0;
@@ -481,6 +579,7 @@ namespace NeuralRendering
 			RecoverIfReady(device);
 			if (failureLatched || !device || !context || eyeIndex >= eyes.size() || !color || !depth || !depthSRV || !motionVectors)
 				return false;
+			SyncResultShapingConfig(tuning);
 			CS_GPU_PASS("NeuralRendering::Evaluate");
 
 			if (!interop.IsInitialized() && !InitializeInterop(device, context))
@@ -522,7 +621,12 @@ namespace NeuralRendering
 				motionVectorScaleX, motionVectorScaleY, tuning)) {
 				ID3D11Resource* temporalOutput = tier.reducedResolution ?
 					tier.resolved.Get() : tier.output.resource11.Get();
-				context->CopyResource(color, temporalOutput);
+				ID3D11ShaderResourceView* temporalOutputSRV = tier.reducedResolution ?
+					tier.resolvedSRV.Get() : tier.output.srv11.Get();
+				ID3D11Resource* shapedOutput = ApplyResultShaping(device, context, eye, eyeIndex,
+					temporalOutput, temporalOutputSRV, colorWidth, colorHeight, guideWidth, guideHeight,
+					0, 0, motionVectorScaleX, motionVectorScaleY, tuning);
+				context->CopyResource(color, shapedOutput);
 				resetPending[eyeIndex][tierIndex] = false;
 				temporalSkippedSinceFull = true;
 				AdvanceTemporalFrame(tuning);
@@ -749,9 +853,13 @@ namespace NeuralRendering
 #endif
 			ID3D11Resource* neuralOutput = tier.reducedResolution ? tier.resolved.Get() : tier.output.resource11.Get();
 			ID3D11ShaderResourceView* neuralOutputSRV = tier.reducedResolution ? tier.resolvedSRV.Get() : tier.output.srv11.Get();
-			ID3D11Resource* writeback = neuralOutput;
+			ID3D11Resource* shapedOutput = ApplyResultShaping(device, context, eye, eyeIndex, neuralOutput,
+				neuralOutputSRV, colorWidth, colorHeight, guideWidth, guideHeight, 0, 0,
+				motionVectorScaleX, motionVectorScaleY, tuning);
+			ID3D11ShaderResourceView* shapedOutputSRV = shapedOutput == neuralOutput ? neuralOutputSRV : eye.resultShaping.output.srv.Get();
+			ID3D11Resource* writeback = shapedOutput;
 			if (tuning.adaptiveResolution && tuning.adaptiveHandoff)
-				writeback = ApplyAdaptiveHandoff(device, context, eyeIndex, eye, neuralOutput, neuralOutputSRV,
+				writeback = ApplyAdaptiveHandoff(device, context, eyeIndex, eye, shapedOutput, shapedOutputSRV,
 					colorWidth, colorHeight, guideWidth, guideHeight, motionVectorScaleX, motionVectorScaleY,
 					0, 0, tuning);
 			context->CopyResource(color, writeback ? writeback : neuralOutput);
@@ -769,6 +877,7 @@ namespace NeuralRendering
 			RecoverIfReady(device);
 			if (failureLatched || !device || !context || !color)
 				return false;
+			SyncResultShapingConfig(tuning);
 			ID3D11Resource* writeback = destination ? destination : color;
 			if (!writeback)
 				return false;
@@ -879,12 +988,17 @@ namespace NeuralRendering
 						auto& tier = eye.tiers[tierIndex];
 						ID3D11Resource* temporalOutput = tier.reducedResolution ?
 							tier.resolved.Get() : tier.output.resource11.Get();
+						ID3D11ShaderResourceView* temporalOutputSRV = tier.reducedResolution ?
+							tier.resolvedSRV.Get() : tier.output.srv11.Get();
+						ID3D11Resource* shapedOutput = ApplyResultShaping(device, context, eye, eyeIndex,
+							temporalOutput, temporalOutputSRV, colorWidth, colorHeight, guideWidth, guideHeight,
+							input.sourceX, input.sourceY, input.motionVectorScaleX, input.motionVectorScaleY, tuning);
 						if (blendSubrect && destinationUAV) {
-							FoveatedRenderImpl::Ops::BlendSubrectToOutput(temporalOutput,
+							FoveatedRenderImpl::Ops::BlendSubrectToOutput(shapedOutput,
 								writeback, destinationUAV, input.sourceX, input.sourceY, colorWidth, colorHeight);
 						} else {
 							context->CopySubresourceRegion(writeback, 0, input.sourceX, input.sourceY, 0,
-								temporalOutput, 0, &outputBox);
+								shapedOutput, 0, &outputBox);
 						}
 						resetPending[eyeIndex][tierIndex] = false;
 					}
@@ -1136,9 +1250,14 @@ namespace NeuralRendering
 #endif
 				ID3D11Resource* neuralOutput = tier.reducedResolution ? tier.resolved.Get() : tier.output.resource11.Get();
 				ID3D11ShaderResourceView* neuralOutputSRV = tier.reducedResolution ? tier.resolvedSRV.Get() : tier.output.srv11.Get();
-				ID3D11Resource* writebackOutput = neuralOutput;
+				ID3D11Resource* shapedOutput = ApplyResultShaping(device, context, eye, eyeIndex,
+					neuralOutput, neuralOutputSRV, colorWidth, colorHeight, guideWidth, guideHeight,
+					input.sourceX, input.sourceY, input.motionVectorScaleX, input.motionVectorScaleY, tuning);
+				ID3D11ShaderResourceView* shapedOutputSRV = shapedOutput == neuralOutput ?
+					neuralOutputSRV : eye.resultShaping.output.srv.Get();
+				ID3D11Resource* writebackOutput = shapedOutput;
 				if (tuning.adaptiveResolution && tuning.adaptiveHandoff)
-					writebackOutput = ApplyAdaptiveHandoff(device, context, eyeIndex, eye, neuralOutput, neuralOutputSRV,
+					writebackOutput = ApplyAdaptiveHandoff(device, context, eyeIndex, eye, shapedOutput, shapedOutputSRV,
 						colorWidth, colorHeight, guideWidth, guideHeight,
 						input.motionVectorScaleX, input.motionVectorScaleY,
 						input.sourceX, input.sourceY, tuning);
@@ -1201,16 +1320,22 @@ namespace NeuralRendering
 			temporalAccumulateCS.Reset();
 			temporalReprojectCS.Reset();
 			adaptiveHandoffCS.Reset();
+			resultShapingCS.Reset();
 			modelResolutionCB.Reset();
 			modelResolutionSampler.Reset();
 			temporalReuseCB.Reset();
 			temporalReuseSampler.Reset();
+			resultShapingCB.Reset();
+			resultShapingSampler.Reset();
 			temporalConfigInitialized = false;
+			resultShapingConfigInitialized = false;
 			temporalFrameIndex = 0;
 			temporalSkippedSinceFull = false;
 			temporalReuseActiveLogged = false;
 			temporalReuseCropActiveLogged = false;
 			temporalReuseWarningLogged = false;
+			resultShapingFailureLogged = false;
+			resultStabilizationFailureLogged = false;
 			return true;
 		}
 
@@ -1218,6 +1343,9 @@ namespace NeuralRendering
 		{
 			for (auto& eyeReset : resetPending)
 				eyeReset.fill(true);
+			for (auto& eye : eyes)
+				eye.resultShaping.historyAllocationFailed = false;
+			resultStabilizationFailureLogged = false;
 			InvalidateTemporalHistory();
 		}
 
@@ -1229,6 +1357,9 @@ namespace NeuralRendering
 			temporalAccumulateCS.Reset();
 			temporalReprojectCS.Reset();
 			adaptiveHandoffCS.Reset();
+			resultShapingCS.Reset();
+			for (auto& eye : eyes)
+				eye.resultShaping.valid = false;
 		}
 
 		[[nodiscard]] bool IsFailureLatched() const { return failureLatched; }
@@ -1414,6 +1545,244 @@ namespace NeuralRendering
 				eye.temporal.accumulatedMotion[0], "NeuralRendering::TemporalAccumulatedMotion0") &&
 			EnsureTemporalTexture(device, colorWidth, colorHeight, DXGI_FORMAT_R16G16_FLOAT,
 				eye.temporal.accumulatedMotion[1], "NeuralRendering::TemporalAccumulatedMotion1");
+		}
+
+		bool EnsureResultShapingTexture(ID3D11Device* device, std::uint32_t width, std::uint32_t height,
+			DXGI_FORMAT format, TemporalTexture& texture, const char* name)
+		{
+			if (!EnsureTemporalTexture(device, width, height, format, texture, name))
+				return false;
+			Util::SetResourceName(texture.srv.Get(), (std::string(name) + " SRV").c_str());
+			Util::SetResourceName(texture.uav.Get(), (std::string(name) + " UAV").c_str());
+			return true;
+		}
+
+		bool EnsureResultShapingResources(ID3D11Device* device, EyeResources& eye,
+			std::uint32_t eyeIndex, std::uint32_t colorWidth, std::uint32_t colorHeight,
+			std::uint32_t guideWidth, std::uint32_t guideHeight,
+			std::uint32_t regionX, std::uint32_t regionY, std::uint32_t modelResolution,
+			bool needHistory)
+		{
+			if (!device || !colorWidth || !colorHeight || !guideWidth || !guideHeight)
+				return false;
+
+			const DXGI_FORMAT colorFormat = eye.color.desc.Format;
+			auto& state = eye.resultShaping;
+			const bool outputMatches = state.width == colorWidth && state.height == colorHeight &&
+				state.guideWidth == guideWidth && state.guideHeight == guideHeight && state.format == colorFormat &&
+				state.output.resource && state.output.srv && state.output.uav;
+			if (!outputMatches) {
+				ResultShapingEyeState replacement;
+				replacement.width = colorWidth;
+				replacement.height = colorHeight;
+				replacement.guideWidth = guideWidth;
+				replacement.guideHeight = guideHeight;
+				replacement.regionX = regionX;
+				replacement.regionY = regionY;
+				replacement.modelResolution = modelResolution;
+				replacement.format = colorFormat;
+				const std::string suffix = eyeIndex == 0 ? "Left" : "Right";
+				if (!EnsureResultShapingTexture(device, colorWidth, colorHeight, colorFormat,
+					replacement.output, ("NeuralRendering::ResultShapingOutput" + suffix).c_str()))
+					return false;
+				state = std::move(replacement);
+			} else if (state.regionX != regionX || state.regionY != regionY ||
+				state.modelResolution != modelResolution) {
+				state.valid = false;
+				state.regionX = regionX;
+				state.regionY = regionY;
+				state.modelResolution = modelResolution;
+			}
+
+			const bool historyMatches = state.previousOutput.resource && state.previousOutput.srv &&
+				state.previousOutput.uav && state.previousBase.resource && state.previousBase.srv &&
+				state.previousBase.uav && state.previousDepth.resource && state.previousDepth.srv &&
+				state.previousDepth.uav;
+			if (needHistory && !historyMatches && !state.historyAllocationFailed) {
+				TemporalTexture previousOutput;
+				TemporalTexture previousBase;
+				TemporalTexture previousDepth;
+				const std::string suffix = eyeIndex == 0 ? "Left" : "Right";
+				const bool historyCreated =
+					EnsureResultShapingTexture(device, colorWidth, colorHeight, colorFormat,
+						previousOutput, ("NeuralRendering::ResultShapingHistory" + suffix).c_str()) &&
+					EnsureResultShapingTexture(device, colorWidth, colorHeight, colorFormat,
+						previousBase, ("NeuralRendering::ResultShapingBase" + suffix).c_str()) &&
+					EnsureResultShapingTexture(device, guideWidth, guideHeight, DXGI_FORMAT_R32_FLOAT,
+						previousDepth, ("NeuralRendering::ResultShapingDepth" + suffix).c_str());
+				if (historyCreated) {
+					state.previousOutput = std::move(previousOutput);
+					state.previousBase = std::move(previousBase);
+					state.previousDepth = std::move(previousDepth);
+					state.valid = false;
+				} else {
+					state.previousOutput = {};
+					state.previousBase = {};
+					state.previousDepth = {};
+					state.historyAllocationFailed = true;
+					state.valid = false;
+				}
+			}
+			return true;
+		}
+
+		bool EnsureResultShapingShader(ID3D11Device* device)
+		{
+			if (!device)
+				return false;
+			if (!resultShapingCS.Get(L"Data\\Shaders\\Upscaling\\NeuralRendering\\ResultShapingCS.hlsl", {},
+				"cs_5_0", "main", "NeuralRendering::ResultShapingCS"))
+				return false;
+
+			if (!resultShapingCB) {
+				D3D11_BUFFER_DESC bufferDesc{};
+				bufferDesc.ByteWidth = sizeof(ResultShapingConstants);
+				bufferDesc.Usage = D3D11_USAGE_DEFAULT;
+				bufferDesc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+				if (FAILED(device->CreateBuffer(&bufferDesc, nullptr, resultShapingCB.GetAddressOf())))
+					return false;
+				Util::SetResourceName(resultShapingCB.Get(), "NeuralRendering::ResultShapingCB");
+			}
+
+			if (!resultShapingSampler) {
+				D3D11_SAMPLER_DESC samplerDesc{};
+				samplerDesc.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
+				samplerDesc.AddressU = D3D11_TEXTURE_ADDRESS_CLAMP;
+				samplerDesc.AddressV = D3D11_TEXTURE_ADDRESS_CLAMP;
+				samplerDesc.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
+				samplerDesc.MinLOD = 0.0f;
+				samplerDesc.MaxLOD = std::numeric_limits<float>::max();
+				if (FAILED(device->CreateSamplerState(&samplerDesc, resultShapingSampler.GetAddressOf())))
+					return false;
+				Util::SetResourceName(resultShapingSampler.Get(), "NeuralRendering::ResultShapingSampler");
+			}
+			return true;
+		}
+
+		void ClearResultShapingBindings(ID3D11DeviceContext* context)
+		{
+			if (!context)
+				return;
+			std::array<ID3D11ShaderResourceView*, 7> nullSources{};
+			ID3D11UnorderedAccessView* nullTarget = nullptr;
+			ID3D11Buffer* nullBuffer = nullptr;
+			ID3D11SamplerState* nullSampler = nullptr;
+			context->CSSetShaderResources(0, static_cast<UINT>(nullSources.size()), nullSources.data());
+			context->CSSetUnorderedAccessViews(0, 1, &nullTarget, nullptr);
+			context->CSSetConstantBuffers(0, 1, &nullBuffer);
+			context->CSSetSamplers(0, 1, &nullSampler);
+			context->CSSetShader(nullptr, nullptr, 0);
+		}
+
+		ID3D11Resource* ApplyResultShaping(ID3D11Device* device, ID3D11DeviceContext* context,
+			EyeResources& eye, std::uint32_t eyeIndex, ID3D11Resource* nrOutput,
+			ID3D11ShaderResourceView* nrOutputSRV, std::uint32_t colorWidth, std::uint32_t colorHeight,
+			std::uint32_t guideWidth, std::uint32_t guideHeight,
+			std::uint32_t regionX, std::uint32_t regionY, float motionScaleX, float motionScaleY,
+			const Tuning& tuning)
+		{
+			const bool stabilizeConfigured = tuning.stabilizeMode != 0;
+			const bool stabilizeAllowed = stabilizeConfigured && tuning.temporalReuseCadence == 0;
+			if ((!tuning.resultShapingEnabled || !HasResultShapingEffect(tuning)) && !stabilizeAllowed)
+				return nrOutput;
+
+			auto& state = eye.resultShaping;
+			const bool hasDepth = eye.depth.srv11 && eye.depth.resource11;
+			std::uint32_t stabilizeMode = stabilizeAllowed && hasDepth ? tuning.stabilizeMode : 0u;
+			if (stabilizeMode == 2u && (!eye.motionVectors.srv11 || !std::isfinite(motionScaleX) || !std::isfinite(motionScaleY)))
+				stabilizeMode = 0;
+			if (!nrOutput || !nrOutputSRV || !eye.color.srv11 || !context ||
+				!EnsureResultShapingResources(device, eye, eyeIndex, colorWidth, colorHeight,
+					guideWidth, guideHeight, regionX, regionY, tuning.modelResolutionPercent, stabilizeMode != 0) ||
+				!EnsureResultShapingShader(device)) {
+				state.valid = false;
+				if (!resultShapingFailureLogged) {
+					logger::warn("[DLSSNR] result shaping unavailable; using the unmodified NR output");
+					resultShapingFailureLogged = true;
+				}
+				return nrOutput;
+			}
+
+			const bool historyAvailable = state.previousOutput.resource && state.previousOutput.srv &&
+				state.previousOutput.uav && state.previousBase.resource && state.previousBase.srv &&
+				state.previousBase.uav && state.previousDepth.resource && state.previousDepth.srv &&
+				state.previousDepth.uav;
+			if (stabilizeMode != 0 && !historyAvailable) {
+				if (!resultStabilizationFailureLogged) {
+					logger::warn("[DLSSNR] result stabilization history unavailable; keeping result shaping active without temporal smoothing");
+					resultStabilizationFailureLogged = true;
+				}
+				stabilizeMode = 0;
+			}
+			if (stabilizeMode != 0 && !state.valid)
+				stabilizeMode = 0;
+			float frameDeltaSeconds = globals::game::deltaTime ? *globals::game::deltaTime : (1.0f / 90.0f);
+			if (!std::isfinite(frameDeltaSeconds) || frameDeltaSeconds <= 0.0f)
+				frameDeltaSeconds = 1.0f / 90.0f;
+			frameDeltaSeconds = std::clamp(frameDeltaSeconds, 1.0f / 240.0f, 0.25f);
+
+			ResultShapingConstants constants{};
+			constants.colorWidth = colorWidth;
+			constants.colorHeight = colorHeight;
+			constants.guideWidth = guideWidth;
+			constants.guideHeight = guideHeight;
+			constants.motionScaleX = motionScaleX;
+			constants.motionScaleY = motionScaleY;
+			constants.frameDeltaSeconds = frameDeltaSeconds;
+			constants.stabilizeTimeMs = tuning.stabilizeTimeMs;
+			constants.editStrength = tuning.resultEditStrength;
+			constants.brightening = tuning.resultBrightening;
+			constants.darkening = tuning.resultDarkening;
+			constants.colorStrength = tuning.resultColor;
+			constants.hueShiftStrength = tuning.resultHueShiftStrength;
+			constants.shadows = tuning.resultShadows;
+			constants.midtones = tuning.resultMidtones;
+			constants.highlights = tuning.resultHighlights;
+			constants.largeScaleTone = tuning.resultLargeScaleTone;
+			constants.fineDetail = tuning.resultFineDetail;
+			constants.detailRadius = tuning.resultDetailRadius;
+			constants.haloSuppression = tuning.resultHaloSuppression;
+			constants.maxBrighteningStops = tuning.resultMaxBrighteningStops;
+			constants.maxDarkeningStops = tuning.resultMaxDarkeningStops;
+			constants.maxColorChangeStops = tuning.resultMaxColorChangeStops;
+			constants.depthThreshold = tuning.stabilizeDepthThreshold;
+			constants.colorTolerance = tuning.stabilizeColorTolerance;
+			constants.shapeEnabled = tuning.resultShapingEnabled ? 1u : 0u;
+			constants.stabilizeMode = stabilizeMode;
+			constants.stabilizeDetail = tuning.stabilizeDetail ? 1u : 0u;
+
+			CS_GPU_PASS("NeuralRendering::ResultShaping");
+			context->UpdateSubresource(resultShapingCB.Get(), 0, nullptr, &constants, 0, 0);
+			std::array<ID3D11ShaderResourceView*, 7> sources{};
+			sources[0] = eye.color.srv11.Get();
+			sources[1] = nrOutputSRV;
+			sources[2] = eye.depth.srv11.Get();
+			sources[3] = eye.motionVectors.srv11.Get();
+			if (stabilizeMode != 0) {
+				sources[4] = state.previousOutput.srv.Get();
+				sources[5] = state.previousBase.srv.Get();
+				sources[6] = state.previousDepth.srv.Get();
+			}
+			ID3D11UnorderedAccessView* target = state.output.uav.Get();
+			ID3D11Buffer* constantBuffer = resultShapingCB.Get();
+			ID3D11SamplerState* sampler = resultShapingSampler.Get();
+			context->CSSetShader(resultShapingCS.get(), nullptr, 0);
+			context->CSSetConstantBuffers(0, 1, &constantBuffer);
+			context->CSSetShaderResources(0, static_cast<UINT>(sources.size()), sources.data());
+			context->CSSetUnorderedAccessViews(0, 1, &target, nullptr);
+			context->CSSetSamplers(0, 1, &sampler);
+			context->Dispatch((colorWidth + 7) / 8, (colorHeight + 7) / 8, 1);
+			ClearResultShapingBindings(context);
+
+			if (stabilizeAllowed && historyAvailable && eye.depth.resource11) {
+				context->CopyResource(state.previousOutput.resource.Get(), state.output.resource.Get());
+				context->CopyResource(state.previousBase.resource.Get(), eye.color.resource11.Get());
+				context->CopyResource(state.previousDepth.resource.Get(), eye.depth.resource11.Get());
+				state.valid = true;
+			} else {
+				state.valid = false;
+			}
+			return state.output.resource.Get();
 		}
 
 		bool EnsureTemporalReuseShaders(ID3D11Device* device)
@@ -1628,11 +1997,25 @@ namespace NeuralRendering
 			return true;
 		}
 
+		void SyncResultShapingConfig(const Tuning& tuning)
+		{
+			const auto next = MakeResultShapingConfigKey(tuning);
+			if (resultShapingConfigInitialized && resultShapingConfig == next)
+				return;
+			resultShapingConfig = next;
+			resultShapingConfigInitialized = true;
+			for (auto& eye : eyes) {
+				eye.resultShaping.valid = false;
+				eye.resultShaping.historyAllocationFailed = false;
+			}
+		}
+
 		void InvalidateTemporalHistory(bool preserveHandoff = false)
 		{
 			for (auto& eye : eyes) {
 				eye.temporal.valid = false;
 				eye.temporal.accumulatedMotionIndex = 0;
+				eye.resultShaping.valid = false;
 				if (!preserveHandoff)
 					eye.handoff.valid = false;
 			}
@@ -2457,21 +2840,28 @@ namespace NeuralRendering
 		Util::LazyShader<ID3D11ComputeShader> temporalAccumulateCS;
 		Util::LazyShader<ID3D11ComputeShader> temporalReprojectCS;
 		Util::LazyShader<ID3D11ComputeShader> adaptiveHandoffCS;
+		Util::LazyShader<ID3D11ComputeShader> resultShapingCS;
 		Microsoft::WRL::ComPtr<ID3D11Buffer> modelResolutionCB;
 		Microsoft::WRL::ComPtr<ID3D11SamplerState> modelResolutionSampler;
 		Microsoft::WRL::ComPtr<ID3D11Buffer> temporalReuseCB;
 		Microsoft::WRL::ComPtr<ID3D11SamplerState> temporalReuseSampler;
 		Microsoft::WRL::ComPtr<ID3D11Buffer> adaptiveHandoffCB;
 		Microsoft::WRL::ComPtr<ID3D11SamplerState> adaptiveHandoffSampler;
+		Microsoft::WRL::ComPtr<ID3D11Buffer> resultShapingCB;
+		Microsoft::WRL::ComPtr<ID3D11SamplerState> resultShapingSampler;
 		std::array<EyeResources, 2> eyes;
 		std::array<std::array<bool, kResolutionTierCount>, 2> resetPending{};
 		bool temporalConfigInitialized = false;
 		TemporalHistoryConfig temporalConfig;
+		bool resultShapingConfigInitialized = false;
+		ResultShapingConfigKey resultShapingConfig;
 		std::uint64_t temporalFrameIndex = 0;
 		bool temporalSkippedSinceFull = false;
 		bool temporalReuseActiveLogged = false;
 		bool temporalReuseCropActiveLogged = false;
 		bool temporalReuseWarningLogged = false;
+		bool resultShapingFailureLogged = false;
+		bool resultStabilizationFailureLogged = false;
 		std::uint32_t adaptivePrewarmTier = UINT32_MAX;
 		std::uint32_t adaptivePrewarmResolution = 0;
 		std::int32_t adaptivePrewarmDirection = 0;
