@@ -11,7 +11,6 @@
 #include "SecondPassCrop.h"
 #include "StageSplitPolicy.h"
 #include "Features/Upscaling/PerfMode.h"
-#include "AdaptiveQualityOrder.h"
 #include "PixelCrop.h"
 #include "Globals.h"
 #include "GpuPass.h"
@@ -257,44 +256,9 @@ namespace NeuralRendering
 			const bool adaptive = adaptiveEligible && settings.neuralRenderingAdaptiveEnabled &&
 				foveated.adaptiveController.IsEnabled();
 			const bool adaptiveCrop = adaptive && foveated.IsAdaptiveCropRuntimeActive();
-			const auto& controller = foveated.adaptiveController;
 			const auto requestedPassMode = std::min(settings.neuralRenderingMultiPass, 2u);
 			const auto activePassMode = settings.neuralRenderingPreUpscale == 0 ?
 				foveated.GetEffectiveMultiPassMode() : 0u;
-			const auto leftUV = foveated.subrectController.GetUV();
-			const auto rightUV = foveated.subrectController.GetRightEyeUV();
-			const bool geometryCompatible = std::abs(leftUV.w - rightUV.w) <= 0.0005f &&
-				std::abs(leftUV.h - rightUV.h) <= 0.0005f;
-			const auto configuredCrop = static_cast<std::uint32_t>(std::lround(std::clamp(
-				std::min({ leftUV.w, leftUV.h, rightUV.w, rightUV.h }) * 100.0f, 0.0f, 100.0f)));
-			const auto cropMaximum = settings.neuralRenderingAdaptiveCropMaximumScalePercent;
-			const auto cropMinimum = settings.neuralRenderingAdaptiveCropMinimumScalePercent;
-			const bool passesCanDown = adaptive && foveated.adaptivePassController.CanDecrease(requestedPassMode);
-			const bool cropCanDown = adaptive && settings.neuralRenderingAdaptiveCropEnabled && geometryCompatible &&
-				!FoveatedRenderImpl::Core::vrSubrectFixedEnvelopeRejected &&
-				!FoveatedRenderImpl::Core::vrSubrectNeuralFixedEnvelopeRejected && configuredCrop >= 30 &&
-				(foveated.IsAdaptiveCropRuntimeActive() ?
-					foveated.adaptiveCropController.ActiveScalePercent() > foveated.adaptiveCropController.MinimumScalePercent() :
-					cropMaximum > cropMinimum);
-			const bool resolutionCanDown = adaptive && !controller.IsAtMinimum();
-			const auto downshiftAxis = SelectAdaptiveDownshift(settings.neuralRenderingAdaptiveQualityOrder,
-				passesCanDown, cropCanDown, resolutionCanDown);
-			const auto passMode = foveated.adaptivePassController.ActiveMode(requestedPassMode);
-			const auto passModesToAdd = requestedPassMode > passMode ? requestedPassMode - passMode : 0u;
-			const bool passHeadroom = controller.LastSampleHadHeadroom() &&
-				AdaptivePassController::HasProjectedHeadroom(controller.SmoothedFrameTimeMs(),
-					settings.neuralRenderingAdaptiveSecondPassCostMs, passModesToAdd,
-					controller.ApplicationDeadlineMs(), settings.neuralRenderingAdaptiveGuardTimeMs);
-			const bool passesCanUp = adaptive && foveated.adaptivePassController.CanIncrease(requestedPassMode) && passHeadroom;
-			const bool cropCanUp = adaptive && settings.neuralRenderingAdaptiveCropEnabled &&
-				foveated.IsAdaptiveCropRuntimeActive() &&
-				foveated.adaptiveCropController.ActiveScalePercent() < foveated.adaptiveCropController.MaximumScalePercent();
-			const bool resolutionCanUp = adaptive && !controller.IsAtMaximum();
-			const auto upshiftAxis = SelectAdaptiveUpshift(settings.neuralRenderingAdaptiveQualityOrder,
-				passesCanUp, cropCanUp, resolutionCanUp);
-			const int prewarmDirection = !adaptive || foveated.IsAdaptiveCropTransitioning() ? 0 :
-				controller.LastSampleOverBudget() && downshiftAxis == AdaptiveQualityAxis::Resolution ? -1 :
-				controller.LastSampleHadHeadroom() && upshiftAxis == AdaptiveQualityAxis::Resolution ? 1 : 0;
 			return {
 				.intensity = settings.neuralRenderingIntensity,
 				.localToneStrength = settings.neuralRenderingLocalTone,
@@ -322,10 +286,10 @@ namespace NeuralRendering
 						settings.neuralRenderingAdditionalPasses[1].autoMask,
 						settings.neuralRenderingAdditionalPasses[1].uiCorrection },
 				},
-				.modelResolutionPercent = adaptive ? controller.ActiveResolution() : settings.neuralRenderingModelResolution,
-				.modelResolveMode = settings.neuralRenderingResolveMode,
+				.modelResolutionPercent = 100,
+				.modelResolveMode = 0,
 				.multiPass = activePassMode,
-				.secondPassContribution = settings.neuralRenderingSecondPassContribution,
+				.sharedPassHistory = settings.neuralRenderingSharedPassHistory,
 				.secondPassCropReductionX = settings.neuralRenderingSecondPassCropReductionX,
 				.secondPassCropReductionY = settings.neuralRenderingSecondPassCropReductionY,
 				.secondPassBlendMode = settings.neuralRenderingSecondPassBlendMode,
@@ -333,21 +297,22 @@ namespace NeuralRendering
 				.secondPassFeatherWidth = settings.neuralRenderingSecondPassFeatherWidth,
 				.secondPassFalloffCurve = settings.neuralRenderingSecondPassFalloffCurve,
 				.secondPassDitherStrength = settings.neuralRenderingSecondPassDitherStrength,
-				.stereoResidualReprojection = settings.neuralRenderingStereoResidualReprojection && globals::game::isVR,
-				.stereoResidualAnchorEye = settings.neuralRenderingStereoResidualAnchorEye,
 				.adaptiveMaxPassCount = requestedPassMode + 1,
+				.adaptivePassFadeEnabled = adaptive && settings.neuralRenderingPreUpscale == 0 &&
+					settings.neuralRenderingAdaptivePassFadeEnabled,
+				.adaptivePassFadeDurationMs = settings.neuralRenderingAdaptivePassFadeDurationMs,
+				.adaptiveNRTargetEnabled = !adaptive || foveated.adaptivePassController.IsNeuralEnabled(),
 				.temporalReuseCadence = (adaptive || !globals::game::isVR || settings.neuralRenderingPreUpscale != 0 ||
-					settings.neuralRenderingStereoResidualReprojection ||
 					settings.neuralRenderingMultiPass != 0) ? 0u : settings.neuralRenderingTemporalReuseCadence,
 				.temporalReuseDepthThreshold = settings.neuralRenderingTemporalDepthThreshold,
 				.temporalReuseColorTolerance = settings.neuralRenderingTemporalColorTolerance,
 				.temporalReuseResetAfterSkip = settings.neuralRenderingTemporalReuseResetAfterSkip,
-				.adaptiveResolution = adaptive,
+				.adaptiveResolution = false,
 				.adaptiveHandoff = !adaptiveCrop,
-				.adaptiveHandoffAlpha = adaptive ? controller.HandoffAlpha() : 1.0f,
-				.adaptiveDepthThreshold = adaptive ? settings.neuralRenderingTemporalDepthThreshold : 0.05f,
-				.adaptivePrewarmDirection = prewarmDirection,
-				.adaptiveMemoryCeiling = adaptive ? controller.MemoryCeiling() : 100u,
+				.adaptiveHandoffAlpha = 1.0f,
+				.adaptiveDepthThreshold = 0.05f,
+				.adaptivePrewarmDirection = 0,
+				.adaptiveMemoryCeiling = 100u,
 				.nrContribution = settings.neuralRenderingNRContribution,
 				.detailBoost = settings.neuralRenderingDetailBoost,
 			};
@@ -621,7 +586,6 @@ namespace NeuralRendering
 		foveated.UpdateAdaptiveState(frame, true);
 		Tuning tuning = GetTuning(foveated, true);
 		tuning.temporalReuseCadence = 0;
-		tuning.stereoResidualReprojection = false;
 		bool succeeded = false;
 		if (!globals::game::isVR) {
 			CS_GPU_PASS("NeuralRendering::FlatPreUpscale");
@@ -780,9 +744,8 @@ namespace NeuralRendering
 		preUpscaleBlockLogged = false;
 		preUpscaleExecutionFailed = false;
 		if (!preUpscaleSuccessLogged) {
-			logger::info("[DLSSNR] experimental pre-upscale route active; stage=before-dlss vr={} model={} resolve={}",
-				globals::game::isVR, foveated.settings.neuralRenderingModelResolution,
-				foveated.settings.neuralRenderingResolveMode == 1 ? "matched-residual" : "classic");
+			logger::info("[DLSSNR] experimental pre-upscale route active; stage=before-dlss vr={} model=100",
+				globals::game::isVR);
 			preUpscaleSuccessLogged = true;
 		}
 		return true;
@@ -967,9 +930,11 @@ namespace NeuralRendering
 			};
 		}
 		const bool splitSecondPass = splitPostStage && activePassMode == 1;
+		Tuning tuning = GetTuning(foveated, true);
 		const bool finishNR = foveated.settings.neuralRenderingNRContribution < 1.0f ||
 			foveated.settings.neuralRenderingDetailBoost > 1.0f ||
-			(splitSecondPass && foveated.settings.neuralRenderingSecondPassContribution < 1.0f);
+			(gaze.dynamic && foveated.settings.neuralRenderingEyeTrackedFadeInMs > 0) ||
+			Renderer::Instance().NeedsAdaptivePassFadeComposite(tuning);
 		if ((wantsEdgeBlend || finishNR) && !destinationUAV) {
 			// Stage only each eye's active crop. The old fallback copied the full
 			// SBS target in both directions, even when NR covered a small gaze crop.
@@ -998,7 +963,6 @@ namespace NeuralRendering
 			}
 		}
 		const bool enableBlend = wantsEdgeBlend && (destinationUAV || stagedCropWriteback);
-		Tuning tuning = GetTuning(foveated, true);
 		if (foveated.settings.neuralRenderingPreUpscale != 0) {
 			// The pre-SR stage already consumed pass one when it succeeded. If it
 			// did not, the post-SR route runs the full configured cascade as fallback.
@@ -1012,10 +976,10 @@ namespace NeuralRendering
 			// result derived from pass one's output.
 			tuning.secondPassCropReductionX = 0;
 			tuning.secondPassCropReductionY = 0;
-			tuning.nrContribution *= tuning.secondPassContribution;
-		} else if (activePassMode != 1) {
-			// The centered crop contract is specifically for a two-evaluation chain.
-			// A three-pass chain must not accidentally crop its third (final) pass.
+		} else if (activePassMode > 1) {
+			// A three-pass chain must not crop its third (final) pass. Keep the
+			// configured crop latent at mode 0: during an adaptive 2->1 fade the
+			// renderer still evaluates two passes until the transition completes.
 			tuning.secondPassCropReductionX = 0;
 			tuning.secondPassCropReductionY = 0;
 		}

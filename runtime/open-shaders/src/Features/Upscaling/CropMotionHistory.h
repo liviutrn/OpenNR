@@ -26,7 +26,11 @@ namespace FoveatedRenderImpl::CropMotion
 		return originCompensated || (previousX == currentX && previousY == currentY);
 	}
 
-	/** Convert current-to-previous crop displacement to stored motion-vector units. */
+	/** Convert current-to-previous crop displacement to stored motion-vector units.
+	 * `scale` is the input motion-vector scale per color pixel. The crop extent
+	 * converts that value to the full region's scale; later upscaler/model scaling
+	 * must not be folded into this source-motion correction.
+	 */
 	inline std::array<float, 2> Offset(const History& previous, const Region& current,
 		std::array<float, 2> scale, std::uint32_t frame, bool& reset)
 	{

@@ -71,8 +71,6 @@ namespace NeuralRendering
 
 		std::uint32_t GetPassCount(const Tuning& tuning)
 		{
-			if (tuning.multiPass == 1 && tuning.secondPassContribution <= 0.0f)
-				return 1;
 			return tuning.multiPass == 0 ? 1 : std::min(tuning.multiPass + 1, kCascadePassCount);
 		}
 
@@ -319,6 +317,11 @@ namespace NeuralRendering
 			return runtimeFeatureSlotBase + eyeIndex + (passIndex + tierIndex * kCascadePassCount) * kEyeCount;
 		}
 
+		std::uint32_t ActiveFeatureSlot(std::uint32_t eyeIndex, std::uint32_t tierIndex, std::uint32_t passIndex) const
+		{
+			return FeatureSlot(eyeIndex, tierIndex, sharedPassHistoryActive ? 0u : passIndex);
+		}
+
 		ModelResolveSettings frameResolveSettings{ 1.0f, 1.0f, 4.0f, 1.0f };
 		std::chrono::steady_clock::time_point resolveTimestamp{};
 		std::uint32_t resolveFrame = UINT32_MAX;
@@ -346,6 +349,104 @@ namespace NeuralRendering
 			}
 			return frameResolveSettings;
 		}
+
+		struct AdaptivePassFadeFrame
+		{
+			std::uint32_t passCount = 1;
+			std::uint32_t lowPassCount = 0;
+			float contribution = 1.0f;
+			float projectedWeight = 1.0f;
+			std::uint32_t frame = 0;
+			std::chrono::steady_clock::time_point now{};
+			bool active = false;
+			bool commit = false;
+			bool reachesEndpoint = false;
+		};
+
+		AdaptivePassFadeFrame PrepareAdaptivePassFade(const Tuning& tuning, std::uint32_t requestedPassCount,
+			bool compositeAvailable)
+		{
+			AdaptivePassFadeFrame result{};
+			result.passCount = requestedPassCount;
+			if (!tuning.adaptivePassFadeEnabled || tuning.adaptivePassFadeDurationMs == 0 || !compositeAvailable ||
+				runtimeFeatureSlotBase != 0) {
+				if (requestedPassCount == 0 && adaptivePassFadeInitialized && adaptiveStablePassCount > 0)
+					InvalidateForAdaptiveNROff();
+				adaptivePassFadeInitialized = true;
+				adaptiveStablePassCount = requestedPassCount;
+				adaptivePassFadeActive = false;
+				adaptivePassFadeWeight = 1.0f;
+				return result;
+			}
+
+			result.frame = globals::state ? globals::state->frameCount : 0u;
+			result.now = std::chrono::steady_clock::now();
+			if (!adaptivePassFadeInitialized) {
+				adaptiveStablePassCount = requestedPassCount;
+				adaptivePassFadeInitialized = true;
+			}
+			if (adaptivePassFadeActive) {
+				if (requestedPassCount <= adaptivePassFadeLowCount)
+					adaptivePassFadeDirection = -1;
+				else if (requestedPassCount >= adaptivePassFadeHighCount)
+					adaptivePassFadeDirection = 1;
+			} else if (requestedPassCount != adaptiveStablePassCount) {
+				adaptivePassFadeLowCount = adaptiveStablePassCount > requestedPassCount ?
+					adaptiveStablePassCount - 1 : adaptiveStablePassCount;
+				adaptivePassFadeHighCount = adaptivePassFadeLowCount + 1;
+				adaptivePassFadeDirection = requestedPassCount > adaptiveStablePassCount ? 1 : -1;
+				adaptivePassFadeWeight = adaptivePassFadeDirection > 0 ? 0.0f : 1.0f;
+				adaptivePassFadeLastFrame = UINT32_MAX;
+				adaptivePassFadeLastSuccessTime = {};
+				adaptivePassFadeActive = true;
+			}
+
+			if (!adaptivePassFadeActive)
+				return result;
+			result.active = true;
+			result.passCount = adaptivePassFadeHighCount;
+			result.lowPassCount = adaptivePassFadeLowCount;
+			result.projectedWeight = adaptivePassFadeWeight;
+			if (result.frame != adaptivePassFadeLastFrame) {
+				if (adaptivePassFadeLastSuccessTime != std::chrono::steady_clock::time_point{}) {
+					const float dtMs = std::chrono::duration<float, std::milli>(
+						result.now - adaptivePassFadeLastSuccessTime).count();
+					const float step = std::clamp(dtMs, 0.0f, 50.0f) /
+						static_cast<float>(tuning.adaptivePassFadeDurationMs);
+					result.projectedWeight = std::clamp(result.projectedWeight +
+						static_cast<float>(adaptivePassFadeDirection) * step, 0.0f, 1.0f);
+				}
+				result.commit = true;
+			}
+			result.contribution = result.projectedWeight;
+			result.reachesEndpoint = (adaptivePassFadeDirection > 0 && result.projectedWeight >= 1.0f) ||
+				(adaptivePassFadeDirection < 0 && result.projectedWeight <= 0.0f);
+			return result;
+		}
+
+		void InvalidateForAdaptiveNROff()
+		{
+			for (auto& eyeReset : resetPending)
+				eyeReset.fill(true);
+			InvalidateTemporalHistory();
+		}
+
+		void CommitAdaptivePassFade(const AdaptivePassFadeFrame& frame)
+		{
+			if (!frame.commit)
+				return;
+			adaptivePassFadeWeight = frame.projectedWeight;
+			adaptivePassFadeLastFrame = frame.frame;
+			adaptivePassFadeLastSuccessTime = frame.now;
+			if (frame.reachesEndpoint) {
+				adaptiveStablePassCount = frame.projectedWeight >= 1.0f ?
+					adaptivePassFadeHighCount : adaptivePassFadeLowCount;
+				adaptivePassFadeActive = false;
+				if (adaptiveStablePassCount == 0)
+					InvalidateForAdaptiveNROff();
+			}
+		}
+
 		struct TemporalTexture
 		{
 			Microsoft::WRL::ComPtr<ID3D11Texture2D> resource;
@@ -391,29 +492,6 @@ namespace NeuralRendering
 		};
 		static_assert(sizeof(TemporalReuseConstants) == 48);
 
-		struct alignas(16) StereoResidualConstants
-		{
-			std::uint32_t colorWidth = 0;
-			std::uint32_t colorHeight = 0;
-			std::uint32_t guideWidth = 0;
-			std::uint32_t guideHeight = 0;
-			std::uint32_t eyeWidth = 0;
-			std::uint32_t eyeHeight = 0;
-			std::uint32_t sourceCropX = 0;
-			std::uint32_t sourceCropY = 0;
-			std::uint32_t targetCropX = 0;
-			std::uint32_t targetCropY = 0;
-			float depthTolerance = 0.005f;
-			float colorTolerance = 0.12f;
-			float residualStrength = 1.0f;
-			float padding0 = 0.0f;
-			float padding1 = 0.0f;
-			float padding2 = 0.0f;
-			Matrix targetInverseViewProjection{};
-			Matrix sourceViewProjection{};
-		};
-		static_assert(sizeof(StereoResidualConstants) == 192);
-
 		struct HandoffTexture
 		{
 			Microsoft::WRL::ComPtr<ID3D11Texture2D> resource;
@@ -457,6 +535,7 @@ namespace NeuralRendering
 			SharedTexture color;
 			SharedTexture depth;
 			SharedTexture motionVectors;
+			SharedTexture zeroMotionVectors;
 			std::array<TierResources, kResolutionTierCount> tiers;
 			TemporalEyeState temporal;
 				std::uint32_t colorWidth = 0;
@@ -507,6 +586,12 @@ namespace NeuralRendering
 				InvalidateTemporalHistory();
 				return true;
 			}
+			const bool passFadeCompositeAvailable = destinationUAV || inputs[0].writebackUAV || inputs[1].writebackUAV;
+			const std::uint32_t requestedPassCount = tuning.adaptiveNRTargetEnabled ? GetPassCount(tuning) : 0u;
+			const auto passFadeFrame = PrepareAdaptivePassFade(tuning, requestedPassCount, passFadeCompositeAvailable);
+			const std::uint32_t passCount = passFadeFrame.passCount;
+			if (passCount == 0)
+				return true;
 
 			if (!interop.IsInitialized() && !InitializeInterop(device, context))
 				return false;
@@ -521,7 +606,7 @@ namespace NeuralRendering
 			const auto resolveSettings = FrameResolveSettings(modelResolution, tuning.adaptiveResolution);
 			SyncTemporalReuseConfig(tuning, modelResolution, passCount);
 			if (!EnsureResources(device, eyeIndex, color, depth, motionVectors, guideWidth, guideHeight,
-				colorWidth, colorHeight, modelWidth, modelHeight, resourcePassCount, modelResolution,
+				colorWidth, colorHeight, modelWidth, modelHeight, resourcePassCount, tuning.sharedPassHistory, modelResolution,
 				tuning.adaptiveResolution, {}, tuning.adaptiveMemoryCeiling))
 				return LatchFailure("shared resource creation", interop.LastError());
 
@@ -533,6 +618,10 @@ namespace NeuralRendering
 			if (!CopyDepthGuide(context, depthSRV, eye.depth.uav11.Get(), guideWidth, guideHeight))
 				return LatchFailure("depth guide conversion", E_FAIL);
 			context->CopyResource(eye.motionVectors.resource11.Get(), motionVectors);
+			if (tuning.sharedPassHistory && passCount > 1) {
+				constexpr FLOAT zeroMotion[4]{};
+				context->ClearUnorderedAccessViewFloat(eye.zeroMotionVectors.uav11.Get(), zeroMotion);
+			}
 
 			const bool temporalCandidate = IsTemporalReuseSupported(tuning, tier, passCount) &&
 				CanAttemptTemporalReuse(eye, colorWidth, colorHeight, guideWidth, guideHeight, 0, 0) &&
@@ -736,7 +825,6 @@ namespace NeuralRendering
 				motionVectorScaleY * static_cast<float>(modelHeight) / colorHeight,
 				tuning, passCount, resetForAnchor, tuning.secondPassCropReductionX,
 				tuning.secondPassCropReductionY,
-				tuning.secondPassContribution,
 				&secondPassCropFallbackWasRetried);
 			if (!interop.EndD3D12()) {
 #if defined(OPENNR_CAPTURE_ENABLED)
@@ -752,8 +840,8 @@ namespace NeuralRendering
 #endif
 				return LatchFailure("Feature 18", static_cast<HRESULT>(Runtime::Instance().NgxResult()));
 			}
-			if (passCount == 2 && (tuning.secondPassCropReductionX != 0 || tuning.secondPassCropReductionY != 0 ||
-				tuning.secondPassContribution < 1.0f) &&
+			CommitPassTopologyResets(eyeIndex, tierIndex, passCount, tuning.sharedPassHistory);
+			if (passCount == 2 && (tuning.secondPassCropReductionX != 0 || tuning.secondPassCropReductionY != 0) &&
 				!CompositeSecondPassCrop(context, tier, modelWidth, modelHeight,
 					tuning, guideWidth, guideHeight, secondPassCropFallbackWasRetried))
 				return LatchFailure("second-pass crop composite", E_FAIL);
@@ -811,14 +899,8 @@ namespace NeuralRendering
 			ID3D11Resource* destination, ID3D11UnorderedAccessView* destinationUAV,
 			bool blendSubrect, const StereoResourceEnvelope& resourceEnvelope)
 		{
-			if (!tuning.stereoResidualReprojection)
-				stereoResidualDispatchRejected = false;
-			stereoResidualStatus = tuning.stereoResidualReprojection ?
-				"Waiting for valid stereo inputs" : "Off";
 			RecoverIfReady(device);
 			if (failureLatched || !device || !context || !color) {
-				if (tuning.stereoResidualReprojection)
-					stereoResidualStatus = "Unavailable: NR renderer is not ready";
 				return false;
 			}
 			ID3D11Resource* writeback = destination ? destination : color;
@@ -829,8 +911,6 @@ namespace NeuralRendering
 				return false;
 			CS_GPU_PASS("NeuralRendering::EvaluateStereo");
 			if (tuning.nrContribution <= 0.0f) {
-				if (tuning.stereoResidualReprojection)
-					stereoResidualStatus = "Inactive: NR contribution is zero";
 				for (auto& eyeReset : resetPending)
 					eyeReset.fill(true);
 				InvalidateTemporalHistory();
@@ -857,7 +937,6 @@ namespace NeuralRendering
 			const std::uint32_t stableModelHeight = ScaleDimension(stableColorHeight, modelResolution);
 			const std::uint32_t stableFeatureInputWidth = modelResolution == 100 ? stableColorWidth : stableModelWidth;
 			const std::uint32_t stableFeatureInputHeight = modelResolution == 100 ? stableColorHeight : stableModelHeight;
-			const std::uint32_t passCount = GetPassCount(tuning);
 			const std::uint32_t resourcePassCount = std::clamp(tuning.adaptiveMaxPassCount, passCount, kCascadePassCount);
 			const std::uint32_t tierIndex = ResolutionTierIndex(modelResolution);
 			const auto resolveSettings = FrameResolveSettings(modelResolution, tuning.adaptiveResolution);
@@ -867,7 +946,7 @@ namespace NeuralRendering
 				if (!input.depth || !input.depthSRV || !input.motionVectors)
 					return false;
 				if (!EnsureResources(device, eyeIndex, color, input.depth, input.motionVectors,
-						guideWidth, guideHeight, colorWidth, colorHeight, modelWidth, modelHeight, resourcePassCount, modelResolution,
+						guideWidth, guideHeight, colorWidth, colorHeight, modelWidth, modelHeight, resourcePassCount, tuning.sharedPassHistory, modelResolution,
 						tuning.adaptiveResolution, resourceEnvelope, tuning.adaptiveMemoryCeiling))
 					return LatchFailure("shared resource creation", interop.LastError());
 
@@ -893,10 +972,16 @@ namespace NeuralRendering
 				ID3D11Resource* nrMotion = input.motionVectors;
 				if (input.compensateCropMotion) {
 					bool reset = resetPending[eyeIndex][tierIndex];
+					// CropMotion converts a color-space crop displacement into the
+					// source motion-vector units. Keep this scale independent of NGX's
+					// later model-resolution scaling and of the guide texture size.
+					const std::array<float, 2> cropMotionScale{
+						input.motionVectorScaleX / static_cast<float>(colorWidth),
+						input.motionVectorScaleY / static_cast<float>(colorHeight)
+					};
 					nrMotion = FoveatedRenderImpl::CropMotion::Prepare(cropMotionSlotBase + eyeIndex, nrMotion,
 						{ input.sourceX, input.sourceY, colorWidth, colorHeight }, sourceGuideWidth, sourceGuideHeight,
-						{ input.motionVectorScaleX * float(modelWidth) / colorWidth / sourceGuideWidth,
-						  input.motionVectorScaleY * float(modelHeight) / colorHeight / sourceGuideHeight },
+						cropMotionScale,
 						globals::state->frameCount, reset);
 					if (!nrMotion)
 						return LatchFailure("crop motion preparation", E_FAIL);
@@ -910,70 +995,17 @@ namespace NeuralRendering
 				} else {
 					context->CopyResource(eye.motionVectors.resource11.Get(), nrMotion);
 				}
-			}
-
-			const std::uint32_t stereoAnchorEye = std::min(tuning.stereoResidualAnchorEye, 1u);
-			const std::uint32_t stereoTargetEye = 1u - stereoAnchorEye;
-			const bool stereoAtlasLayoutValid = (colorDesc.Width % 2u) == 0 &&
-				colorDesc.Width / 2u >= colorWidth && colorDesc.Height >= colorHeight;
-			bool stereoResidualActive = tuning.stereoResidualReprojection && globals::game::isVR &&
-				stereoAtlasLayoutValid && !stereoResidualDispatchRejected;
-			bool stereoEyeCropsValid = true;
-			if (tuning.stereoResidualReprojection) {
-				if (!globals::game::isVR)
-					stereoResidualStatus = "Unavailable: requires VR mode";
-				else if (!stereoAtlasLayoutValid)
-					stereoResidualStatus = "Unavailable: expected side-by-side stereo input";
-				else if (stereoResidualDispatchRejected)
-					stereoResidualStatus = "Unavailable: transfer failed; evaluating both eyes natively";
-			}
-			if (stereoResidualActive) {
-				for (std::uint32_t eyeIndex = 0; eyeIndex < inputs.size(); ++eyeIndex) {
-					const std::uint32_t eyeStart = eyeIndex * (colorDesc.Width / 2u);
-					const auto& input = inputs[eyeIndex];
-					if (input.sourceX < eyeStart || input.sourceX + colorWidth > eyeStart + colorDesc.Width / 2u ||
-						input.sourceY + colorHeight > colorDesc.Height) {
-						stereoResidualActive = false;
-						stereoEyeCropsValid = false;
-						break;
-					}
+				if (tuning.sharedPassHistory && passCount > 1) {
+					constexpr FLOAT zeroMotion[4]{};
+					context->ClearUnorderedAccessViewFloat(eye.zeroMotionVectors.uav11.Get(), zeroMotion);
 				}
-			}
-			if (tuning.stereoResidualReprojection && stereoResidualActive &&
-				!stereoResidualDispatchRejected && !EnsureStereoResidualResources(device)) {
-				stereoResidualActive = false;
-				stereoResidualDispatchRejected = true;
-				stereoResidualStatus = "Unavailable: reprojection shader or resources failed";
-			}
-			if (tuning.stereoResidualReprojection && globals::game::isVR && stereoAtlasLayoutValid &&
-				!stereoResidualDispatchRejected && !stereoEyeCropsValid)
-				stereoResidualStatus = "Unavailable: eye crop is outside its stereo view";
-			if (stereoResidualActive)
-				stereoResidualStatus = stereoAnchorEye == 0 ? "Active: left eye is the native anchor" :
-					"Active: right eye is the native anchor";
-			if (!stereoResidualConfigInitialized || stereoResidualConfigEnabled != stereoResidualActive ||
-				(stereoResidualActive && stereoResidualConfigAnchor != stereoAnchorEye)) {
-				if (stereoResidualConfigInitialized) {
-					for (auto& eyeReset : resetPending)
-						eyeReset.fill(true);
-					InvalidateTemporalHistory();
-				}
-				stereoResidualConfigInitialized = true;
-				stereoResidualConfigEnabled = stereoResidualActive;
-				stereoResidualConfigAnchor = stereoAnchorEye;
-			}
-			if (tuning.stereoResidualReprojection && !stereoResidualActive && !stereoResidualWarningLogged) {
-				logger::warn("[DLSSNR] one-eye stereo residual mode unavailable ({}); evaluating both eyes natively",
-					stereoResidualStatus);
-				stereoResidualWarningLogged = true;
 			}
 
 			const auto adaptivePrewarm = PrepareAdjacentPrewarmResources(device, tierIndex,
 				colorWidth, colorHeight, guideWidth, guideHeight, resourcePassCount, modelResolution,
 				stableColorWidth, stableColorHeight, tuning);
 
-			const bool temporalTierSupported = !stereoResidualActive &&
-				IsTemporalReuseSupported(tuning, eyes[0].tiers[tierIndex], passCount) &&
+			const bool temporalTierSupported = IsTemporalReuseSupported(tuning, eyes[0].tiers[tierIndex], passCount) &&
 				IsTemporalReuseSupported(tuning, eyes[1].tiers[tierIndex], passCount);
 			const bool fullEyeTemporalLayout = IsFullEyeTemporalLayout(colorDesc, inputs, colorWidth, colorHeight);
 			const bool stableTemporalLayout = IsTemporalLayoutStable(colorDesc, inputs, colorWidth, colorHeight);
@@ -1004,7 +1036,7 @@ namespace NeuralRendering
 					inputs[0].sourceX, inputs[0].sourceY, inputs[0].compensateCropMotion) &&
 				CanAttemptTemporalReuse(eyes[1], colorWidth, colorHeight, guideWidth, guideHeight,
 					inputs[1].sourceX, inputs[1].sourceY, inputs[1].compensateCropMotion) &&
-				!stereoResidualActive && !tuning.adaptiveResolution && !resetPending[0][tierIndex] && !resetPending[1][tierIndex] &&
+				!tuning.adaptiveResolution && !resetPending[0][tierIndex] && !resetPending[1][tierIndex] &&
 				tuning.temporalReuseCadence == 2;
 			if (temporalCandidate) {
 				const std::uint32_t anchorEye = TemporalStereoSchedule::AnchorEye(temporalFrameIndex);
@@ -1043,11 +1075,43 @@ namespace NeuralRendering
 					temporalSkippedSinceFull = false;
 				}
 			}
-			if (stereoResidualActive)
-				runNative[stereoTargetEye] = false;
 
-			// Skip model-input generation for the eye receiving residual reuse. Capture
-			// mode may request both inputs, so keep its diagnostic path complete.
+			// Fade only the displayed contribution after a moving-gaze history reset.
+			// Feature 18 continues evaluating at full strength so it can rebuild its
+			// private temporal state during the fade.
+			const bool dynamicGaze = inputs[0].compensateCropMotion || inputs[1].compensateCropMotion;
+			const std::uint32_t gazeFadeDurationMs = runtimeFeatureSlotBase == 0 ?
+				finishing.neuralRenderingEyeTrackedFadeInMs : 0u;
+			const std::uint32_t gazeFadeFrame = globals::state ? globals::state->frameCount : 0u;
+			const auto gazeFadeNow = std::chrono::steady_clock::now();
+			const bool gazeHistoryReset = dynamicGaze &&
+				(resetPending[0][tierIndex] || resetPending[1][tierIndex]);
+			float gazeFadeElapsedForFrame = gazeFadeElapsedMs;
+			bool commitGazeFadeFrame = false;
+			float gazeFadeWeight = 1.0f;
+			if (gazeFadeDurationMs == 0 || !dynamicGaze) {
+				gazeFadeActive = false;
+				gazeFadeElapsedMs = 0.0f;
+			} else if (gazeHistoryReset) {
+				gazeFadeActive = true;
+				gazeFadeElapsedForFrame = 0.0f;
+				gazeFadeWeight = 0.0f;
+				commitGazeFadeFrame = true;
+			} else if (gazeFadeActive) {
+				if (gazeFadeFrame != lastGazeFadeFrame) {
+					const float dtMs = lastGazeFadeSuccessTime == std::chrono::steady_clock::time_point{} ? 0.0f :
+						std::chrono::duration<float, std::milli>(gazeFadeNow - lastGazeFadeSuccessTime).count();
+					// A paused/stalled game should not consume the fade while no fresh
+					// frames are being rendered.
+					gazeFadeElapsedForFrame += std::clamp(dtMs, 0.0f, 50.0f);
+					commitGazeFadeFrame = true;
+				}
+				const float t = std::clamp(gazeFadeElapsedForFrame / static_cast<float>(gazeFadeDurationMs), 0.0f, 1.0f);
+				gazeFadeWeight = t * t * (3.0f - 2.0f * t);
+			}
+			const float adaptivePassContribution = passFadeFrame.active && passFadeFrame.lowPassCount == 0 ?
+				passFadeFrame.contribution : 1.0f;
+			const float displayedNRContribution = tuning.nrContribution * gazeFadeWeight * adaptivePassContribution;
 			for (std::uint32_t eyeIndex = 0; eyeIndex < inputs.size(); ++eyeIndex) {
 				auto& eye = eyes[eyeIndex];
 				auto& tier = eye.tiers[tierIndex];
@@ -1200,12 +1264,12 @@ namespace NeuralRendering
 					tuning, passCount, resetPending[eyeIndex][tierIndex] ||
 						(eyeSkippedSinceFull[eyeIndex] && tuning.temporalReuseResetAfterSkip),
 					tuning.secondPassCropReductionX, tuning.secondPassCropReductionY,
-					tuning.secondPassContribution,
 					&secondPassCropFallbackForEye[eyeIndex]);
 				if (!eyeSucceeded) {
 					succeeded = false;
 					break;
 				}
+				CommitPassTopologyResets(eyeIndex, tierIndex, passCount, tuning.sharedPassHistory);
 			}
 
 			if (!interop.EndD3D12()) {
@@ -1223,17 +1287,13 @@ namespace NeuralRendering
 				return LatchFailure("Feature 18 stereo", static_cast<HRESULT>(Runtime::Instance().NgxResult()));
 			}
 
-			// Resolve both native outputs before the stereo residual pass. This keeps
-			// the anchor-eye source valid regardless of which eye is selected as anchor.
-			std::array<bool, 2> outputPrepared{};
 			for (std::uint32_t eyeIndex = 0; eyeIndex < inputs.size(); ++eyeIndex) {
 				if (!runNative[eyeIndex])
 					continue;
 				auto& eye = eyes[eyeIndex];
 				auto& tier = eye.tiers[tierIndex];
 				if (passCount == 2 &&
-					(tuning.secondPassCropReductionX != 0 || tuning.secondPassCropReductionY != 0 ||
-						tuning.secondPassContribution < 1.0f) &&
+					(tuning.secondPassCropReductionX != 0 || tuning.secondPassCropReductionY != 0) &&
 					!CompositeSecondPassCrop(context, tier, modelWidth, modelHeight,
 						tuning, guideWidth, guideHeight, secondPassCropFallbackForEye[eyeIndex])) {
 #if defined(OPENNR_CAPTURE_ENABLED)
@@ -1250,45 +1310,6 @@ namespace NeuralRendering
 						globals::features::openNRCapture.AbortFrame();
 #endif
 					return LatchFailure("model output resolve stereo", E_FAIL);
-				}
-				outputPrepared[eyeIndex] = true;
-			}
-
-			bool stereoResidualFallbackThisFrame = false;
-			if (stereoResidualActive) {
-				auto& sourceEye = eyes[stereoAnchorEye];
-				auto& sourceTier = sourceEye.tiers[tierIndex];
-				auto& targetEye = eyes[stereoTargetEye];
-				auto& targetTier = targetEye.tiers[tierIndex];
-				ID3D11ShaderResourceView* sourceTeacherSRV = sourceTier.reducedResolution ?
-					sourceTier.resolvedSRV.Get() : sourceTier.output.srv11.Get();
-				ID3D11Resource* targetOutput = targetTier.reducedResolution ?
-					targetTier.resolved.Get() : targetTier.output.resource11.Get();
-				ID3D11UnorderedAccessView* targetOutputUAV = targetTier.reducedResolution ?
-					targetTier.resolvedUAV.Get() : targetTier.output.uav11.Get();
-				const auto eyeStart = stereoTargetEye * (colorDesc.Width / 2u);
-				const auto sourceEyeStart = stereoAnchorEye * (colorDesc.Width / 2u);
-				const bool residualApplied = outputPrepared[stereoAnchorEye] &&
-					DispatchStereoResidual(device, context, sourceEye, sourceTeacherSRV, targetEye,
-						targetOutput, targetOutputUAV, colorWidth, colorHeight, guideWidth, guideHeight,
-						colorDesc.Width / 2u, colorDesc.Height,
-						inputs[stereoAnchorEye].sourceX - sourceEyeStart, inputs[stereoAnchorEye].sourceY,
-						inputs[stereoTargetEye].sourceX - eyeStart, inputs[stereoTargetEye].sourceY,
-						stereoTargetEye);
-				if (!residualApplied) {
-					// Keep stereo presentation coherent if the transfer cannot produce
-					// this frame: restore the native anchor too, so both eyes use SR.
-					ID3D11Resource* sourceOutput = sourceTier.reducedResolution ?
-						sourceTier.resolved.Get() : sourceTier.output.resource11.Get();
-					context->CopyResource(sourceOutput, sourceEye.color.resource11.Get());
-					context->CopyResource(targetOutput, targetEye.color.resource11.Get());
-					stereoResidualFallbackThisFrame = true;
-					stereoResidualDispatchRejected = true;
-					stereoResidualStatus = "Frame fallback: both eyes use SR; native evaluation resumes next frame";
-					if (!stereoResidualWarningLogged) {
-						logger::warn("[DLSSNR] stereo residual dispatch unavailable; both eyes fall back to current SR image and native evaluation resumes next frame");
-						stereoResidualWarningLogged = true;
-					}
 				}
 			}
 
@@ -1324,7 +1345,10 @@ namespace NeuralRendering
 				ID3D11UnorderedAccessView* eyeWritebackUAV = input.writebackUAV ? input.writebackUAV : destinationUAV;
 				const std::uint32_t dstX = input.writebackTarget ? 0u : input.sourceX;
 				const std::uint32_t dstY = input.writebackTarget ? 0u : input.sourceY;
-				if ((blendSubrect || finishNR) && eyeWritebackUAV) {
+				ID3D11ShaderResourceView* cascadeBaseSRV = passFadeFrame.active &&
+					passFadeFrame.contribution < 1.0f && passFadeFrame.lowPassCount > 0 ?
+					tier.cascadeIntermediates[passFadeFrame.lowPassCount - 1].srv11.Get() : nullptr;
+				if ((blendSubrect || finishNR || displayedNRContribution < 1.0f || cascadeBaseSRV) && eyeWritebackUAV) {
 					// Keep the original background in `writeback` and composite the NR
 					// crop over it with the same edge treatment as standard foveated DLSS.
 					FoveatedRenderImpl::Ops::BlendSubrectToOutput(writebackOutput, eyeWriteback, eyeWritebackUAV,
@@ -1332,17 +1356,13 @@ namespace NeuralRendering
 						blendSubrect,
 						0, input.forceFeatherComposite,
 						input.forceFeatherComposite ? 32.0f : 0.0f,
-						tuning.nrContribution, tuning.detailBoost);
+						displayedNRContribution, tuning.detailBoost, nullptr,
+						cascadeBaseSRV, passFadeFrame.contribution);
 				} else {
 					context->CopySubresourceRegion(eyeWriteback, 0, dstX, dstY, 0,
 						writebackOutput, 0, &outputBox);
 				}
 				resetPending[eyeIndex][tierIndex] = false;
-			}
-			if (stereoResidualFallbackThisFrame) {
-				for (auto& eyeReset : resetPending)
-					eyeReset[tierIndex] = true;
-				InvalidateTemporalHistory();
 			}
 			if (temporalTierSupported) {
 				bool recorded = true;
@@ -1376,6 +1396,14 @@ namespace NeuralRendering
 				temporalSkippedSinceFull = false;
 			}
 			AdvanceTemporalFrame(tuning);
+			CommitAdaptivePassFade(passFadeFrame);
+			if (commitGazeFadeFrame) {
+				gazeFadeElapsedMs = gazeFadeElapsedForFrame;
+				lastGazeFadeFrame = gazeFadeFrame;
+				lastGazeFadeSuccessTime = gazeFadeNow;
+				if (gazeFadeElapsedMs >= static_cast<float>(gazeFadeDurationMs))
+					gazeFadeActive = false;
+			}
 #if defined(OPENNR_CAPTURE_ENABLED)
 			if (captureFrame)
 				globals::features::openNRCapture.EndFrame();
@@ -1408,7 +1436,6 @@ namespace NeuralRendering
 			failureLatched = false;
 			copyDepthGuideCS.Reset();
 			modelResolutionCS.Reset();
-			stereoResidualReprojectCS.Reset();
 			temporalSnapshotCS.Reset();
 			temporalAccumulateCS.Reset();
 			temporalPackNativeMotionCS.Reset();
@@ -1416,22 +1443,17 @@ namespace NeuralRendering
 			adaptiveHandoffCS.Reset();
 			modelResolutionCB.Reset();
 			modelResolutionSampler.Reset();
-			stereoResidualCB.Reset();
 			temporalReuseCB.Reset();
 			temporalReuseSampler.Reset();
 			temporalConfigInitialized = false;
+			sharedPassHistoryActive = false;
+			passHistoryRetirementPending = false;
 			temporalFrameIndex = 0;
 			temporalSkippedSinceFull = false;
 			temporalReuseActiveLogged = false;
 			temporalReuseCropActiveLogged = false;
 			temporalEyeAlternationLogged = false;
 			temporalReuseWarningLogged = false;
-			stereoResidualConfigInitialized = false;
-			stereoResidualConfigEnabled = false;
-			stereoResidualConfigAnchor = 0;
-			stereoResidualWarningLogged = false;
-			stereoResidualDispatchRejected = false;
-			stereoResidualStatus = "Off";
 			return true;
 		}
 
@@ -1442,13 +1464,10 @@ namespace NeuralRendering
 			InvalidateTemporalHistory();
 		}
 
-		[[nodiscard]] const char* StereoResidualStatusText() const { return stereoResidualStatus; }
-
 		void ClearShaderCache()
 		{
 			copyDepthGuideCS.Reset();
 			modelResolutionCS.Reset();
-			stereoResidualReprojectCS.Reset();
 			temporalSnapshotCS.Reset();
 			temporalAccumulateCS.Reset();
 			temporalPackNativeMotionCS.Reset();
@@ -1459,6 +1478,14 @@ namespace NeuralRendering
 		[[nodiscard]] bool IsFailureLatched() const { return failureLatched; }
 		[[nodiscard]] bool IsFailureRecoverable() const { return failureLatched && recoverableFailure; }
 		[[nodiscard]] bool IsRecoveryLimited() const { return recoveryAttempted; }
+		[[nodiscard]] bool NeedsAdaptivePassFadeComposite(const Tuning& tuning) const
+		{
+			const auto requestedPassCount = tuning.adaptiveNRTargetEnabled ? GetPassCount(tuning) : 0u;
+			return tuning.adaptivePassFadeEnabled && tuning.adaptivePassFadeDurationMs > 0 &&
+				runtimeFeatureSlotBase == 0 &&
+				(adaptivePassFadeActive || (adaptivePassFadeInitialized &&
+					requestedPassCount != adaptiveStablePassCount));
+		}
 
 		[[nodiscard]] bool IsAdaptiveTierReady(std::uint32_t modelResolution, std::uint32_t passCount) const
 		{
@@ -1476,7 +1503,7 @@ namespace NeuralRendering
 					tier.reducedResolution != (normalizedResolution != 100) || !tier.output.resource11)
 					return false;
 				for (std::uint32_t passIndex = 0; passIndex < normalizedPassCount; ++passIndex)
-					if (!Runtime::Instance().HasFeature(FeatureSlot(eyeIndex, tierIndex, passIndex)))
+					if (!Runtime::Instance().HasFeature(ActiveFeatureSlot(eyeIndex, tierIndex, passIndex)))
 						return false;
 			}
 			return true;
@@ -1546,20 +1573,46 @@ namespace NeuralRendering
 
 		void SyncTemporalReuseConfig(const Tuning& tuning, std::uint32_t modelResolution, std::uint32_t passCount)
 		{
+			const auto cropReductionX = passCount == 2 ? tuning.secondPassCropReductionX : 0u;
+			const auto cropReductionY = passCount == 2 ? tuning.secondPassCropReductionY : 0u;
 			const TemporalHistoryConfig next{ tuning.adaptiveResolution, modelResolution, tuning.temporalReuseCadence,
 				tuning.temporalReuseDepthThreshold, tuning.temporalReuseColorTolerance, passCount,
-				tuning.secondPassCropReductionX, tuning.secondPassCropReductionY };
+				cropReductionX, cropReductionY, tuning.sharedPassHistory };
 			if (temporalConfigInitialized && temporalConfig == next)
 				return;
+			const bool passHistoryModeChanged = temporalConfigInitialized &&
+				temporalConfig.sharedPassHistory != next.sharedPassHistory;
+			const bool passCountChanged = temporalConfigInitialized && temporalConfig.passes != next.passes;
+			const auto previousPassCount = temporalConfig.passes;
 			const bool cropModeChanged = temporalConfigInitialized &&
 				(temporalConfig.secondPassCropReductionX != next.secondPassCropReductionX ||
 					temporalConfig.secondPassCropReductionY != next.secondPassCropReductionY);
 			const bool preserveHandoff = temporalConfigInitialized && temporalConfig.PreservesHandoff(next);
 			temporalConfigInitialized = true;
 			temporalConfig = next;
-			if (cropModeChanged)
+			sharedPassHistoryActive = tuning.sharedPassHistory;
+			if (passHistoryModeChanged)
 				for (auto& eyeReset : resetPending)
 					eyeReset.fill(true);
+			if (passHistoryModeChanged) {
+				passHistoryRetirementPending = tuning.sharedPassHistory;
+				ResetAdaptivePrewarmState();
+			}
+			if (!passHistoryModeChanged && passCountChanged && next.passes > previousPassCount) {
+				for (std::uint32_t eyeIndex = 0; eyeIndex < kEyeCount; ++eyeIndex) {
+					if (tuning.sharedPassHistory) {
+						passTopologyResetPending[eyeIndex][ResolutionTierIndex(modelResolution)][0] = true;
+					} else {
+						for (std::uint32_t passIndex = previousPassCount; passIndex < next.passes; ++passIndex)
+							passTopologyResetPending[eyeIndex][ResolutionTierIndex(modelResolution)][passIndex] = true;
+					}
+				}
+			}
+			if (!passHistoryModeChanged && cropModeChanged) {
+				const auto historyPass = tuning.sharedPassHistory ? 0u : 1u;
+				for (std::uint32_t eyeIndex = 0; eyeIndex < kEyeCount; ++eyeIndex)
+					passTopologyResetPending[eyeIndex][ResolutionTierIndex(modelResolution)][historyPass] = true;
+			}
 			InvalidateTemporalHistory(preserveHandoff);
 		}
 
@@ -1724,93 +1777,6 @@ namespace NeuralRendering
 					return false;
 				Util::SetResourceName(temporalReuseSampler.Get(), "NeuralRendering::TemporalReuseSampler");
 			}
-			return true;
-		}
-
-		bool EnsureStereoResidualResources(ID3D11Device* device)
-		{
-			if (!device || !stereoResidualReprojectCS.Get(
-				L"Data\\Shaders\\Upscaling\\NeuralRendering\\StereoResidualReprojectCS.hlsl", {},
-				"cs_5_0", "main", "NeuralRendering::StereoResidualReprojectCS"))
-				return false;
-			if (!stereoResidualCB) {
-				D3D11_BUFFER_DESC bufferDesc{};
-				bufferDesc.ByteWidth = sizeof(StereoResidualConstants);
-				bufferDesc.Usage = D3D11_USAGE_DEFAULT;
-				bufferDesc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
-				if (FAILED(device->CreateBuffer(&bufferDesc, nullptr, stereoResidualCB.GetAddressOf())))
-					return false;
-				Util::SetResourceName(stereoResidualCB.Get(), "NeuralRendering::StereoResidualCB");
-			}
-			return true;
-		}
-
-		void ClearStereoResidualBindings(ID3D11DeviceContext* context)
-		{
-			if (!context)
-				return;
-			std::array<ID3D11ShaderResourceView*, 5> nullSources{};
-			ID3D11UnorderedAccessView* nullTarget = nullptr;
-			ID3D11Buffer* nullBuffer = nullptr;
-			context->CSSetShaderResources(0, static_cast<UINT>(nullSources.size()), nullSources.data());
-			context->CSSetUnorderedAccessViews(0, 1, &nullTarget, nullptr);
-			context->CSSetConstantBuffers(0, 1, &nullBuffer);
-			context->CSSetShader(nullptr, nullptr, 0);
-		}
-
-		bool DispatchStereoResidual(ID3D11Device* device, ID3D11DeviceContext* context,
-			const EyeResources& sourceEye, ID3D11ShaderResourceView* sourceTeacher,
-			const EyeResources& targetEye, ID3D11Resource* targetOutput,
-			ID3D11UnorderedAccessView* targetOutputUAV,
-			std::uint32_t colorWidth, std::uint32_t colorHeight,
-			std::uint32_t guideWidth, std::uint32_t guideHeight,
-			std::uint32_t eyeWidth, std::uint32_t eyeHeight,
-			std::uint32_t sourceCropX, std::uint32_t sourceCropY,
-			std::uint32_t targetCropX, std::uint32_t targetCropY,
-			std::uint32_t targetEyeIndex)
-		{
-			if (!EnsureStereoResidualResources(device) || !context || !sourceEye.color.srv11 ||
-				!sourceTeacher || !sourceEye.depth.srv11 || !targetEye.color.srv11 ||
-				!targetEye.depth.srv11 || !targetOutput || !targetOutputUAV)
-				return false;
-			D3D11_TEXTURE2D_DESC inputDesc{}, outputDesc{};
-			if (!GetTextureDesc(targetEye.color.resource11.Get(), inputDesc) ||
-				!GetTextureDesc(targetOutput, outputDesc) || inputDesc.Width != outputDesc.Width ||
-				inputDesc.Height != outputDesc.Height || inputDesc.Format != outputDesc.Format)
-				return false;
-
-			ClearStereoResidualBindings(context);
-			// The shader writes the target base plus valid residual into every output
-			// pixel, so a separate full-frame initialization copy is unnecessary.
-			CS_GPU_PASS("NeuralRendering::StereoResidualReproject");
-			const StereoResidualConstants constants{
-				.colorWidth = colorWidth,
-				.colorHeight = colorHeight,
-				.guideWidth = guideWidth,
-				.guideHeight = guideHeight,
-				.eyeWidth = eyeWidth,
-				.eyeHeight = eyeHeight,
-				.sourceCropX = sourceCropX,
-				.sourceCropY = sourceCropY,
-				.targetCropX = targetCropX,
-				.targetCropY = targetCropY,
-				.depthTolerance = 0.005f,
-				.colorTolerance = 0.12f,
-				.residualStrength = 1.0f,
-				.targetInverseViewProjection = globals::game::frameBufferCached.GetCameraViewProjInverse(targetEyeIndex),
-				.sourceViewProjection = globals::game::frameBufferCached.GetCameraViewProj(1u - targetEyeIndex),
-			};
-			context->UpdateSubresource(stereoResidualCB.Get(), 0, nullptr, &constants, 0, 0);
-			std::array<ID3D11ShaderResourceView*, 5> sources{
-				sourceEye.color.srv11.Get(), sourceTeacher, sourceEye.depth.srv11.Get(),
-				targetEye.color.srv11.Get(), targetEye.depth.srv11.Get() };
-			ID3D11Buffer* constantBuffer = stereoResidualCB.Get();
-			context->CSSetShader(stereoResidualReprojectCS.get(), nullptr, 0);
-			context->CSSetConstantBuffers(0, 1, &constantBuffer);
-			context->CSSetShaderResources(0, static_cast<UINT>(sources.size()), sources.data());
-			context->CSSetUnorderedAccessViews(0, 1, &targetOutputUAV, nullptr);
-			context->Dispatch((colorWidth + 7) / 8, (colorHeight + 7) / 8, 1);
-			ClearStereoResidualBindings(context);
 			return true;
 		}
 
@@ -2089,29 +2055,16 @@ namespace NeuralRendering
 				!tier.cascadeIntermediates[1].resource11 || !tier.output.resource11 || !tier.output.uav11)
 				return false;
 
-			const auto contribution = tuning.secondPassContribution;
 			const auto reductionX = tuning.secondPassCropReductionX;
 			const auto reductionY = tuning.secondPassCropReductionY;
 			const auto crop = MakeSecondPassCropPlan(width, height, motionWidth, motionHeight, reductionX, reductionY);
 			if ((reductionX != 0 || reductionY != 0) && !crop.enabled)
 				return false;
 			if (fullPassFallback) {
-				if (contribution >= 1.0f) {
-					context->CopyResource(tier.output.resource11.Get(), tier.cascadeIntermediates[1].resource11.Get());
-					return true;
-				}
-				context->CopyResource(tier.output.resource11.Get(), tier.cascadeIntermediates[0].resource11.Get());
-				return FoveatedRenderImpl::Ops::BlendSubrectToOutput(
-					tier.cascadeIntermediates[1].resource11.Get(), tier.output.resource11.Get(), tier.output.uav11.Get(),
-					0, 0, width, height, 0, false, 0, false, 0.0f,
-					contribution, 1.0f);
+				context->CopyResource(tier.output.resource11.Get(), tier.cascadeIntermediates[1].resource11.Get());
+				return true;
 			}
 			context->CopyResource(tier.output.resource11.Get(), tier.cascadeIntermediates[0].resource11.Get());
-			if (reductionX == 0 && reductionY == 0)
-				return FoveatedRenderImpl::Ops::BlendSubrectToOutput(
-					tier.cascadeIntermediates[1].resource11.Get(), tier.output.resource11.Get(), tier.output.uav11.Get(),
-					0, 0, width, height, 0, false, 0, false, 0.0f,
-					contribution, 1.0f);
 			const FoveatedRenderImpl::Ops::SubrectBlendOverride blendOverride{
 				.blendMode = tuning.secondPassBlendMode,
 				.maskMode = tuning.secondPassMaskMode,
@@ -2123,7 +2076,7 @@ namespace NeuralRendering
 				tier.cascadeIntermediates[1].resource11.Get(), tier.output.resource11.Get(), tier.output.uav11.Get(),
 				crop.output.x, crop.output.y, crop.output.width, crop.output.height,
 				crop.output.x, true, crop.output.y, false, 0.0f,
-				contribution, 1.0f, &blendOverride)) {
+				1.0f, 1.0f, &blendOverride)) {
 				static bool fallbackLogged = false;
 				if (!fallbackLogged) {
 					fallbackLogged = true;
@@ -2135,6 +2088,17 @@ namespace NeuralRendering
 					tier.cascadeIntermediates[1].resource11.Get(), 0, &sourceBox);
 			}
 			return true;
+		}
+
+		void CommitPassTopologyResets(std::uint32_t eyeIndex, std::uint32_t tierIndex,
+			std::uint32_t passCount, bool sharedPassHistory)
+		{
+			if (sharedPassHistory) {
+				passTopologyResetPending[eyeIndex][tierIndex][0] = false;
+				return;
+			}
+			for (std::uint32_t passIndex = 0; passIndex < passCount; ++passIndex)
+				passTopologyResetPending[eyeIndex][tierIndex][passIndex] = false;
 		}
 
 		bool ExecuteCascade(ID3D12GraphicsCommandList* commandList, std::uint32_t eyeIndex, std::uint32_t tierIndex,
@@ -2149,7 +2113,7 @@ namespace NeuralRendering
 			float motionVectorScaleX, float motionVectorScaleY,
 			const Tuning& tuning, std::uint32_t passCount, bool reset,
 			std::uint32_t secondPassCropReductionX, std::uint32_t secondPassCropReductionY,
-			float secondPassContribution, bool* cropFallbackUsed)
+			bool* cropFallbackUsed)
 		{
 			if (cropFallbackUsed)
 				*cropFallbackUsed = false;
@@ -2169,7 +2133,7 @@ namespace NeuralRendering
 			constexpr auto readState = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
 			constexpr auto writeState = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
 			const bool separateSecondPass = passCount == 2 &&
-				(secondPassCropReductionX != 0 || secondPassCropReductionY != 0 || secondPassContribution < 1.0f);
+				(secondPassCropReductionX != 0 || secondPassCropReductionY != 0);
 			const bool croppedSecondPass = passCount == 2 &&
 				(secondPassCropReductionX != 0 || secondPassCropReductionY != 0);
 			const SecondPassCropConfig cropConfig{ outputWidth, outputHeight, guideWidth, guideHeight,
@@ -2179,6 +2143,7 @@ namespace NeuralRendering
 			D3D12_RESOURCE_STATES initialInputState = commonState;
 			D3D12_RESOURCE_STATES depthState = commonState;
 			D3D12_RESOURCE_STATES motionState = commonState;
+			D3D12_RESOURCE_STATES zeroMotionState = commonState;
 			D3D12_RESOURCE_STATES finalOutputState = commonState;
 			std::array<D3D12_RESOURCE_STATES, kCascadePassCount - 1> intermediateStates{};
 			intermediateStates.fill(commonState);
@@ -2212,6 +2177,10 @@ namespace NeuralRendering
 			transition(initialInput, initialInputState, readState);
 			transition(depth, depthState, readState);
 			transition(motionVectors, motionState, readState);
+			ID3D12Resource* zeroMotionVectors = tuning.sharedPassHistory && passCount > 1 ?
+				eyes[eyeIndex].zeroMotionVectors.resource12.Get() : nullptr;
+			if (zeroMotionVectors)
+				transition(zeroMotionVectors, zeroMotionState, readState);
 			transition(outputForPass(0), outputStateForPass(0), writeState);
 			flushBarriers();
 
@@ -2283,14 +2252,23 @@ namespace NeuralRendering
 				// evaluation subrect can make unlike full-resource extents appear equal.
 				guide.motionVectorsLowResolution = fullGuide.motionVectorsLowResolution;
 				const auto passTuning = tuning.ForPass(passIndex);
-				bool succeeded = Runtime::Instance().Execute(commandList, FeatureSlot(eyeIndex, tierIndex, passIndex),
-					input, depth, motionVectors, output, guide, passTuning, reset);
+				// Independent mode uses one Feature 18 slot per pass. Shared-history mode
+				// maps these passes to pass 0's per-eye slot. Both modes repopulate NGX
+				// parameters before each evaluation so per-pass tuning remains effective.
+				ID3D12Resource* passMotionVectors = passIndex > 0 && zeroMotionVectors ? zeroMotionVectors : motionVectors;
+				const auto historySlot = tuning.sharedPassHistory ? 0u : passIndex;
+				const bool resetPassHistory = (reset && (!tuning.sharedPassHistory || passIndex == 0)) ||
+					(passTopologyResetPending[eyeIndex][tierIndex][historySlot] &&
+						(!tuning.sharedPassHistory || passIndex == 0));
+				bool succeeded = Runtime::Instance().Execute(commandList, ActiveFeatureSlot(eyeIndex, tierIndex, passIndex),
+					input, depth, passMotionVectors, output, guide, passTuning,
+					resetPassHistory);
 				if (!succeeded && croppedSecondPass && passIndex == 1 && !cropAlreadyRejected) {
 					// Some Feature 18 runtime builds reject an evaluation subrect even when
 					// their create envelope is stable. Retry that pass on the full region so
 					// opting into the smaller crop never disables sequential NR entirely.
-					succeeded = Runtime::Instance().Execute(commandList, FeatureSlot(eyeIndex, tierIndex, passIndex),
-						input, depth, motionVectors, output, fullGuide, passTuning, true);
+					succeeded = Runtime::Instance().Execute(commandList, ActiveFeatureSlot(eyeIndex, tierIndex, passIndex),
+						input, depth, passMotionVectors, output, fullGuide, passTuning, true);
 					if (succeeded) {
 						cropFallbackLatch.MarkRejected();
 						if (cropFallbackUsed)
@@ -2316,6 +2294,8 @@ namespace NeuralRendering
 			transition(initialInput, initialInputState, commonState);
 			transition(depth, depthState, commonState);
 			transition(motionVectors, motionState, commonState);
+			if (zeroMotionVectors)
+				transition(zeroMotionVectors, zeroMotionState, commonState);
 			for (std::uint32_t passIndex = 0; passIndex < passCount; ++passIndex)
 				transition(outputForPass(passIndex), outputStateForPass(passIndex), commonState);
 			flushBarriers();
@@ -2825,7 +2805,7 @@ namespace NeuralRendering
 			guide.creationOutputWidth = outputWidth;
 			guide.creationOutputHeight = outputHeight;
 			guide.motionVectorsLowResolution = stableGuideWidth <= inputWidth && stableGuideHeight <= inputHeight;
-			const auto slot = FeatureSlot(work.eyeIndex, work.tierIndex, work.passIndex);
+			const auto slot = ActiveFeatureSlot(work.eyeIndex, work.tierIndex, work.passIndex);
 			bool succeeded = Runtime::Instance().HasFeature(slot);
 			if (!succeeded)
 				succeeded = Runtime::Instance().PrewarmFeature(commandList, slot, guide);
@@ -2942,7 +2922,7 @@ namespace NeuralRendering
 		bool EnsureResources(ID3D11Device* device, std::uint32_t eyeIndex, ID3D11Resource* color, ID3D11Resource* depth,
 			ID3D11Resource* motionVectors, std::uint32_t guideWidth, std::uint32_t guideHeight,
 			std::uint32_t colorWidth, std::uint32_t colorHeight,
-			std::uint32_t modelWidth, std::uint32_t modelHeight, std::uint32_t passCount,
+			std::uint32_t modelWidth, std::uint32_t modelHeight, std::uint32_t passCount, bool sharedPassHistory,
 			std::uint32_t modelResolution, bool prewarmAdaptive,
 			const StereoResourceEnvelope& resourceEnvelope, std::uint32_t memoryCeiling)
 		{
@@ -2953,6 +2933,8 @@ namespace NeuralRendering
 			if (resourceEnvelope.enabled && (!resourceEnvelope.IsValid() ||
 				resourceEnvelope.guideWidth < guideWidth || resourceEnvelope.guideHeight < guideHeight ||
 				resourceEnvelope.colorWidth < colorWidth || resourceEnvelope.colorHeight < colorHeight))
+				return false;
+			if (!RetireUnusedPassFeatures())
 				return false;
 			D3D11_TEXTURE2D_DESC colorSource{}, depthSource{}, motionSource{};
 			if (!GetTextureDesc(color, colorSource) || !GetTextureDesc(depth, depthSource) ||
@@ -2977,7 +2959,8 @@ namespace NeuralRendering
 			const bool sharedMatch = eye.sharedResourcesValid && eye.sharedColorWidth == sharedColorWidth &&
 				eye.sharedColorHeight == sharedColorHeight && eye.sharedGuideWidth == sharedGuideWidth &&
 				eye.sharedGuideHeight == sharedGuideHeight && Matches(eye.color, colorDesc) &&
-				Matches(eye.depth, depthDesc) && Matches(eye.motionVectors, motionDesc);
+				Matches(eye.depth, depthDesc) && Matches(eye.motionVectors, motionDesc) &&
+				(!sharedPassHistory || passCount <= 1 || Matches(eye.zeroMotionVectors, motionDesc));
 			if (!sharedMatch) {
 				if (eye.sharedResourcesValid) {
 					if (!interop.WaitForIdle())
@@ -2995,6 +2978,9 @@ namespace NeuralRendering
 					!interop.CreateSharedTexture(depthDesc, eye.depth, ("NeuralRendering::Depth" + suffix).c_str()) ||
 					!interop.CreateSharedTexture(motionDesc, eye.motionVectors, ("NeuralRendering::Motion" + suffix).c_str()))
 					return false;
+				if (sharedPassHistory && passCount > 1 && !interop.CreateSharedTexture(motionDesc,
+					eye.zeroMotionVectors, ("NeuralRendering::ZeroMotion" + suffix).c_str()))
+					return false;
 				eye.sharedColorWidth = sharedColorWidth;
 				eye.sharedColorHeight = sharedColorHeight;
 				eye.sharedGuideWidth = sharedGuideWidth;
@@ -3002,6 +2988,10 @@ namespace NeuralRendering
 				eye.sharedResourcesValid = true;
 				resetPending[eyeIndex].fill(true);
 			}
+			if (sharedPassHistory && passCount > 1 && !eye.zeroMotionVectors.resource11 &&
+				!interop.CreateSharedTexture(motionDesc, eye.zeroMotionVectors,
+					(eyeIndex == 0 ? "NeuralRendering::ZeroMotionLeft" : "NeuralRendering::ZeroMotionRight")))
+				return false;
 
 			// The resource dimensions may be stable at the envelope while these
 			// fields track the current valid crop. Keep them current even when the
@@ -3048,7 +3038,7 @@ namespace NeuralRendering
 			const std::uint32_t featureInputHeight = modelResolution == 100 ? sharedColorHeight : resourceModelHeight;
 			const bool lowResolutionMotion = sharedGuideWidth <= featureInputWidth && sharedGuideHeight <= featureInputHeight;
 			for (std::uint32_t pass = 0; pass < passCount; ++pass) {
-				const auto slot = FeatureSlot(eyeIndex, tierIndex, pass);
+				const auto slot = ActiveFeatureSlot(eyeIndex, tierIndex, pass);
 				if (!Runtime::Instance().NeedsRecreation(slot, featureInputWidth, featureInputHeight,
 					resourceModelWidth, resourceModelHeight, lowResolutionMotion))
 					continue;
@@ -3059,6 +3049,27 @@ namespace NeuralRendering
 				Runtime::Instance().ResetFeature(slot);
 				resetPending[eyeIndex][tierIndex] = true;
 			}
+			return true;
+		}
+
+		bool RetireUnusedPassFeatures()
+		{
+			if (!passHistoryRetirementPending)
+				return true;
+			bool hasUnusedFeatures = false;
+			for (std::uint32_t eyeIndex = 0; eyeIndex < eyes.size(); ++eyeIndex)
+				for (std::uint32_t tierIndex = 0; tierIndex < kResolutionTierCount; ++tierIndex)
+					for (std::uint32_t passIndex = 1; passIndex < kCascadePassCount; ++passIndex)
+						hasUnusedFeatures |= Runtime::Instance().HasFeature(
+							FeatureSlot(eyeIndex, tierIndex, passIndex));
+			if (hasUnusedFeatures && !interop.WaitForIdle())
+				return false;
+			if (hasUnusedFeatures)
+				for (std::uint32_t eyeIndex = 0; eyeIndex < eyes.size(); ++eyeIndex)
+					for (std::uint32_t tierIndex = 0; tierIndex < kResolutionTierCount; ++tierIndex)
+						for (std::uint32_t passIndex = 1; passIndex < kCascadePassCount; ++passIndex)
+							Runtime::Instance().ResetFeature(FeatureSlot(eyeIndex, tierIndex, passIndex));
+			passHistoryRetirementPending = false;
 			return true;
 		}
 
@@ -3075,7 +3086,6 @@ namespace NeuralRendering
 		D3D12Interop interop;
 		Util::LazyShader<ID3D11ComputeShader> copyDepthGuideCS;
 		Util::LazyShader<ID3D11ComputeShader> modelResolutionCS;
-		Util::LazyShader<ID3D11ComputeShader> stereoResidualReprojectCS;
 		Util::LazyShader<ID3D11ComputeShader> temporalSnapshotCS;
 		Util::LazyShader<ID3D11ComputeShader> temporalAccumulateCS;
 		Util::LazyShader<ID3D11ComputeShader> temporalPackNativeMotionCS;
@@ -3083,29 +3093,38 @@ namespace NeuralRendering
 		Util::LazyShader<ID3D11ComputeShader> adaptiveHandoffCS;
 		Microsoft::WRL::ComPtr<ID3D11Buffer> modelResolutionCB;
 		Microsoft::WRL::ComPtr<ID3D11SamplerState> modelResolutionSampler;
-		Microsoft::WRL::ComPtr<ID3D11Buffer> stereoResidualCB;
 		Microsoft::WRL::ComPtr<ID3D11Buffer> temporalReuseCB;
 		Microsoft::WRL::ComPtr<ID3D11SamplerState> temporalReuseSampler;
 		Microsoft::WRL::ComPtr<ID3D11Buffer> adaptiveHandoffCB;
 		Microsoft::WRL::ComPtr<ID3D11SamplerState> adaptiveHandoffSampler;
 		std::array<EyeResources, 2> eyes;
 		std::array<std::array<bool, kResolutionTierCount>, 2> resetPending{};
+		std::array<std::array<std::array<bool, kCascadePassCount>, kResolutionTierCount>, kEyeCount> passTopologyResetPending{};
+		bool adaptivePassFadeInitialized = false;
+		bool adaptivePassFadeActive = false;
+		std::uint32_t adaptiveStablePassCount = 1;
+		std::uint32_t adaptivePassFadeLowCount = 0;
+		std::uint32_t adaptivePassFadeHighCount = 1;
+		std::int32_t adaptivePassFadeDirection = 0;
+		float adaptivePassFadeWeight = 1.0f;
+		std::uint32_t adaptivePassFadeLastFrame = UINT32_MAX;
+		std::chrono::steady_clock::time_point adaptivePassFadeLastSuccessTime{};
+		bool gazeFadeActive = false;
+		float gazeFadeElapsedMs = 0.0f;
+		std::uint32_t lastGazeFadeFrame = UINT32_MAX;
+		std::chrono::steady_clock::time_point lastGazeFadeSuccessTime{};
 		std::array<std::array<SecondPassCropFallbackLatch, kResolutionTierCount>, kEyeCount> secondPassCropFallback{};
 		std::array<bool, 2> eyeSkippedSinceFull{};
 		bool temporalConfigInitialized = false;
 		TemporalHistoryConfig temporalConfig;
+		bool sharedPassHistoryActive = false;
+		bool passHistoryRetirementPending = false;
 		std::uint64_t temporalFrameIndex = 0;
 		bool temporalSkippedSinceFull = false;
 		bool temporalReuseActiveLogged = false;
 		bool temporalReuseCropActiveLogged = false;
 		bool temporalEyeAlternationLogged = false;
 		bool temporalReuseWarningLogged = false;
-		bool stereoResidualConfigInitialized = false;
-		bool stereoResidualConfigEnabled = false;
-		std::uint32_t stereoResidualConfigAnchor = 0;
-		bool stereoResidualWarningLogged = false;
-		bool stereoResidualDispatchRejected = false;
-		const char* stereoResidualStatus = "Off";
 		std::uint32_t runtimeFeatureSlotBase = 0;
 		std::uint32_t cropMotionSlotBase = 2;
 		std::uint32_t adaptivePrewarmTier = UINT32_MAX;
@@ -3174,8 +3193,11 @@ namespace NeuralRendering
 	{
 		return state_->CanUseAdaptiveTier(modelResolution, passCount);
 	}
+	bool Renderer::NeedsAdaptivePassFadeComposite(const Tuning& tuning) const
+	{
+		return state_->NeedsAdaptivePassFadeComposite(tuning);
+	}
 	std::uint32_t Renderer::NgxResult() const { return Runtime::Instance().NgxResult(); }
 	std::uint64_t Renderer::SuccessfulFrames() const { return Runtime::Instance().SuccessfulFrames(); }
 	const char* Renderer::StatusText() const { return ToString(Runtime::Instance().Status()); }
-	const char* Renderer::StereoResidualStatusText() const { return state_->StereoResidualStatusText(); }
 }

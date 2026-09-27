@@ -41,7 +41,9 @@ namespace NeuralRendering
 		// 0 = single pass, 1 = 2x, 2 = 3x sequential Feature 18 evaluations.
 		// The adaptive controller may reduce this count under pressure.
 		std::uint32_t multiPass = 0;
-		float secondPassContribution = 1.0f;
+		// Reuse pass 0's temporal history within each eye. Later same-frame passes
+		// receive zero motion vectors so they do not advance history by game motion.
+		bool sharedPassHistory = false;
 		// Reduce the centered second-pass region independently per axis in 2x mode.
 		std::uint32_t secondPassCropReductionX = 0;
 		std::uint32_t secondPassCropReductionY = 0;
@@ -50,11 +52,13 @@ namespace NeuralRendering
 		float secondPassFeatherWidth = 32.0f;
 		float secondPassFalloffCurve = 1.0f;
 		float secondPassDitherStrength = 1.0f;
-		bool stereoResidualReprojection = false;
-		std::uint32_t stereoResidualAnchorEye = 0;
 		// Allocate up to this many pass resources when adaptive pass reduction is
 		// active, so a pressure response does not recreate the cascade resources.
 		std::uint32_t adaptiveMaxPassCount = 1;
+		// Optional adjacent-pass crossfade for adaptive pass-count changes.
+		bool adaptivePassFadeEnabled = false;
+		std::uint32_t adaptivePassFadeDurationMs = 150;
+		bool adaptiveNRTargetEnabled = true;
 		// Experimental stereo mode: 0 = disabled, 2 = alternate native Feature 18
 		// anchors between eyes each host frame and reproject the other eye's saved
 		// residual using accumulated game motion vectors.

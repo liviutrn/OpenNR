@@ -1200,7 +1200,8 @@ namespace FoveatedRenderImpl::Ops
 		bool blendEdges,
 		uint32_t srcOffsetY, bool forceFeather, float featherWidthOverride,
 		float sourceContribution, float detailBoost,
-		const SubrectBlendOverride* blendOverride)
+		const SubrectBlendOverride* blendOverride,
+		ID3D11ShaderResourceView* cascadeBaseSRV, float cascadeContribution)
 	{
 		auto context = globals::d3d::context;
 		auto& foveated = globals::features::upscaling.foveatedRender;
@@ -1212,7 +1213,8 @@ namespace FoveatedRenderImpl::Ops
 		if (!blendEdges && !forceFeather)
 			blendMode = FoveatedRender::SubrectBlendMode::kHardCopy;
 		// Fast path: hard copy (original behaviour)
-		if (blendMode == FoveatedRender::SubrectBlendMode::kHardCopy &&
+		const bool blendCascade = cascadeBaseSRV && cascadeContribution < 1.0f;
+		if (!blendCascade && blendMode == FoveatedRender::SubrectBlendMode::kHardCopy &&
 			sourceContribution >= 1.0f && detailBoost <= 1.0f) {
 			D3D11_BOX srcBox = { srcOffsetX, srcOffsetY, 0, srcOffsetX + subWidth, srcOffsetY + subHeight, 1 };
 			context->CopySubresourceRegion(dst, 0, dstOffsetX, dstOffsetY, 0, dlssSrc, 0, &srcBox);
@@ -1298,12 +1300,13 @@ namespace FoveatedRenderImpl::Ops
 			cb->SourceContribution = std::clamp(sourceContribution, 0.0f, 1.0f);
 			cb->DetailBoost = std::clamp(detailBoost, 1.0f, 2.0f);
 			std::fill(std::begin(cb->padding2), std::end(cb->padding2), 0.0f);
+			cb->padding2[0] = std::clamp(cascadeContribution, 0.0f, 1.0f);
 			cb->MaskMode = blendOverride ? std::min(blendOverride->maskMode, 1u) :
 				(!forceFeather && foveated.GetSubrectMaskMode() == FoveatedRender::SubrectMaskMode::kOval ? 1u : 0u);
 			cb->FrameIndex = globals::state->frameCount;
 			cb->SrcOffsetX = srcOffsetX;
 			cb->SrcOffsetY = srcOffsetY;
-			cb->PaddingUInt0 = 0;
+			cb->PaddingUInt0 = blendCascade ? 1u : 0u;
 			cb->PaddingUInt1 = 0;
 			cb->PaddingUInt2 = 0;
 			cb->FeatherWidth = blendOverride ? std::clamp(blendOverride->featherWidth, 2.0f, 128.0f) :
@@ -1336,7 +1339,7 @@ namespace FoveatedRenderImpl::Ops
 		context->CSSetShader(Core::vrSubrectBlendCS.get(), nullptr, 0);
 		ID3D11Buffer* cbs[] = { Core::vrSubrectBlendCB.get() };
 		context->CSSetConstantBuffers(0, 1, cbs);
-		ID3D11ShaderResourceView* srvs[] = { Core::vrBlendSrcSRV.get(), nullptr };
+		ID3D11ShaderResourceView* srvs[] = { Core::vrBlendSrcSRV.get(), blendCascade ? cascadeBaseSRV : nullptr };
 		context->CSSetShaderResources(0, 2, srvs);
 		ID3D11UnorderedAccessView* uavs[] = { dstUAV };
 		context->CSSetUnorderedAccessViews(0, 1, uavs, nullptr);

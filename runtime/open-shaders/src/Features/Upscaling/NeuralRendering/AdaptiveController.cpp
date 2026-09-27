@@ -67,6 +67,12 @@ namespace NeuralRendering
 		normalized.upshiftFrames = std::clamp(normalized.upshiftFrames, 4u, 64u);
 		normalized.minimumDwellFrames = std::clamp(normalized.minimumDwellFrames, 4u, 240u);
 		normalized.guardTimeMs = std::clamp(normalized.guardTimeMs, 0.0f, 5.0f);
+		normalized.minimumWorkloadMs = std::clamp(std::isfinite(normalized.minimumWorkloadMs) ? normalized.minimumWorkloadMs : 19.0f, 1.0f, 50.0f);
+		normalized.maximumWorkloadMs = std::clamp(std::isfinite(normalized.maximumWorkloadMs) ? normalized.maximumWorkloadMs : 22.0f, 1.0f, 50.0f);
+		if (normalized.maximumWorkloadMs < normalized.minimumWorkloadMs)
+			std::swap(normalized.maximumWorkloadMs, normalized.minimumWorkloadMs);
+		normalized.downshiftDelayMs = std::clamp(std::isfinite(normalized.downshiftDelayMs) ? normalized.downshiftDelayMs : 300.0f, 50.0f, 5000.0f);
+		normalized.upshiftDelayMs = std::clamp(std::isfinite(normalized.upshiftDelayMs) ? normalized.upshiftDelayMs : 800.0f, 50.0f, 5000.0f);
 		return normalized;
 	}
 
@@ -80,11 +86,12 @@ namespace NeuralRendering
 		transitionFrame_ = 0;
 		transitionFrameCount_ = 0;
 		dwellFrames_ = 0;
-		overrunFrames_ = 0;
-		headroomFrames_ = 0;
+		overrunMs_ = 0.0f;
+		headroomMs_ = 0.0f;
 		applicationDeadlineMs_ = 25.0f;
 		lastFrameTimeMs_ = 0.0f;
 		smoothedFrameTimeMs_ = 0.0f;
+		timingSampleAgeMs_ = 0.0f;
 		lastSampleOverBudget_ = false;
 		lastSampleHadHeadroom_ = false;
 	}
@@ -111,8 +118,8 @@ namespace NeuralRendering
 		previousTransitionMs_ = 0.0f;
 		transitionDurationMs_ = std::clamp(frameCount * applicationDeadlineMs_, 120.0f, 800.0f);
 		dwellFrames_ = 0;
-		overrunFrames_ = 0;
-		headroomFrames_ = 0;
+		overrunMs_ = 0.0f;
+		headroomMs_ = 0.0f;
 	}
 
 	void AdaptiveController::Update(std::uint32_t frame, const Config& requestedConfig, bool eligible, float workloadMs, float elapsedMs)
@@ -133,6 +140,10 @@ namespace NeuralRendering
 		hasTimestamp_ = true;
 		const float visualDeltaMs = std::clamp(std::isfinite(elapsedMs) && elapsedMs >= 0.0f ? elapsedMs : frameTimeMs, 0.0f, 50.0f);
 		frameTimeMs = std::isfinite(workloadMs) && workloadMs > 0.0f && workloadMs <= 250.0f ? workloadMs : 0.0f;
+		if (frameTimeMs > 0.0f)
+			timingSampleAgeMs_ = 0.0f;
+		else
+			timingSampleAgeMs_ += visualDeltaMs;
 		decisionReason_ = "hold";
 
 		const Config config = NormalizeConfig(requestedConfig);
@@ -143,7 +154,9 @@ namespace NeuralRendering
 			config.minimumResolution != config_.minimumResolution ||
 			config.maximumResolution != config_.maximumResolution ||
 			config.downshiftFrames != config_.downshiftFrames || config.upshiftFrames != config_.upshiftFrames ||
-			config.minimumDwellFrames != config_.minimumDwellFrames;
+			config.minimumDwellFrames != config_.minimumDwellFrames ||
+			config.minimumWorkloadMs != config_.minimumWorkloadMs || config.maximumWorkloadMs != config_.maximumWorkloadMs ||
+			config.downshiftDelayMs != config_.downshiftDelayMs || config.upshiftDelayMs != config_.upshiftDelayMs;
 		config_ = config;
 
 		const bool shouldRun = config.enabled && eligible;
@@ -176,14 +189,18 @@ namespace NeuralRendering
 			transitionFrame_ = 0;
 			transitionFrameCount_ = 0;
 			dwellFrames_ = 0;
-			overrunFrames_ = 0;
-			headroomFrames_ = 0;
+			overrunMs_ = 0.0f;
+			headroomMs_ = 0.0f;
 		}
 
 		if (frameTimeMs > 0.0f) {
 			lastFrameTimeMs_ = frameTimeMs;
+			// Preserve the previous ~20% update at 60 Hz while keeping the filter's
+			// real-time response consistent at 30/40/60 FPS.
+			constexpr float smoothingTimeConstantMs = 74.75f;
+			const float smoothingAlpha = 1.0f - std::exp(-visualDeltaMs / smoothingTimeConstantMs);
 			smoothedFrameTimeMs_ = smoothedFrameTimeMs_ == 0.0f ? frameTimeMs :
-				smoothedFrameTimeMs_ * 0.90f + frameTimeMs * 0.10f;
+				smoothedFrameTimeMs_ + (frameTimeMs - smoothedFrameTimeMs_) * smoothingAlpha;
 		}
 
 		if (transitionFrameCount_ != 0) {
@@ -198,41 +215,37 @@ namespace NeuralRendering
 		}
 
 		++dwellFrames_;
-		if (frameTimeMs == 0.0f) {
+		lastSampleOverBudget_ = false;
+		lastSampleHadHeadroom_ = false;
+		if (smoothedFrameTimeMs_ <= 0.0f || timingSampleAgeMs_ > 100.0f) {
 			decisionReason_ = "timing-unavailable";
-			lastSampleOverBudget_ = false;
-			lastSampleHadHeadroom_ = false;
-			overrunFrames_ = 0;
-			headroomFrames_ = 0;
+			overrunMs_ = headroomMs_ = 0.0f;
 			return;
 		}
-
-		const float guardedDeadline = std::max(1.0f, applicationDeadlineMs_ - config.guardTimeMs);
-		const bool emergencyOverrun = frameTimeMs > applicationDeadlineMs_ * 1.25f;
-		const bool overrun = emergencyOverrun || frameTimeMs > guardedDeadline ||
-			(smoothedFrameTimeMs_ > guardedDeadline && frameTimeMs > applicationDeadlineMs_ * 0.95f);
-		const float restorationBudget = std::min(applicationDeadlineMs_ * 0.85f,
-			applicationDeadlineMs_ - config.guardTimeMs * 2.0f);
-		const bool headroom = frameTimeMs < restorationBudget && smoothedFrameTimeMs_ < restorationBudget;
-		lastSampleOverBudget_ = overrun;
-		lastSampleHadHeadroom_ = headroom;
+		const bool overrun = smoothedFrameTimeMs_ > config.maximumWorkloadMs;
+		const bool headroom = smoothedFrameTimeMs_ < config.minimumWorkloadMs;
 		if (overrun) {
-			++overrunFrames_;
-			headroomFrames_ = 0;
+			overrunMs_ += visualDeltaMs;
+			headroomMs_ = 0.0f;
+			if (config.allowDownshift && overrunMs_ >= config.downshiftDelayMs) {
+				lastSampleOverBudget_ = true;
+				overrunMs_ -= config.downshiftDelayMs;
+			}
 		} else if (headroom) {
-			overrunFrames_ = 0;
-			++headroomFrames_;
+			headroomMs_ += visualDeltaMs;
+			overrunMs_ = 0.0f;
+			if (config.allowUpshift && headroomMs_ >= config.upshiftDelayMs) {
+				lastSampleHadHeadroom_ = true;
+				headroomMs_ -= config.upshiftDelayMs;
+			}
 		} else {
-			overrunFrames_ = 0;
-			headroomFrames_ = 0;
+			overrunMs_ = headroomMs_ = 0.0f;
 		}
-		if (!config.allowDownshift)
-			overrunFrames_ = 0;
 
 		if (IsTransitioning())
 			return;
 		if (dwellFrames_ >= config.minimumDwellFrames &&
-			config.allowDownshift && (overrunFrames_ >= config.downshiftFrames || emergencyOverrun) && activeBucket_ < minimumBucket_) {
+			config.allowDownshift && lastSampleOverBudget_ && activeBucket_ < minimumBucket_) {
 			decisionReason_ = "workload-pressure";
 			StartTransition(activeBucket_ + 1, config.downshiftFrames);
 			if (config.memoryPressure)
@@ -241,7 +254,7 @@ namespace NeuralRendering
 		}
 
 		if (config.allowUpshift && !config.memoryPressure && dwellFrames_ >= config.minimumDwellFrames &&
-			headroomFrames_ >= config.upshiftFrames && activeBucket_ > maximumBucket_ &&
+			lastSampleHadHeadroom_ && activeBucket_ > maximumBucket_ &&
 			kResolutionBuckets[activeBucket_ - 1] <= memoryCeiling_) {
 			decisionReason_ = "workload-headroom";
 			StartTransition(activeBucket_ - 1, config.upshiftFrames);

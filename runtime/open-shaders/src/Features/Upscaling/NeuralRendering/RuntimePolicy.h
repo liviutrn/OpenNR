@@ -22,6 +22,7 @@ namespace NeuralRendering
 		std::uint32_t passes = 1;
 		std::uint32_t secondPassCropReductionX = 0;
 		std::uint32_t secondPassCropReductionY = 0;
+		bool sharedPassHistory = false;
 
 		bool operator==(const TemporalHistoryConfig&) const = default;
 

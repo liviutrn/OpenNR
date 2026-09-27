@@ -7,10 +7,11 @@
 namespace NeuralRendering
 {
 	/**
-	 * Small hysteretic controller for the opt-in adaptive Neural Rendering test.
+	 * Workload sampler and elapsed-time hysteresis controller for adaptive quality.
 	 *
-	 * The controller only selects a native resolution bucket. It does not own
-	 * graphics resources and it never changes the display or compositor mode.
+	 * It exposes sustained pressure/headroom events to the pass and crop
+	 * controllers. The native resolution bucket remains pinned by its caller.
+	 * It does not own graphics resources or change the display/compositor mode.
 	 */
 	class AdaptiveController
 	{
@@ -26,6 +27,13 @@ namespace NeuralRendering
 			std::uint32_t targetFps = 0;
 			// Positive values override FPS and set an explicit workload deadline.
 			float targetFrameTimeMs = 0.0f;
+			// Adaptive quality uses an explicit dead band over measured active work.
+			// Above maximum for downshiftDelayMs reduces quality; below minimum for
+			// upshiftDelayMs restores it. Between bounds, the controller holds.
+		float minimumWorkloadMs = 19.0f;
+		float maximumWorkloadMs = 22.0f;
+			float downshiftDelayMs = 300.0f;
+			float upshiftDelayMs = 800.0f;
 			std::uint32_t minimumResolution = 70;
 			std::uint32_t maximumResolution = 100;
 			std::uint32_t downshiftFrames = 4;
@@ -51,6 +59,10 @@ namespace NeuralRendering
 		[[nodiscard]] bool IsEnabled() const { return enabled_; }
 		[[nodiscard]] bool LastSampleOverBudget() const { return lastSampleOverBudget_; }
 		[[nodiscard]] bool LastSampleHadHeadroom() const { return lastSampleHadHeadroom_; }
+		[[nodiscard]] bool HasFreshTimingSample() const
+		{
+			return smoothedFrameTimeMs_ > 0.0f && timingSampleAgeMs_ <= 100.0f;
+		}
 		[[nodiscard]] bool IsAtMinimum() const { return activeBucket_ >= minimumBucket_; }
 		[[nodiscard]] bool IsAtMaximum() const { return activeBucket_ == maximumBucket_; }
 		/** @brief Session memory ceiling; only an explicit Reset clears learned pressure. */
@@ -95,12 +107,13 @@ namespace NeuralRendering
 		std::uint32_t transitionFrame_ = 0;
 		std::uint32_t transitionFrameCount_ = 0;
 		std::uint32_t dwellFrames_ = 0;
-		std::uint32_t overrunFrames_ = 0;
-		std::uint32_t headroomFrames_ = 0;
+		float overrunMs_ = 0.0f;
+		float headroomMs_ = 0.0f;
 		float applicationDeadlineMs_ = 25.0f;
 		float transitionElapsedMs_ = 0.0f;
 		float previousTransitionMs_ = 0.0f;
 		float transitionDurationMs_ = 0.0f;
+		float timingSampleAgeMs_ = 0.0f;
 		const char* decisionReason_ = "initial";
 		float lastFrameTimeMs_ = 0.0f;
 		float smoothedFrameTimeMs_ = 0.0f;

@@ -242,14 +242,13 @@ namespace FoveatedRenderImpl::NativeOpenVRGaze
 		Util::Subrect::UVRegion CropFromCenter(
 			const Util::Subrect::UVRegion& base, const std::array<float, 2>& center,
 			const Util::Subrect::UVRegion& previous, bool havePrevious,
-			std::uint32_t width, std::uint32_t height, std::uint32_t quantization,
-			float deltaMs, float catchupMs)
+			std::uint32_t width, std::uint32_t height, std::uint32_t deadZonePixels)
 		{
 			auto result = base;
-			result.x = GazeCropPolicy::ResolveOrigin(previous.x, center[0], base.w, width, quantization,
-				havePrevious, deltaMs, catchupMs);
-			result.y = GazeCropPolicy::ResolveOrigin(previous.y, center[1], base.h, height, quantization,
-				havePrevious, deltaMs, catchupMs);
+			result.x = GazeCropPolicy::ResolveOrigin(previous.x, center[0], base.w, width,
+				deadZonePixels, havePrevious);
+			result.y = GazeCropPolicy::ResolveOrigin(previous.y, center[1], base.h, height,
+				deadZonePixels, havePrevious);
 			return result;
 		}
 
@@ -410,11 +409,9 @@ namespace FoveatedRenderImpl::NativeOpenVRGaze
 				state.wasDynamic = true;
 
 				result.leftUV = CropFromCenter(baseLeft, state.filteredLeft, state.cachedResult.leftUV,
-					state.cacheValid && !reacquired, a_eyeWidth, a_eyeHeight, a_config.quantizationPixels,
-					dtMs, a_config.catchupMs);
+					state.cacheValid && !reacquired, a_eyeWidth, a_eyeHeight, a_config.quantizationPixels);
 				result.rightUV = CropFromCenter(baseRight, state.filteredRight, state.cachedResult.rightUV,
-					state.cacheValid && !reacquired, a_eyeWidth, a_eyeHeight, a_config.quantizationPixels,
-					dtMs, a_config.catchupMs);
+					state.cacheValid && !reacquired, a_eyeWidth, a_eyeHeight, a_config.quantizationPixels);
 				result.dynamic = true;
 				result.diagnostics.dynamic = true;
 				result.diagnostics.usingFallback = false;

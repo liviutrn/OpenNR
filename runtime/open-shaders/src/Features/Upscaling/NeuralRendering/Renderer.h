@@ -105,10 +105,11 @@ namespace NeuralRendering
 		[[nodiscard]] bool IsAdaptiveTierReady(std::uint32_t modelResolution, std::uint32_t passCount) const;
 		/** @brief True when ready, or when prewarm failed and a one-time live create is the only fallback. */
 		[[nodiscard]] bool CanUseAdaptiveTier(std::uint32_t modelResolution, std::uint32_t passCount) const;
+		/** @brief True when an adaptive pass-count transition needs the blend-capable writeback path. */
+		[[nodiscard]] bool NeedsAdaptivePassFadeComposite(const Tuning& tuning) const;
 		[[nodiscard]] std::uint32_t NgxResult() const;
 		[[nodiscard]] std::uint64_t SuccessfulFrames() const;
 		[[nodiscard]] const char* StatusText() const;
-		[[nodiscard]] const char* StereoResidualStatusText() const;
 
 	private:
 		explicit Renderer(std::uint32_t runtimeFeatureSlotBlock = 0, std::uint32_t cropMotionSlotBase = 2);

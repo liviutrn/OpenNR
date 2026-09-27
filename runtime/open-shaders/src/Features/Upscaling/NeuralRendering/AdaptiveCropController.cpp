@@ -49,9 +49,14 @@ namespace NeuralRendering
 		normalized.minimumScalePercent = FindBucketAtOrBelow(std::clamp(normalized.minimumScalePercent, 30u,
 			normalized.maximumScalePercent));
 		normalized.downshiftFrames = std::clamp(normalized.downshiftFrames, 1u, 16u);
-		normalized.upshiftFrames = std::clamp(normalized.upshiftFrames, 8u, 240u);
-		normalized.minimumDwellFrames = std::clamp(normalized.minimumDwellFrames, 8u, 600u);
+		// The shared adaptive controller emits time-based headroom/pressure pulses.
+		// Allow a single pulse to move the crop tier; requiring several consecutive
+		// rendered frames would discard isolated pulses and make recovery depend on
+		// headset refresh rate.
+		normalized.upshiftFrames = std::clamp(normalized.upshiftFrames, 1u, 240u);
+		normalized.minimumDwellFrames = std::clamp(normalized.minimumDwellFrames, 1u, 600u);
 		normalized.transitionFrames = std::clamp(normalized.transitionFrames, 2u, 24u);
+		normalized.stepPercent = std::clamp(normalized.stepPercent, 5u, 70u);
 		return normalized;
 	}
 
@@ -111,7 +116,7 @@ namespace NeuralRendering
 			config.downshiftFrames != config_.downshiftFrames ||
 			config.upshiftFrames != config_.upshiftFrames ||
 			config.minimumDwellFrames != config_.minimumDwellFrames ||
-			config.transitionFrames != config_.transitionFrames || maximumBucket != maximumBucket_;
+			config.transitionFrames != config_.transitionFrames || config.stepPercent != config_.stepPercent || maximumBucket != maximumBucket_;
 		config_ = config;
 		maximumBucket_ = maximumBucket;
 		minimumBucket_ = minimumBucket;
@@ -192,12 +197,16 @@ namespace NeuralRendering
 
 		if (dwellFrames_ >= config.minimumDwellFrames && transitionFrameCount_ == 0 &&
 			!nrTransitioning && allowDownshift &&
-				overrunFrames_ >= config.downshiftFrames && activeBucket_ < minimumBucket_)
-			StartTransition(activeBucket_ + 1, config.transitionFrames);
+				overrunFrames_ >= config.downshiftFrames && activeBucket_ < minimumBucket_) {
+			const auto targetScale = ActiveScalePercent() > config.stepPercent ? ActiveScalePercent() - config.stepPercent : 0u;
+			StartTransition(std::min(FindBucketIndexAtOrBelow(targetScale), minimumBucket_), config.transitionFrames);
+		}
 		else if (dwellFrames_ >= config.minimumDwellFrames && transitionFrameCount_ == 0 &&
 			!nrTransitioning && allowUpshift &&
-			headroomFrames_ >= config.upshiftFrames && activeBucket_ > maximumBucket_)
-			StartTransition(activeBucket_ - 1, config.transitionFrames);
+			headroomFrames_ >= config.upshiftFrames && activeBucket_ > maximumBucket_) {
+			const auto targetScale = std::min(100u, ActiveScalePercent() + config.stepPercent);
+			StartTransition(std::max(FindBucketIndexAtOrBelow(targetScale), maximumBucket_), config.transitionFrames);
+		}
 	}
 
 	std::uint32_t AdaptiveCropController::ActiveScalePercent() const

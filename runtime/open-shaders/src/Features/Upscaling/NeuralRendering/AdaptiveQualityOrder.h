@@ -1,6 +1,5 @@
 #pragma once
 
-#include <array>
 #include <cstdint>
 
 namespace NeuralRendering
@@ -9,46 +8,33 @@ namespace NeuralRendering
 	{
 		Passes,
 		Crop,
-		Resolution,
 		None,
 	};
 
-	inline constexpr std::array<std::array<AdaptiveQualityAxis, 3>, 6> kAdaptiveQualityOrders{{
-		{ AdaptiveQualityAxis::Passes, AdaptiveQualityAxis::Crop, AdaptiveQualityAxis::Resolution },
-		{ AdaptiveQualityAxis::Passes, AdaptiveQualityAxis::Resolution, AdaptiveQualityAxis::Crop },
-		{ AdaptiveQualityAxis::Crop, AdaptiveQualityAxis::Passes, AdaptiveQualityAxis::Resolution },
-		{ AdaptiveQualityAxis::Crop, AdaptiveQualityAxis::Resolution, AdaptiveQualityAxis::Passes },
-		{ AdaptiveQualityAxis::Resolution, AdaptiveQualityAxis::Passes, AdaptiveQualityAxis::Crop },
-		{ AdaptiveQualityAxis::Resolution, AdaptiveQualityAxis::Crop, AdaptiveQualityAxis::Passes },
-	}};
-
-	[[nodiscard]] constexpr std::array<AdaptiveQualityAxis, 3> GetAdaptiveQualityOrder(std::uint32_t index)
-	{
-		return kAdaptiveQualityOrders[index < kAdaptiveQualityOrders.size() ? index : 0];
-	}
-
+	/** Adaptive quality is limited to the two controls used by the UI. */
 	[[nodiscard]] constexpr AdaptiveQualityAxis SelectAdaptiveDownshift(std::uint32_t order,
-		bool passesCanDecrease, bool cropCanDecrease, bool resolutionCanDecrease)
+		bool passesCanDecrease, bool cropCanDecrease, bool = false)
 	{
-		for (const auto axis : GetAdaptiveQualityOrder(order)) {
-			if ((axis == AdaptiveQualityAxis::Passes && passesCanDecrease) ||
-				(axis == AdaptiveQualityAxis::Crop && cropCanDecrease) ||
-				(axis == AdaptiveQualityAxis::Resolution && resolutionCanDecrease))
-				return axis;
+		if (order == 1) {
+			if (cropCanDecrease) return AdaptiveQualityAxis::Crop;
+			if (passesCanDecrease) return AdaptiveQualityAxis::Passes;
+		} else {
+			if (passesCanDecrease) return AdaptiveQualityAxis::Passes;
+			if (cropCanDecrease) return AdaptiveQualityAxis::Crop;
 		}
 		return AdaptiveQualityAxis::None;
 	}
 
 	[[nodiscard]] constexpr AdaptiveQualityAxis SelectAdaptiveUpshift(std::uint32_t order,
-		bool passesCanIncrease, bool cropCanIncrease, bool resolutionCanIncrease)
+		bool passesCanIncrease, bool cropCanIncrease, bool = false)
 	{
-		const auto priority = GetAdaptiveQualityOrder(order);
-		for (auto index = priority.size(); index > 0; --index) {
-			const auto axis = priority[index - 1];
-			if ((axis == AdaptiveQualityAxis::Passes && passesCanIncrease) ||
-				(axis == AdaptiveQualityAxis::Crop && cropCanIncrease) ||
-				(axis == AdaptiveQualityAxis::Resolution && resolutionCanIncrease))
-				return axis;
+		// Restore in reverse order so the quality control reduced last recovers first.
+		if (order == 1) {
+			if (passesCanIncrease) return AdaptiveQualityAxis::Passes;
+			if (cropCanIncrease) return AdaptiveQualityAxis::Crop;
+		} else {
+			if (cropCanIncrease) return AdaptiveQualityAxis::Crop;
+			if (passesCanIncrease) return AdaptiveQualityAxis::Passes;
 		}
 		return AdaptiveQualityAxis::None;
 	}

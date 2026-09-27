@@ -100,7 +100,8 @@ namespace FoveatedRenderImpl::Ops
 		bool blendEdges = true,
 		uint32_t srcOffsetY = 0, bool forceFeather = false, float featherWidthOverride = 0.0f,
 		float sourceContribution = 1.0f, float detailBoost = 1.0f,
-		const SubrectBlendOverride* blendOverride = nullptr);
+		const SubrectBlendOverride* blendOverride = nullptr,
+		ID3D11ShaderResourceView* cascadeBaseSRV = nullptr, float cascadeContribution = 1.0f);
 
 	// Hash of per-eye UVs + mode for change detection (forces SL DLSS resource
 	// recreation). Both eyes are mixed in so asymmetric presets — e.g. Nasal

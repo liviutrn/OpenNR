@@ -123,7 +123,6 @@ struct FoveatedRender
 		// FoveatedRender itself remains opt-in, so this does not activate NR outside
 		// an explicitly enabled foveated-DLSS session.
 		bool neuralRenderingEnabled = true;
-		uint neuralRenderingModelResolution = 100;
 		uint neuralRenderingPreset = 0;  // 0 = Default; 5 = Custom
 		float neuralRenderingIntensity = 1.70f;
 		float neuralRenderingLocalTone = 1.00f;
@@ -133,13 +132,11 @@ struct FoveatedRender
 		bool neuralRenderingAutoMask = true;
 		bool neuralRenderingUICorrection = false;
 		// 0 = classic bounded resolve, 1 = exact-area + matched residual.
-		uint neuralRenderingResolveMode = 0;
 		// 0 = single pass, 1 = two, or 2 = three sequential Feature 18 evaluations.
 		uint neuralRenderingMultiPass = 0;
+		bool neuralRenderingSharedPassHistory = false;
 		std::array<NeuralRenderingPassSettings, 2> neuralRenderingAdditionalPasses{};
-		float neuralRenderingSecondPassContribution = 1.0f;
 		// Estimated additional GPU time for each added sequential NR pass.
-		float neuralRenderingAdaptiveSecondPassCostMs = 6.0f;
 		// Pass-two crop reductions are centered on the current selected/gaze crop.
 		uint neuralRenderingSecondPassCropReductionX = 0;
 		uint neuralRenderingSecondPassCropReductionY = 0;
@@ -151,8 +148,6 @@ struct FoveatedRender
 		float neuralRenderingSecondPassFeatherWidth = 32.0f;
 		float neuralRenderingSecondPassFalloffCurve = 1.0f;
 		float neuralRenderingSecondPassDitherStrength = 1.0f;
-		bool neuralRenderingStereoResidualReprojection = false;
-		uint neuralRenderingStereoResidualAnchorEye = 0;
 		// Retired experimental routes. These are intentionally not serialized or
 		// exposed and ClampSettings forces them off for old in-memory callers.
 		uint neuralRenderingPreUpscale = 0;
@@ -161,27 +156,23 @@ struct FoveatedRender
 		float neuralRenderingTemporalDepthThreshold = 0.05f;
 		float neuralRenderingTemporalColorTolerance = 0.08f;
 		bool neuralRenderingTemporalReuseResetAfterSkip = false;
-		// Opt-in in-game adaptive NR test. The controller derives a 2:1
-		// application budget from the selected headset refresh unless a custom FPS
-		// target is set, then moves through the short native ladder; it never changes
-		// the display/compositor mode.
+		// Opt-in in-game adaptive quality controller. It measures SteamVR active
+		// GPU/CPU work and uses a user-defined time band; it never changes the
+		// display/compositor mode or NR model resolution.
 		bool neuralRenderingAdaptiveEnabled = false;
-		uint neuralRenderingAdaptiveRefreshHz = 80;
-		// 0 = headset budget, 1 = custom FPS, 2 = custom frame-time target.
-		uint neuralRenderingAdaptiveBudgetMode = 0;
-		// Zero keeps the refresh-derived budget for existing settings. When set,
-		// the controller uses this custom application target instead.
-		uint neuralRenderingAdaptiveTargetFps = 0;
-		// Used only in custom frame-time mode; defines the controller's workload cap.
-		float neuralRenderingAdaptiveTargetFrameTimeMs = 20.0f;
-		uint neuralRenderingAdaptiveMinimumResolution = 70;
-		uint neuralRenderingAdaptiveDownshiftFrames = 4;
-		uint neuralRenderingAdaptiveUpshiftFrames = 12;
-		uint neuralRenderingAdaptiveMinimumDwellFrames = 30;
-		float neuralRenderingAdaptiveGuardTimeMs = 1.0f;
+		// User-set hysteresis band on measured active GPU/CPU work (milliseconds).
+		float neuralRenderingAdaptiveMinimumWorkloadMs = 19.0f;
+		float neuralRenderingAdaptiveMaximumWorkloadMs = 22.0f;
+		// Estimated incremental active-work cost reserved before restoring each pass.
+		float neuralRenderingAdaptivePass1CostMs = 0.0f;
+		float neuralRenderingAdaptivePass2CostMs = 0.0f;
+		float neuralRenderingAdaptivePass3CostMs = 0.0f;
+		float neuralRenderingAdaptiveDownshiftDelayMs = 300.0f;
+		float neuralRenderingAdaptiveUpshiftDelayMs = 800.0f;
 		bool neuralRenderingAdaptiveDiagnostics = false;
-		// Six possible pressure orders for sequential passes, crop coverage, and
-		// NR model resolution. Default prioritizes stopping extra passes first.
+		bool neuralRenderingAdaptivePassFadeEnabled = false;
+		uint neuralRenderingAdaptivePassFadeDurationMs = 150;
+		// 0 = reduce extra passes first; 1 = reduce crop first.
 		uint neuralRenderingAdaptiveQualityOrder = 0;
 		// Optional companion for the shared foveated crop. Eye tracking owns the
 		// crop center; this controller changes its extent around that center.
@@ -190,10 +181,8 @@ struct FoveatedRender
 		// configured size and smaller tiers are relative to that saved region.
 		uint neuralRenderingAdaptiveCropMaximumScalePercent = 100;
 		uint neuralRenderingAdaptiveCropMinimumScalePercent = 60;
-		uint neuralRenderingAdaptiveCropDownshiftFrames = 2;
-		uint neuralRenderingAdaptiveCropUpshiftFrames = 24;
-		uint neuralRenderingAdaptiveCropMinimumDwellFrames = 60;
 		uint neuralRenderingAdaptiveCropTransitionFrames = 8;
+		uint neuralRenderingAdaptiveCropStepPercent = 20;
 		// Isolated native OpenVR gaze-provider experiment. The provider moves a
 		// fixed-size crop around the per-eye gaze point; it is opt-in, NR-only,
 		// and falls back to the persisted static crop whenever the native API is
@@ -207,6 +196,8 @@ struct FoveatedRender
 		float neuralRenderingEyeTrackedPredictionMs = 0.0f;
 		uint neuralRenderingEyeTrackedQuantizationPixels = 8;
 		uint neuralRenderingEyeTrackedCropPaddingPixels = 0;
+		// Display-only fade after a gaze crop resets DLSS history. Zero disables it.
+		uint neuralRenderingEyeTrackedFadeInMs = 150;
 		float neuralRenderingNRContribution = 1.0f;
 		float neuralRenderingDetailBoost = 1.0f;
 	};
@@ -227,9 +218,10 @@ struct FoveatedRender
 	static constexpr const char* kPresetCenter50 = "Center 50%";                       ///< Centered crop covering 50% of the eye.
 	static constexpr const char* kPresetCenter40 = "Center 40%";                       ///< Centered crop covering 40% of the eye.
 	static constexpr const char* kPresetCenter30 = "Center 30%";                       ///< Centered crop covering 30% of the eye.
-	static constexpr const char* kPresetNasalConvergence50 = "Nasal Convergence 50%";  ///< 50% crop biased toward nasal convergence.
-	static constexpr const char* kPresetNasalConvergence60 = "Nasal Convergence 60%";  ///< 60% crop biased toward nasal convergence.
-	static constexpr const char* kPresetNasalConvergence70 = "Nasal Convergence 70%";  ///< 70% crop biased toward nasal convergence.
+	static constexpr const char* kPresetCenterV50H40 = "Center V50% / H40%";
+	static constexpr const char* kPresetCenterV40H30 = "Center V40% / H30%";
+	static constexpr const char* kPresetCenterV60H40 = "Center V60% / H40%";
+	static constexpr const char* kPresetCenterV60H50 = "Center V60% / H50%";
 
 	Settings settings;
 	NeuralRendering::AdaptiveController adaptiveController;
@@ -280,6 +272,11 @@ struct FoveatedRender
 	{
 		return adaptiveController.IsEnabled() ? adaptivePassController.ActiveMode(settings.neuralRenderingMultiPass) :
 			settings.neuralRenderingMultiPass;
+	}
+	bool IsAdaptiveNeuralRenderingEnabled() const
+	{
+		return !settings.neuralRenderingAdaptiveEnabled || !adaptiveController.IsEnabled() ||
+			adaptivePassController.IsNeuralEnabled();
 	}
 
 	/** @brief True while drag-resizing the crop region, and for a few seconds after.

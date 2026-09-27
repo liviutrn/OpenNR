@@ -96,25 +96,16 @@ namespace FoveatedRenderImpl::GazeCropPolicy
 			previous[1] + (sample[1] - previous[1]) * alpha };
 	}
 
-	/** Hold the crop inside its movement guard and ease toward the live origin outside it. */
+	/** Hold the crop inside its movement dead zone; recenter fully once crossed. */
 	inline float ResolveOrigin(float previous, float sample, float extent,
-		std::uint32_t pixels, std::uint32_t quantizationPixels, bool havePrevious,
-		float deltaMs = 16.67f, float catchupMs = 0.0f)
+		std::uint32_t pixels, std::uint32_t deadZonePixels, bool havePrevious)
 	{
 		const float maxOrigin = std::max(0.0f, 1.0f - extent);
 		const float desired = std::clamp(sample - extent * 0.5f, 0.0f, maxOrigin);
-		const float deadZone = pixels ? static_cast<float>(quantizationPixels) / static_cast<float>(pixels) : 0.0f;
+		const float deadZone = pixels ? static_cast<float>(deadZonePixels) / static_cast<float>(pixels) : 0.0f;
 		const float delta = desired - previous;
-		const float distance = std::abs(delta);
-		if (havePrevious && distance <= deadZone)
+		if (havePrevious && std::abs(delta) <= deadZone)
 			return previous;
-		if (!havePrevious)
-			return desired;
-		const float target = desired - std::copysign(deadZone, delta);
-
-		const float dt = std::clamp(std::isfinite(deltaMs) ? deltaMs : 16.67f, 0.1f, 250.0f);
-		const float duration = std::clamp(std::isfinite(catchupMs) ? catchupMs : 0.0f, 0.0f, 100.0f);
-		const float alpha = duration > 0.0f ? 1.0f - std::exp(-dt / duration) : 1.0f;
-		return std::clamp(previous + (target - previous) * alpha, 0.0f, maxOrigin);
+		return desired;
 	}
 }

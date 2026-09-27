@@ -40,6 +40,7 @@ namespace NeuralRendering
 			std::uint32_t upshiftFrames = 24;
 			std::uint32_t minimumDwellFrames = 60;
 			std::uint32_t transitionFrames = 8;
+			std::uint32_t stepPercent = 20;
 		};
 
 		void Reset();
