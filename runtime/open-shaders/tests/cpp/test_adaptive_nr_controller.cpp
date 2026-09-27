@@ -13,6 +13,7 @@ TEST_CASE("VRAM pressure ceiling survives headroom and budget edits until explic
 	config.enabled = true;
 	config.memoryPressure = true;
 	config.minimumDwellFrames = 4;
+	config.downshiftDelayMs = 100.0f;
 	for (unsigned frame = 0; frame < 4; ++frame)
 		controller.Update(frame, config, true, 40.0f, 25.0f);
 	REQUIRE(controller.ActiveResolution() == 95);
@@ -74,6 +75,7 @@ TEST_CASE("Memory ceiling still permits recovery from ordinary workload downshif
 	config.enabled = true;
 	config.memoryPressure = true;
 	config.minimumDwellFrames = 4;
+	config.downshiftDelayMs = 100.0f;
 	for (unsigned frame = 0; frame < 4; ++frame)
 		controller.Update(frame, config, true, 40.0f, 25.0f);
 	config.memoryPressure = false;
@@ -137,13 +139,13 @@ TEST_CASE("NR residency stays bounded across a full ladder and repeated frames",
 	REQUIRE_FALSE(residency.Contains(6));
 }
 
-TEST_CASE("NR downshift honors consecutive pressure setting", "[adaptive][nr]")
+TEST_CASE("NR downshift honors sustained pressure delay", "[adaptive][nr]")
 {
 	NRController controller;
 	NRController::Config config;
 	config.enabled = true;
 	config.minimumDwellFrames = 4;
-	config.downshiftFrames = 11;
+	config.downshiftDelayMs = 275.0f;
 	for (unsigned frame = 0; frame < 10; ++frame)
 		controller.Update(frame, config, true, 26.0f, 25.0f);
 	REQUIRE(controller.ActiveResolution() == 100);
@@ -157,6 +159,7 @@ TEST_CASE("NR does not restore a tier with marginal headroom", "[adaptive][nr]")
 	NRController::Config config;
 	config.enabled = true;
 	config.minimumDwellFrames = 30;
+	config.downshiftDelayMs = 750.0f;
 	for (unsigned frame = 0; frame < 31; ++frame)
 		controller.Update(frame, config, true, 32.0f, 25.0f);
 	REQUIRE(controller.ActiveResolution() == 95);
@@ -173,6 +176,7 @@ TEST_CASE("NR recursive weights follow an elapsed-time smoothstep", "[adaptive][
 	config.enabled = true;
 	config.minimumDwellFrames = 30;
 	config.downshiftFrames = 4;
+	config.downshiftDelayMs = 750.0f;
 	for (unsigned frame = 0; frame < 30; ++frame)
 		controller.Update(frame, config, true, 32.0f, 25.0f);
 	REQUIRE(controller.ActiveResolution() == 95);
@@ -199,6 +203,22 @@ TEST_CASE("adaptive NR ignores unavailable paced workload", "[adaptive][nr]")
 	REQUIRE_FALSE(controller.LastSampleOverBudget());
 	controller.Update(101, config, true, std::numeric_limits<float>::quiet_NaN());
 	REQUIRE_FALSE(controller.LastSampleHadHeadroom());
+}
+
+TEST_CASE("adaptive workload sampler emits pressure while NR resolution is pinned", "[adaptive][nr]")
+{
+	NRController controller;
+	NRController::Config config;
+	config.enabled = true;
+	config.minimumResolution = 100;
+	config.maximumResolution = 100;
+	config.minimumDwellFrames = 1;
+	config.downshiftDelayMs = 100.0f;
+	for (unsigned frame = 0; frame < 4; ++frame)
+		controller.Update(frame, config, true, 30.0f, 25.0f);
+	REQUIRE(controller.ActiveResolution() == 100);
+	REQUIRE(controller.TargetResolution() == 100);
+	REQUIRE(controller.LastSampleOverBudget());
 }
 
 TEST_CASE("adaptive NR supports a custom FPS budget", "[adaptive][nr]")
@@ -259,12 +279,13 @@ TEST_CASE("adaptive NR recovers one tier from workload headroom", "[adaptive][nr
 	config.refreshHz = 72;
 	config.minimumDwellFrames = 30;
 	config.upshiftFrames = 12;
+	config.downshiftDelayMs = 830.0f;
 	for (unsigned frame = 0; frame < 31; ++frame)
 		controller.Update(frame, config, true, 32.0f, 27.78f);
 	REQUIRE(controller.ActiveResolution() == 95);
 	config.allowDownshift = false;
 	for (unsigned frame = 31; frame < 70; ++frame)
-		controller.Update(frame, config, true, 20.0f, 27.78f);
+		controller.Update(frame, config, true, 15.0f, 27.78f);
 	REQUIRE(controller.ActiveResolution() == 100);
 }
 
@@ -274,6 +295,7 @@ TEST_CASE("crop transition blocks NR restoration and legal config edits preserve
 	NRController::Config config;
 	config.enabled = true;
 	config.minimumDwellFrames = 30;
+	config.downshiftDelayMs = 830.0f;
 	for (unsigned frame = 0; frame < 31; ++frame)
 		controller.Update(frame, config, true, 32.0f, 27.78f);
 	REQUIRE(controller.ActiveResolution() == 95);

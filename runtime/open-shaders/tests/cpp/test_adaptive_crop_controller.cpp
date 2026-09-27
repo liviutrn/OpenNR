@@ -19,6 +19,7 @@ namespace
 		config.upshiftFrames = 8;
 		config.minimumDwellFrames = 8;
 		config.transitionFrames = 2;
+		config.stepPercent = 5;
 		return config;
 	}
 
