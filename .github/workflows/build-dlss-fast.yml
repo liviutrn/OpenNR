@@ -140,6 +140,24 @@ jobs:
             -DCMAKE_CXX_COMPILER_LAUNCHER=sccache
           if ($LASTEXITCODE -ne 0) { throw "CMake configure failed" }
 
+      - name: Validate CENTER_SHARED shaders
+        if: github.ref_name == 'feature/feature18-center-shared'
+        shell: pwsh
+        run: |
+          $sdkBin = Join-Path ([Environment]::GetFolderPath('ProgramFilesX86')) "Windows Kits/10/bin"
+          $fxc = Get-ChildItem $sdkBin -Recurse -File -Filter "fxc.exe" |
+            Where-Object { $_.FullName -match "x64" } |
+            Sort-Object FullName -Descending |
+            Select-Object -First 1
+          if (-not $fxc) { throw "Windows SDK fxc.exe not found" }
+          $shaderRoot = Join-Path $env:GITHUB_WORKSPACE "runtime/open-shaders/features/Upscaling/Shaders"
+          $shaderDir = Join-Path $shaderRoot "Upscaling/NeuralRendering"
+          foreach ($name in @("CenterSharedBuildCS.hlsl", "CenterSharedGuideCS.hlsl",
+              "CenterSharedResidualCS.hlsl", "CenterSharedWarpCS.hlsl")) {
+            & $fxc.FullName /nologo /T cs_5_0 /E main /I $shaderRoot /Fo (Join-Path $env:RUNNER_TEMP "center-shared.dxbc") (Join-Path $shaderDir $name)
+            if ($LASTEXITCODE -ne 0) { throw "Shader compile failed: $name" }
+          }
+
       - name: Compile only CommunityShaders.dll
         shell: pwsh
         run: |
@@ -208,6 +226,14 @@ jobs:
           $dll = Join-Path $env:GITHUB_WORKSPACE "fast-artifact/SKSE/Plugins/CommunityShaders.dll"
           if (-not (Test-Path $dll) -or (Get-Item $dll).Length -lt 100000) {
             throw "Missing or undersized experiment DLL"
+          }
+          $dllBytes = [IO.File]::ReadAllBytes($dll)
+          $peOffset = [BitConverter]::ToInt32($dllBytes, 0x3c)
+          if ($dllBytes[0] -ne 0x4d -or $dllBytes[1] -ne 0x5a -or
+              $peOffset -lt 0x40 -or $peOffset + 4 -ge $dllBytes.Length -or
+              $dllBytes[$peOffset] -ne 0x50 -or $dllBytes[$peOffset + 1] -ne 0x45 -or
+              $dllBytes[$peOffset + 2] -ne 0 -or $dllBytes[$peOffset + 3] -ne 0) {
+            throw "Experiment DLL has no valid MZ/PE signature"
           }
           Copy-Item $dll (Join-Path $pluginDir "CommunityShaders.dll")
           $shaderSource = Join-Path $env:GITHUB_WORKSPACE "runtime/open-shaders/features/Upscaling/Shaders/Upscaling/NeuralRendering"

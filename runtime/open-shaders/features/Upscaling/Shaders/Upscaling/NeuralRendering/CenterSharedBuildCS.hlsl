@@ -48,14 +48,18 @@ void main(uint3 id : SV_DispatchThreadID)
 			confidence *= 1.0 - 0.6 * smoothstep(0.12, 0.35, colorDifference);
 		} else {
 			bool selectLeft = left.centerZ < right.centerZ;
-			Candidate selected = selectLeft ? left : right;
+			Candidate selected = left;
+			if (!selectLeft)
+				selected = right;
 			result = ReadEyeColor(selected, selectLeft ? 0 : 1);
 			centerZ = selected.centerZ;
 			confidence = selected.confidence * 0.45;
 		}
 	} else if (left.confidence > 0.0 || right.confidence > 0.0) {
 		bool selectLeft = left.confidence > 0.0;
-		Candidate selected = selectLeft ? left : right;
+		Candidate selected = left;
+		if (!selectLeft)
+			selected = right;
 		result = ReadEyeColor(selected, selectLeft ? 0 : 1);
 		centerZ = selected.centerZ;
 		confidence = selected.confidence * 0.55;

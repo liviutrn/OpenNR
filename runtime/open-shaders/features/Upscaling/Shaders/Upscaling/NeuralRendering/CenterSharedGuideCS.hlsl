@@ -26,13 +26,17 @@ void main(uint3 id : SV_DispatchThreadID)
 				CenterMotion(right, 1) * right.confidence) / weight;
 		} else {
 			bool selectLeft = left.centerZ < right.centerZ;
-			Candidate selected = selectLeft ? left : right;
+			Candidate selected = left;
+			if (!selectLeft)
+				selected = right;
 			centerZ = selected.centerZ;
 			motion = CenterMotion(selected, selectLeft ? 0 : 1);
 		}
 	} else if (left.confidence > 0.0 || right.confidence > 0.0) {
 		bool selectLeft = left.confidence > 0.0;
-		Candidate selected = selectLeft ? left : right;
+		Candidate selected = left;
+		if (!selectLeft)
+			selected = right;
 		centerZ = selected.centerZ;
 		motion = CenterMotion(selected, selectLeft ? 0 : 1);
 	}
