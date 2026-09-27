@@ -211,12 +211,6 @@ namespace NeuralRendering
 
 	std::uint32_t AdaptiveCropController::ActiveScalePercent() const
 	{
-		// During a visual handoff the committed/rendered crop is still the previous
-		// tier. Report that tier as active until the handoff completes. This keeps
-		// the global adaptive selector on the Crop axis for the full transition and
-		// prevents a pass drop from starting while the crop is only halfway changed.
-		if (IsTransitioning())
-			return previousScalePercent_;
 		return kScaleBuckets[std::min(activeBucket_, static_cast<std::uint32_t>(kScaleBuckets.size() - 1))];
 	}
 
@@ -261,6 +255,6 @@ namespace NeuralRendering
 			return static_cast<float>(ActiveScalePercent());
 		const float t = HandoffAlpha();
 		const float smooth = t * t * (3.0f - 2.0f * t);
-		return previousScalePercent_ + (static_cast<float>(TargetScalePercent()) - previousScalePercent_) * smooth;
+		return previousScalePercent_ + (static_cast<float>(ActiveScalePercent()) - previousScalePercent_) * smooth;
 	}
 }

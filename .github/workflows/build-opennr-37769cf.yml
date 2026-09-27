@@ -2,7 +2,7 @@ name: Build OpenNR 2.15.1 VR revision
 
 on:
   push:
-    branches: ["codex/opennr-37769cf", "codex/opennr-run22-reviewed", "codex/opennr-run23-reviewed", "codex/opennr-run24-reviewed"]
+    branches: ["codex/opennr-37769cf", "codex/opennr-run22-reviewed", "codex/opennr-run23-reviewed", "codex/opennr-run24-reviewed", "codex/opennr-run24-crop-deadzone-rollback-test"]
   workflow_dispatch:
 
 permissions:
@@ -83,7 +83,7 @@ jobs:
       - name: Upload installable package
         uses: actions/upload-artifact@v4
         with:
-          name: OpenNR-2.15.1-run24-reviewed
+          name: OpenNR-2.15.1-run24-crop-deadzone-rollback-test
           path: dist/*
           if-no-files-found: error
           retention-days: 14
