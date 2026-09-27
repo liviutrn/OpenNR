@@ -1,10 +1,12 @@
 #include "Integration.h"
 
 #include "Renderer.h"
+#include "RuntimePolicy.h"
 #include "Features/HDRDisplay.h"
 #include "Features/Upscaling.h"
 #include "Features/Upscaling/FoveatedRender/Bridge.h"
 #include "Features/Upscaling/FoveatedRender/Core.h"
+#include "Features/Upscaling/FoveatedRender/Ops.h"
 #include "Features/Upscaling/NativeOpenVRGaze.h"
 #include "Features/Upscaling/PerfMode.h"
 #include "Globals.h"
@@ -47,6 +49,9 @@ namespace NeuralRendering
 		bool preUpscaleSuccessLogged = false;
 		bool preUpscaleExecutionFailed = false;
 		bool adaptiveCropHandoffDisabledLogged = false;
+		bool coverageUnavailableLogged = false;
+		bool coverageCropWasActive = false;
+		std::uint32_t coverageActivePercent = 100;
 
 		bool IsGameMenuOpen()
 		{
@@ -143,7 +148,7 @@ namespace NeuralRendering
 			const int prewarmDirection = !adaptive || foveated.IsAdaptiveCropTransitioning() ? 0 :
 				controller.LastSampleOverBudget() && !controller.IsAtMinimum() ? -1 :
 				controller.LastSampleHadHeadroom() && !controller.IsAtMaximum() ? 1 : 0;
-			return {
+Tuning tuning{
 				settings.neuralRenderingIntensity,
 				settings.neuralRenderingLocalTone,
 				settings.neuralRenderingLocalStructure,
@@ -189,7 +194,19 @@ namespace NeuralRendering
 				settings.neuralRenderingStabilizeDetail,
 				settings.neuralRenderingStabilizeDepthThreshold,
 				settings.neuralRenderingStabilizeColorTolerance,
+				settings.neuralRenderingTemporalReuseStaggerEyes,
 			};
+			if constexpr (kFullResolutionNeuralRenderingOnly) {
+				// Enforce the full-resolution contract at the runtime boundary too, so a
+				// remote/DevBench settings write cannot select a reduced NR model area.
+				tuning.modelResolutionPercent = 100;
+				tuning.adaptiveResolution = false;
+				tuning.adaptiveHandoff = true;
+				tuning.adaptiveHandoffAlpha = 1.0f;
+				tuning.adaptivePrewarmDirection = 0;
+				tuning.adaptiveMemoryCeiling = 100;
+			}
+			return tuning;
 		}
 
 		void LogPreUpscaleBlocked(const char* reason)
@@ -385,6 +402,9 @@ namespace NeuralRendering
 		auto& foveated = upscaling.foveatedRender;
 		if (!foveated.settings.neuralRenderingEnabled || foveated.settings.neuralRenderingPreUpscale == 0)
 			return false;
+		// Pre-upscale NR evaluates at render resolution, below the display eye.
+		if constexpr (kFullResolutionNeuralRenderingOnly)
+			return false;
 		if (preUpscaleExecutionFailed) {
 			LogPreUpscaleBlocked("the previous pre-NR execution failed; toggle the option to retry");
 			return false;
@@ -504,8 +524,10 @@ namespace NeuralRendering
 							.motionVectors = motionGuide->resource.get(),
 							.sourceX = eye * eyeWidth,
 							.sourceY = 0,
-							.motionVectorScaleX = 1.0f,
-							.motionVectorScaleY = 1.0f,
+							// Motion vectors are UV-unit; Feature 18 expects guide pixels
+							// (the post-upscale and flat routes scale the same way).
+							.motionVectorScaleX = static_cast<float>(eyeWidth),
+							.motionVectorScaleY = static_cast<float>(eyeHeight),
 						};
 					}
 					if (!inputs[0].depth || !inputs[1].depth || !inputs[0].motionVectors || !inputs[1].motionVectors) {
@@ -610,15 +632,50 @@ namespace NeuralRendering
 		if (leftUV.w != rightUV.w || leftUV.h != rightUV.h)
 			return false;
 		const std::uint32_t eyeWidth = totalDesc.Width / 2;
-		const std::uint32_t outWidth = std::max<std::uint32_t>(1, static_cast<std::uint32_t>(eyeWidth * leftUV.w));
-		const std::uint32_t outHeight = std::max<std::uint32_t>(1, static_cast<std::uint32_t>(totalDesc.Height * leftUV.h));
+		std::uint32_t outWidth = std::max<std::uint32_t>(1, static_cast<std::uint32_t>(eyeWidth * leftUV.w));
+		std::uint32_t outHeight = std::max<std::uint32_t>(1, static_cast<std::uint32_t>(totalDesc.Height * leftUV.h));
 			// The fixed crop envelope is a backing-resource contract only. Feature
 			// 18 still receives the current valid native guide extent so a smaller
 			// crop never exposes stale tail data from the envelope.
-			const std::uint32_t guideWidth = fullEye ? FoveatedRenderImpl::Core::vrIntermediateDepth[0]->desc.Width : FoveatedRenderImpl::Core::vrSubrectValidInW;
-			const std::uint32_t guideHeight = fullEye ? FoveatedRenderImpl::Core::vrIntermediateDepth[0]->desc.Height : FoveatedRenderImpl::Core::vrSubrectValidInH;
-			if (guideWidth == 0 || guideHeight == 0)
+			const std::uint32_t fullGuideWidth = fullEye ? FoveatedRenderImpl::Core::vrIntermediateDepth[0]->desc.Width : FoveatedRenderImpl::Core::vrSubrectValidInW;
+			const std::uint32_t fullGuideHeight = fullEye ? FoveatedRenderImpl::Core::vrIntermediateDepth[0]->desc.Height : FoveatedRenderImpl::Core::vrSubrectValidInH;
+			if (fullGuideWidth == 0 || fullGuideHeight == 0)
 				return false;
+			std::uint32_t guideWidth = fullGuideWidth;
+			std::uint32_t guideHeight = fullGuideHeight;
+
+		// NR-only coverage: DLSS stays full eye and every NR pixel stays at 100%
+		// model resolution. Feature 18 runs on a centered region cropped from the
+		// full-eye guides, and the result is edge-blended over the DLSS image, so the
+		// periphery keeps full DLSS quality instead of the stretched foveated path.
+		const std::uint32_t coverage = NormalizeNeuralCoverage(foveated.settings.neuralRenderingCoverage);
+		NeuralCoverageRect coverageRect{};
+		bool coverageCrop = fullEye && coverage < 100 && !gaze.dynamic && !foveated.IsAdaptiveCropRuntimeActive();
+		if (coverageCrop) {
+			const auto depthFormat = FoveatedRenderImpl::Core::vrIntermediateDepth[0]->desc.Format;
+			coverageRect = ComputeNeuralCoverageRect(eyeWidth, totalDesc.Height, fullGuideWidth, fullGuideHeight, coverage);
+			coverageCrop = coverageRect.IsValid() &&
+				(depthFormat == DXGI_FORMAT_R32_TYPELESS || depthFormat == DXGI_FORMAT_R32_FLOAT);
+			if (!coverageCrop && !coverageUnavailableLogged) {
+				logger::warn("[DLSSNR] NR coverage {}% unavailable for this guide contract; using the full eye", coverage);
+				coverageUnavailableLogged = true;
+			}
+		}
+		if (coverageCrop) {
+			outWidth = coverageRect.colorWidth;
+			outHeight = coverageRect.colorHeight;
+			guideWidth = coverageRect.guideWidth;
+			guideHeight = coverageRect.guideHeight;
+		}
+		if (coverageCrop != coverageCropWasActive || (coverageCrop && coverage != coverageActivePercent)) {
+			if (coverageCrop)
+				logger::info("[DLSSNR] NR-only coverage {}% active color={}x{} guides={}x{} (DLSS full eye, model 100%)",
+					coverage, outWidth, outHeight, guideWidth, guideHeight);
+			else
+				logger::info("[DLSSNR] NR-only coverage off; full-eye NR");
+			coverageCropWasActive = coverageCrop;
+			coverageActivePercent = coverage;
+		}
 			Renderer::StereoResourceEnvelope resourceEnvelope{};
 			if (!fullEye && !gaze.dynamic &&
 				foveated.IsAdaptiveCropRuntimeActive() &&
@@ -643,8 +700,8 @@ namespace NeuralRendering
 		// the crop, which made its rectangle visible even when Edge Blend was set
 		// to Feather or Dither.
 		const auto blendMode = foveated.GetSubrectBlendMode();
-		const bool wantsEdgeBlend = !fullEye &&
-			(foveated.IsAdaptiveCropRuntimeActive() || blendMode != FoveatedRender::SubrectBlendMode::kHardCopy);
+		const bool wantsEdgeBlend = coverageCrop || (!fullEye &&
+			(foveated.IsAdaptiveCropRuntimeActive() || blendMode != FoveatedRender::SubrectBlendMode::kHardCopy));
 		ID3D11Resource* destination = Util::AsReal(total.texture);
 		ID3D11UnorderedAccessView* destinationUAV = Util::AsReal(total.UAV);
 		bool stagedBlendTarget = false;
@@ -683,10 +740,14 @@ namespace NeuralRendering
 				.depth = (fullEye ? FoveatedRenderImpl::Core::vrIntermediateDepth[eye] : FoveatedRenderImpl::Core::vrSubrectDepth[eye])->resource.get(),
 				.depthSRV = (fullEye ? FoveatedRenderImpl::Core::vrIntermediateDepth[eye] : FoveatedRenderImpl::Core::vrSubrectDepth[eye])->srv.get(),
 				.motionVectors = (fullEye ? FoveatedRenderImpl::Core::vrIntermediateMotionVectors[eye] : FoveatedRenderImpl::Core::vrSubrectMotionVectors[eye])->resource.get(),
-				.sourceX = x,
-				.sourceY = y,
-				.motionVectorScaleX = motionScaleX * guideWidth,
-				.motionVectorScaleY = motionScaleY * guideHeight,
+				.sourceX = x + (coverageCrop ? coverageRect.colorX : 0u),
+				.sourceY = y + (coverageCrop ? coverageRect.colorY : 0u),
+				// UV-unit vectors -> guide pixels of the full source eye; a guide crop
+				// does not change the pixel displacement.
+				.motionVectorScaleX = motionScaleX * fullGuideWidth,
+				.motionVectorScaleY = motionScaleY * fullGuideHeight,
+				.guideSourceX = coverageCrop ? coverageRect.guideX : 0u,
+				.guideSourceY = coverageCrop ? coverageRect.guideY : 0u,
 			};
 		}
 		Tuning tuning = GetTuning(foveated, true);
@@ -694,7 +755,7 @@ namespace NeuralRendering
 			logger::info("[DLSSNR] adaptive NR history handoff disabled while adaptive crop is active; using current-frame crop feathering");
 			adaptiveCropHandoffDisabledLogged = true;
 		}
-		if (!fullEye)
+		if (!fullEye || coverageCrop)
 			// The cascade relies on full-eye dimensions and isolated stage history;
 			// keep cropped/foveated regions on the established single-pass route.
 		{
@@ -706,6 +767,9 @@ namespace NeuralRendering
 			if (gaze.dynamic)
 				tuning.temporalReuseCadence = 0;
 		}
+			// A hard-copy edge mode would expose the NR-only rectangle; upgrade it to
+			// feathering for this composite only.
+			FoveatedRenderImpl::Ops::forceFeatherBlend = coverageCrop;
 			bool succeeded = Renderer::Instance().ApplyStereo(globals::d3d::device, context,
 				Util::AsReal(total.texture), inputs, guideWidth, guideHeight,
 				outWidth, outHeight, tuning, destination, destinationUAV, wantsEdgeBlend && destinationUAV != nullptr,
@@ -731,6 +795,7 @@ namespace NeuralRendering
 					logger::error("[DLSSNR] fixed resource envelope fallback aborted because the GPU fence could not be drained");
 				}
 			}
+		FoveatedRenderImpl::Ops::forceFeatherBlend = false;
 		if (succeeded) {
 			if (stagedBlendTarget)
 				context->CopyResource(Util::AsReal(total.texture), destination);
@@ -782,6 +847,9 @@ namespace NeuralRendering
 		preUpscaleSuccessLogged = false;
 		preUpscaleExecutionFailed = false;
 		adaptiveCropHandoffDisabledLogged = false;
+		coverageUnavailableLogged = false;
+		coverageCropWasActive = false;
+		coverageActivePercent = 100;
 		writebackLogged = false;
 		flatRouteWasActive = false;
 		flatFrameGenerationBlockLogged = false;

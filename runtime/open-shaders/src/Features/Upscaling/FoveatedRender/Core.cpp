@@ -1196,6 +1196,8 @@ namespace FoveatedRenderImpl::Ops
 		const bool adaptiveMask = foveated.IsAdaptiveCropRuntimeActive();
 		if (adaptiveMask)
 			blendMode = FoveatedRender::SubrectBlendMode::kFeather;
+		else if (Ops::forceFeatherBlend && blendMode == FoveatedRender::SubrectBlendMode::kHardCopy)
+			blendMode = FoveatedRender::SubrectBlendMode::kFeather;
 
 		// Fast path: hard copy (original behaviour)
 		if (blendMode == FoveatedRender::SubrectBlendMode::kHardCopy) {

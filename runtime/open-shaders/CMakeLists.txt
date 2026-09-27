@@ -28,7 +28,7 @@ option(
 project(
     # gersemi: ignore
     CommunityShaders
-	VERSION 2.19.1
+	VERSION 2.20.0
     LANGUAGES CXX
 )
 
@@ -94,6 +94,11 @@ option(
     OFF
 )
 option(
+    OPENNR_PERFORMANCE_OVERLAY
+    "Compile the Performance Overlay window. OpenNR VR release packages remove it: its per-draw timing and VR ImGui overlay pass cost frame time."
+    OFF
+)
+option(
     SKIP_RUNTIME_DOWNLOADS
     "Skip redistributable runtime downloads for DLL-only development builds."
     OFF
@@ -107,6 +112,7 @@ message("\tAIO include non-autoupload features: ${AIO_INCLUDE_NON_AUTOUPLOAD}")
 message("\tAIO include OpenNR Capture: ${AIO_INCLUDE_OPENNR_CAPTURE}")
 message("\tBuild OpenNR Capture: ${BUILD_OPENNR_CAPTURE}")
 message("\tOpenNR lean package: ${OPENNR_LEAN_PACKAGE}")
+message("\tOpenNR performance overlay: ${OPENNR_PERFORMANCE_OVERLAY}")
 message("\tSkip runtime downloads: ${SKIP_RUNTIME_DOWNLOADS}")
 message("\tEffects11: ${ENABLE_EFFECTS11}")
 
@@ -206,6 +212,7 @@ target_compile_definitions(
     PRIVATE
         "$<$<BOOL:${TRACY_SUPPORT}>:TRACY_SUPPORT>"
         "$<$<BOOL:${BUILD_OPENNR_CAPTURE}>:OPENNR_CAPTURE_ENABLED>"
+        "$<$<NOT:$<BOOL:${OPENNR_PERFORMANCE_OVERLAY}>>:OPENNR_NO_PERFORMANCE_OVERLAY>"
 )
 
 file(

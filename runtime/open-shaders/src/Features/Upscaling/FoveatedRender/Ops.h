@@ -89,6 +89,10 @@ namespace FoveatedRenderImpl::Ops
 	bool BlendSubrectToOutput(ID3D11Resource* dlssSrc, ID3D11Resource* dst, ID3D11UnorderedAccessView* dstUAV,
 		uint32_t dstOffsetX, uint32_t dstOffsetY, uint32_t subWidth, uint32_t subHeight, uint32_t srcOffsetX = 0);
 
+	// Set by the NR-only coverage route while it composites: a hard-copy edge mode
+	// is upgraded to feathering so the NR rectangle never shows as a hard seam.
+	inline bool forceFeatherBlend = false;
+
 	// Hash of per-eye UVs + mode for change detection (forces SL DLSS resource
 	// recreation). Both eyes are mixed in so asymmetric presets — e.g. Nasal
 	// Convergence, where rightUV differs from leftUV — don't collide on a

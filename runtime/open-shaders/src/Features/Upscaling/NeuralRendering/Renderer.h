@@ -25,6 +25,10 @@ namespace NeuralRendering
 			std::uint32_t sourceY = 0;
 			float motionVectorScaleX = 1.0f;
 			float motionVectorScaleY = 1.0f;
+			// Top-left of this eye's guide region inside the depth/motion sources. Non-zero
+			// only for NR-only coverage, which crops full-eye guides without a copy pass.
+			std::uint32_t guideSourceX = 0;
+			std::uint32_t guideSourceY = 0;
 			};
 
 			// Optional stable resource envelope for the adaptive regular-crop

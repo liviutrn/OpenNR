@@ -221,6 +221,9 @@ void PerformanceOverlay::LoadSettings(json& j)
 		// Fallback to defaults if JSON is invalid
 		this->settings = PerformanceOverlay::Settings{};
 	}
+#if defined(OPENNR_NO_PERFORMANCE_OVERLAY)
+	this->settings.ShowInOverlay = false;
+#endif
 	// Ensure history buffers match loaded size
 	this->state.frameTimeHistory.Resize(this->settings.FrameHistorySize);
 	this->state.postFGFrameTimeHistory.Resize(this->settings.FrameHistorySize);
@@ -263,6 +266,9 @@ void PerformanceOverlay::DataLoaded()
 
 void PerformanceOverlay::DrawOverlay()
 {
+#if defined(OPENNR_NO_PERFORMANCE_OVERLAY)
+	return;
+#endif
 	auto* menu = Menu::GetSingleton();
 
 	if (!globals::state || !menu) {

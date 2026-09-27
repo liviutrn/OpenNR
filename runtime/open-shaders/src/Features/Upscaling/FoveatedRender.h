@@ -110,6 +110,9 @@ struct FoveatedRender
 		// an explicitly enabled foveated-DLSS session.
 		bool neuralRenderingEnabled = true;
 		uint neuralRenderingModelResolution = 100;
+		// NR-only centered coverage (linear %, per axis). DLSS stays full eye; Feature 18
+		// runs at 100% model resolution on the center and is edge-blended onto DLSS.
+		uint neuralRenderingCoverage = 100;
 		uint neuralRenderingPreset = 0;  // 0 = Default; 5 = Custom
 		float neuralRenderingIntensity = 1.70f;
 		float neuralRenderingLocalTone = 1.00f;
@@ -162,6 +165,8 @@ struct FoveatedRender
 		// Diagnostic only: keep the conservative reset after reused frames unless
 		// explicitly disabled for an isolated temporal-causality experiment.
 		bool neuralRenderingTemporalReuseResetAfterSkip = true;
+		// N2 only: alternate the native eye each frame instead of skipping both eyes together.
+		bool neuralRenderingTemporalReuseStaggerEyes = false;
 		// Opt-in in-game adaptive NR test. The controller derives a 2:1
 		// application budget from the selected headset refresh unless a custom FPS
 		// target is set, then moves through the short native ladder; it never changes

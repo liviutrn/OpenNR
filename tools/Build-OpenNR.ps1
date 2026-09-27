@@ -5,11 +5,17 @@ param(
     [string]$SourceRoot,
     [string[]]$Targets = @('CommunityShaders', 'cpp_tests'),
     [bool]$CaptureEnabled = $true,
-    [switch]$ConfigureOnly
+    [switch]$ConfigureOnly,
+    [switch]$DisableShaderTests,
+    # Release packages link with LTCG (/GL + /LTCG), as upstream shipping builds do.
+    [bool]$LinkTimeOptimization = $true
 )
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path -Parent $PSScriptRoot
 if (-not $SourceRoot) { $SourceRoot = Join-Path $repo 'runtime\open-shaders' }
+$toolchainRoot = $env:OPENNR_TOOLCHAIN_ROOT
+if (-not $toolchainRoot) { $toolchainRoot = Join-Path (Split-Path -Parent $repo) 'OpenNR-Toolchain' }
+if (-not $env:OPENNR_DEPENDENCIES_ROOT) { $env:OPENNR_DEPENDENCIES_ROOT = 'C:\OpenNR\Dependencies\runtime-2.16.0' }
 $python = Get-Command python -ErrorAction Stop
 $pathTool = Join-Path $PSScriptRoot 'opennr_paths.py'
 $pathArguments = @($pathTool, 'build')
@@ -23,14 +29,36 @@ if ($LASTEXITCODE -ne 0) { throw 'Invalid external dependency destination' }
 $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
 $vs = & $vswhere -latest -version '[17.0,18.0)' -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
 if (-not $vs) { throw 'MSVC C++ tools are required' }
-$cmake = Join-Path $vs 'Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe'
+$cmake = $env:OPENNR_CMAKE_EXE
+if (-not $cmake) {
+    $workspaceCMake = Join-Path $toolchainRoot 'cmake\4.4.3\bin\cmake.exe'
+    if (Test-Path -LiteralPath $workspaceCMake) {
+        $cmake = $workspaceCMake
+    } else {
+        $cmakeCommand = Get-Command cmake.exe -ErrorAction Stop
+        $cmake = $cmakeCommand.Source
+    }
+}
+if (-not (Test-Path -LiteralPath $cmake -PathType Leaf)) { throw "CMake executable is missing: $cmake" }
+$cmakeVersionText = (& $cmake --version | Select-Object -First 1)
+if ($cmakeVersionText -notmatch 'cmake version ([0-9]+\.[0-9]+\.[0-9]+)') {
+    throw "Could not read CMake version from $cmake"
+}
+$cmakeVersion = [version]$Matches[1]
+if ($cmakeVersion -lt [version]'4.2.0') {
+    throw "OpenNR shader tests need CMake 4.2 or later; found CMake $cmakeVersion at $cmake. Set OPENNR_CMAKE_EXE to the workspace toolchain copy."
+}
+Write-Host "Using CMake $cmakeVersion at $cmake"
 $vcvars = Join-Path $vs 'VC\Auxiliary\Build\vcvars64.bat'
 $vcpkg = Join-Path $vs 'VC\vcpkg\scripts\buildsystems\vcpkg.cmake'
+$shaderTestFramework = Join-Path $toolchainRoot 'dependencies\ShaderTestFramework'
+$shaderTestsValue = if ($DisableShaderTests) { 'OFF' } else { 'ON' }
 New-Item -ItemType Directory -Force -Path $BuildRoot | Out-Null
 $captureValue = if ($CaptureEnabled) { 'ON' } else { 'OFF' }
+$ipoValue = if ($LinkTimeOptimization) { 'ON' } else { 'OFF' }
 $arguments = @(
     '-S', "`"$SourceRoot`"", '-B', "`"$BuildRoot`"", '-G', '"Visual Studio 17 2022"', '-A', 'x64',
-    "`"-DCMAKE_TOOLCHAIN_FILE=$vcpkg`"", '-DVCPKG_MANIFEST_INSTALL=OFF',
+    "`"-DCMAKE_TOOLCHAIN_FILE:FILEPATH=$vcpkg`"", '-DVCPKG_MANIFEST_INSTALL=OFF',
     "`"-DVCPKG_INSTALLED_DIR=$Dependencies\vcpkg_installed`"", '-DVCPKG_TARGET_TRIPLET=x64-windows-static-md-release',
     "`"-DOPENNR_COMMONLIB_SOURCE_DIR=$Dependencies\CommonLibSSE-NG`"",
     "`"-DCOMMONLIB_PREBUILT_DIR=$Dependencies\CommonLib-prebuilt`"",
@@ -43,11 +71,12 @@ $arguments = @(
     "`"-DFETCHCONTENT_SOURCE_DIR_CATCH2=$Dependencies\catch2-src`"",
     "`"-DFETCHCONTENT_SOURCE_DIR_IMGUIVRHELPER=$Dependencies\imguivrhelper-src`"",
     "`"-DFETCHCONTENT_SOURCE_DIR_HDE64=$Dependencies\hde64-src`"",
-    '-DAUTO_PLUGIN_DEPLOYMENT=OFF', '-DBUILD_CPP_TESTS=ON', '-DBUILD_SHADER_TESTS=OFF',
+    "`"-DFETCHCONTENT_SOURCE_DIR_SHADERTESTFRAMEWORK=$shaderTestFramework`"",
+    '-DAUTO_PLUGIN_DEPLOYMENT=OFF', '-DBUILD_CPP_TESTS=ON', "-DBUILD_SHADER_TESTS=$shaderTestsValue",
     "-DBUILD_OPENNR_CAPTURE=$captureValue", "-DAIO_INCLUDE_OPENNR_CAPTURE=$captureValue", '-DOPENNR_LEAN_PACKAGE=ON',
     '-DAIO_INCLUDE_NON_AUTOUPLOAD=OFF', '-DAIO_ZIP_TO_DIST=OFF', '-DZIP_TO_DIST=OFF',
     '-DSKSE_SUPPORT_XBYAK=ON', '-DENABLE_SKYRIM_SE=ON', '-DENABLE_SKYRIM_AE=ON', '-DENABLE_SKYRIM_VR=ON',
-    '-DCMAKE_INTERPROCEDURAL_OPTIMIZATION=OFF', '-DSC_DEVFAST_OPTS=OFF', '-DSC_COMPILE_PDB=OFF',
+    "-DCMAKE_INTERPROCEDURAL_OPTIMIZATION=$ipoValue", '-DSC_DEVFAST_OPTS=OFF', '-DSC_COMPILE_PDB=OFF',
     '-DCMAKE_POLICY_VERSION_MINIMUM=3.5'
 )
 $lines = @('@echo off', "call `"$vcvars`"", 'if errorlevel 1 exit /b 1', "`"$cmake`" $($arguments -join ' ')", 'if errorlevel 1 exit /b 1')

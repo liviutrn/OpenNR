@@ -326,12 +326,14 @@ void PerformanceRenderer::Render(Feature* host)
 			ImGui::EndTabItem();
 		}
 
+#if !defined(OPENNR_NO_PERFORMANCE_OVERLAY)
 		if (MenuFonts::BeginTabItemWithFont(T(TKEY("tab_overlay"), "Overlay"), Menu::FontRole::Subheading)) {
 			if (ImGui::BeginChild("##PerformanceOverlayContent", ImVec2(0, 0), false))
 				globals::features::performanceOverlay.DrawSettings();
 			ImGui::EndChild();
 			ImGui::EndTabItem();
 		}
+#endif
 
 		if (MenuFonts::BeginTabItemWithFont(T("menu.features.profiling", "Profiling"), Menu::FontRole::Subheading)) {
 			if (ImGui::BeginChild("##PerformanceProfilingContent", ImVec2(0, 0), false))

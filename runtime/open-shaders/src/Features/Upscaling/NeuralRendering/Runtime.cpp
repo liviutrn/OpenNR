@@ -309,13 +309,6 @@ namespace NeuralRendering
 		}
 
 		auto* parameters = static_cast<NVSDK_NGX_Parameter*>(parameters_);
-		auto create = reinterpret_cast<CreateFeature>(GetProcAddress(static_cast<HMODULE>(module_), "NVSDK_NGX_D3D12_CreateFeature"));
-		SignedRuntimePathScope scope(static_cast<HMODULE>(module_), path_.parent_path() / L"nvngx.dll");
-		if (!create || !scope.IsInstalled()) {
-			detail_ = "native Feature 18 create export or signed-runtime proxy is unavailable";
-			return false;
-		}
-
 		const bool dimensionsChanged = featureInputWidth_[slot] != inputWidth || featureInputHeight_[slot] != inputHeight ||
 			featureOutputWidth_[slot] != outputWidth || featureOutputHeight_[slot] != outputHeight ||
 			featureMotionVectorsLowResolution_[slot] != guide.motionVectorsLowResolution;
@@ -326,6 +319,16 @@ namespace NeuralRendering
 		}
 		if (featureHandles_[slot])
 			return true;
+
+		// The signed-runtime path proxy patches the carrier's import table. Install it
+		// only when a feature is actually created; the per-frame evaluate path installs
+		// its own scope, so an existing handle no longer pays for a second patch cycle.
+		auto create = reinterpret_cast<CreateFeature>(GetProcAddress(static_cast<HMODULE>(module_), "NVSDK_NGX_D3D12_CreateFeature"));
+		SignedRuntimePathScope scope(static_cast<HMODULE>(module_), path_.parent_path() / L"nvngx.dll");
+		if (!create || !scope.IsInstalled()) {
+			detail_ = "native Feature 18 create export or signed-runtime proxy is unavailable";
+			return false;
+		}
 
 		parameters->Reset();
 		const auto createFlags = guide.motionVectorsLowResolution ?

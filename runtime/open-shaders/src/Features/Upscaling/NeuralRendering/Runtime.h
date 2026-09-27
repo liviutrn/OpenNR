@@ -73,6 +73,9 @@ namespace NeuralRendering
 		bool stabilizeDetail = false;
 		float stabilizeDepthThreshold = 0.05f;
 		float stabilizeColorTolerance = 0.08f;
+		// N2 only: alternate which eye receives native Feature 18 each frame so the
+		// per-frame NR cost stays flat; the other eye reuses its previous residual.
+		bool temporalReuseStaggerEyes = false;
 	};
 
 	/**

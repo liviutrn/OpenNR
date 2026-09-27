@@ -227,7 +227,7 @@ bool OverlayRenderer::ShouldSkipRendering()
 			 abTestingManager->IsEnabled() ||
 			 (failed && !hide) ||
 			 effectFailed ||
-			 globals::features::performanceOverlay.settings.ShowInOverlay ||
+			 globals::features::performanceOverlay.IsOverlayVisible() ||
 			 globals::features::sceneSelector.IsOverlayVisible() ||
 			 renderDoc->IsAvailable() ||
 			 HomePageRenderer::ShouldShowFirstTimeSetup() ||

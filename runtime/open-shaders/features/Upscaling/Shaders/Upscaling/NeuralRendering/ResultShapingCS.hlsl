@@ -39,6 +39,10 @@ Texture2D<float4> gPreviousInput : register(t5);
 Texture2D<float> gPreviousDepth : register(t6);
 
 RWTexture2D<float4> gOutput : register(u0);
+// Stabilized but unshaped result (input + stabilized NR delta). It is the next
+// frame's gPreviousResult, so stabilization always runs in the raw NR domain and
+// result shaping is applied afterwards; the two filters never mix domains.
+RWTexture2D<float4> gHistoryOutput : register(u1);
 SamplerState gLinearClamp : register(s0);
 
 static const float3 kLuma = float3(0.2126, 0.7152, 0.0722);
@@ -122,12 +126,13 @@ float3 PreviousLowFrequencyDelta(float2 uv)
 		PreviousDeltaAt(uv - float2(0.0, offset.y))) / 8.0;
 }
 
-float3 ShapeDelta(float2 pixel, float3 baseColor, float3 delta)
+// lowFrequencyDelta must describe the same (possibly stabilized) delta that is passed in.
+float3 ShapeDelta(float2 pixel, float3 baseColor, float3 delta, float3 lowFrequencyDelta)
 {
 	delta *= gEditStrength;
 	if (gLargeScaleTone != 1.0 || gFineDetail != 1.0)
 	{
-		const float3 lowFrequency = CurrentLowFrequencyDelta(pixel) * gEditStrength;
+		const float3 lowFrequency = lowFrequencyDelta * gEditStrength;
 		delta = lowFrequency * gLargeScaleTone + (delta - lowFrequency) * gFineDetail;
 	}
 
@@ -234,9 +239,12 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
 	const float2 pixelPosition = float2(pixel);
 	const float4 baseColor = gInput.Load(int3(pixel, 0));
 	const float4 nrColor = gNRResult.Load(int3(pixel, 0));
-	float3 delta = nrColor.rgb - baseColor.rgb;
-	if (gShapeEnabled != 0u)
-		delta = ShapeDelta(pixelPosition, baseColor.rgb, delta);
+	const float3 rawDelta = nrColor.rgb - baseColor.rgb;
+	float3 delta = rawDelta;
+	const bool shapeNeedsLowFrequency = gShapeEnabled != 0u && (gLargeScaleTone != 1.0 || gFineDetail != 1.0);
+	const bool stabilizeNeedsLowFrequency = gStabilizeMode != 0u && gStabilizeDetail == 0u;
+	float3 lowFrequency = (shapeNeedsLowFrequency || stabilizeNeedsLowFrequency) ?
+		CurrentLowFrequencyDelta(pixelPosition) : float3(0.0, 0.0, 0.0);
 
 	if (gStabilizeMode != 0u)
 	{
@@ -258,17 +266,27 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
 				max(gStabilizeTimeMs * 0.001, 0.001));
 			if (gStabilizeDetail != 0u)
 			{
-				delta = lerp(delta, previousDelta, historyWeight);
+				delta = lerp(rawDelta, previousDelta, historyWeight);
+				if (shapeNeedsLowFrequency)
+					lowFrequency = lerp(lowFrequency, PreviousLowFrequencyDelta(previousUV), historyWeight);
 			}
 			else
 			{
-				const float3 currentLowFrequency = CurrentLowFrequencyDelta(pixelPosition);
-				const float3 previousLowFrequency = PreviousLowFrequencyDelta(previousUV);
-				delta = lerp(currentLowFrequency, previousLowFrequency, historyWeight) +
-					(delta - currentLowFrequency);
+				const float3 stabilizedLowFrequency = lerp(lowFrequency,
+					PreviousLowFrequencyDelta(previousUV), historyWeight);
+				delta = stabilizedLowFrequency + (rawDelta - lowFrequency);
+				lowFrequency = stabilizedLowFrequency;
 			}
 		}
 	}
+
+	float3 stabilized = baseColor.rgb + delta;
+	if (!all(stabilized == stabilized) || !all(abs(stabilized) < float3(1e20, 1e20, 1e20)))
+		stabilized = nrColor.rgb;
+	gHistoryOutput[pixel] = float4(max(stabilized, 0.0.xxx), nrColor.a);
+
+	if (gShapeEnabled != 0u)
+		delta = ShapeDelta(pixelPosition, baseColor.rgb, delta, lowFrequency);
 
 	float3 result = baseColor.rgb + delta;
 	if (!all(result == result) || !all(abs(result) < float3(1e20, 1e20, 1e20)))

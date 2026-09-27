@@ -127,7 +127,12 @@ struct PerformanceOverlay : OverlayFeature
 	virtual bool IsCore() const override { return true; }
 	/** @brief Keeps these settings on the Performance page's Overlay tab. */
 	virtual bool IsInMenu() const override { return false; }
+#if defined(OPENNR_NO_PERFORMANCE_OVERLAY)
+	// OpenNR release builds remove the overlay: no per-draw timing, no VR ImGui overlay pass.
+	bool IsOverlayVisible() const override { return false; }
+#else
 	bool IsOverlayVisible() const override { return settings.ShowInOverlay; }
+#endif
 	virtual std::pair<std::string, std::vector<std::string>> GetFeatureSummary() override
 	{
 		return { T("feature.performance_overlay.description", "Real-time performance monitoring system that displays FPS, frame times, draw calls, VRAM usage, and detailed shader performance analysis."),

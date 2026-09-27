@@ -14,6 +14,7 @@
 #include "NeuralRendering/Integration.h"
 #include "NeuralRendering/FuturePipeline.h"
 #include "NeuralRendering/Renderer.h"
+#include "NeuralRendering/RuntimePolicy.h"
 
 #include <algorithm>
 #include <cmath>
@@ -89,6 +90,7 @@ namespace
 	X(subrectDitherStrength) \
 	X(neuralRenderingEnabled) \
 	X(neuralRenderingModelResolution) \
+	X(neuralRenderingCoverage) \
 	X(neuralRenderingPreset) \
 	X(neuralRenderingIntensity) \
 	X(neuralRenderingLocalTone) \
@@ -125,6 +127,7 @@ namespace
 	X(neuralRenderingTemporalDepthThreshold) \
 	X(neuralRenderingTemporalColorTolerance) \
 	X(neuralRenderingTemporalReuseResetAfterSkip) \
+	X(neuralRenderingTemporalReuseStaggerEyes) \
 	X(neuralRenderingAdaptiveEnabled) \
 	X(neuralRenderingAdaptiveRefreshHz) \
 	X(neuralRenderingAdaptiveTargetFps) \
@@ -338,6 +341,16 @@ void FoveatedRender::ClampSettings()
 		settings.neuralRenderingModelResolution != 100)
 		settings.neuralRenderingModelResolution = settings.neuralRenderingModelResolution < 33 ? 33 :
 			(settings.neuralRenderingModelResolution < 70 ? 70 : 100);
+	settings.neuralRenderingCoverage = NeuralRendering::NormalizeNeuralCoverage(settings.neuralRenderingCoverage);
+	if constexpr (NeuralRendering::kFullResolutionNeuralRenderingOnly) {
+		// Reduced NR model area weakens the neural effect: this build evaluates every
+		// NR pixel at the full display-eye resolution. Saved reduced tiers, adaptive
+		// tiering and render-resolution pre-upscale NR are normalized off here.
+		settings.neuralRenderingModelResolution = 100;
+		settings.neuralRenderingAdaptiveEnabled = false;
+		settings.neuralRenderingAdaptiveCropEnabled = false;
+		settings.neuralRenderingPreUpscale = 0;
+	}
 	if (settings.neuralRenderingPreset == 4 || settings.neuralRenderingPreset > 5)
 		settings.neuralRenderingPreset = 5;
 	settings.neuralRenderingIntensity = std::clamp(settings.neuralRenderingIntensity, 0.0f, 2.0f);
@@ -1200,6 +1213,32 @@ const char* FoveatedRender::SubrectMaskModeName(SubrectMaskMode mode)
 			ImGui::TextDisabled("%s %s", T(TKEY("neural_rendering_active_style"), "Active style:"), styleLabels[activeStyle]);
 
 			ImGui::SeparatorText("NR Cost");
+			{
+				static const char* coverageLabels[] = {
+					"Full eye (100%)", "Center 95% | 90% NR area", "Center 90% | 81% NR area", "Center 85% | 72% NR area",
+					"Center 80% | 64% NR area", "Center 75% | 56% NR area", "Center 70% | 49% NR area" };
+				static_assert(IM_ARRAYSIZE(coverageLabels) == NeuralRendering::kNeuralCoveragePresets.size());
+				int coverageIndex = 0;
+				for (int index = 0; index < IM_ARRAYSIZE(coverageLabels); ++index)
+					if (settings.neuralRenderingCoverage == NeuralRendering::kNeuralCoveragePresets[index]) {
+						coverageIndex = index;
+						break;
+					}
+				if (ImGui::Combo(T(TKEY("neural_rendering_coverage"), "NR Coverage"), &coverageIndex,
+						coverageLabels, IM_ARRAYSIZE(coverageLabels)))
+					settings.neuralRenderingCoverage = NeuralRendering::kNeuralCoveragePresets[coverageIndex];
+				if (auto _tt = Util::HoverTooltipWrapper())
+					drawWrapped(T(TKEY("neural_rendering_coverage_tooltip"),
+						"Runs NR only on the center of each eye at full 100% model resolution. DLSS stays full eye, and the NR edge is blended with your Edge Blend settings (Hard Copy is upgraded to Feather). NR cost scales with the NR area. Requires Full Eye foveation."));
+				if (settings.neuralRenderingCoverage < 100 &&
+					!(subrectController.GetUV().IsFullEye() && subrectController.GetRightEyeUV().IsFullEye()))
+					drawWarningWrapped(T(TKEY("neural_rendering_coverage_crop_warning"),
+						"NR Coverage applies only with the Full Eye foveation preset."));
+			}
+			if constexpr (NeuralRendering::kFullResolutionNeuralRenderingOnly) {
+				ImGui::TextDisabled("%s", T(TKEY("neural_rendering_model_resolution_locked"),
+					"Model resolution: 100% (reduced NR resolution is disabled in this build)"));
+			} else {
 			static const char* modelResolutions[] = {
 				"Full (100%)", "95%", "90%", "85%", "80%", "75%", "70%", "50% (experimental)", "33% (experimental)" };
 			static constexpr uint modelResolutionValues[] = { 100u, 95u, 90u, 85u, 80u, 75u, 70u, 50u, 33u };
@@ -1217,6 +1256,7 @@ const char* FoveatedRender::SubrectMaskModeName(SubrectMaskMode mode)
 			if (auto _tt = Util::HoverTooltipWrapper())
 				drawWrapped(T(TKEY("neural_rendering_model_resolution_tooltip"),
 					"The display stays full resolution. Only the NR model area changes. 50% and 33% are fixed experimental tiers; adaptive NR remains limited to 70% and above."));
+			}
 
 			ImGui::SeparatorText("Advanced NR Tuning");
 			static const char* presets[] = { "Default", "Balanced", "Fabric Detail", "Natural", "Custom" };
@@ -1241,7 +1281,10 @@ const char* FoveatedRender::SubrectMaskModeName(SubrectMaskMode mode)
 			if (custom)
 				settings.neuralRenderingPreset = 5;
 
-			if (ImGui::CollapsingHeader("Adaptive Performance")) {
+			if (NeuralRendering::kFullResolutionNeuralRenderingOnly) {
+				// Adaptive NR works by lowering the NR model tier, and adaptive crop needs
+				// adaptive NR; neither is offered while NR is fixed at full resolution.
+			} else if (ImGui::CollapsingHeader("Adaptive Performance")) {
 				ImGui::SeparatorText("Adaptive Neural Rendering");
 				ImGui::Checkbox("Enable adaptive NR resolution", &settings.neuralRenderingAdaptiveEnabled);
 				if (auto _tt = Util::HoverTooltipWrapper())
@@ -1405,6 +1448,7 @@ const char* FoveatedRender::SubrectMaskModeName(SubrectMaskMode mode)
 
 			if (ImGui::CollapsingHeader("Experimental Pipeline")) {
 				ImGui::SeparatorText("Resolve and Pipeline");
+				if (!NeuralRendering::kFullResolutionNeuralRenderingOnly) {
 				static const char* resolveModes[] = { "Classic (bounded source)", "Matched Residual (experimental)" };
 				int resolveMode = static_cast<int>(std::min(settings.neuralRenderingResolveMode, 1u));
 				if (ImGui::Combo(T(TKEY("neural_rendering_resolve_mode"), "Reduced NR Resolve"), &resolveMode,
@@ -1421,6 +1465,7 @@ const char* FoveatedRender::SubrectMaskModeName(SubrectMaskMode mode)
 					drawWrapped(T(TKEY("neural_rendering_pre_upscale_tooltip"), "Runs NR before DLSS. It may reduce halos but can change color and is incompatible with Ray Reconstruction. VR requires Full Eye + Default mode."));
 				if (settings.neuralRenderingPreUpscale)
 					drawWarningWrapped(T(TKEY("neural_rendering_pre_upscale_warning"), "Experimental. Disable Ray Reconstruction and use Full Eye + Default mode."));
+				}
 
 				static const char* multiPassModes[] = { "Off", "2x sequential NR", "3x sequential NR" };
 				int multiPass = static_cast<int>(std::min(settings.neuralRenderingMultiPass, 2u));
@@ -1462,6 +1507,13 @@ const char* FoveatedRender::SubrectMaskModeName(SubrectMaskMode mode)
 						&settings.neuralRenderingTemporalDepthThreshold, 0.0f, 0.25f, "%.3f");
 					ImGui::SliderFloat(T(TKEY("neural_rendering_temporal_color_tolerance"), "Color rejection tolerance"),
 						&settings.neuralRenderingTemporalColorTolerance, 0.0f, 0.50f, "%.3f");
+					if (settings.neuralRenderingTemporalReuseCadence == 2) {
+						ImGui::Checkbox(T(TKEY("neural_rendering_temporal_stagger_eyes"), "Stagger eyes (one native eye per frame)"),
+							&settings.neuralRenderingTemporalReuseStaggerEyes);
+						if (auto _tt = Util::HoverTooltipWrapper())
+							drawWrapped(T(TKEY("neural_rendering_temporal_stagger_eyes_tooltip"),
+								"Alternates which eye gets full Feature 18 each frame; the other eye reuses its previous-frame residual. Per-frame NR cost stays flat instead of alternating heavy and light frames. Watch for left/right differences during fast motion."));
+					}
 					ImGui::Checkbox(T(TKEY("neural_rendering_temporal_reset_after_skip"), "Reset native history after a skipped frame"),
 						&settings.neuralRenderingTemporalReuseResetAfterSkip);
 					if (auto _tt = Util::HoverTooltipWrapper())

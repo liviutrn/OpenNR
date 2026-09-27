@@ -385,7 +385,11 @@ namespace NeuralRendering
 		struct ResultShapingEyeState
 		{
 			TemporalTexture output;
-			TemporalTexture previousOutput;
+			// Ping-pong stabilized (unshaped) results: history[historyIndex] is the
+			// previous frame, the other slot receives this frame. Swapping replaces a
+			// full-eye history copy per eye per frame.
+			std::array<TemporalTexture, 2> history;
+			std::uint32_t historyIndex = 0;
 			TemporalTexture previousBase;
 			TemporalTexture previousDepth;
 			std::uint32_t width = 0;
@@ -928,9 +932,8 @@ namespace NeuralRendering
 				if (tier.reducedResolution && !DispatchModelInput(device, context, eye, tier, colorWidth, colorHeight, modelWidth, modelHeight,
 					 tuning.modelResolveMode == 1))
 					return LatchFailure("model input downsample stereo", E_FAIL);
-				if (!CopyDepthGuide(context, input.depthSRV, eye.depth.uav11.Get(), guideWidth, guideHeight))
-					return LatchFailure("depth guide conversion", E_FAIL);
-				context->CopyResource(eye.motionVectors.resource11.Get(), input.motionVectors);
+				if (!CopyStereoGuides(context, input, eye, guideWidth, guideHeight))
+					return LatchFailure("depth/motion guide copy", E_FAIL);
 			}
 
 			const auto adaptivePrewarm = PrepareAdjacentPrewarmResources(device, tierIndex,
@@ -958,7 +961,26 @@ namespace NeuralRendering
 				resetPending[1][tierIndex] = true;
 			}
 			const bool cropTemporalLayout = stableTemporalLayout && !fullEyeTemporalLayout;
-			const bool temporalCandidate = temporalTierSupported && stableTemporalLayout &&
+			// Eye-staggered N2: one native eye per frame keeps the Feature 18 cost flat
+			// instead of alternating a two-eye frame with a two-eye skip frame.
+			const bool staggerConfigured = tuning.temporalReuseStaggerEyes && tuning.temporalReuseCadence == 2 &&
+				temporalTierSupported && stableTemporalLayout && !tuning.adaptiveResolution;
+			if (staggerConfigured) {
+				const std::uint32_t nativeEye = StaggeredNativeEye(temporalFrameIndex);
+				const std::uint32_t reuseEye = nativeEye ^ 1u;
+				const bool reuseReady = CanAttemptTemporalReuse(eyes[reuseEye], colorWidth, colorHeight,
+						guideWidth, guideHeight, inputs[reuseEye].sourceX, inputs[reuseEye].sourceY) &&
+					!resetPending[reuseEye][tierIndex] && !resetPending[nativeEye][tierIndex];
+				if (reuseReady) {
+					const auto staggered = ApplyStaggeredStereo(device, context, inputs, nativeEye, tierIndex,
+						colorWidth, colorHeight, guideWidth, guideHeight, modelWidth, modelHeight,
+						stableFeatureInputWidth, stableFeatureInputHeight, stableModelWidth, stableModelHeight,
+						resolveSettings, tuning, writeback, destinationUAV, blendSubrect);
+					if (staggered != StaggerResult::FallBack)
+						return staggered == StaggerResult::Applied;
+				}
+			}
+			const bool temporalCandidate = !staggerConfigured && temporalTierSupported && stableTemporalLayout &&
 				CanAttemptTemporalReuse(eyes[0], colorWidth, colorHeight, guideWidth, guideHeight,
 					inputs[0].sourceX, inputs[0].sourceY) &&
 				CanAttemptTemporalReuse(eyes[1], colorWidth, colorHeight, guideWidth, guideHeight,
@@ -1287,12 +1309,118 @@ namespace NeuralRendering
 					InvalidateTemporalHistory();
 			}
 			temporalSkippedSinceFull = false;
+			staggerSkippedLastFrame = {};
 			AdvanceTemporalFrame(tuning);
 #if defined(OPENNR_CAPTURE_ENABLED)
 			if (captureFrame)
 				globals::features::openNRCapture.EndFrame();
 #endif
 			return true;
+		}
+
+		enum class StaggerResult
+		{
+			Applied,
+			Failed,
+			FallBack,
+		};
+
+		// One native Feature 18 eye plus one residual-reuse eye. Returns FallBack when
+		// the reuse eye cannot be reprojected so the caller runs a full stereo frame.
+		StaggerResult ApplyStaggeredStereo(ID3D11Device* device, ID3D11DeviceContext* context,
+			const std::array<StereoEyeInput, 2>& inputs, std::uint32_t nativeEye, std::uint32_t tierIndex,
+			std::uint32_t colorWidth, std::uint32_t colorHeight, std::uint32_t guideWidth, std::uint32_t guideHeight,
+			std::uint32_t modelWidth, std::uint32_t modelHeight,
+			std::uint32_t stableFeatureInputWidth, std::uint32_t stableFeatureInputHeight,
+			std::uint32_t stableModelWidth, std::uint32_t stableModelHeight,
+			const ModelResolveSettings& resolveSettings, const Tuning& tuning,
+			ID3D11Resource* writeback, ID3D11UnorderedAccessView* destinationUAV, bool blendSubrect)
+		{
+			const std::uint32_t reuseEye = nativeEye ^ 1u;
+			{
+				auto& eye = eyes[reuseEye];
+				auto& tier = eye.tiers[tierIndex];
+				ID3D11UnorderedAccessView* reuseUAV = tier.reducedResolution ? tier.resolvedUAV.Get() : tier.output.uav11.Get();
+				if (!TryTemporalReuse(device, context, eye, reuseUAV, colorWidth, colorHeight, guideWidth, guideHeight,
+						inputs[reuseEye].motionVectorScaleX, inputs[reuseEye].motionVectorScaleY, tuning))
+					return StaggerResult::FallBack;
+			}
+
+			ID3D12GraphicsCommandList* commandList = nullptr;
+			if (!interop.BeginD3D12(&commandList)) {
+				LatchFailure("BeginD3D12 staggered", interop.LastError());
+				return StaggerResult::Failed;
+			}
+			{
+				auto& eye = eyes[nativeEye];
+				auto& tier = eye.tiers[tierIndex];
+				const auto& input = inputs[nativeEye];
+				const bool reset = resetPending[nativeEye][tierIndex] ||
+					(tuning.temporalReuseResetAfterSkip && staggerSkippedLastFrame[nativeEye]);
+				const bool succeeded = ExecuteCascade(commandList, nativeEye, tierIndex,
+					tier.reducedResolution ? tier.modelInput.resource12.Get() : eye.color.resource12.Get(),
+					eye.depth.resource12.Get(), eye.motionVectors.resource12.Get(),
+					std::array<ID3D12Resource*, kCascadePassCount - 1>{
+						tier.cascadeIntermediates[0].resource12.Get(), tier.cascadeIntermediates[1].resource12.Get() },
+					tier.output.resource12.Get(),
+					tier.reducedResolution ? modelWidth : colorWidth,
+					tier.reducedResolution ? modelHeight : colorHeight,
+					guideWidth, guideHeight, modelWidth, modelHeight,
+					stableFeatureInputWidth, stableFeatureInputHeight, stableModelWidth, stableModelHeight,
+					input.motionVectorScaleX * static_cast<float>(modelWidth) / colorWidth,
+					input.motionVectorScaleY * static_cast<float>(modelHeight) / colorHeight,
+					tuning, 1, reset);
+				if (!interop.EndD3D12()) {
+					LatchFailure("EndD3D12 staggered", interop.LastError());
+					return StaggerResult::Failed;
+				}
+				if (!succeeded) {
+					LatchFailure("Feature 18 staggered", static_cast<HRESULT>(Runtime::Instance().NgxResult()));
+					return StaggerResult::Failed;
+				}
+				if (tier.reducedResolution && !DispatchModelResolve(device, context, eye, tier, colorWidth, colorHeight,
+						resolveSettings, tuning.modelResolveMode == 1)) {
+					LatchFailure("model output resolve staggered", E_FAIL);
+					return StaggerResult::Failed;
+				}
+			}
+
+			const D3D11_BOX outputBox{ 0, 0, 0, colorWidth, colorHeight, 1 };
+			for (std::uint32_t eyeIndex = 0; eyeIndex < inputs.size(); ++eyeIndex) {
+				auto& eye = eyes[eyeIndex];
+				auto& tier = eye.tiers[tierIndex];
+				const auto& input = inputs[eyeIndex];
+				ID3D11Resource* output = tier.reducedResolution ? tier.resolved.Get() : tier.output.resource11.Get();
+				ID3D11ShaderResourceView* outputSRV = tier.reducedResolution ? tier.resolvedSRV.Get() : tier.output.srv11.Get();
+				ID3D11Resource* shaped = ApplyResultShaping(device, context, eye, eyeIndex, output, outputSRV,
+					colorWidth, colorHeight, guideWidth, guideHeight, input.sourceX, input.sourceY,
+					input.motionVectorScaleX, input.motionVectorScaleY, tuning);
+				if (blendSubrect && destinationUAV)
+					FoveatedRenderImpl::Ops::BlendSubrectToOutput(shaped, writeback, destinationUAV,
+						input.sourceX, input.sourceY, colorWidth, colorHeight);
+				else
+					context->CopySubresourceRegion(writeback, 0, input.sourceX, input.sourceY, 0, shaped, 0, &outputBox);
+			}
+
+			{
+				auto& eye = eyes[nativeEye];
+				auto& tier = eye.tiers[tierIndex];
+				ID3D11ShaderResourceView* teacherSRV = tier.reducedResolution ? tier.resolvedSRV.Get() : tier.output.srv11.Get();
+				if (!RecordTemporalHistory(device, context, eye, teacherSRV, colorWidth, colorHeight,
+						guideWidth, guideHeight, inputs[nativeEye].sourceX, inputs[nativeEye].sourceY))
+					InvalidateTemporalHistory();
+			}
+			resetPending[0][tierIndex] = false;
+			resetPending[1][tierIndex] = false;
+			staggerSkippedLastFrame[nativeEye] = false;
+			staggerSkippedLastFrame[reuseEye] = true;
+			temporalSkippedSinceFull = true;
+			AdvanceTemporalFrame(tuning);
+			if (!temporalReuseStaggerLogged) {
+				logger::info("[DLSSNR] experimental eye-staggered temporal reuse active (one native eye per frame)");
+				temporalReuseStaggerLogged = true;
+			}
+			return StaggerResult::Applied;
 		}
 
 		bool Reset(bool manual = true)
@@ -1331,6 +1459,8 @@ namespace NeuralRendering
 			resultShapingConfigInitialized = false;
 			temporalFrameIndex = 0;
 			temporalSkippedSinceFull = false;
+			staggerSkippedLastFrame = {};
+			temporalReuseStaggerLogged = false;
 			temporalReuseActiveLogged = false;
 			temporalReuseCropActiveLogged = false;
 			temporalReuseWarningLogged = false;
@@ -1594,29 +1724,28 @@ namespace NeuralRendering
 				state.modelResolution = modelResolution;
 			}
 
-			const bool historyMatches = state.previousOutput.resource && state.previousOutput.srv &&
-				state.previousOutput.uav && state.previousBase.resource && state.previousBase.srv &&
-				state.previousBase.uav && state.previousDepth.resource && state.previousDepth.srv &&
-				state.previousDepth.uav;
-			if (needHistory && !historyMatches && !state.historyAllocationFailed) {
-				TemporalTexture previousOutput;
+			if (needHistory && !HasResultShapingHistory(state) && !state.historyAllocationFailed) {
+				std::array<TemporalTexture, 2> history;
 				TemporalTexture previousBase;
 				TemporalTexture previousDepth;
 				const std::string suffix = eyeIndex == 0 ? "Left" : "Right";
 				const bool historyCreated =
 					EnsureResultShapingTexture(device, colorWidth, colorHeight, colorFormat,
-						previousOutput, ("NeuralRendering::ResultShapingHistory" + suffix).c_str()) &&
+						history[0], ("NeuralRendering::ResultShapingHistoryA" + suffix).c_str()) &&
+					EnsureResultShapingTexture(device, colorWidth, colorHeight, colorFormat,
+						history[1], ("NeuralRendering::ResultShapingHistoryB" + suffix).c_str()) &&
 					EnsureResultShapingTexture(device, colorWidth, colorHeight, colorFormat,
 						previousBase, ("NeuralRendering::ResultShapingBase" + suffix).c_str()) &&
 					EnsureResultShapingTexture(device, guideWidth, guideHeight, DXGI_FORMAT_R32_FLOAT,
 						previousDepth, ("NeuralRendering::ResultShapingDepth" + suffix).c_str());
 				if (historyCreated) {
-					state.previousOutput = std::move(previousOutput);
+					state.history = std::move(history);
+					state.historyIndex = 0;
 					state.previousBase = std::move(previousBase);
 					state.previousDepth = std::move(previousDepth);
 					state.valid = false;
 				} else {
-					state.previousOutput = {};
+					state.history = {};
 					state.previousBase = {};
 					state.previousDepth = {};
 					state.historyAllocationFailed = true;
@@ -1624,6 +1753,15 @@ namespace NeuralRendering
 				}
 			}
 			return true;
+		}
+
+		static bool HasResultShapingHistory(const ResultShapingEyeState& state)
+		{
+			for (const auto& history : state.history)
+				if (!history.resource || !history.srv || !history.uav)
+					return false;
+			return state.previousBase.resource && state.previousBase.srv && state.previousBase.uav &&
+				state.previousDepth.resource && state.previousDepth.srv && state.previousDepth.uav;
 		}
 
 		bool EnsureResultShapingShader(ID3D11Device* device)
@@ -1664,11 +1802,11 @@ namespace NeuralRendering
 			if (!context)
 				return;
 			std::array<ID3D11ShaderResourceView*, 7> nullSources{};
-			ID3D11UnorderedAccessView* nullTarget = nullptr;
+			std::array<ID3D11UnorderedAccessView*, 2> nullTargets{};
 			ID3D11Buffer* nullBuffer = nullptr;
 			ID3D11SamplerState* nullSampler = nullptr;
 			context->CSSetShaderResources(0, static_cast<UINT>(nullSources.size()), nullSources.data());
-			context->CSSetUnorderedAccessViews(0, 1, &nullTarget, nullptr);
+			context->CSSetUnorderedAccessViews(0, static_cast<UINT>(nullTargets.size()), nullTargets.data(), nullptr);
 			context->CSSetConstantBuffers(0, 1, &nullBuffer);
 			context->CSSetSamplers(0, 1, &nullSampler);
 			context->CSSetShader(nullptr, nullptr, 0);
@@ -1703,10 +1841,7 @@ namespace NeuralRendering
 				return nrOutput;
 			}
 
-			const bool historyAvailable = state.previousOutput.resource && state.previousOutput.srv &&
-				state.previousOutput.uav && state.previousBase.resource && state.previousBase.srv &&
-				state.previousBase.uav && state.previousDepth.resource && state.previousDepth.srv &&
-				state.previousDepth.uav;
+			const bool historyAvailable = HasResultShapingHistory(state);
 			if (stabilizeMode != 0 && !historyAvailable) {
 				if (!resultStabilizationFailureLogged) {
 					logger::warn("[DLSSNR] result stabilization history unavailable; keeping result shaping active without temporal smoothing");
@@ -1726,8 +1861,9 @@ namespace NeuralRendering
 			constants.colorHeight = colorHeight;
 			constants.guideWidth = guideWidth;
 			constants.guideHeight = guideHeight;
-			constants.motionScaleX = motionScaleX;
-			constants.motionScaleY = motionScaleY;
+			// Motion stabilization offsets color-pixel positions; convert from guide pixels.
+			constants.motionScaleX = GuideToColorMotionScale(motionScaleX, colorWidth, guideWidth);
+			constants.motionScaleY = GuideToColorMotionScale(motionScaleY, colorHeight, guideHeight);
 			constants.frameDeltaSeconds = frameDeltaSeconds;
 			constants.stabilizeTimeMs = tuning.stabilizeTimeMs;
 			constants.editStrength = tuning.resultEditStrength;
@@ -1758,24 +1894,30 @@ namespace NeuralRendering
 			sources[1] = nrOutputSRV;
 			sources[2] = eye.depth.srv11.Get();
 			sources[3] = eye.motionVectors.srv11.Get();
+			const bool recordHistory = stabilizeAllowed && historyAvailable && eye.depth.resource11;
+			const std::uint32_t previousIndex = state.historyIndex & 1u;
+			const std::uint32_t nextIndex = previousIndex ^ 1u;
 			if (stabilizeMode != 0) {
-				sources[4] = state.previousOutput.srv.Get();
+				sources[4] = state.history[previousIndex].srv.Get();
 				sources[5] = state.previousBase.srv.Get();
 				sources[6] = state.previousDepth.srv.Get();
 			}
-			ID3D11UnorderedAccessView* target = state.output.uav.Get();
+			std::array<ID3D11UnorderedAccessView*, 2> targets{
+				state.output.uav.Get(), recordHistory ? state.history[nextIndex].uav.Get() : nullptr };
 			ID3D11Buffer* constantBuffer = resultShapingCB.Get();
 			ID3D11SamplerState* sampler = resultShapingSampler.Get();
 			context->CSSetShader(resultShapingCS.get(), nullptr, 0);
 			context->CSSetConstantBuffers(0, 1, &constantBuffer);
 			context->CSSetShaderResources(0, static_cast<UINT>(sources.size()), sources.data());
-			context->CSSetUnorderedAccessViews(0, 1, &target, nullptr);
+			context->CSSetUnorderedAccessViews(0, static_cast<UINT>(targets.size()), targets.data(), nullptr);
 			context->CSSetSamplers(0, 1, &sampler);
 			context->Dispatch((colorWidth + 7) / 8, (colorHeight + 7) / 8, 1);
 			ClearResultShapingBindings(context);
 
-			if (stabilizeAllowed && historyAvailable && eye.depth.resource11) {
-				context->CopyResource(state.previousOutput.resource.Get(), state.output.resource.Get());
+			if (recordHistory) {
+				// The stabilized result already sits in the next history slot; only the
+				// per-frame input and depth guides need a copy.
+				state.historyIndex = nextIndex;
 				context->CopyResource(state.previousBase.resource.Get(), eye.color.resource11.Get());
 				context->CopyResource(state.previousDepth.resource.Get(), eye.depth.resource11.Get());
 				state.valid = true;
@@ -1884,8 +2026,9 @@ namespace NeuralRendering
 				.colorHeight = colorHeight,
 				.guideWidth = guideWidth,
 				.guideHeight = guideHeight,
-				.motionScaleX = motionScaleX,
-				.motionScaleY = motionScaleY,
+				// The shader offsets color-pixel positions; convert from guide pixels.
+				.motionScaleX = GuideToColorMotionScale(motionScaleX, colorWidth, guideWidth),
+				.motionScaleY = GuideToColorMotionScale(motionScaleY, colorHeight, guideHeight),
 			};
 			context->UpdateSubresource(temporalReuseCB.Get(), 0, nullptr, &constants, 0, 0);
 			std::array<ID3D11ShaderResourceView*, 8> sources{};
@@ -2441,6 +2584,39 @@ namespace NeuralRendering
 			context->CSSetShader(nullptr, nullptr, 0);
 		}
 
+		static bool IsR32DepthFormat(DXGI_FORMAT format)
+		{
+			return format == DXGI_FORMAT_R32_TYPELESS || format == DXGI_FORMAT_R32_FLOAT;
+		}
+
+		// Copies this eye's guide region into the shared Feature 18 guides. A 32-bit
+		// float depth source (the VR per-eye intermediates) is copied directly, which
+		// also supports the NR-only coverage offset; other depth formats keep the
+		// conversion dispatch and must start at the origin.
+		bool CopyStereoGuides(ID3D11DeviceContext* context, const StereoEyeInput& input, EyeResources& eye,
+			std::uint32_t guideWidth, std::uint32_t guideHeight)
+		{
+			D3D11_TEXTURE2D_DESC depthDesc{}, motionDesc{};
+			if (!GetTextureDesc(input.depth, depthDesc) || !GetTextureDesc(input.motionVectors, motionDesc))
+				return false;
+			const std::uint64_t right = static_cast<std::uint64_t>(input.guideSourceX) + guideWidth;
+			const std::uint64_t bottom = static_cast<std::uint64_t>(input.guideSourceY) + guideHeight;
+			if (right > depthDesc.Width || bottom > depthDesc.Height || right > motionDesc.Width || bottom > motionDesc.Height)
+				return false;
+			const D3D11_BOX box{ input.guideSourceX, input.guideSourceY, 0,
+				static_cast<UINT>(right), static_cast<UINT>(bottom), 1 };
+			if (IsR32DepthFormat(depthDesc.Format) && depthDesc.SampleDesc.Count == 1) {
+				context->CopySubresourceRegion(eye.depth.resource11.Get(), 0, 0, 0, 0, input.depth, 0, &box);
+			} else {
+				if (input.guideSourceX != 0 || input.guideSourceY != 0)
+					return false;
+				if (!CopyDepthGuide(context, input.depthSRV, eye.depth.uav11.Get(), guideWidth, guideHeight))
+					return false;
+			}
+			context->CopySubresourceRegion(eye.motionVectors.resource11.Get(), 0, 0, 0, 0, input.motionVectors, 0, &box);
+			return true;
+		}
+
 		bool CopyDepthGuide(ID3D11DeviceContext* context, ID3D11ShaderResourceView* source,
 			ID3D11UnorderedAccessView* destination, std::uint32_t width, std::uint32_t height)
 		{
@@ -2857,6 +3033,8 @@ namespace NeuralRendering
 		ResultShapingConfigKey resultShapingConfig;
 		std::uint64_t temporalFrameIndex = 0;
 		bool temporalSkippedSinceFull = false;
+		std::array<bool, 2> staggerSkippedLastFrame{};
+		bool temporalReuseStaggerLogged = false;
 		bool temporalReuseActiveLogged = false;
 		bool temporalReuseCropActiveLogged = false;
 		bool temporalReuseWarningLogged = false;
