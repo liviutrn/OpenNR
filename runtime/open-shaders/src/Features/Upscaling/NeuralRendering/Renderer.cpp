@@ -586,13 +586,6 @@ namespace NeuralRendering
 				InvalidateTemporalHistory();
 				return true;
 			}
-			const bool passFadeCompositeAvailable = destinationUAV || inputs[0].writebackUAV || inputs[1].writebackUAV;
-			const std::uint32_t requestedPassCount = tuning.adaptiveNRTargetEnabled ? GetPassCount(tuning) : 0u;
-			const auto passFadeFrame = PrepareAdaptivePassFade(tuning, requestedPassCount, passFadeCompositeAvailable);
-			const std::uint32_t passCount = passFadeFrame.passCount;
-			if (passCount == 0)
-				return true;
-
 			if (!interop.IsInitialized() && !InitializeInterop(device, context))
 				return false;
 			if (Runtime::Instance().Status() != RuntimeStatus::Initialized && !InitializeRuntime())
@@ -916,6 +909,12 @@ namespace NeuralRendering
 				InvalidateTemporalHistory();
 				return true;
 			}
+			const bool passFadeCompositeAvailable = destinationUAV || inputs[0].writebackUAV || inputs[1].writebackUAV;
+			const std::uint32_t requestedPassCount = tuning.adaptiveNRTargetEnabled ? GetPassCount(tuning) : 0u;
+			const auto passFadeFrame = PrepareAdaptivePassFade(tuning, requestedPassCount, passFadeCompositeAvailable);
+			const std::uint32_t passCount = passFadeFrame.passCount;
+			if (passCount == 0)
+				return true;
 
 			if (!interop.IsInitialized() && !InitializeInterop(device, context))
 				return false;

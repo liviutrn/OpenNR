@@ -929,7 +929,6 @@ namespace NeuralRendering
 				.compensateCropMotion = gaze.dynamic && !baseFullEye,
 			};
 		}
-		const bool splitSecondPass = splitPostStage && activePassMode == 1;
 		Tuning tuning = GetTuning(foveated, true);
 		const bool finishNR = foveated.settings.neuralRenderingNRContribution < 1.0f ||
 			foveated.settings.neuralRenderingDetailBoost > 1.0f ||
