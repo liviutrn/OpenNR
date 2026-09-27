@@ -2,7 +2,7 @@ name: Build OpenNR 2.15.1 VR revision
 
 on:
   push:
-    branches: ["codex/opennr-37769cf", "codex/opennr-run22-reviewed", "codex/opennr-run23-reviewed"]
+    branches: ["codex/opennr-37769cf", "codex/opennr-run22-reviewed", "codex/opennr-run23-reviewed", "codex/opennr-run24-reviewed"]
   workflow_dispatch:
 
 permissions:
@@ -56,18 +56,33 @@ jobs:
           Pop-Location
           "VCPKG_ROOT=$vcpkg" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
-      - name: Configure and package
+      - name: Configure
         shell: pwsh
         working-directory: runtime/open-shaders
         run: |
           $dist = Join-Path $env:GITHUB_WORKSPACE "dist"
           cmake --preset OpenNR-Package -DOPENNR_EXTERNAL_DLSSNR_RUNTIME=ON "-DDIST_PATH=$dist"
+
+      - name: Build and run adaptive C++ tests
+        shell: pwsh
+        working-directory: runtime/open-shaders
+        run: |
+          cmake --build --preset Package --target cpp_tests --parallel
+          $testExe = Get-ChildItem -Path "E:\OpenNR_Builds\2.15.1\presets\OpenNR-Package" -Filter cpp_tests.exe -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $testExe) { throw "cpp_tests.exe was not produced" }
+          & $testExe.FullName
+          if ($LASTEXITCODE -ne 0) { throw "cpp_tests failed with exit code $LASTEXITCODE" }
+
+      - name: Build package
+        shell: pwsh
+        working-directory: runtime/open-shaders
+        run: |
           cmake --build --preset Package --parallel
 
       - name: Upload installable package
         uses: actions/upload-artifact@v4
         with:
-          name: OpenNR-2.15.1-run23-reviewed
+          name: OpenNR-2.15.1-run24-reviewed
           path: dist/*
           if-no-files-found: error
           retention-days: 14
