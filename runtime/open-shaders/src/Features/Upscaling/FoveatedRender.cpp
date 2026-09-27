@@ -98,6 +98,8 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	neuralRenderingPreUpscale,
 	neuralRenderingResolveMode,
 	neuralRenderingMultiPass,
+	neuralRenderingStereoMode,
+	neuralRenderingCenterSharedDebug,
 	neuralRenderingTemporalReuseCadence,
 	neuralRenderingTemporalDepthThreshold,
 	neuralRenderingTemporalColorTolerance,
@@ -305,6 +307,8 @@ void FoveatedRender::ClampSettings()
 	settings.neuralRenderingPreUpscale = std::min(settings.neuralRenderingPreUpscale, 1u);
 	settings.neuralRenderingResolveMode = std::min(settings.neuralRenderingResolveMode, 1u);
 	settings.neuralRenderingMultiPass = std::min(settings.neuralRenderingMultiPass, 2u);
+	settings.neuralRenderingStereoMode = std::min(settings.neuralRenderingStereoMode, 1u);
+	settings.neuralRenderingCenterSharedDebug = std::min(settings.neuralRenderingCenterSharedDebug, 6u);
 	if (settings.neuralRenderingTemporalReuseCadence != 0 &&
 		settings.neuralRenderingTemporalReuseCadence != 2 &&
 		settings.neuralRenderingTemporalReuseCadence != 3 &&
@@ -1275,6 +1279,19 @@ const char* FoveatedRender::SubrectMaskModeName(SubrectMaskMode mode)
 				drawWrapped(T(TKEY("neural_rendering_pre_upscale_tooltip"), "Runs NR before DLSS. It may reduce halos but can change color and is incompatible with Ray Reconstruction. VR requires Full Eye + Default mode."));
 			if (settings.neuralRenderingPreUpscale)
 				drawWarningWrapped(T(TKEY("neural_rendering_pre_upscale_warning"), "Experimental. Disable Ray Reconstruction and use Full Eye + Default mode."));
+
+			if (globals::game::isVR) {
+				static const char* stereoModes[] = { "Per Eye", "Center Shared (experimental)" };
+				int stereoMode = static_cast<int>(settings.neuralRenderingStereoMode);
+				if (ImGui::Combo("DLSSNR.StereoMode", &stereoMode, stereoModes, IM_ARRAYSIZE(stereoModes)))
+					settings.neuralRenderingStereoMode = static_cast<uint>(stereoMode);
+				if (settings.neuralRenderingStereoMode == 1) {
+					int centerDebug = static_cast<int>(settings.neuralRenderingCenterSharedDebug);
+					if (ImGui::SliderInt("DLSSNR.CenterSharedDebug", &centerDebug, 0, 6))
+						settings.neuralRenderingCenterSharedDebug = static_cast<uint>(centerDebug);
+					drawWarningWrapped("CENTER_SHARED uses one Feature 18 pass. Disable adaptive NR, eye-tracked crop, and sequential NR for the first A/B test.");
+				}
+			}
 
 			static const char* multiPassModes[] = { "Off", "2x sequential NR", "3x sequential NR" };
 			int multiPass = static_cast<int>(std::min(settings.neuralRenderingMultiPass, 2u));

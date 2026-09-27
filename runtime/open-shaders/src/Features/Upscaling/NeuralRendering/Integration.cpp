@@ -1,6 +1,7 @@
 #include "Integration.h"
 
 #include "Renderer.h"
+#include "CenterShared.h"
 #include "Features/HDRDisplay.h"
 #include "Features/Upscaling.h"
 #include "Features/Upscaling/FoveatedRender/Bridge.h"
@@ -47,6 +48,8 @@ namespace NeuralRendering
 		bool preUpscaleSuccessLogged = false;
 		bool preUpscaleExecutionFailed = false;
 		bool adaptiveCropHandoffDisabledLogged = false;
+		bool stereoModeObserved = false;
+		std::uint32_t activeStereoMode = 0;
 
 		bool IsGameMenuOpen()
 		{
@@ -312,6 +315,7 @@ namespace NeuralRendering
 		const bool overlayOpen = IsTemporalOverlayOpen();
 		const bool requested = historyResetRequested.exchange(false, std::memory_order_acq_rel);
 		const bool requestedPreUpscale = globals::features::upscaling.foveatedRender.settings.neuralRenderingPreUpscale != 0;
+		const auto requestedStereoMode = globals::features::upscaling.foveatedRender.settings.neuralRenderingStereoMode;
 		bool stageChanged = false;
 		bool menuChanged = false;
 		if (!menuStateObserved) {
@@ -328,6 +332,13 @@ namespace NeuralRendering
 			preUpscaleMode = requestedPreUpscale;
 			stageChanged = true;
 		}
+		if (!stereoModeObserved) {
+			stereoModeObserved = true;
+			activeStereoMode = requestedStereoMode;
+		} else if (activeStereoMode != requestedStereoMode) {
+			activeStereoMode = requestedStereoMode;
+			stageChanged = true;
+		}
 		if (stageChanged) {
 			preUpscaleBlockLogged = false;
 			preUpscaleExecutionFailed = false;
@@ -341,7 +352,8 @@ namespace NeuralRendering
 			// the neural history and the foveated periphery history, but do not
 			// suppress the ordinary menu route itself.
 			FoveatedRenderImpl::Core::InvalidateTemporalState();
-		} else {
+		}
+		if (!menuChanged || stageChanged) {
 			ResetHistory();
 		}
 		const char* resetReason = stageChanged ? "NR stage changed" :
@@ -363,6 +375,8 @@ namespace NeuralRendering
 		auto& upscaling = globals::features::upscaling;
 		auto& foveated = upscaling.foveatedRender;
 		if (!foveated.settings.neuralRenderingEnabled || foveated.settings.neuralRenderingPreUpscale == 0)
+			return false;
+		if (foveated.settings.neuralRenderingStereoMode == 1)
 			return false;
 		if (preUpscaleExecutionFailed) {
 			LogPreUpscaleBlocked("the previous pre-NR execution failed; toggle the option to retry");
@@ -622,7 +636,8 @@ namespace NeuralRendering
 		// the crop, which made its rectangle visible even when Edge Blend was set
 		// to Feather or Dither.
 		const auto blendMode = foveated.GetSubrectBlendMode();
-		const bool wantsEdgeBlend = !fullEye &&
+		const bool centerShared = foveated.settings.neuralRenderingStereoMode == 1;
+		const bool wantsEdgeBlend = !centerShared && !fullEye &&
 			(foveated.IsAdaptiveCropRuntimeActive() || blendMode != FoveatedRender::SubrectBlendMode::kHardCopy);
 		ID3D11Resource* destination = total.texture;
 		ID3D11UnorderedAccessView* destinationUAV = total.UAV;
@@ -685,11 +700,22 @@ namespace NeuralRendering
 			if (gaze.dynamic)
 				tuning.temporalReuseCadence = 0;
 		}
-			bool succeeded = Renderer::Instance().ApplyStereo(globals::d3d::device, context,
-				total.texture, inputs, guideWidth, guideHeight,
-				outWidth, outHeight, tuning, destination, destinationUAV, wantsEdgeBlend && destinationUAV != nullptr,
-				resourceEnvelope);
-			if (!succeeded && resourceEnvelope.IsValid() &&
+			bool succeeded = false;
+			if (centerShared) {
+				const std::array<CenterShared::EyeInput, 2> centerInputs{{
+					{ inputs[0], motionLeft->srv.get(), leftUV },
+					{ inputs[1], motionRight->srv.get(), rightUV },
+				}};
+				succeeded = CenterShared::Apply(globals::d3d::device, context, total.texture,
+					centerInputs, guideWidth, guideHeight, outWidth, outHeight, eyeWidth,
+					totalDesc.Height, tuning, foveated.settings.neuralRenderingCenterSharedDebug);
+			} else {
+				succeeded = Renderer::Instance().ApplyStereo(globals::d3d::device, context,
+					total.texture, inputs, guideWidth, guideHeight,
+					outWidth, outHeight, tuning, destination, destinationUAV, wantsEdgeBlend && destinationUAV != nullptr,
+					resourceEnvelope);
+			}
+			if (!centerShared && !succeeded && resourceEnvelope.IsValid() &&
 				Renderer::Instance().IsFailureRecoverable()) {
 				// A native Feature 18 failure is not allowed to leave the runtime
 				// latched on the experimental envelope. Drop only the NR renderer's
@@ -740,6 +766,7 @@ namespace NeuralRendering
 	void Reset()
 	{
 		Renderer::Instance().Reset();
+		CenterShared::Reset();
 		globals::features::upscaling.foveatedRender.ResetAdaptiveState();
 		FoveatedRenderImpl::NativeOpenVRGaze::Reset();
 		historyResetRequested.store(false, std::memory_order_release);
@@ -756,6 +783,8 @@ namespace NeuralRendering
 		menuStateObserved = false;
 		menuWasOpen = false;
 		preUpscaleModeObserved = false;
+		stereoModeObserved = false;
+		activeStereoMode = 0;
 		preUpscaleMode = false;
 		preUpscaleBlockLogged = false;
 		preUpscaleSuccessLogged = false;

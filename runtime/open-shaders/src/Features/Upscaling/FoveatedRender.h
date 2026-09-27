@@ -128,6 +128,8 @@ struct FoveatedRender
 		// 2 = three sequential Feature 18 evaluations. Runtime-gated away from
 		// pre-upscale and cropped VR paths.
 		uint neuralRenderingMultiPass = 0;
+		uint neuralRenderingStereoMode = 0;
+		uint neuralRenderingCenterSharedDebug = 0;
 		// Experimental Feature 18 temporal reuse. 0 = off; 2/3/4 means a full
 		// neural pass every Nth frame, with exact-MV residual reprojection between
 		// full passes. Runtime-gated to native-size single-pass full-eye or stable

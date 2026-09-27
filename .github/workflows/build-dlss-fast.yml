@@ -4,8 +4,10 @@ on:
   push:
     branches:
       - "dev/dlss-fast"
+      - "feature/feature18-center-shared"
     paths:
       - "runtime/open-shaders/src/Features/Upscaling/**"
+      - "runtime/open-shaders/features/Upscaling/Shaders/Upscaling/NeuralRendering/**"
       - "runtime/open-shaders/cmake/Streamline/**"
       - "runtime/open-shaders/cmake/NVAPI/**"
       - "runtime/open-shaders/CMakeLists.txt"
@@ -192,6 +194,81 @@ jobs:
         with:
           name: OpenNR-DLSS-FAST-${{ github.run_number }}-${{ github.sha }}
           path: fast-artifact/*
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Package CENTER_SHARED Test01
+        if: github.ref_name == 'feature/feature18-center-shared'
+        shell: pwsh
+        run: |
+          $root = Join-Path $env:GITHUB_WORKSPACE "center-shared-package"
+          $pluginDir = Join-Path $root "SKSE/Plugins"
+          $shaderDir = Join-Path $root "Shaders/Upscaling/NeuralRendering"
+          New-Item -ItemType Directory -Force -Path $pluginDir, $shaderDir | Out-Null
+          $dll = Join-Path $env:GITHUB_WORKSPACE "fast-artifact/SKSE/Plugins/CommunityShaders.dll"
+          if (-not (Test-Path $dll) -or (Get-Item $dll).Length -lt 100000) {
+            throw "Missing or undersized experiment DLL"
+          }
+          Copy-Item $dll (Join-Path $pluginDir "CommunityShaders.dll")
+          $shaderSource = Join-Path $env:GITHUB_WORKSPACE "runtime/open-shaders/features/Upscaling/Shaders/Upscaling/NeuralRendering"
+          $shaderFiles = Get-ChildItem $shaderSource -File | Where-Object Name -Like "CenterShared*"
+          if ($shaderFiles.Count -ne 5) { throw "Expected five CENTER_SHARED shaders, found $($shaderFiles.Count)" }
+          $shaderFiles | Copy-Item -Destination $shaderDir
+          $dllHash = (Get-FileHash $dll -Algorithm SHA256).Hash
+          @"
+          # OpenNR Feature18 CENTER_SHARED Test01
+
+          Feature18 runs once on a synthetic center view reconstructed from BOTH eyes. Only the signed center neural residual is reprojected onto the real Skyrim left and right images. Original per-eye geometry remains the final stereo baseline.
+
+          Parent/baseline commit: a65539c2572f0fbf72d592d475bd76ed6dbda4ab
+          Experiment commit: $env:GITHUB_SHA
+          Branch: $env:GITHUB_REF_NAME
+          Build: $env:GITHUB_RUN_ID / $env:GITHUB_RUN_ATTEMPT
+          CommunityShaders.dll SHA-256: $dllHash
+
+          ## Installation and settings
+
+          Extract this ZIP into the Skyrim VR Data folder, replacing the existing SKSE/Plugins/CommunityShaders.dll. Keep a backup of your baseline DLL. The included Shaders folder contains the five runtime compiled CENTER_SHARED shaders.
+
+          In the OpenNR Upscaling menu set DLSSNR.StereoMode to Per Eye (0) or Center Shared (1). The persisted Upscaling JSON uses foveatedRender.neuralRenderingStereoMode with the same values. DLSSNR.CenterSharedDebug maps to foveatedRender.neuralRenderingCenterSharedDebug: 0 final; 1 center color; 2 center depth; 3 center confidence; 4 signed residual; 5 left confidence; 6 right confidence.
+
+          ## A/B test
+
+          Use 1x NR, adaptive NR disabled, eye-tracked crop disabled, and the same preset, crop, resolution, sharpening, SteamVR resolution, scene, and refresh state. Change only StereoMode. Sequential NR and pre-upscale NR are bypassed in Center Shared mode.
+
+          ## GPU timing markers
+
+          Feature18CenterShared::StereoToCenter, Feature18CenterShared::Feature18, Feature18CenterShared::ResidualToStereo, Feature18CenterShared::Total.
+
+          ## Limitations
+
+          Center motion vectors transform and fuse per-eye vectors under the current camera geometry; they do not reconstruct the previous center camera. The center is a fixed crop centered between the current per-eye crops. Moving eye-tracked crops reset center history. Pull reconstruction can lose confidence at occlusion edges, near objects, thin geometry, specular surfaces, and disocclusions. Such pixels retain the original eye image. Performance requires headset measurement.
+
+          ## Rollback
+
+          Set DLSSNR.StereoMode to Per Eye (0), or restore the baseline DLL and shader installation.
+          "@ | Set-Content (Join-Path $root "README_CENTER_SHARED.md") -Encoding utf8
+          @"
+          OpenNR Feature18 CENTER_SHARED Test01
+          Repository: https://github.com/liviutrn/OpenNR
+          Baseline: a65539c2572f0fbf72d592d475bd76ed6dbda4ab
+          Experiment: $env:GITHUB_SHA
+          Branch: $env:GITHUB_REF_NAME
+          Build: $env:GITHUB_RUN_ID / $env:GITHUB_RUN_ATTEMPT
+          DLL SHA-256: $dllHash
+          "@ | Set-Content (Join-Path $root "REVISION.txt") -Encoding utf8
+          '{"foveatedRender":{"neuralRenderingStereoMode":1,"neuralRenderingCenterSharedDebug":0,"neuralRenderingMultiPass":0,"neuralRenderingAdaptiveEnabled":false,"neuralRenderingEyeTrackedFoveation":false}}' |
+            Set-Content (Join-Path $root "CENTER_SHARED_SETTINGS_EXAMPLE.json") -Encoding utf8
+          $zip = Join-Path $env:GITHUB_WORKSPACE "OpenNR_Feature18_CenterShared_Test01.zip"
+          Compress-Archive -Path (Join-Path $root "*") -DestinationPath $zip -Force
+          if ((Get-Item $zip).Length -lt 100000) { throw "CENTER_SHARED ZIP is undersized" }
+
+      - name: Upload CENTER_SHARED Test01 ZIP
+        if: github.ref_name == 'feature/feature18-center-shared'
+        uses: actions/upload-artifact@v4
+        with:
+          name: OpenNR_Feature18_CenterShared_Test01
+          path: OpenNR_Feature18_CenterShared_Test01.zip
           if-no-files-found: error
           retention-days: 30
 
