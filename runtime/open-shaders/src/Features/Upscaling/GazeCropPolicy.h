@@ -96,16 +96,17 @@ namespace FoveatedRenderImpl::GazeCropPolicy
 			previous[1] + (sample[1] - previous[1]) * alpha };
 	}
 
-	/** Hold the crop inside its movement dead zone; recenter fully once crossed. */
+	/** Retain a stable crop inside a small central guard; recenter without slew outside it. */
 	inline float ResolveOrigin(float previous, float sample, float extent,
-		std::uint32_t pixels, std::uint32_t deadZonePixels, bool havePrevious)
+		std::uint32_t pixels, std::uint32_t quantizationPixels, bool havePrevious)
 	{
 		const float maxOrigin = std::max(0.0f, 1.0f - extent);
 		const float desired = std::clamp(sample - extent * 0.5f, 0.0f, maxOrigin);
-		const float deadZone = pixels ? static_cast<float>(deadZonePixels) / static_cast<float>(pixels) : 0.0f;
-		const float delta = desired - previous;
-		if (havePrevious && std::abs(delta) <= deadZone)
+		const float guard = std::min(0.02f, extent * 0.05f);
+		if (havePrevious && std::abs(desired - previous) <= guard)
 			return previous;
-		return desired;
+		// Quantization must not place the tracked point outside the central guard.
+		const float step = pixels ? std::min(static_cast<float>(quantizationPixels) / static_cast<float>(pixels), guard) : 0.0f;
+		return step > 0.0f ? std::clamp(std::round(desired / step) * step, 0.0f, maxOrigin) : desired;
 	}
 }

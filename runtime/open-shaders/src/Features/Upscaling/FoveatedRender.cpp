@@ -419,8 +419,8 @@ void FoveatedRender::ClampSettings()
 	settings.neuralRenderingAdaptiveCropTransitionFrames = std::clamp(settings.neuralRenderingAdaptiveCropTransitionFrames, 2u, 24u);
 	settings.neuralRenderingAdaptiveCropStepPercent = std::clamp(settings.neuralRenderingAdaptiveCropStepPercent, 5u, 70u);
 	settings.neuralRenderingAdaptiveQualityOrder =
-		(settings.neuralRenderingAdaptiveQualityOrder == 2 || settings.neuralRenderingAdaptiveQualityOrder == 3 ||
-			settings.neuralRenderingAdaptiveQualityOrder == 5) ? 1u : 0u;
+		(settings.neuralRenderingAdaptiveQualityOrder == 1 || settings.neuralRenderingAdaptiveQualityOrder == 2 ||
+			settings.neuralRenderingAdaptiveQualityOrder == 3 || settings.neuralRenderingAdaptiveQualityOrder == 5) ? 1u : 0u;
 	settings.neuralRenderingEyeTrackedPolicy = std::min(settings.neuralRenderingEyeTrackedPolicy, 1u);
 	settings.neuralRenderingEyeTrackedSmoothingMs = std::isfinite(settings.neuralRenderingEyeTrackedSmoothingMs) ?
 		std::clamp(settings.neuralRenderingEyeTrackedSmoothingMs, 0.0f,
@@ -546,8 +546,6 @@ void FoveatedRender::UpdateAdaptiveState(std::uint32_t frame, bool routeEligible
 		adaptiveCropController.IsRuntimeActive() &&
 		adaptiveCropController.ActiveScalePercent() < adaptiveCropController.MaximumScalePercent();
 	const bool nrCanUpshift = false;
-	const auto upshiftAxis = NeuralRendering::SelectAdaptiveUpshift(
-		settings.neuralRenderingAdaptiveQualityOrder, passesCanUpshift, cropCanUpshift, nrCanUpshift);
 	NeuralRendering::AdaptiveController::Config nrConfig;
 	nrConfig.enabled = settings.neuralRenderingAdaptiveEnabled;
 	nrConfig.memoryPressure = false;
@@ -602,6 +600,11 @@ void FoveatedRender::UpdateAdaptiveState(std::uint32_t frame, bool routeEligible
 	const float projectedPassWorkMs = adaptiveController.SmoothedFrameTimeMs() + estimatedPassCosts[nextPassIndex];
 	const bool passHeadroomNow = adaptiveController.HasFreshTimingSample() &&
 		projectedPassWorkMs < settings.neuralRenderingAdaptiveMinimumWorkloadMs;
+	// If the preferred pass increase does not fit the measured budget, allow
+	// the next configured restoration axis to use the available headroom.
+	const auto upshiftAxis = NeuralRendering::SelectAdaptiveUpshift(
+		settings.neuralRenderingAdaptiveQualityOrder, passesCanUpshift && passHeadroomNow,
+		cropCanUpshift, nrCanUpshift);
 	adaptivePassController.Update(frame, requestedPassMode, adaptiveNRActive,
 		downshiftAxis == NeuralRendering::AdaptiveQualityAxis::Passes,
 		upshiftAxis == NeuralRendering::AdaptiveQualityAxis::Passes,
@@ -1397,10 +1400,10 @@ const char* FoveatedRender::SubrectMaskModeName(SubrectMaskMode mode)
 				if (auto _tt = Util::HoverTooltipWrapper())
 					drawWrapped("After a gaze crop reset, DLSS keeps evaluating to rebuild its own history while the neural contribution fades back in. Zero disables the fade.");
 				int quantizationPixels = static_cast<int>(std::min(settings.neuralRenderingEyeTrackedQuantizationPixels, 64u));
-				if (ImGui::SliderInt("Crop movement dead zone", &quantizationPixels, 0, 64, quantizationPixels == 0 ? "Off" : "%d input px"))
+				if (ImGui::SliderInt("Crop movement quantization", &quantizationPixels, 0, 64, quantizationPixels == 0 ? "Off" : "%d input px"))
 					settings.neuralRenderingEyeTrackedQuantizationPixels = static_cast<uint>(std::clamp(quantizationPixels, 0, 64));
 				if (auto _tt = Util::HoverTooltipWrapper())
-				drawWrapped("The crop holds while its target stays within this many input pixels, then follows only the movement beyond the threshold. Off removes the movement threshold.");
+				drawWrapped("The crop stays stable inside a small fixed central guard. This setting quantizes crop movement after gaze moves beyond that guard; Off disables quantization, not the central guard.");
 				int cropPadding = static_cast<int>(std::min(settings.neuralRenderingEyeTrackedCropPaddingPixels, 128u));
 				if (ImGui::SliderInt("Gaze crop edge margin", &cropPadding, 0, 128, cropPadding == 0 ? "Off" : "%d input px"))
 					settings.neuralRenderingEyeTrackedCropPaddingPixels = static_cast<uint>(std::clamp(cropPadding, 0, 128));
