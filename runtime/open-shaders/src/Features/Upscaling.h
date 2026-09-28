@@ -96,7 +96,7 @@ public:
 		float sharpnessFSR = 0.8f;
 		bool sharpnessEnabledDLSS = false;
 		float sharpnessDLSS = 0.0f;
-		uint presetDLSS = 0;  // 0=Default, 1=J, 2=K, 3=L, 4=M
+		uint presetDLSS = 0;  // 0=Default, 1=J, 2=K, 3=L, 4=M, 5=E (CNN), 6=F (CNN)
 		bool reflexLowLatencyMode = false;
 		bool reflexLowLatencyBoost = false;
 		bool reflexUseMarkersToOptimize = false;

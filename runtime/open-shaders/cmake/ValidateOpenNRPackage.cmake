@@ -38,6 +38,7 @@ set(_required_paths
     "Shaders/WetnessEffects/WetnessEffects.hlsli"
     "Shaders/Upscaling/NeuralRendering/TemporalReuseCS.hlsl"
     "Shaders/Upscaling/NeuralRendering/ResultShapingCS.hlsl"
+    "SKSE/Plugins/CommunityShaders/OpenNR-SettingsBenchmark.json"
     "Shaders/Upscaling/Streamline/nvngx_dlss.dll"
     "Shaders/Upscaling/Streamline/nvngx_dlssnr.dll"
 )

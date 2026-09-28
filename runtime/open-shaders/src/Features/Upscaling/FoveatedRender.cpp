@@ -452,7 +452,7 @@ void FoveatedRender::ClampSettings()
 	settings.neuralRenderingEyeTrackedQuantizationPixels = std::clamp(settings.neuralRenderingEyeTrackedQuantizationPixels, 0u, 64u);
 	// Preset clamping reads from Upscaling::Settings now.
 	auto& sharedPreset = globals::features::upscaling.settings.presetDLSS;
-	sharedPreset = std::min(sharedPreset, 5u);
+	sharedPreset = std::min(sharedPreset, 6u);
 	if (!IsPresetCompatibleWithMode(sharedPreset)) {
 		sharedPreset = 3;  // Fall back to L
 	}
@@ -786,7 +786,7 @@ uint FoveatedRender::GetActiveQualityMode() const
 
 uint FoveatedRender::GetActivePresetDLSS() const
 {
-	return std::min(globals::features::upscaling.settings.presetDLSS, 5u);
+	return std::min(globals::features::upscaling.settings.presetDLSS, 6u);
 }
 
 float FoveatedRender::GetActiveSharpnessDLSS() const
@@ -801,10 +801,10 @@ float FoveatedRender::GetRenderScaleForQuality(uint qualityMode)
 
 bool FoveatedRender::IsPresetCompatibleWithMode(uint presetIndex) const
 {
-	// Preset indices: 0=Default, 1=J, 2=K, 3=L, 4=M, 5=F
-	// Faster mode: J(1) and K(2) are incompatible.
+	// Preset indices: 0=Default, 1=J, 2=K, 3=L, 4=M, 5=E, 6=F
+	// Faster mode: J(1) and K(2) are incompatible; E(5) is unverified there.
 	if (GetDlssMode() == DlssMode::kFaster) {
-		return presetIndex != 1 && presetIndex != 2;
+		return presetIndex != 1 && presetIndex != 2 && presetIndex != 5;
 	}
 	return true;
 }

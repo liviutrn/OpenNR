@@ -31,6 +31,7 @@
 #include <stdexcept>
 
 #include "Features/PostProcessing.h"
+#include "Features/Upscaling/NeuralRendering/SettingsBenchmark.h"
 
 #define I18N_KEY_PREFIX "feature.upscaling."
 
@@ -407,7 +408,9 @@ void Upscaling::DrawDLSSNRSharedControls()
 			T(TKEY("dlss_model_preset_j"), "Preset J"),
 			T(TKEY("dlss_model_preset_k"), "Preset K"),
 			T(TKEY("dlss_model_preset_l"), "Preset L"),
-			T(TKEY("dlss_model_preset_m"), "Preset M")
+			T(TKEY("dlss_model_preset_m"), "Preset M"),
+			T(TKEY("dlss_model_preset_e"), "Preset E (CNN, fastest, deprecated)"),
+			T(TKEY("dlss_model_preset_f"), "Preset F (CNN, deprecated)")
 		};
 		ImGui::Combo(T(TKEY("dlss_model_preset"), "DLSS Model Preset"), reinterpret_cast<int*>(&settings.presetDLSS), presets, IM_ARRAYSIZE(presets));
 		if (auto _tt = Util::HoverTooltipWrapper())
@@ -476,6 +479,9 @@ void Upscaling::DrawDLSSNRPage()
 		ImGui::TextWrapped("%s", T("menu.dlssnr.shared_description",
 			"These settings are shared with Upscaling."));
 		DrawDLSSNRSharedControls();
+		ImGui::Separator();
+		if (ImGui::CollapsingHeader(T("menu.dlssnr.benchmark_header", "Settings Benchmark (measure in headset)")))
+			NeuralRendering::SettingsBenchmark::DrawPanel();
 	} else {
 		DrawDLSSNRSharedControls();
 		ImGui::Separator();
@@ -718,6 +724,19 @@ void Upscaling::RegisterUxActions()
 				{ "temporalReuseCadence", effectiveTemporalReuseCadence },
 				{ "runtimeStatus", nr.StatusText() }, { "successfulEvaluations", nr.SuccessfulFrames() } });
 		});
+	FEATURE_COMMAND("startSettingsBenchmark",
+		"Start the in-headset settings benchmark (VR only). Applies each enabled variant live, measures SteamVR compositor GPU time against bracketing baselines, then restores the original settings. Params: none.",
+		[](Feature*, const json&) {
+			std::string error;
+			if (!NeuralRendering::SettingsBenchmark::Start(&error))
+				throw std::runtime_error(error);
+		});
+	FEATURE_COMMAND("cancelSettingsBenchmark",
+		"Cancel a running settings benchmark and restore the original settings. Params: none.",
+		[](Feature*, const json&) { NeuralRendering::SettingsBenchmark::Cancel(); });
+	FEATURE_QUERY("settingsBenchmarkStatus",
+		"Read the settings benchmark phase, progress, result file and per-variant GPU/CPU deltas. Params: none.",
+		[](const Feature*, const json&) -> json { return NeuralRendering::SettingsBenchmark::StatusJson(); });
 	FEATURE_COMMAND("setNeuralRenderingResultShaping",
 		"Enable or disable the optional post-NR result-shaping pass. Params: enabled (boolean). Requests a safe NR history reset after the change.",
 		[](Feature*, const json& args) {
@@ -893,9 +912,11 @@ void Upscaling::DrawSettings()
 				T(TKEY("dlss_model_preset_j"), "Preset J"),
 				T(TKEY("dlss_model_preset_k"), "Preset K"),
 				T(TKEY("dlss_model_preset_l"), "Preset L"),
-				T(TKEY("dlss_model_preset_m"), "Preset M")
+				T(TKEY("dlss_model_preset_m"), "Preset M"),
+				T(TKEY("dlss_model_preset_e"), "Preset E (CNN, fastest, deprecated)"),
+				T(TKEY("dlss_model_preset_f"), "Preset F (CNN, deprecated)")
 			};
-			ImGui::Combo(T(TKEY("dlss_model_preset"), "DLSS Model Preset"), (int*)&settings.presetDLSS, presets, 5);
+			ImGui::Combo(T(TKEY("dlss_model_preset"), "DLSS Model Preset"), (int*)&settings.presetDLSS, presets, IM_ARRAYSIZE(presets));
 			if (auto _tt = Util::HoverTooltipWrapper()) {
 				ImGui::Text("%s", T(TKEY("dlss_model_preset_tooltip"),
 									  "Choose which DLSS AI model preset to use.\n"
@@ -1334,7 +1355,7 @@ void Upscaling::LoadSettings(json& o_json)
 		logger::warn("[Upscaling] Loaded qualityMode {} out of range, clamping to 4", settings.qualityMode);
 		settings.qualityMode = 4;
 	}
-	if (settings.presetDLSS > 4) {
+	if (settings.presetDLSS > 6) {
 		logger::warn("[Upscaling] Loaded presetDLSS {} out of range, resetting to 0 (Default)", settings.presetDLSS);
 		settings.presetDLSS = 0;
 	}

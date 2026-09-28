@@ -1,6 +1,6 @@
-# OpenNR 2.20.0
+# OpenNR 2.20.1
 
-OpenNR is a VR neural-rendering development project combining the native Open Shaders integration, synchronized capture, and separate model research. **2.20.0 adds NR-only center coverage (full DLSS eye, 100% NR model resolution on the NR region) and eye-staggered temporal reuse, fixes motion-vector scaling in the pre-upscale, temporal-reuse and result-stabilizer paths, removes the Performance Overlay, and locks NR to full resolution.** Saved user settings are normalized on load (reduced NR tiers, adaptive NR and pre-upscale NR become off); the package does not rewrite them.
+OpenNR is a VR neural-rendering development project combining the native Open Shaders integration, synchronized capture, and separate model research. **2.20.1 adds an in-headset Settings Benchmark (live A/B of candidate settings against bracketing baselines, timed with the SteamVR compositor) and DLSS CNN presets E/F.** 2.20.0 added NR-only center coverage at 100% NR model resolution, eye-staggered temporal reuse, motion-vector fixes, Performance Overlay removal and the full-resolution NR lock. Saved user settings are not rewritten by the package.
 
 The canonical source is this repository. Large data and environments live outside D:. The runtime retains the `CommunityShaders.dll` filename and asset paths for compatibility.
 
@@ -9,7 +9,9 @@ The canonical source is this repository. Large data and environments live outsid
 - [Project map](docs/PROJECT_MAP.md): subsystem ownership and maintained entry points.
 - [Consolidation audit](docs/PROJECT_CONSOLIDATION_AUDIT.md): provenance, migration, tests, recovery and limitations.
 - [Setup and dependencies](docs/SETUP.md): external inputs and repeatable commands.
-- [2.20.0 changes](runtime/open-shaders/package/OPENNR-2.20.0-CHANGELOG.md).
+- [2.20.1 changes](runtime/open-shaders/package/OPENNR-2.20.1-CHANGELOG.md).
+- [2.20.1 validation and local update](docs/OPENNR_2.20.1_RELEASE_20260927.md).
+- [Shader and settings analysis (what NR can pick up)](docs/OPENNR_SHADER_SETTINGS_ANALYSIS_20260927.md).
 - [2.20.0 validation and local update](docs/OPENNR_2.20.0_RELEASE_20260927.md).
 - [2.19.1 audit and optimization plan](docs/OPENNR_2.19.1_AUDIT_AND_OPTIMIZATION_20260927.md).
 - [2.18.0 validation and local update](docs/OPENNR_2.18.0_RELEASE_20260924.md).
@@ -23,10 +25,10 @@ From PowerShell at the repository root:
 ```powershell
 .\tools\Build-OpenNR.ps1
 .\tools\Build-OpenNR.ps1 -Targets @('CommunityShaders','cpp_tests','Package-AIO-Manual')
-& 'E:\OpenNR_Builds\2.20.0\tests\cpp\Release\cpp_tests.exe'
+& 'E:\OpenNR_Builds\2.20.1\tests\cpp\Release\cpp_tests.exe'
 ```
 
-The standard local archive is `E:\OpenNR_Builds\2.20.0\dist\OpenNR 2.20.0.7z`.
+The standard local archive is `E:\OpenNR_Builds\2.20.1\dist\OpenNR 2.20.1.7z`.
 The build disables automatic deployment. It requires the declared external dependencies and local/private runtime inputs described in setup. This repository does not distribute NVIDIA's private carrier or recovered weights.
 
 ## Storage

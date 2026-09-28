@@ -619,6 +619,15 @@ void Streamline::SetDLSSOptions(sl::ViewportHandle p_viewport, uint32_t width, u
 	case 4:
 		customPreset = sl::DLSSPreset::ePresetM;
 		break;
+	// CNN presets: deprecated by NVIDIA but still in the 310.x SDK. Much cheaper than
+	// the transformer models; NR runs on top of the upscaled image. If the runtime
+	// no longer honors them it silently uses its default model.
+	case 5:
+		customPreset = sl::DLSSPreset::ePresetE;
+		break;
+	case 6:
+		customPreset = sl::DLSSPreset::ePresetF;
+		break;
 	}
 
 	// Keep eDefault for Auto so NVIDIA can update the mode-specific presets.
