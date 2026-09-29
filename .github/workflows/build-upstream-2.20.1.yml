@@ -40,9 +40,6 @@ jobs:
           $patch = "patches/2.20.1-v00-gaze-history.patch"
           if (-not (Test-Path $patch)) { throw "Missing v00 patch: $patch" }
 
-          # All ported hunks apply directly except the final Renderer wrapper hunk,
-          # whose line-offset matching is unstable after the earlier Renderer edits.
-          # Apply valid hunks, then replace that exact unchanged wrapper text below.
           git apply --reject $patch
           $applyExit = $LASTEXITCODE
           $rejects = @(Get-ChildItem "runtime/open-shaders" -Filter "*.rej" -Recurse)
@@ -56,28 +53,28 @@ jobs:
             $renderer = "runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Renderer.cpp"
             $text = Get-Content $renderer -Raw
             $old = @'
-		return state_->ApplyStereo(device, context, color, eyes,
-			guideWidth, guideHeight, colorWidth, colorHeight, tuning,
-				destination, destinationUAV, blendSubrect, resourceEnvelope);
-	}
+          		return state_->ApplyStereo(device, context, color, eyes,
+          			guideWidth, guideHeight, colorWidth, colorHeight, tuning,
+          				destination, destinationUAV, blendSubrect, resourceEnvelope);
+          	}
 
-	bool Renderer::Reset() { return state_->Reset(); }
-	void Renderer::ClearShaderCache() { state_->ClearShaderCache(); }
-	void Renderer::ResetHistory() { state_->ResetHistory(); }
-'@
+          	bool Renderer::Reset() { return state_->Reset(); }
+          	void Renderer::ClearShaderCache() { state_->ClearShaderCache(); }
+          	void Renderer::ResetHistory() { state_->ResetHistory(); }
+          '@
             $new = @'
-		const bool succeeded = state_->ApplyStereo(device, context, color, eyes,
-			guideWidth, guideHeight, colorWidth, colorHeight, tuning,
-				destination, destinationUAV, blendSubrect, resourceEnvelope);
-		for (std::uint32_t eye = 0; eye < 2; ++eye)
-			FoveatedRenderImpl::CropMotion::Commit(2 + eye, succeeded && eyes[eye].compensateCropMotion);
-		return succeeded;
-	}
+          		const bool succeeded = state_->ApplyStereo(device, context, color, eyes,
+          			guideWidth, guideHeight, colorWidth, colorHeight, tuning,
+          				destination, destinationUAV, blendSubrect, resourceEnvelope);
+          		for (std::uint32_t eye = 0; eye < 2; ++eye)
+          			FoveatedRenderImpl::CropMotion::Commit(2 + eye, succeeded && eyes[eye].compensateCropMotion);
+          		return succeeded;
+          	}
 
-	bool Renderer::Reset() { FoveatedRenderImpl::CropMotion::Invalidate(2, 2); return state_->Reset(); }
-	void Renderer::ClearShaderCache() { state_->ClearShaderCache(); }
-	void Renderer::ResetHistory() { FoveatedRenderImpl::CropMotion::Invalidate(2, 2); state_->ResetHistory(); }
-'@
+          	bool Renderer::Reset() { FoveatedRenderImpl::CropMotion::Invalidate(2, 2); return state_->Reset(); }
+          	void Renderer::ClearShaderCache() { state_->ClearShaderCache(); }
+          	void Renderer::ResetHistory() { FoveatedRenderImpl::CropMotion::Invalidate(2, 2); state_->ResetHistory(); }
+          '@
             if (-not $text.Contains($old)) { throw "Expected Renderer wrapper text missing after partial v00 patch" }
             $text = $text.Replace($old, $new)
             [IO.File]::WriteAllText((Resolve-Path $renderer), $text, [Text.UTF8Encoding]::new($false))
@@ -129,7 +126,6 @@ jobs:
           $text = $text.Substring(0, $start) + $replacement + $text.Substring($end)
           Set-Content -Path $runtimePath -Value $text -NoNewline
 
-          # Source-contract validator: preserve every upstream source check except the absent private carrier.
           $sourceValidator = "runtime/open-shaders/cmake/ValidateOpenNRSourceContracts.cmake"
           $v = Get-Content $sourceValidator -Raw
           $needle = '   NOT EXISTS "${_dlssnr_carrier_path}" OR'
@@ -146,7 +142,6 @@ jobs:
           $v = $v.Substring(0, $sizeStart) + $wrappedSizeBlock + $v.Substring($sizeEnd)
           Set-Content -Path $sourceValidator -Value $v -NoNewline
 
-          # Package validator: validate the complete public package, but don't demand/hash the private carrier.
           $packageValidator = "runtime/open-shaders/cmake/ValidateOpenNRPackage.cmake"
           $p = Get-Content $packageValidator -Raw
           $requiredCarrier = '    "Shaders/Upscaling/Streamline/nvngx_dlssnr.dll"'
