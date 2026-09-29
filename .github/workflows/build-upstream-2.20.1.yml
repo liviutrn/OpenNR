@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   build:
-    name: Build installable OpenNR 2.20.1 package
+    name: Build OpenNR 2.20.1 public-source package
     runs-on: windows-2025
     steps:
       - name: Check out upstream 2.20.1 build branch
@@ -37,8 +37,10 @@ jobs:
       - name: Permit carrier-excluded CI package
         shell: pwsh
         run: |
-          $path = "runtime/open-shaders/cmake/Streamline-Runtime.cmake"
-          $text = Get-Content $path -Raw
+          # Upstream intentionally does not publish NVIDIA's native Feature 18 carrier.
+          # Relax only the carrier-presence/staging assertions for this CI build.
+          $runtimePath = "runtime/open-shaders/cmake/Streamline-Runtime.cmake"
+          $text = Get-Content $runtimePath -Raw
           $startToken = 'if(NOT EXISTS "${OPENNR_DLSSNR_RUNTIME_SOURCE}")'
           $endToken = 'list(APPEND STREAMLINE_RUNTIME_FILES "${_opennr_dlssnr_runtime_destination}")'
           $start = $text.IndexOf($startToken)
@@ -65,12 +67,51 @@ jobs:
           else()
               message(WARNING
                   "Building public-source OpenNR 2.20.1 without the locally supplied nvngx_dlssnr.dll carrier. "
-                  "The compiled CommunityShaders.dll is valid, but Feature 18 requires the carrier to be added at install time."
+                  "CommunityShaders.dll will still be compiled from the exact upstream sources."
               )
           endif()
           '@
-          $patched = $text.Substring(0, $start) + $replacement + $text.Substring($end)
-          Set-Content -Path $path -Value $patched -NoNewline
+          $text = $text.Substring(0, $start) + $replacement + $text.Substring($end)
+          Set-Content -Path $runtimePath -Value $text -NoNewline
+
+          # Source-contract validator: preserve every upstream source check except the absent private carrier.
+          $sourceValidator = "runtime/open-shaders/cmake/ValidateOpenNRSourceContracts.cmake"
+          $v = Get-Content $sourceValidator -Raw
+          $needle = '   NOT EXISTS "${_dlssnr_carrier_path}" OR'
+          if (-not $v.Contains($needle)) { throw "Could not locate carrier existence assertion in source validator" }
+          $v = $v.Replace($needle, '   FALSE OR')
+          $sizeStartToken = 'file(SIZE "${_dlssnr_carrier_path}" _source_dlssnr_size)'
+          $sizeStart = $v.IndexOf($sizeStartToken)
+          $sizeEndToken = 'endif()'
+          $sizeEndStart = $v.IndexOf($sizeEndToken, $sizeStart)
+          if ($sizeStart -lt 0 -or $sizeEndStart -lt 0) { throw "Could not locate carrier size assertion in source validator" }
+          $sizeEnd = $sizeEndStart + $sizeEndToken.Length
+          $sizeBlock = $v.Substring($sizeStart, $sizeEnd - $sizeStart)
+          $wrappedSizeBlock = 'if(EXISTS "${_dlssnr_carrier_path}")' + "`n" + $sizeBlock + "`nendif()"
+          $v = $v.Substring(0, $sizeStart) + $wrappedSizeBlock + $v.Substring($sizeEnd)
+          Set-Content -Path $sourceValidator -Value $v -NoNewline
+
+          # Package validator: validate the complete public package, but don't demand/hash the private carrier.
+          $packageValidator = "runtime/open-shaders/cmake/ValidateOpenNRPackage.cmake"
+          $p = Get-Content $packageValidator -Raw
+          $requiredCarrier = '    "Shaders/Upscaling/Streamline/nvngx_dlssnr.dll"'
+          if (-not $p.Contains($requiredCarrier)) { throw "Could not locate carrier manifest entry in package validator" }
+          $p = $p.Replace($requiredCarrier, '')
+          $pkgSizeStartToken = 'file(SIZE "${PACKAGE_ROOT}/Shaders/Upscaling/Streamline/nvngx_dlssnr.dll" _dlssnr_size)'
+          $pkgSizeStart = $p.IndexOf($pkgSizeStartToken)
+          $pkgSizeEndStart = $p.IndexOf('endif()', $pkgSizeStart)
+          if ($pkgSizeStart -lt 0 -or $pkgSizeEndStart -lt 0) { throw "Could not locate carrier size assertion in package validator" }
+          $pkgSizeEnd = $pkgSizeEndStart + 'endif()'.Length
+          $pkgSizeBlock = $p.Substring($pkgSizeStart, $pkgSizeEnd - $pkgSizeStart)
+          $pkgWrapped = 'if(EXISTS "${PACKAGE_ROOT}/Shaders/Upscaling/Streamline/nvngx_dlssnr.dll")' + "`n" + $pkgSizeBlock + "`nelse()`n    set(_dlssnr_size 0)`nendif()"
+          $p = $p.Substring(0, $pkgSizeStart) + $pkgWrapped + $p.Substring($pkgSizeEnd)
+          $hashLine = 'file(SHA256 "${PACKAGE_ROOT}/Shaders/Upscaling/Streamline/nvngx_dlssnr.dll" _dlssnr_sha256)'
+          if (-not $p.Contains($hashLine)) { throw "Could not locate carrier hash assertion in package validator" }
+          $hashReplacement = 'if(EXISTS "${PACKAGE_ROOT}/Shaders/Upscaling/Streamline/nvngx_dlssnr.dll")' + "`n    " + $hashLine + "`nelse()`n    set(_dlssnr_sha256 \"carrier-excluded\")`nendif()"
+          $p = $p.Replace($hashLine, $hashReplacement)
+          Set-Content -Path $packageValidator -Value $p -NoNewline
+
+          Write-Host "Carrier-only release guards relaxed; upstream C++ and shader sources are unchanged."
 
       - name: Set up MSVC
         uses: ilammy/msvc-dev-cmd@v1
@@ -109,11 +150,12 @@ jobs:
           @'
           OpenNR 2.20.1 public-source build
 
-          This package was compiled from upstream tag v2.20.1 source.
-          The upstream repository intentionally does not distribute NVIDIA's native Feature 18 carrier:
-            SKSE/Plugins/CommunityShaders/Shaders/Upscaling/Streamline/nvngx_dlssnr.dll
+          Compiled from upstream tag v2.20.1 (commit 9b6340870f3910d81917f167245885b50216654f).
 
-          Copy the validated nvngx_dlssnr.dll from your existing licensed OpenNR installation into that path before using DLSS 5 / Feature 18.
+          NVIDIA's native Feature 18 carrier is intentionally not distributed in the public source tree:
+            Shaders/Upscaling/Streamline/nvngx_dlssnr.dll
+
+          Before using DLSS 5 / Feature 18, add a validated nvngx_dlssnr.dll from your existing licensed OpenNR installation to that path.
           '@ | Set-Content -Path dist\README-CARRIER-REQUIRED.txt
 
       - name: List output and hashes
@@ -125,7 +167,7 @@ jobs:
             "$($h.Hash)  $($_.FullName)"
           } | Tee-Object -FilePath dist\SHA256SUMS.txt
 
-      - name: Upload installable package
+      - name: Upload package
         uses: actions/upload-artifact@v4
         with:
           name: OpenNR-2.20.1-upstream-build-carrier-excluded
