@@ -382,7 +382,11 @@ diff --git a/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Rendere
 +				}
 +				if (!CopyStereoGuides(context, guideInput, eye, guideWidth, guideHeight))
  					return LatchFailure("depth/motion guide copy", E_FAIL);
-@@ -3080,11 +3080,14 @@
+@@ -3076,15 +3076,18 @@
+ 	bool Renderer::ApplyStereo(ID3D11Device* device, ID3D11DeviceContext* context, ID3D11Resource* color,
+ 		const std::array<StereoEyeInput, 2>& eyes,
+ 		std::uint32_t guideWidth, std::uint32_t guideHeight,
+ 		std::uint32_t colorWidth, std::uint32_t colorHeight, const Tuning& tuning,
  		ID3D11Resource* destination, ID3D11UnorderedAccessView* destinationUAV,
  		bool blendSubrect, const StereoResourceEnvelope& resourceEnvelope)
  	{
