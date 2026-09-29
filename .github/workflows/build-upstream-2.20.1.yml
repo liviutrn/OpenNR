@@ -90,8 +90,6 @@ jobs:
       - name: Permit carrier-excluded CI package
         shell: pwsh
         run: |
-          # Upstream intentionally does not publish NVIDIA's native Feature 18 carrier.
-          # Relax only the carrier-presence/staging assertions for this CI build.
           $runtimePath = "runtime/open-shaders/cmake/Streamline-Runtime.cmake"
           $text = Get-Content $runtimePath -Raw
           $startToken = 'if(NOT EXISTS "${OPENNR_DLSSNR_RUNTIME_SOURCE}")'
@@ -127,7 +125,6 @@ endif()
           $text = $text.Substring(0, $start) + $replacement + $text.Substring($end)
           Set-Content -Path $runtimePath -Value $text -NoNewline
 
-          # Source-contract validator: preserve every upstream source check except the absent private carrier.
           $sourceValidator = "runtime/open-shaders/cmake/ValidateOpenNRSourceContracts.cmake"
           $v = Get-Content $sourceValidator -Raw
           $needle = '   NOT EXISTS "${_dlssnr_carrier_path}" OR'
@@ -144,7 +141,6 @@ endif()
           $v = $v.Substring(0, $sizeStart) + $wrappedSizeBlock + $v.Substring($sizeEnd)
           Set-Content -Path $sourceValidator -Value $v -NoNewline
 
-          # Package validator: validate the complete public package, but don't demand/hash the private carrier.
           $packageValidator = "runtime/open-shaders/cmake/ValidateOpenNRPackage.cmake"
           $p = Get-Content $packageValidator -Raw
           $requiredCarrier = '    "Shaders/Upscaling/Streamline/nvngx_dlssnr.dll"'
@@ -169,8 +165,6 @@ endif()
 '@
           $p = $p.Replace($hashLine, $hashReplacement)
           Set-Content -Path $packageValidator -Value $p -NoNewline
-
-          Write-Host "Carrier-only release guards relaxed; 2.20.1-v00 gaze-history patch remains applied."
 
       - name: Set up MSVC
         uses: ilammy/msvc-dev-cmd@v1
