@@ -319,8 +319,7 @@ diff --git a/runtime/open-shaders/src/Features/Upscaling/FoveatedRender/Modes.cp
 diff --git a/runtime/open-shaders/src/Features/Upscaling/NativeOpenVRGaze.cpp b/runtime/open-shaders/src/Features/Upscaling/NativeOpenVRGaze.cpp
 --- a/runtime/open-shaders/src/Features/Upscaling/NativeOpenVRGaze.cpp
 +++ b/runtime/open-shaders/src/Features/Upscaling/NativeOpenVRGaze.cpp
-@@ -496,7 +496,5 @@
- 
+@@ -498,6 +498,4 @@
  		const bool cropChanged = state.cacheValid && (a_config.enabled || state.cachedResult.diagnostics.experimentEnabled) &&
  			(!SameRegion(result.leftUV, state.cachedResult.leftUV) || !SameRegion(result.rightUV, state.cachedResult.rightUV));
 -		// Crop-local histories have no verified exposed-region validity mask.
@@ -331,22 +330,30 @@ diff --git a/runtime/open-shaders/src/Features/Upscaling/NativeOpenVRGaze.cpp b/
 diff --git a/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Integration.cpp b/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Integration.cpp
 --- a/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Integration.cpp
 +++ b/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Integration.cpp
-@@ -745,5 +745,6 @@
- 
+@@ -743,9 +743,10 @@
+ 				.sourceX = x + (coverageCrop ? coverageRect.colorX : 0u),
+ 				.sourceY = y + (coverageCrop ? coverageRect.colorY : 0u),
+ 				// UV-unit vectors -> guide pixels of the full source eye; a guide crop
+ 				// does not change the pixel displacement.
  				.motionVectorScaleX = motionScaleX * fullGuideWidth,
  				.motionVectorScaleY = motionScaleY * fullGuideHeight,
 +				.compensateCropMotion = gazeConfig.enabled && !fullEye,
  				.guideSourceX = coverageCrop ? coverageRect.guideX : 0u,
  				.guideSourceY = coverageCrop ? coverageRect.guideY : 0u,
+ 			};
 diff --git a/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Renderer.h b/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Renderer.h
 --- a/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Renderer.h
 +++ b/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Renderer.h
-@@ -24,4 +24,5 @@
- 
+@@ -24,8 +24,9 @@
+ 			std::uint32_t sourceX = 0;
+ 			std::uint32_t sourceY = 0;
  			float motionVectorScaleX = 1.0f;
  			float motionVectorScaleY = 1.0f;
 +			bool compensateCropMotion = false;
  			// Top-left of this eye's guide region inside the depth/motion sources. Non-zero
+ 			// only for NR-only coverage, which crops full-eye guides without a copy pass.
+ 			std::uint32_t guideSourceX = 0;
+ 			std::uint32_t guideSourceY = 0;
 diff --git a/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Renderer.cpp b/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Renderer.cpp
 --- a/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Renderer.cpp
 +++ b/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Renderer.cpp
@@ -375,7 +382,7 @@ diff --git a/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Rendere
 +				}
 +				if (!CopyStereoGuides(context, guideInput, eye, guideWidth, guideHeight))
  					return LatchFailure("depth/motion guide copy", E_FAIL);
-@@ -3074,11 +3074,14 @@
+@@ -3080,11 +3080,14 @@
  		ID3D11Resource* destination, ID3D11UnorderedAccessView* destinationUAV,
  		bool blendSubrect, const StereoResourceEnvelope& resourceEnvelope)
  	{
