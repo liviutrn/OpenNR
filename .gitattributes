@@ -3,3 +3,9 @@ experiments/legacy/** whitespace=-blank-at-eol,-blank-at-eof
 
 # Keep build patches byte-stable on Windows runners so git apply sees LF context.
 patches/*.patch -text
+
+# v01 transformation scripts compare normalized LF source text against multi-line
+# PowerShell here-strings. Keep the scripts LF on Windows runners so exact-match
+# assertions remain deterministic.
+scripts/v01/*.ps1 text eol=lf
+.github/workflows/*.yml text eol=lf
