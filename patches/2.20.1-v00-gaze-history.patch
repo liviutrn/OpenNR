@@ -1,0 +1,395 @@
+diff --git a/runtime/open-shaders/features/Upscaling/Shaders/Upscaling/FoveatedRender/CropMotionCS.hlsl b/runtime/open-shaders/features/Upscaling/Shaders/Upscaling/FoveatedRender/CropMotionCS.hlsl
+new file mode 100644
+--- /dev/null
++++ b/runtime/open-shaders/features/Upscaling/Shaders/Upscaling/FoveatedRender/CropMotionCS.hlsl
+@@ -0,0 +1,17 @@
++cbuffer CropMotion : register(b0)
++{
++	uint2 Extent;
++	float2 OriginOffset;
++};
++Texture2D<float2> Source : register(t0);
++RWTexture2D<float2> Output : register(u0);
++
++[numthreads(8, 8, 1)]
++void main(uint3 id : SV_DispatchThreadID)
++{
++	if (any(id.xy >= Extent))
++		return;
++	float2 motion = Source.Load(int3(id.xy, 0));
++	bool invalid = any(!isfinite(motion)) || any(asuint(motion) == 0x00800000u);
++	Output[id.xy] = invalid ? motion : motion + OriginOffset;
++}
+diff --git a/runtime/open-shaders/src/Features/Upscaling/CropMotion.h b/runtime/open-shaders/src/Features/Upscaling/CropMotion.h
+new file mode 100644
+--- /dev/null
++++ b/runtime/open-shaders/src/Features/Upscaling/CropMotion.h
+@@ -0,0 +1,19 @@
++#pragma once
++
++#include "CropMotionHistory.h"
++
++struct ID3D11Resource;
++
++namespace FoveatedRenderImpl::CropMotion
++{
++	/** Prepare private compensated vectors; slots 0/1 are SR, 2/3 are NR. */
++	ID3D11Resource* Prepare(std::uint32_t slot, ID3D11Resource* source,
++		const Region& region, std::uint32_t guideWidth, std::uint32_t guideHeight,
++		std::array<float, 2> scale, std::uint32_t frame, bool& reset);
++	/** Advance history only after the corresponding reconstruction succeeds. */
++	void Commit(std::uint32_t slot, bool succeeded);
++	/** Invalidate a stage without reallocating GPU resources. */
++	void Invalidate(std::uint32_t firstSlot = 0, std::uint32_t count = 4);
++	/** Release resources on device/shader teardown. */
++	void Clear();
++}
+diff --git a/runtime/open-shaders/src/Features/Upscaling/CropMotionHistory.h b/runtime/open-shaders/src/Features/Upscaling/CropMotionHistory.h
+new file mode 100644
+--- /dev/null
++++ b/runtime/open-shaders/src/Features/Upscaling/CropMotionHistory.h
+@@ -0,0 +1,39 @@
++#pragma once
++
++#include <array>
++#include <cmath>
++#include <cstdint>
++
++namespace FoveatedRenderImpl::CropMotion
++{
++	struct Region
++	{
++		std::uint32_t x = 0, y = 0, width = 0, height = 0;
++	};
++
++	struct History
++	{
++		Region region{};
++		std::array<float, 2> scale{};
++		std::uint32_t frame = 0;
++		bool valid = false;
++	};
++
++	/** Convert current-to-previous crop displacement to stored motion-vector units. */
++	inline std::array<float, 2> Offset(const History& previous, const Region& current,
++		std::array<float, 2> scale, std::uint32_t frame, bool& reset)
++	{
++		const double dx = double(current.x) - previous.region.x;
++		const double dy = double(current.y) - previous.region.y;
++		constexpr double maxShiftFraction = 0.25;
++		reset = reset || !previous.valid || std::uint32_t(frame - previous.frame) != 1 ||
++			current.width != previous.region.width || current.height != previous.region.height ||
++			!current.width || !current.height || scale != previous.scale ||
++			!std::isfinite(scale[0]) || !std::isfinite(scale[1]) || !scale[0] || !scale[1] ||
++			std::abs(dx) > current.width * maxShiftFraction || std::abs(dy) > current.height * maxShiftFraction;
++		if (reset)
++			return {};
++		return { float(dx / (double(current.width) * scale[0])),
++			float(dy / (double(current.height) * scale[1])) };
++	}
++}
+diff --git a/runtime/open-shaders/src/Features/Upscaling/CropMotion.cpp b/runtime/open-shaders/src/Features/Upscaling/CropMotion.cpp
+new file mode 100644
+--- /dev/null
++++ b/runtime/open-shaders/src/Features/Upscaling/CropMotion.cpp
+@@ -0,0 +1,154 @@
++#include "CropMotion.h"
++#include "../../Globals.h"
++#include "../../GpuPass.h"
++#include "../../Util.h"
++#include "../../Utils/D3D.h"
++
++#include <wrl/client.h>
++
++namespace FoveatedRenderImpl::CropMotion
++{
++	namespace
++	{
++		using Microsoft::WRL::ComPtr;
++		struct Slot
++		{
++			History previous{}, pending{};
++			ComPtr<ID3D11Resource> source;
++			ComPtr<ID3D11ShaderResourceView> sourceView;
++			ComPtr<ID3D11Texture2D> output;
++			ComPtr<ID3D11UnorderedAccessView> outputView;
++			D3D11_TEXTURE2D_DESC desc{};
++		};
++		std::array<Slot, 4> slots;
++		ComPtr<ID3D11ComputeShader> shader;
++		ComPtr<ID3D11Buffer> constants;
++		struct Constants
++		{
++			std::uint32_t width, height;
++			float dx, dy;
++		};
++		static_assert(sizeof(Constants) == 16);
++
++		bool EnsureResources(Slot& slot, ID3D11Resource* source)
++		{
++			auto* device = globals::d3d::device;
++			if (!device)
++				return false;
++			if (!shader) {
++				shader.Attach(static_cast<ID3D11ComputeShader*>(Util::CompileShader(
++					L"Data\\Shaders\\Upscaling\\FoveatedRender\\CropMotionCS.hlsl", {}, "cs_5_0")));
++				if (!shader)
++					return false;
++				Util::SetResourceName(shader.Get(), "FoveatedRender::CropMotion");
++			}
++			if (!constants) {
++				D3D11_BUFFER_DESC desc{};
++				desc.ByteWidth = sizeof(Constants);
++				desc.Usage = D3D11_USAGE_DEFAULT;
++				desc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
++				if (FAILED(device->CreateBuffer(&desc, nullptr, &constants)))
++					return false;
++				Util::SetResourceName(constants.Get(), "FoveatedRender::CropMotionConstants");
++			}
++			if (slot.source.Get() == source && slot.sourceView && slot.output && slot.outputView)
++				return true;
++			ComPtr<ID3D11Texture2D> texture;
++			if (FAILED(source->QueryInterface(IID_PPV_ARGS(&texture))))
++				return false;
++			D3D11_TEXTURE2D_DESC desc{};
++			texture->GetDesc(&desc);
++			if (desc.ArraySize != 1 || desc.MipLevels != 1 || desc.SampleDesc.Count != 1 ||
++				(desc.Format != DXGI_FORMAT_R16G16_FLOAT && desc.Format != DXGI_FORMAT_R32G32_FLOAT))
++				return false;
++			slot.sourceView.Reset();
++			if (FAILED(device->CreateShaderResourceView(source, nullptr, &slot.sourceView)))
++				return false;
++			Util::SetResourceName(slot.sourceView.Get(), "FoveatedRender::CropMotionSource SRV");
++			if (!slot.output || slot.desc.Width != desc.Width || slot.desc.Height != desc.Height || slot.desc.Format != desc.Format) {
++				slot.output.Reset();
++				slot.outputView.Reset();
++				desc.Usage = D3D11_USAGE_DEFAULT;
++				desc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
++				desc.CPUAccessFlags = 0;
++				desc.MiscFlags = 0;
++				if (FAILED(device->CreateTexture2D(&desc, nullptr, &slot.output)) ||
++					FAILED(device->CreateUnorderedAccessView(slot.output.Get(), nullptr, &slot.outputView)))
++					return false;
++				Util::SetResourceName(slot.output.Get(), "FoveatedRender::CropMotionOutput");
++				Util::SetResourceName(slot.outputView.Get(), "FoveatedRender::CropMotionOutput UAV");
++			}
++			slot.source = source;
++			slot.desc = desc;
++			return true;
++		}
++	}
++
++	ID3D11Resource* Prepare(std::uint32_t index, ID3D11Resource* source,
++		const Region& region, std::uint32_t guideWidth, std::uint32_t guideHeight,
++		std::array<float, 2> scale, std::uint32_t frame, bool& reset)
++	{
++		if (index >= slots.size() || !source || !globals::d3d::context || !guideWidth || !guideHeight)
++			return nullptr;
++		auto& slot = slots[index];
++		slot.pending = {};
++		const auto offset = Offset(slot.previous, region, scale, frame, reset);
++		slot.pending = { region, scale, frame, true };
++		if (offset[0] == 0.0f && offset[1] == 0.0f)
++			return source;
++		if (!EnsureResources(slot, source) || guideWidth > slot.desc.Width || guideHeight > slot.desc.Height) {
++			slot.pending.valid = false;
++			return nullptr;
++		}
++		CS_GPU_PASS("FoveatedRender::CropMotion");
++		auto* context = globals::d3d::context;
++		ComPtr<ID3D11ComputeShader> oldShader;
++		ComPtr<ID3D11ShaderResourceView> oldSource;
++		ComPtr<ID3D11UnorderedAccessView> oldOutput;
++		ComPtr<ID3D11Buffer> oldConstants;
++		std::array<ID3D11ClassInstance*, 256> classes{};
++		UINT classCount = static_cast<UINT>(classes.size());
++		context->CSGetShader(&oldShader, classes.data(), &classCount);
++		context->CSGetShaderResources(0, 1, &oldSource);
++		context->CSGetUnorderedAccessViews(0, 1, &oldOutput);
++		context->CSGetConstantBuffers(0, 1, &oldConstants);
++		ID3D11UnorderedAccessView* nullOutput = nullptr;
++		context->CSSetUnorderedAccessViews(0, 1, &nullOutput, nullptr);
++		const Constants data{ guideWidth, guideHeight, offset[0], offset[1] };
++		context->UpdateSubresource(constants.Get(), 0, nullptr, &data, 0, 0);
++		context->CSSetShader(shader.Get(), nullptr, 0);
++		context->CSSetShaderResources(0, 1, slot.sourceView.GetAddressOf());
++		context->CSSetUnorderedAccessViews(0, 1, slot.outputView.GetAddressOf(), nullptr);
++		context->CSSetConstantBuffers(0, 1, constants.GetAddressOf());
++		context->Dispatch((guideWidth + 7) / 8, (guideHeight + 7) / 8, 1);
++		context->CSSetUnorderedAccessViews(0, 1, &nullOutput, nullptr);
++		context->CSSetShaderResources(0, 1, oldSource.GetAddressOf());
++		context->CSSetUnorderedAccessViews(0, 1, oldOutput.GetAddressOf(), nullptr);
++		context->CSSetConstantBuffers(0, 1, oldConstants.GetAddressOf());
++		context->CSSetShader(oldShader.Get(), classes.data(), classCount);
++		for (UINT i = 0; i < classCount; ++i)
++			classes[i]->Release();
++		return slot.output.Get();
++	}
++
++	void Commit(std::uint32_t slot, bool succeeded)
++	{
++		if (slot < slots.size())
++			slots[slot].previous = succeeded ? slots[slot].pending : History{};
++	}
++
++	void Invalidate(std::uint32_t firstSlot, std::uint32_t count)
++	{
++		for (auto i = firstSlot; i < slots.size() && i - firstSlot < count; ++i) {
++			slots[i].previous = {};
++			slots[i].pending = {};
++		}
++	}
++
++	void Clear()
++	{
++		slots = {};
++		shader.Reset();
++		constants.Reset();
++	}
++}
+diff --git a/runtime/open-shaders/src/Features/Upscaling/FoveatedRender/Core.cpp b/runtime/open-shaders/src/Features/Upscaling/FoveatedRender/Core.cpp
+--- a/runtime/open-shaders/src/Features/Upscaling/FoveatedRender/Core.cpp
++++ b/runtime/open-shaders/src/Features/Upscaling/FoveatedRender/Core.cpp
+@@ -1,4 +1,5 @@
+ #include "Core.h"
+ #include "Ops.h"
++#include "../CropMotion.h"
+ 
+ #include "../../../State.h"
+@@ -1714,9 +1714,11 @@
+ 
+ 		activeSubrectUVHash = 0;
+ 		neuralGuidesFrame = UINT32_MAX;
++		CropMotion::Clear();
+ 		ResetAdaptiveCropHandoff();
+ 	}
+ 
+ 	void Core::InvalidateTemporalState()
+ 	{
++		CropMotion::Invalidate();
+ 		// A crop can move without changing the intermediate dimensions. In that
+@@ -1742,4 +1742,5 @@
+ 
+ 	void Core::ClearShaderCache()
+ 	{
++		CropMotion::Clear();
+ 		vrSubrectStretchCS = nullptr;
+diff --git a/runtime/open-shaders/src/Features/Upscaling/FoveatedRender/Modes.cpp b/runtime/open-shaders/src/Features/Upscaling/FoveatedRender/Modes.cpp
+--- a/runtime/open-shaders/src/Features/Upscaling/FoveatedRender/Modes.cpp
++++ b/runtime/open-shaders/src/Features/Upscaling/FoveatedRender/Modes.cpp
+@@ -10,5 +10,6 @@
+ #include "Core.h"
+ #include "Ops.h"
+ #include "Params.h"
++#include "../CropMotion.h"
+ 
+ #include "../../../Globals.h"
+@@ -88,6 +88,8 @@
+ 		bool result = (p.mode == FoveatedRender::DlssMode::kFaster) ?
+ 		                  ExecuteFasterMode(streamline, p) :
+ 		                  ExecuteDefaultMode(streamline, p);
++		for (uint32_t eye = 0; eye < 2; ++eye)
++			CropMotion::Commit(eye, result && Core::neuralGuidesFrame == frame && p.eyeTrackedGazeConfigured && !p.isFullEye);
+ 		Bridge::foveatedEvaluating = false;
+ 		Bridge::gazeHistoryReset = false;
+ 		return result;
+@@ -218,7 +218,21 @@
+ 			if (p.transparencyMask)
+ 				context->CopySubresourceRegion(Core::vrSubrectTransparencyMask[i]->resource.get(), 0, 0, 0, 0, p.transparencyMask, 0, &sbsCrop);
+ 
++			ID3D11Resource* srMotion = Core::vrSubrectMotionVectors[i]->resource.get();
++			if (p.eyeTrackedGazeConfigured) {
++				float scaleX = 1.0f, scaleY = 1.0f;
++				Bridge::ComputeMvecScale(i, scaleX, scaleY);
++				bool reset = p.eyeTrackedGazeReset;
++				srMotion = CropMotion::Prepare(i, srMotion, { cropX, cropY, subInW, subInH },
++					subInW, subInH, { scaleX, scaleY }, frame, reset);
++				if (!srMotion) {
++					Core::InvalidateTemporalState();
++					return true;
++				}
++				Bridge::gazeHistoryReset = reset;
++			}
++
+ 			if (!DispatchUpscaleRegion(streamline, i,
+ 					Core::vrSubrectColorIn[i]->resource.get(), Core::vrSubrectColorOut[i]->resource.get(),
+-					Core::vrSubrectDepth[i]->resource.get(), Core::vrSubrectMotionVectors[i]->resource.get(),
++					Core::vrSubrectDepth[i]->resource.get(), srMotion,
+ 					p.reactiveMask ? Core::vrSubrectReactiveMask[i]->resource.get() : nullptr,
+diff --git a/runtime/open-shaders/src/Features/Upscaling/NativeOpenVRGaze.cpp b/runtime/open-shaders/src/Features/Upscaling/NativeOpenVRGaze.cpp
+--- a/runtime/open-shaders/src/Features/Upscaling/NativeOpenVRGaze.cpp
++++ b/runtime/open-shaders/src/Features/Upscaling/NativeOpenVRGaze.cpp
+@@ -496,7 +496,5 @@
+ 
+ 		const bool cropChanged = state.cacheValid && (a_config.enabled || state.cachedResult.diagnostics.experimentEnabled) &&
+ 			(!SameRegion(result.leftUV, state.cachedResult.leftUV) || !SameRegion(result.rightUV, state.cachedResult.rightUV));
+-		// Crop-local histories have no verified exposed-region validity mask.
+-		// Any origin change must reset both reconstruction stages without freeing resources.
+-		result.historyReset = result.historyReset || cropChanged;
++		// Each reconstruction stage compensates ordinary origin changes against its last successful frame.
+ 		state.cropChangeCount += cropChanged ? 1 : 0;
+diff --git a/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Integration.cpp b/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Integration.cpp
+--- a/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Integration.cpp
++++ b/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Integration.cpp
+@@ -745,5 +745,6 @@
+ 
+ 				.motionVectorScaleX = motionScaleX * fullGuideWidth,
+ 				.motionVectorScaleY = motionScaleY * fullGuideHeight,
++				.compensateCropMotion = gazeConfig.enabled && !fullEye,
+ 				.guideSourceX = coverageCrop ? coverageRect.guideX : 0u,
+ 				.guideSourceY = coverageCrop ? coverageRect.guideY : 0u,
+diff --git a/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Renderer.h b/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Renderer.h
+--- a/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Renderer.h
++++ b/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Renderer.h
+@@ -24,4 +24,5 @@
+ 
+ 			float motionVectorScaleX = 1.0f;
+ 			float motionVectorScaleY = 1.0f;
++			bool compensateCropMotion = false;
+ 			// Top-left of this eye's guide region inside the depth/motion sources. Non-zero
+diff --git a/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Renderer.cpp b/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Renderer.cpp
+--- a/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Renderer.cpp
++++ b/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Renderer.cpp
+@@ -1,3 +1,4 @@
++#include "../CropMotion.h"
+ #include "Renderer.h"
+ 
+ #include "D3D12Interop.h"
+@@ -925,5 +925,18 @@
+ 				if (tier.reducedResolution && !DispatchModelInput(device, context, eye, tier, colorWidth, colorHeight, modelWidth, modelHeight,
+ 					 tuning.modelResolveMode == 1))
+ 					return LatchFailure("model input downsample stereo", E_FAIL);
+-				if (!CopyStereoGuides(context, input, eye, guideWidth, guideHeight))
++				auto guideInput = input;
++				if (input.compensateCropMotion) {
++					bool reset = resetPending[eyeIndex][tierIndex];
++					ID3D11Resource* nrMotion = FoveatedRenderImpl::CropMotion::Prepare(2 + eyeIndex, input.motionVectors,
++						{ input.sourceX, input.sourceY, colorWidth, colorHeight }, guideWidth, guideHeight,
++						{ input.motionVectorScaleX * float(modelWidth) / colorWidth / guideWidth,
++						  input.motionVectorScaleY * float(modelHeight) / colorHeight / guideHeight },
++						globals::state->frameCount, reset);
++					if (!nrMotion)
++						return LatchFailure("crop motion preparation", E_FAIL);
++					resetPending[eyeIndex][tierIndex] = reset;
++					guideInput.motionVectors = nrMotion;
++				}
++				if (!CopyStereoGuides(context, guideInput, eye, guideWidth, guideHeight))
+ 					return LatchFailure("depth/motion guide copy", E_FAIL);
+@@ -3074,11 +3074,14 @@
+ 		ID3D11Resource* destination, ID3D11UnorderedAccessView* destinationUAV,
+ 		bool blendSubrect, const StereoResourceEnvelope& resourceEnvelope)
+ 	{
+-		return state_->ApplyStereo(device, context, color, eyes,
++		const bool succeeded = state_->ApplyStereo(device, context, color, eyes,
+ 			guideWidth, guideHeight, colorWidth, colorHeight, tuning,
+ 				destination, destinationUAV, blendSubrect, resourceEnvelope);
++		for (std::uint32_t eye = 0; eye < 2; ++eye)
++			FoveatedRenderImpl::CropMotion::Commit(2 + eye, succeeded && eyes[eye].compensateCropMotion);
++		return succeeded;
+ 	}
+ 
+-	bool Renderer::Reset() { return state_->Reset(); }
++	bool Renderer::Reset() { FoveatedRenderImpl::CropMotion::Invalidate(2, 2); return state_->Reset(); }
+ 	void Renderer::ClearShaderCache() { state_->ClearShaderCache(); }
+-	void Renderer::ResetHistory() { state_->ResetHistory(); }
++	void Renderer::ResetHistory() { FoveatedRenderImpl::CropMotion::Invalidate(2, 2); state_->ResetHistory(); }
