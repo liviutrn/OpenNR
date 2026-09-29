@@ -1,4 +1,4 @@
-name: Build upstream OpenNR 2.20.1
+name: Build OpenNR 2.20.1-v00
 
 on:
   push:
@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   build:
-    name: Build OpenNR 2.20.1 public-source package
+    name: Build OpenNR 2.20.1-v00 public-source package
     runs-on: windows-2025
     steps:
       - name: Check out upstream 2.20.1 build branch
@@ -33,6 +33,19 @@ jobs:
             if (-not (Test-Path $_)) { throw "Missing required build input: $_" }
           }
           git diff --check
+
+      - name: Apply 2.20.1-v00 gaze-history fix
+        shell: pwsh
+        run: |
+          $patch = "patches/2.20.1-v00-gaze-history.patch"
+          if (-not (Test-Path $patch)) { throw "Missing v00 patch: $patch" }
+          git apply --check $patch
+          if ($LASTEXITCODE -ne 0) { throw "2.20.1-v00 gaze-history patch does not apply cleanly" }
+          git apply $patch
+          if ($LASTEXITCODE -ne 0) { throw "2.20.1-v00 gaze-history patch apply failed" }
+          git diff --check
+          if ($LASTEXITCODE -ne 0) { throw "Patched source has whitespace errors" }
+          git diff --stat
 
       - name: Permit carrier-excluded CI package
         shell: pwsh
@@ -67,7 +80,7 @@ jobs:
           else()
               message(WARNING
                   "Building public-source OpenNR 2.20.1 without the locally supplied nvngx_dlssnr.dll carrier. "
-                  "CommunityShaders.dll will still be compiled from the exact upstream sources."
+                  "CommunityShaders.dll will still be compiled from the patched 2.20.1-v00 sources."
               )
           endif()
           '@
@@ -117,7 +130,7 @@ jobs:
           $p = $p.Replace($hashLine, $hashReplacement)
           Set-Content -Path $packageValidator -Value $p -NoNewline
 
-          Write-Host "Carrier-only release guards relaxed; upstream C++ and shader sources are unchanged."
+          Write-Host "Carrier-only release guards relaxed; 2.20.1-v00 gaze-history patch remains applied."
 
       - name: Set up MSVC
         uses: ilammy/msvc-dev-cmd@v1
@@ -150,19 +163,26 @@ jobs:
           cmake --preset OpenNR-Package "-DDIST_PATH=$dist"
           cmake --build --preset Package --parallel
 
-      - name: Mark carrier requirement
+      - name: Mark revision and carrier requirement
         shell: pwsh
         run: |
           @'
-          OpenNR 2.20.1 public-source build
+          OpenNR 2.20.1-v00 — gaze-history fix
 
-          Compiled from upstream tag v2.20.1 (commit 9b6340870f3910d81917f167245885b50216654f).
+          Base: upstream OpenNR 2.20.1 commit 9b6340870f3910d81917f167245885b50216654f.
+          CI carrier-support baseline: 441ec3d988e64cf6e3a4a719f9bf1713f4e7783f.
+
+          v00 ports the previously successful OpenNR 2.15.1 gaze-history fix:
+          - preserve temporal history during ordinary small gaze-crop moves;
+          - compensate SR and Feature 18 motion vectors for crop-origin movement;
+          - keep independent SR/NR per-eye crop histories;
+          - reset on missing frame, crop resize, motion-scale change, invalid scale, or crop jump above 25% of the crop extent.
 
           NVIDIA's native Feature 18 carrier is intentionally not distributed in the public source tree:
             Shaders/Upscaling/Streamline/nvngx_dlssnr.dll
 
           Before using DLSS 5 / Feature 18, add a validated nvngx_dlssnr.dll from your existing licensed OpenNR installation to that path.
-          '@ | Set-Content -Path dist\README-CARRIER-REQUIRED.txt
+          '@ | Set-Content -Path dist\README-2.20.1-v00.txt
 
       - name: List output and hashes
         shell: pwsh
@@ -176,7 +196,7 @@ jobs:
       - name: Upload package
         uses: actions/upload-artifact@v4
         with:
-          name: OpenNR-2.20.1-upstream-build-carrier-excluded
+          name: OpenNR-2.20.1-v00-gaze-history-carrier-excluded
           path: dist/*
           if-no-files-found: error
           retention-days: 14
