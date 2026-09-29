@@ -107,7 +107,13 @@ jobs:
           $p = $p.Substring(0, $pkgSizeStart) + $pkgWrapped + $p.Substring($pkgSizeEnd)
           $hashLine = 'file(SHA256 "${PACKAGE_ROOT}/Shaders/Upscaling/Streamline/nvngx_dlssnr.dll" _dlssnr_sha256)'
           if (-not $p.Contains($hashLine)) { throw "Could not locate carrier hash assertion in package validator" }
-          $hashReplacement = 'if(EXISTS "${PACKAGE_ROOT}/Shaders/Upscaling/Streamline/nvngx_dlssnr.dll")' + "`n    " + $hashLine + "`nelse()`n    set(_dlssnr_sha256 \"carrier-excluded\")`nendif()"
+          $hashReplacement = @'
+          if(EXISTS "${PACKAGE_ROOT}/Shaders/Upscaling/Streamline/nvngx_dlssnr.dll")
+              file(SHA256 "${PACKAGE_ROOT}/Shaders/Upscaling/Streamline/nvngx_dlssnr.dll" _dlssnr_sha256)
+          else()
+              set(_dlssnr_sha256 "carrier-excluded")
+          endif()
+          '@
           $p = $p.Replace($hashLine, $hashReplacement)
           Set-Content -Path $packageValidator -Value $p -NoNewline
 
