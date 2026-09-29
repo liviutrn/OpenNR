@@ -34,6 +34,44 @@ jobs:
           }
           git diff --check
 
+      - name: Permit carrier-excluded CI package
+        shell: pwsh
+        run: |
+          $path = "runtime/open-shaders/cmake/Streamline-Runtime.cmake"
+          $text = Get-Content $path -Raw
+          $startToken = 'if(NOT EXISTS "${OPENNR_DLSSNR_RUNTIME_SOURCE}")'
+          $endToken = 'list(APPEND STREAMLINE_RUNTIME_FILES "${_opennr_dlssnr_runtime_destination}")'
+          $start = $text.IndexOf($startToken)
+          $endStart = $text.IndexOf($endToken, $start)
+          if ($start -lt 0 -or $endStart -lt 0) { throw "Could not locate DLSS-NR carrier staging block" }
+          $end = $endStart + $endToken.Length
+          $replacement = @'
+          if(EXISTS "${OPENNR_DLSSNR_RUNTIME_SOURCE}")
+              file(SIZE "${OPENNR_DLSSNR_RUNTIME_SOURCE}" _opennr_dlssnr_runtime_size)
+              if(_opennr_dlssnr_runtime_size LESS 1048576)
+                  message(FATAL_ERROR
+                      "OpenNR Feature 18 carrier is implausibly small: ${_opennr_dlssnr_runtime_size} bytes"
+                  )
+              endif()
+              set(_opennr_dlssnr_runtime_destination
+                  "${STREAMLINE_RUNTIME_DIRECTORY}/nvngx_dlssnr.dll"
+              )
+              file(COPY_FILE
+                  "${OPENNR_DLSSNR_RUNTIME_SOURCE}"
+                  "${_opennr_dlssnr_runtime_destination}"
+                  ONLY_IF_DIFFERENT
+              )
+              list(APPEND STREAMLINE_RUNTIME_FILES "${_opennr_dlssnr_runtime_destination}")
+          else()
+              message(WARNING
+                  "Building public-source OpenNR 2.20.1 without the locally supplied nvngx_dlssnr.dll carrier. "
+                  "The compiled CommunityShaders.dll is valid, but Feature 18 requires the carrier to be added at install time."
+              )
+          endif()
+          '@
+          $patched = $text.Substring(0, $start) + $replacement + $text.Substring($end)
+          Set-Content -Path $path -Value $patched -NoNewline
+
       - name: Set up MSVC
         uses: ilammy/msvc-dev-cmd@v1
         with:
@@ -62,8 +100,21 @@ jobs:
         working-directory: runtime/open-shaders
         run: |
           $dist = Join-Path $env:GITHUB_WORKSPACE "dist"
-          cmake --preset OpenNR-Package -DOPENNR_EXTERNAL_DLSSNR_RUNTIME=ON "-DDIST_PATH=$dist"
+          cmake --preset OpenNR-Package "-DDIST_PATH=$dist"
           cmake --build --preset Package --parallel
+
+      - name: Mark carrier requirement
+        shell: pwsh
+        run: |
+          @'
+          OpenNR 2.20.1 public-source build
+
+          This package was compiled from upstream tag v2.20.1 source.
+          The upstream repository intentionally does not distribute NVIDIA's native Feature 18 carrier:
+            SKSE/Plugins/CommunityShaders/Shaders/Upscaling/Streamline/nvngx_dlssnr.dll
+
+          Copy the validated nvngx_dlssnr.dll from your existing licensed OpenNR installation into that path before using DLSS 5 / Feature 18.
+          '@ | Set-Content -Path dist\README-CARRIER-REQUIRED.txt
 
       - name: List output and hashes
         shell: pwsh
@@ -77,7 +128,7 @@ jobs:
       - name: Upload installable package
         uses: actions/upload-artifact@v4
         with:
-          name: OpenNR-2.20.1-upstream-build
+          name: OpenNR-2.20.1-upstream-build-carrier-excluded
           path: dist/*
           if-no-files-found: error
           retention-days: 14
