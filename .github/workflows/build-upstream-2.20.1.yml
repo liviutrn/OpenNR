@@ -1,5 +1,4 @@
 name: Build OpenNR 2.20.1-v00
-# v00 build trigger after Renderer CRLF normalization
 
 on:
   push:
@@ -52,31 +51,30 @@ jobs:
             }
 
             $renderer = "runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Renderer.cpp"
-            $text = Get-Content $renderer -Raw
-            $text = $text.Replace("`r`n", "`n")
-            $old = @'
-		return state_->ApplyStereo(device, context, color, eyes,
-			guideWidth, guideHeight, colorWidth, colorHeight, tuning,
-				destination, destinationUAV, blendSubrect, resourceEnvelope);
-	}
-
-	bool Renderer::Reset() { return state_->Reset(); }
-	void Renderer::ClearShaderCache() { state_->ClearShaderCache(); }
-	void Renderer::ResetHistory() { state_->ResetHistory(); }
-'@
-            $new = @'
-		const bool succeeded = state_->ApplyStereo(device, context, color, eyes,
-			guideWidth, guideHeight, colorWidth, colorHeight, tuning,
-				destination, destinationUAV, blendSubrect, resourceEnvelope);
-		for (std::uint32_t eye = 0; eye < 2; ++eye)
-			FoveatedRenderImpl::CropMotion::Commit(2 + eye, succeeded && eyes[eye].compensateCropMotion);
-		return succeeded;
-	}
-
-	bool Renderer::Reset() { FoveatedRenderImpl::CropMotion::Invalidate(2, 2); return state_->Reset(); }
-	void Renderer::ClearShaderCache() { state_->ClearShaderCache(); }
-	void Renderer::ResetHistory() { FoveatedRenderImpl::CropMotion::Invalidate(2, 2); state_->ResetHistory(); }
-'@
+            $text = (Get-Content $renderer -Raw).Replace("`r`n", "`n")
+            $old = @(
+              "`t`treturn state_->ApplyStereo(device, context, color, eyes,",
+              "`t`t`tguideWidth, guideHeight, colorWidth, colorHeight, tuning,",
+              "`t`t`t`tdestination, destinationUAV, blendSubrect, resourceEnvelope);",
+              "`t}",
+              "",
+              "`tbool Renderer::Reset() { return state_->Reset(); }",
+              "`tvoid Renderer::ClearShaderCache() { state_->ClearShaderCache(); }",
+              "`tvoid Renderer::ResetHistory() { state_->ResetHistory(); }"
+            ) -join "`n"
+            $new = @(
+              "`t`tconst bool succeeded = state_->ApplyStereo(device, context, color, eyes,",
+              "`t`t`tguideWidth, guideHeight, colorWidth, colorHeight, tuning,",
+              "`t`t`t`tdestination, destinationUAV, blendSubrect, resourceEnvelope);",
+              "`t`tfor (std::uint32_t eye = 0; eye < 2; ++eye)",
+              "`t`t`tFoveatedRenderImpl::CropMotion::Commit(2 + eye, succeeded && eyes[eye].compensateCropMotion);",
+              "`t`treturn succeeded;",
+              "`t}",
+              "",
+              "`tbool Renderer::Reset() { FoveatedRenderImpl::CropMotion::Invalidate(2, 2); return state_->Reset(); }",
+              "`tvoid Renderer::ClearShaderCache() { state_->ClearShaderCache(); }",
+              "`tvoid Renderer::ResetHistory() { FoveatedRenderImpl::CropMotion::Invalidate(2, 2); state_->ResetHistory(); }"
+            ) -join "`n"
             if (-not $text.Contains($old)) { throw "Expected Renderer wrapper text missing after partial v00 patch" }
             $text = $text.Replace($old, $new)
             [IO.File]::WriteAllText((Resolve-Path $renderer), $text, [Text.UTF8Encoding]::new($false))
@@ -99,30 +97,30 @@ jobs:
           $endStart = $text.IndexOf($endToken, $start)
           if ($start -lt 0 -or $endStart -lt 0) { throw "Could not locate DLSS-NR carrier staging block" }
           $end = $endStart + $endToken.Length
-          $replacement = @'
-if(EXISTS "${OPENNR_DLSSNR_RUNTIME_SOURCE}")
-    file(SIZE "${OPENNR_DLSSNR_RUNTIME_SOURCE}" _opennr_dlssnr_runtime_size)
-    if(_opennr_dlssnr_runtime_size LESS 1048576)
-        message(FATAL_ERROR
-            "OpenNR Feature 18 carrier is implausibly small: ${_opennr_dlssnr_runtime_size} bytes"
-        )
-    endif()
-    set(_opennr_dlssnr_runtime_destination
-        "${STREAMLINE_RUNTIME_DIRECTORY}/nvngx_dlssnr.dll"
-    )
-    file(COPY_FILE
-        "${OPENNR_DLSSNR_RUNTIME_SOURCE}"
-        "${_opennr_dlssnr_runtime_destination}"
-        ONLY_IF_DIFFERENT
-    )
-    list(APPEND STREAMLINE_RUNTIME_FILES "${_opennr_dlssnr_runtime_destination}")
-else()
-    message(WARNING
-        "Building public-source OpenNR 2.20.1 without the locally supplied nvngx_dlssnr.dll carrier. "
-        "CommunityShaders.dll will still be compiled from the patched 2.20.1-v00 sources."
-    )
-endif()
-'@
+          $replacement = @(
+            'if(EXISTS "${OPENNR_DLSSNR_RUNTIME_SOURCE}")',
+            '    file(SIZE "${OPENNR_DLSSNR_RUNTIME_SOURCE}" _opennr_dlssnr_runtime_size)',
+            '    if(_opennr_dlssnr_runtime_size LESS 1048576)',
+            '        message(FATAL_ERROR',
+            '            "OpenNR Feature 18 carrier is implausibly small: ${_opennr_dlssnr_runtime_size} bytes"',
+            '        )',
+            '    endif()',
+            '    set(_opennr_dlssnr_runtime_destination',
+            '        "${STREAMLINE_RUNTIME_DIRECTORY}/nvngx_dlssnr.dll"',
+            '    )',
+            '    file(COPY_FILE',
+            '        "${OPENNR_DLSSNR_RUNTIME_SOURCE}"',
+            '        "${_opennr_dlssnr_runtime_destination}"',
+            '        ONLY_IF_DIFFERENT',
+            '    )',
+            '    list(APPEND STREAMLINE_RUNTIME_FILES "${_opennr_dlssnr_runtime_destination}")',
+            'else()',
+            '    message(WARNING',
+            '        "Building public-source OpenNR 2.20.1 without the locally supplied nvngx_dlssnr.dll carrier. "',
+            '        "CommunityShaders.dll will still be compiled from the patched 2.20.1-v00 sources."',
+            '    )',
+            'endif()'
+          ) -join "`n"
           $text = $text.Substring(0, $start) + $replacement + $text.Substring($end)
           Set-Content -Path $runtimePath -Value $text -NoNewline
 
@@ -133,10 +131,9 @@ endif()
           $v = $v.Replace($needle, '   FALSE OR')
           $sizeStartToken = 'file(SIZE "${_dlssnr_carrier_path}" _source_dlssnr_size)'
           $sizeStart = $v.IndexOf($sizeStartToken)
-          $sizeEndToken = 'endif()'
-          $sizeEndStart = $v.IndexOf($sizeEndToken, $sizeStart)
+          $sizeEndStart = $v.IndexOf('endif()', $sizeStart)
           if ($sizeStart -lt 0 -or $sizeEndStart -lt 0) { throw "Could not locate carrier size assertion in source validator" }
-          $sizeEnd = $sizeEndStart + $sizeEndToken.Length
+          $sizeEnd = $sizeEndStart + 'endif()'.Length
           $sizeBlock = $v.Substring($sizeStart, $sizeEnd - $sizeStart)
           $wrappedSizeBlock = 'if(EXISTS "${_dlssnr_carrier_path}")' + "`n" + $sizeBlock + "`nendif()"
           $v = $v.Substring(0, $sizeStart) + $wrappedSizeBlock + $v.Substring($sizeEnd)
@@ -157,13 +154,13 @@ endif()
           $p = $p.Substring(0, $pkgSizeStart) + $pkgWrapped + $p.Substring($pkgSizeEnd)
           $hashLine = 'file(SHA256 "${PACKAGE_ROOT}/Shaders/Upscaling/Streamline/nvngx_dlssnr.dll" _dlssnr_sha256)'
           if (-not $p.Contains($hashLine)) { throw "Could not locate carrier hash assertion in package validator" }
-          $hashReplacement = @'
-if(EXISTS "${PACKAGE_ROOT}/Shaders/Upscaling/Streamline/nvngx_dlssnr.dll")
-    file(SHA256 "${PACKAGE_ROOT}/Shaders/Upscaling/Streamline/nvngx_dlssnr.dll" _dlssnr_sha256)
-else()
-    set(_dlssnr_sha256 "carrier-excluded")
-endif()
-'@
+          $hashReplacement = @(
+            'if(EXISTS "${PACKAGE_ROOT}/Shaders/Upscaling/Streamline/nvngx_dlssnr.dll")',
+            '    file(SHA256 "${PACKAGE_ROOT}/Shaders/Upscaling/Streamline/nvngx_dlssnr.dll" _dlssnr_sha256)',
+            'else()',
+            '    set(_dlssnr_sha256 "carrier-excluded")',
+            'endif()'
+          ) -join "`n"
           $p = $p.Replace($hashLine, $hashReplacement)
           Set-Content -Path $packageValidator -Value $p -NoNewline
 
@@ -201,23 +198,23 @@ endif()
       - name: Mark revision and carrier requirement
         shell: pwsh
         run: |
-          @'
-OpenNR 2.20.1-v00 — gaze-history fix
-
-Base: upstream OpenNR 2.20.1 commit 9b6340870f3910d81917f167245885b50216654f.
-CI carrier-support baseline: 441ec3d988e64cf6e3a4a719f9bf1713f4e7783f.
-
-v00 ports the previously successful OpenNR 2.15.1 gaze-history fix:
-- preserve temporal history during ordinary small gaze-crop moves;
-- compensate SR and Feature 18 motion vectors for crop-origin movement;
-- keep independent SR/NR per-eye crop histories;
-- reset on missing frame, crop resize, motion-scale change, invalid scale, or crop jump above 25% of the crop extent.
-
-NVIDIA's native Feature 18 carrier is intentionally not distributed in the public source tree:
-  Shaders/Upscaling/Streamline/nvngx_dlssnr.dll
-
-Before using DLSS 5 / Feature 18, add a validated nvngx_dlssnr.dll from your existing licensed OpenNR installation to that path.
-'@ | Set-Content -Path dist\README-2.20.1-v00.txt
+          @(
+            'OpenNR 2.20.1-v00 — gaze-history fix',
+            '',
+            'Base: upstream OpenNR 2.20.1 commit 9b6340870f3910d81917f167245885b50216654f.',
+            'CI carrier-support baseline: 441ec3d988e64cf6e3a4a719f9bf1713f4e7783f.',
+            '',
+            'v00 ports the previously successful OpenNR 2.15.1 gaze-history fix:',
+            '- preserve temporal history during ordinary small gaze-crop moves;',
+            '- compensate SR and Feature 18 motion vectors for crop-origin movement;',
+            '- keep independent SR/NR per-eye crop histories;',
+            '- reset on missing frame, crop resize, motion-scale change, invalid scale, or crop jump above 25% of the crop extent.',
+            '',
+            "NVIDIA's native Feature 18 carrier is intentionally not distributed in the public source tree:",
+            '  Shaders/Upscaling/Streamline/nvngx_dlssnr.dll',
+            '',
+            'Before using DLSS 5 / Feature 18, add a validated nvngx_dlssnr.dll from your existing licensed OpenNR installation to that path.'
+          ) | Set-Content -Path dist\README-2.20.1-v00.txt
 
       - name: List output and hashes
         shell: pwsh
