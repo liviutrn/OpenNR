@@ -1,0 +1,408 @@
+{
+  "surface": "report",
+  "title": "OpenNR-GEN final findings: the deployable raw-input path is not ready",
+  "generatedAt": "2026-09-10T16:00:00Z",
+  "status": "reviewed",
+  "report": {
+    "asOf": "2026-09-10"
+  },
+  "queries": {
+    "route_findings": {
+      "rows": [
+        {
+          "route": "SDXL initial smoke",
+          "family": "SDXL + Canny",
+          "input_role": "dlss5_teacher",
+          "strength": "0.28",
+          "generated": 4,
+          "status": "rejected",
+          "student_eligible": false,
+          "finding": "Visible material, lighting, and texture changes; the long prompt was truncated by the SDXL CLIP limit."
+        },
+        {
+          "route": "SDXL pilot_v1",
+          "family": "SDXL + Canny",
+          "input_role": "dlss5_teacher",
+          "strength": "0.16",
+          "generated": 4,
+          "status": "rejected",
+          "student_eligible": false,
+          "finding": "All four eyes were visually rejected; the follow-up remained structurally unsafe despite lower strength."
+        },
+        {
+          "route": "SDXL strength005",
+          "family": "SDXL + Canny",
+          "input_role": "dlss5_teacher",
+          "strength": "0.05",
+          "generated": 2,
+          "status": "rejected",
+          "student_eligible": false,
+          "finding": "Coherent and stereo-consistent, but retention-only: not visibly preferable to the teacher."
+        },
+        {
+          "route": "SDXL strength008 v2",
+          "family": "SDXL + Canny",
+          "input_role": "dlss5_teacher",
+          "strength": "0.08",
+          "generated": 2,
+          "status": "rejected",
+          "student_eligible": false,
+          "finding": "Coherent pair, but no independent realism gain; edge/high-frequency proxies were lower than the teacher."
+        },
+        {
+          "route": "SDXL face probe",
+          "family": "SDXL + Canny",
+          "input_role": "dlss5_teacher",
+          "strength": "0.08",
+          "generated": 1,
+          "status": "offline-only",
+          "student_eligible": false,
+          "finding": "The pleasing full-face result was generated from the teacher. It demonstrates an offline look, not a deployable student target."
+        },
+        {
+          "route": "SDXL interrupted full",
+          "family": "SDXL + Canny",
+          "input_role": "dlss5_teacher",
+          "strength": "0.08",
+          "generated": 12,
+          "status": "stopped-invalid",
+          "student_eligible": false,
+          "finding": "Stopped after 12 eyes when the input-role error was corrected; preserved as provenance evidence and excluded from training."
+        },
+        {
+          "route": "SDXL stale clone",
+          "family": "SDXL + Canny",
+          "input_role": "dlss5_teacher",
+          "strength": "0.08",
+          "generated": 0,
+          "status": "stopped-not-run",
+          "student_eligible": false,
+          "finding": "Manifest sample paths pointed at the wrong root; superseded by the corrected v2 route."
+        },
+        {
+          "route": "SDXL raw-input face",
+          "family": "SDXL + Canny",
+          "input_role": "raw_input",
+          "strength": "0.08",
+          "generated": 1,
+          "status": "rejected",
+          "student_eligible": false,
+          "finding": "Correct deployable graph, but conservative/near raw and worse on teacher MAE than the vanilla input."
+        },
+        {
+          "route": "SDXL raw-input max",
+          "family": "SDXL + Canny",
+          "input_role": "raw_input",
+          "strength": "0.60",
+          "generated": 1,
+          "status": "rejected",
+          "student_eligible": false,
+          "finding": "Maximum tested strength produced psychedelic texture and facial distortion; not usable."
+        },
+        {
+          "route": "Juggernaut v9",
+          "family": "Juggernaut-XL-v9",
+          "input_role": "dlss5_teacher",
+          "strength": "0.08",
+          "generated": 2,
+          "status": "rejected",
+          "student_eligible": false,
+          "finding": "Changed shield pattern, suppressed fire, and altered stone/material response; no stable prettier replacement."
+        },
+        {
+          "route": "Juggernaut v9 strength005",
+          "family": "Juggernaut-XL-v9",
+          "input_role": "dlss5_teacher",
+          "strength": "0.05",
+          "generated": 2,
+          "status": "unaccepted",
+          "student_eligible": false,
+          "finding": "Preserved research probe; no accepted review or complete tranche, and it remains teacher-conditioned."
+        },
+        {
+          "route": "FLUX Kontext probe",
+          "family": "FLUX Kontext FP8 conversion",
+          "input_role": "teacher_context",
+          "strength": "n/a",
+          "generated": 1,
+          "status": "rejected",
+          "student_eligible": false,
+          "finding": "Repeating cyan/black grid artifact; not a scene-preserving target."
+        },
+        {
+          "route": "FLUX main-stack probe",
+          "family": "FLUX Kontext FP8 conversion",
+          "input_role": "teacher_context",
+          "strength": "n/a",
+          "generated": 1,
+          "status": "rejected",
+          "student_eligible": false,
+          "finding": "The same grid artifact persisted in a second compatibility stack; license also bars competitive-model distillation."
+        },
+        {
+          "route": "Raw-input smoke validation",
+          "family": "SDXL + Canny",
+          "input_role": "raw_input",
+          "strength": "0.08",
+          "generated": 0,
+          "status": "dry-run",
+          "student_eligible": false,
+          "finding": "Dry-run only; verifies the raw-input branch without consuming GPU time or creating targets."
+        }
+      ],
+      "source": {
+        "label": "Local OpenNR-GEN route records, reviews, audits, and scores",
+        "files": [
+          "C:\\OpenNR_GEN_Static_20260910",
+          "D:\\.CODEX_Projects\\OpenNR-VR\\tools\\opennr_gen\\generate_sdxl_targets.py",
+          "D:\\.CODEX_Projects\\OpenNR-VR\\tools\\opennr_gen\\audit_static_targets.py"
+        ],
+        "filters": [
+          "OpenNR-GEN static evidence available on 2026-09-10",
+          "20 sequence-disjoint stereo moments / 40 eyes",
+          "No source test rows used for tuning"
+        ],
+        "evidenceFlow": [
+          {
+            "title": "Route inventory",
+            "detail": "Read each route's target_records.json, target_audit.json where present, target_review.json where present, and scores.json where present."
+          },
+          {
+            "title": "Visual review",
+            "detail": "Reviewed the preserved three-way and full-face galleries; route decisions distinguish structural fidelity, teacher preference, and input provenance."
+          }
+        ],
+        "metricDefinitions": [
+          {
+            "label": "Input role",
+            "definition": "The image given to the offline enhancer. raw_input is the deployable vanilla input; dlss5_teacher is an offline reference and is not available to the in-game student.",
+            "componentIds": ["finding-route-table", "finding-executive-summary"]
+          },
+          {
+            "label": "Student eligibility",
+            "definition": "False unless a complete 40-eye route passes hashes, pair completeness, visual review, and teacher-preference checks.",
+            "componentIds": ["finding-route-table", "finding-gate-table"]
+          }
+        ],
+        "caveats": [
+          "A generated image and a passing hash audit do not establish realism, geometry safety, temporal quality, stereo quality, or runtime viability.",
+          "Some probes have only one eye or two eyes and therefore cannot establish a complete stereo/static tranche."
+        ]
+      }
+    },
+    "face_metrics": {
+      "rows": [
+        {
+          "probe": "Correct raw-input face at strength 0.08",
+          "input_role": "raw_input",
+          "strength": 0.08,
+          "raw_teacher_mae": 0.05065818,
+          "target_teacher_mae": 0.05646643,
+          "target_raw_mae": 0.01428915,
+          "target_teacher_edge_mae": 0.02793699,
+          "target_raw_edge_mae": 0.01589821,
+          "target_clip_fraction": 0.00006485,
+          "visual_result": "Near raw; no teacher-like realism lift; reject"
+        },
+        {
+          "probe": "Correct raw-input face at maximum tested strength",
+          "input_role": "raw_input",
+          "strength": 0.60,
+          "raw_teacher_mae": 0.05065818,
+          "target_teacher_mae": 0.07644924,
+          "target_raw_mae": 0.05085242,
+          "target_teacher_edge_mae": 0.03215286,
+          "target_raw_edge_mae": 0.02774642,
+          "target_clip_fraction": 0.00793584,
+          "visual_result": "Psychedelic texture and facial distortion; reject"
+        },
+        {
+          "probe": "Pleasing but teacher-conditioned face at strength 0.08",
+          "input_role": "dlss5_teacher",
+          "strength": 0.08,
+          "raw_teacher_mae": 0.05065818,
+          "target_teacher_mae": 0.02068669,
+          "target_raw_mae": 0.05316539,
+          "target_teacher_edge_mae": 0.02372356,
+          "target_raw_edge_mae": 0.02193739,
+          "target_clip_fraction": 0.00263341,
+          "visual_result": "More detailed/realistic and close to teacher; invalid for deployment"
+        }
+      ],
+      "source": {
+        "label": "Matched full-face scene-019-eye0 probes",
+        "files": [
+          "C:\\OpenNR_GEN_Static_20260910\\sdxl_raw_input_face_probe_v1\\scores.json",
+          "C:\\OpenNR_GEN_Static_20260910\\sdxl_raw_input_strength060_face_probe_v1\\scores.json",
+          "C:\\OpenNR_GEN_Static_20260910\\sdxl_strength008_face_probe_v1\\scores.json"
+        ],
+        "filters": [
+          "Same scene-019-eye0 raw input and DLSS5 teacher reference",
+          "Scores are image-space proxies, not a realism metric"
+        ],
+        "evidenceFlow": [
+          {
+            "title": "Score calculation",
+            "detail": "Read the route scores.json files produced by score_static_targets.py; raw_teacher_mae is the fixed vanilla-to-teacher baseline for this face, while target_teacher_mae compares each generated target to the teacher."
+          },
+          {
+            "title": "Gallery order",
+            "detail": "Each full_face_ordered_gallery.png is ordered vanilla input, SDXL output, DLSS5 teacher."
+          }
+        ],
+        "metricDefinitions": [
+          {
+            "label": "MAE",
+            "definition": "Mean absolute pixel error in normalized RGB image space; lower means closer in pixels, not necessarily more realistic or preferable.",
+            "componentIds": ["face-metric-table", "finding-executive-summary"]
+          },
+          {
+            "label": "Target clip fraction",
+            "definition": "Fraction of output pixel channels at the normalized image bounds; it is a warning signal for clipping, not a quality score.",
+            "componentIds": ["face-metric-table"]
+          }
+        ],
+        "caveats": [
+          "The teacher-conditioned face result cannot be used to claim raw-input enhancement because the enhancer saw the teacher image.",
+          "The face probe is one eye; it does not prove stereo consistency or a complete static target tranche."
+        ]
+      }
+    },
+    "gate_status": {
+      "rows": [
+        {
+          "gate": "Immutable source pairing",
+          "status": "passed",
+          "evidence": "pilot_v1 manifest SHA 60438f20d66eee83083a23b1a4506a2c828bcbab213181022a9541d53308aaaa; 40 eyes from 20 sequence-disjoint moments.",
+          "meaning": "Raw and DLSS5 teacher images are paired for offline comparison."
+        },
+        {
+          "gate": "Source-test protection",
+          "status": "passed",
+          "evidence": "manifest source_test_used_for_tuning=false; 28 train eyes and 12 validation eyes in the selected 40-eye tranche.",
+          "meaning": "The frozen source test split was not used for tuning."
+        },
+        {
+          "gate": "Correct deployable input graph",
+          "status": "corrected",
+          "evidence": "generate_sdxl_targets.py now records --input-role raw_input|dlss5_teacher; raw-input face routes have input_role=raw_input.",
+          "meaning": "The student-facing branch can now be tested honestly, but correction does not make its outputs good."
+        },
+        {
+          "gate": "Accepted 40-eye target tranche",
+          "status": "failed",
+          "evidence": "No route has 40 generated, reviewed, accepted eyes; the best complete review records remain rejected or pending.",
+          "meaning": "There is no valid target set for GEN student training."
+        },
+        {
+          "gate": "Static student training",
+          "status": "blocked",
+          "evidence": "All target audits report target_gate=pending_or_failed and student_training_allowed=false.",
+          "meaning": "No student or checkpoint should be promoted from these targets."
+        },
+        {
+          "gate": "Temporal/stereo/runtime/VR acceptance",
+          "status": "untested",
+          "evidence": "No accepted static target route exists; no temporal run, live Skyrim route, headset, deployment, or VR-budget claim follows from these probes.",
+          "meaning": "These remain separate future gates, not implied by offline PNG generation."
+        },
+        {
+          "gate": "Cleanup",
+          "status": "completed",
+          "evidence": "Stale running metadata was closed as stopped; invalid teacher-conditioned and broken-clone routes remain preserved but explicitly classified.",
+          "meaning": "Useful evidence is retained without leaving misleading active-run state."
+        }
+      ],
+      "source": {
+        "label": "Manifest, target-audit, and target-record gate state",
+        "files": [
+          "C:\\OpenNR_GEN_Static_20260910\\pilot_v1\\manifest.json",
+          "C:\\OpenNR_GEN_Static_20260910\\pilot_v1\\target_audit_lower_smoke_reviewed.json",
+          "D:\\.CODEX_Projects\\OpenNR-VR\\tools\\opennr_gen\\audit_static_targets.py"
+        ],
+        "evidenceFlow": [
+          {
+            "title": "Static manifest audit",
+            "detail": "The selected manifest was checked for exact pairing, split protection, and coverage review before target experiments."
+          },
+          {
+            "title": "Target gate audit",
+            "detail": "Audit outputs were checked for generated count, missing records, hash mismatches, pair completeness, review status, and student_training_allowed."
+          }
+        ],
+        "metricDefinitions": [
+          {
+            "label": "Student training allowed",
+            "definition": "True only when the complete manifest is generated, hash-valid, pair-complete, fully reviewed, and every required check passes with an accept decision.",
+            "componentIds": ["finding-gate-table", "finding-executive-summary"]
+          }
+        ]
+      }
+    },
+    "artifact_index": {
+      "rows": [
+        {
+          "artifact": "Source cache",
+          "path": "C:\\OpenNR_Cache_StrictAllCohortsVariedHighEffect_0.5.5_20260907",
+          "disposition": "kept",
+          "reason": "Read-only source of raw/pre-NR and DLSS5 teacher pairs; not deleted."
+        },
+        {
+          "artifact": "Correct raw-input face gallery",
+          "path": "C:\\OpenNR_GEN_Static_20260910\\sdxl_raw_input_face_probe_v1\\full_face_ordered_gallery.png",
+          "disposition": "kept",
+          "reason": "Vanilla -> SDXL from vanilla -> teacher reference; direct evidence of the deployable-path result."
+        },
+        {
+          "artifact": "Raw-input maximum-strength gallery",
+          "path": "C:\\OpenNR_GEN_Static_20260910\\sdxl_raw_input_strength060_face_probe_v1\\full_face_ordered_gallery.png",
+          "disposition": "kept",
+          "reason": "Shows the strength ceiling failure and why more diffusion was not a solution."
+        },
+        {
+          "artifact": "Teacher-conditioned pleasing face gallery",
+          "path": "C:\\OpenNR_GEN_Static_20260910\\sdxl_strength008_face_probe_v1\\full_face_ordered_gallery.png",
+          "disposition": "kept-invalid-for-training",
+          "reason": "Useful visual control/offline result; enhancer input was the DLSS5 teacher."
+        },
+        {
+          "artifact": "Interrupted full teacher-conditioned route",
+          "path": "C:\\OpenNR_GEN_Static_20260910\\sdxl_strength008_full_v1",
+          "disposition": "kept-invalid-for-training",
+          "reason": "12 generated eyes preserved for provenance; metadata is now stopped with the correction reason."
+        },
+        {
+          "artifact": "Broken stale clone",
+          "path": "C:\\OpenNR_GEN_Static_20260910\\sdxl_strength008_probe_v1",
+          "disposition": "kept-superseded",
+          "reason": "Zero generated eyes; its wrong-root paths document the route preparation error."
+        },
+        {
+          "artifact": "Project generator and tests",
+          "path": "D:\\.CODEX_Projects\\OpenNR-VR\\tools\\opennr_gen",
+          "disposition": "kept",
+          "reason": "Isolated reproducibility tools, including explicit input-role selection and gallery rendering."
+        },
+        {
+          "artifact": "Final project report",
+          "path": "D:\\.CODEX_Projects\\OpenNR-VR\\docs\\OPENNR_GEN_FINAL_REPORT_20260910.md",
+          "disposition": "created",
+          "reason": "Single source of truth for findings, evidence scope, route decisions, and next gate."
+        }
+      ],
+      "source": {
+        "label": "OpenNR-GEN artifact disposition index",
+        "files": [
+          "C:\\OpenNR_GEN_Static_20260910",
+          "D:\\.CODEX_Projects\\OpenNR-VR\\docs\\OPENNR_GEN_FINAL_REPORT_20260910.md"
+        ],
+        "evidenceFlow": [
+          {
+            "title": "Cleanup rule",
+            "detail": "Preserve source, galleries, manifests, scores, and rejected route evidence; correct misleading run status; do not delete broad user-owned worktree changes."
+          }
+        ]
+      }
+    }
+  }
+}

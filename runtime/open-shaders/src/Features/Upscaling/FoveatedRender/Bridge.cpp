@@ -1,0 +1,44 @@
+#include "Bridge.h"
+
+#include "../../../Globals.h"
+#include "../../Upscaling.h"
+#include "../FoveatedRender.h"
+
+bool FoveatedRenderImpl::Bridge::IsRouteActive()
+{
+	// IsActive() already checks: enabledAtBoot && isVR
+	//                            && GetUpscaleMethod() is kDLSS or kFSR (selected, not just available)
+	return globals::features::upscaling.foveatedRender.IsActive();
+}
+
+void FoveatedRenderImpl::Bridge::BootSequence()
+{
+	auto& enhancer = globals::features::upscaling.foveatedRender;
+	enhancer.LatchEnabled();
+	enhancer.LatchQualityMode();
+}
+
+void FoveatedRenderImpl::Bridge::ComputeMvecScale(uint32_t eyeIndex, float& outX, float& outY)
+{
+	// Default: identity (caller's normal Streamline path).
+	outX = 1.0f;
+	outY = 1.0f;
+
+	if (!IsRouteActive())
+		return;
+
+	auto& enhancer = globals::features::upscaling.foveatedRender;
+	// Use the effective per-eye UV. Adaptive crop is deliberately a centered
+	// regular crop; a gaze/raw asymmetric region remains authoritative whenever
+	// the adaptive crop lockout is active.
+	const auto uv = (eyeIndex == 1) ? enhancer.GetEffectiveRightUV() : enhancer.GetEffectiveLeftUV();
+	const bool isFullEye = uv.IsFullEye();
+
+	if (isFullEye)
+		return;
+
+	// Default + Faster both use per-eye DLSS calls (not strip-merged), so
+	// motion vectors scale by 1/UV.w on x.
+	outX = (uv.w > 0.0f) ? (1.0f / uv.w) : 1.0f;
+	outY = (uv.h > 0.0f) ? (1.0f / uv.h) : 1.0f;
+}

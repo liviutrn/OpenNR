@@ -1,0 +1,29 @@
+{
+  "OpenNR Capture": {
+    "enable_capture": false,
+    "capture_pre_nr": true,
+    "capture_post_nr": true,
+    "capture_raw_teacher": true,
+    "capture_depth": true,
+    "capture_motion_vectors": true,
+    "capture_full_frame": true,
+    "capture_full_frame_sequence": true,
+    "capture_left_eye": true,
+    "capture_right_eye": true,
+    "capture_rate_fps": 90.0,
+    "burst_frames": 128,
+    "crop_size": 512,
+    "crop_count": 2,
+    "queue_capacity": 32,
+    "full_frame_every_samples": 0,
+    "max_samples": 128,
+    "toggle_capture_key": 219,
+    "single_capture_key": 221,
+    "burst_capture_key": 220,
+    "output_directory": "C:\\OpenNR_Captures_Temporal_20260905",
+    "crops": [
+      { "center_x": 0.50, "center_y": 0.50 },
+      { "center_x": 0.50, "center_y": 0.25 }
+    ]
+  }
+}

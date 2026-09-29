@@ -1,33 +1,47 @@
+# Local build and generated capture output
 build/
-bin/
-dist/
-.idea/
-.vs*/
-CMakeUserPresets.json
-shadertoolsconfig.json
-.vscode
+out/
+captures/
+*.capture
+*.staging
+*.readback
 
-# Folder view configuration files
-**/.DS_Store
-.claude/settings.local.json
+# Runtime/debug artifacts
+*.log
+*.pdb
+*.dmp
 
-tools/__pycache__/
+# Keep proprietary/runtime binaries out of the research repository.
+*.dll
+*.exe
 
-# Semantic Release's plugin dependencies (CI installs these into the
-# checkout via cycjimmy/semantic-release-action); also produced by a local
-# `npm install` for testing .releaserc.js/tools/release-first-parent-plugin.js.
-/node_modules/
-/package.json
-/package-lock.json
+# Local editor and OS noise
+.vs/
+.vscode/
+*.user
+*.suo
+__pycache__/
+*.py[cod]
+Thumbs.db
+Desktop.ini
 
-# feature_version_audit.py --apply-bumps output, read by
-# tools/release-notes-feature-audit-plugin.js during Semantic Release
-/feature-audit-notes.md
-
-# clangd compile database (machine-specific absolute paths; regenerate with
-# tools/gen-clangd-db.ps1)
-/compile_commands.json
-.github/scripts/__pycache__/
-
-# Proprietary DLSS Neural Rendering runtime; install locally, never distribute.
-**/nvngx_dlssnr.dll
+# External payloads and machine configuration
+/artifacts/
+/.out.relocation-staging-*/
+/_*report_app*/
+/config/paths.local.json
+*.obj
+*.pch
+*.lib
+*.exp
+*.cso
+*.pt
+*.pth
+*.onnx
+*.engine
+*.safetensors
+*.npy
+*.npz
+node_modules/
+.pytest_cache/
+.venv/

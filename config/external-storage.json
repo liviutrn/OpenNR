@@ -1,0 +1,160 @@
+{
+  "defaults": {
+    "data": "C:/OpenNR/TrainingInputs",
+    "cache": "C:/OpenNR/TrainingCache",
+    "training": "C:/OpenNR/Training",
+    "output": "C:/OpenNR/Outputs",
+    "build": "E:/OpenNR_Builds/2.15.0",
+    "dependencies": "C:/OpenNR/Dependencies/runtime-2.15.0"
+  },
+  "compatibility_moves": [
+    {
+      "source": "D:\\.CODEX_Projects\\OpenNR-VR\\.git\\objects",
+      "destination": "C:\\OpenNR\\Repositories\\OpenNR-VR.git\\objects",
+      "files": 2886,
+      "bytes": 1924449703,
+      "verifiedAt": "2026-09-13T22:01:57.0418615Z"
+    },
+    {
+      "source": "D:\\.CODEX_Projects\\OpenNR-VR\\_dlss5_amd_hip_linux_report_app_20260913",
+      "destination": "C:\\OpenNR\\Reports\\LegacyApps\\_dlss5_amd_hip_linux_report_app_20260913",
+      "files": 252,
+      "bytes": 4808450,
+      "verifiedAt": "2026-09-13T22:01:34.8140990Z"
+    },
+    {
+      "source": "D:\\.CODEX_Projects\\DLSS_5_SKYRIM\\dist",
+      "destination": "E:\\OpenNR_Builds\\Legacy-20260913\\dist",
+      "files": 2,
+      "bytes": 288574503,
+      "verifiedAt": "2026-09-13T22:02:46.6760646Z"
+    },
+    {
+      "source": "D:\\.CODEX_Projects\\DLSS_5_SKYRIM\\work\\open-nr-eye-tracking-experiment-20260912\\build",
+      "destination": "E:\\OpenNR_Builds\\Legacy-20260913\\work\\open-nr-eye-tracking-experiment-20260912\\build",
+      "files": 4988,
+      "bytes": 490095026,
+      "verifiedAt": "2026-09-13T21:47:35.4948826Z"
+    },
+    {
+      "source": "D:\\.CODEX_Projects\\OpenNR\\out",
+      "destination": "C:\\OpenNR\\Relocated\\OpenNR-legacy-output-20260913",
+      "files": 3,
+      "bytes": 49771165,
+      "verifiedAt": "2026-09-13T21:45:30.5308023Z"
+    },
+    {
+      "source": "D:\\.CODEX_Projects\\DLSS_5_SKYRIM\\vendor\\open-shaders-dlssnr-vr-091bfb4d\\dist",
+      "destination": "E:\\OpenNR_Builds\\Legacy-20260913\\vendor\\open-shaders-dlssnr-vr-091bfb4d\\dist",
+      "files": 3,
+      "bytes": 740676595,
+      "verifiedAt": "2026-09-13T21:56:19.8452561Z"
+    },
+    {
+      "source": "D:\\.CODEX_Projects\\DLSS_5_SKYRIM\\work\\open-nr-adaptive-handoff-2.14.8-fixed-20260913\\build",
+      "destination": "E:\\OpenNR_Builds\\Legacy-20260913\\work\\open-nr-adaptive-handoff-2.14.8-fixed-20260913\\build",
+      "files": 17460,
+      "bytes": 14580621763,
+      "verifiedAt": "2026-09-13T21:55:03.7561904Z"
+    },
+    {
+      "source": "D:\\.CODEX_Projects\\OpenNR-VR\\_opennr_gen_final_report_app2",
+      "destination": "C:\\OpenNR\\Reports\\LegacyApps\\_opennr_gen_final_report_app2",
+      "files": 255,
+      "bytes": 12329195,
+      "verifiedAt": "2026-09-13T22:01:33.1328292Z"
+    },
+    {
+      "source": "D:\\.CODEX_Projects\\DLSS_5_SKYRIM\\work\\open-nr-2.14.5-all-features-20260912\\dist",
+      "destination": "E:\\OpenNR_Builds\\Legacy-20260913\\work\\open-nr-2.14.5-all-features-20260912\\dist",
+      "files": 1,
+      "bytes": 228102246,
+      "verifiedAt": "2026-09-13T21:55:10.0578658Z"
+    },
+    {
+      "source": "D:\\.CODEX_Projects\\DLSS_5_SKYRIM\\work\\open-nr-eye-tracking-experiment-20260912\\dist",
+      "destination": "E:\\OpenNR_Builds\\Legacy-20260913\\work\\open-nr-eye-tracking-experiment-20260912\\dist",
+      "files": 1,
+      "bytes": 227933879,
+      "verifiedAt": "2026-09-13T21:47:07.0479515Z"
+    },
+    {
+      "source": "D:\\.CODEX_Projects\\DLSS_5_SKYRIM\\work\\open-nr-adaptive-handoff-2.14.8-fixed-20260913\\dist",
+      "destination": "E:\\OpenNR_Builds\\Legacy-20260913\\work\\open-nr-adaptive-handoff-2.14.8-fixed-20260913\\dist",
+      "files": 2,
+      "bytes": 518577570,
+      "verifiedAt": "2026-09-13T21:47:38.6155644Z"
+    },
+    {
+      "source": "D:\\.CODEX_Projects\\DLSS_5_SKYRIM\\work\\open-shaders-adaptive-nr-handoff-study-opennr-20260913\\build",
+      "destination": "E:\\OpenNR_Builds\\Legacy-20260913\\work\\open-shaders-adaptive-nr-handoff-study-opennr-20260913\\build",
+      "files": 19090,
+      "bytes": 7596698380,
+      "verifiedAt": "2026-09-13T21:43:54.7119148Z"
+    },
+    {
+      "source": "D:\\.CODEX_Projects\\DLSS_5_SKYRIM\\work\\open-shaders-2.12.0-open-nr\\build",
+      "destination": "E:\\OpenNR_Builds\\Legacy-20260913\\work\\open-shaders-2.12.0-open-nr\\build",
+      "files": 15509,
+      "bytes": 13043129285,
+      "verifiedAt": "2026-09-13T21:47:04.1776219Z"
+    },
+    {
+      "source": "D:\\.CODEX_Projects\\DLSS_5_SKYRIM\\work\\open-shaders-2.12.0-open-nr\\dist",
+      "destination": "E:\\OpenNR_Builds\\Legacy-20260913\\work\\open-shaders-2.12.0-open-nr\\dist",
+      "files": 1,
+      "bytes": 142469023,
+      "verifiedAt": "2026-09-13T21:43:59.3267371Z"
+    },
+    {
+      "source": "D:\\.CODEX_Projects\\DLSS_5_SKYRIM\\vendor\\open-shaders-dlssnr-vr-091bfb4d\\build",
+      "destination": "E:\\OpenNR_Builds\\Legacy-20260913\\vendor\\open-shaders-dlssnr-vr-091bfb4d\\build",
+      "files": 27592,
+      "bytes": 16576950253,
+      "verifiedAt": "2026-09-13T22:00:40.3304824Z"
+    },
+    {
+      "source": "D:\\.CODEX_Projects\\DLSS_5_SKYRIM\\staging",
+      "destination": "E:\\OpenNR_Builds\\Legacy-20260913\\staging",
+      "files": 3210,
+      "bytes": 3252452837,
+      "verifiedAt": "2026-09-13T22:01:19.7497320Z"
+    },
+    {
+      "source": "D:\\.CODEX_Projects\\OpenNR-VR\\_opennr_gen_final_report_app",
+      "destination": "C:\\OpenNR\\Reports\\LegacyApps\\_opennr_gen_final_report_app",
+      "files": 248,
+      "bytes": 1875304,
+      "verifiedAt": "2026-09-13T22:01:31.1058602Z"
+    },
+    {
+      "source": "D:\\OpenNR_TrainingInputs",
+      "destination": "C:\\OpenNR\\TrainingInputs\\Migrated-D-20260913",
+      "files": 13,
+      "bytes": 8943283631,
+      "verifiedAt": "2026-09-13T21:40:10.2868964Z"
+    },
+    {
+      "source": "D:\\.CODEX_Projects\\DLSS_5_SKYRIM\\work\\open-nr-2.14.5-all-features-20260912\\build",
+      "destination": "E:\\OpenNR_Builds\\Legacy-20260913\\work\\open-nr-2.14.5-all-features-20260912\\build",
+      "files": 5235,
+      "bytes": 5443937640,
+      "verifiedAt": "2026-09-13T21:56:16.0911450Z"
+    },
+    {
+      "source": "D:\\.CODEX_Projects\\DLSS_5_SKYRIM\\open-shaders-dlssnr-public-pr\\build",
+      "destination": "E:\\OpenNR_Builds\\Legacy-20260913\\open-shaders-dlssnr-public-pr\\build",
+      "files": 10105,
+      "bytes": 5115676587,
+      "verifiedAt": "2026-09-13T22:02:44.3501006Z"
+    }
+  ],
+  "unavailable": [
+    {
+      "path": "C:/OpenNR_Captures_FullRes_Pilot_20260904",
+      "target": "H:/OpenNR-ColdStorage/RawCaptures/OpenNR_Captures_FullRes_Pilot_20260904",
+      "status": "H: not mounted; retain provenance"
+    }
+  ],
+  "recovery_root": "C:\\OpenNR\\ConsolidationBackups\\20260913"
+}

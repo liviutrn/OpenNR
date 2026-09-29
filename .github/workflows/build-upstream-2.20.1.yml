@@ -1,0 +1,234 @@
+name: Build OpenNR 2.20.1-v00
+
+on:
+  push:
+    branches: ["build/upstream-v2.20.1"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build OpenNR 2.20.1-v00 public-source package
+    runs-on: windows-2025
+    steps:
+      - name: Check out upstream 2.20.1 build branch
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 1
+
+      - name: Verify exact upstream source
+        shell: pwsh
+        run: |
+          $version = (Get-Content VERSION -Raw).Trim()
+          if ($version -ne '2.20.1') { throw "Expected VERSION 2.20.1, got $version" }
+          @(
+            "runtime/open-shaders/CMakePresets.json",
+            "runtime/open-shaders/vcpkg.json",
+            "runtime/open-shaders/src/Features/Upscaling/NeuralRendering/SettingsBenchmark.cpp",
+            "runtime/open-shaders/src/Features/Upscaling/NeuralRendering/BenchmarkPolicy.h"
+          ) | ForEach-Object {
+            if (-not (Test-Path $_)) { throw "Missing required build input: $_" }
+          }
+          git diff --check
+
+      - name: Apply 2.20.1-v00 gaze-history fix
+        shell: pwsh
+        run: |
+          $patch = "patches/2.20.1-v00-gaze-history.patch"
+          if (-not (Test-Path $patch)) { throw "Missing v00 patch: $patch" }
+
+          git apply --reject $patch
+          $applyExit = $LASTEXITCODE
+          $rejects = @(Get-ChildItem "runtime/open-shaders" -Filter "*.rej" -Recurse)
+          $expectedReject = (Resolve-Path "runtime/open-shaders/src/Features/Upscaling/NeuralRendering").Path + "\Renderer.cpp.rej"
+          if ($applyExit -ne 0) {
+            if ($rejects.Count -ne 1 -or $rejects[0].FullName -ne $expectedReject) {
+              $rejects | ForEach-Object { Write-Host "Unexpected reject: $($_.FullName)" }
+              throw "v00 patch produced unexpected rejects"
+            }
+
+            $renderer = "runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Renderer.cpp"
+            $text = (Get-Content $renderer -Raw).Replace("`r`n", "`n")
+            $old = @(
+              "`t`treturn state_->ApplyStereo(device, context, color, eyes,",
+              "`t`t`tguideWidth, guideHeight, colorWidth, colorHeight, tuning,",
+              "`t`t`t`tdestination, destinationUAV, blendSubrect, resourceEnvelope);",
+              "`t}",
+              "",
+              "`tbool Renderer::Reset() { return state_->Reset(); }",
+              "`tvoid Renderer::ClearShaderCache() { state_->ClearShaderCache(); }",
+              "`tvoid Renderer::ResetHistory() { state_->ResetHistory(); }"
+            ) -join "`n"
+            $new = @(
+              "`t`tconst bool succeeded = state_->ApplyStereo(device, context, color, eyes,",
+              "`t`t`tguideWidth, guideHeight, colorWidth, colorHeight, tuning,",
+              "`t`t`t`tdestination, destinationUAV, blendSubrect, resourceEnvelope);",
+              "`t`tfor (std::uint32_t eye = 0; eye < 2; ++eye)",
+              "`t`t`tFoveatedRenderImpl::CropMotion::Commit(2 + eye, succeeded && eyes[eye].compensateCropMotion);",
+              "`t`treturn succeeded;",
+              "`t}",
+              "",
+              "`tbool Renderer::Reset() { FoveatedRenderImpl::CropMotion::Invalidate(2, 2); return state_->Reset(); }",
+              "`tvoid Renderer::ClearShaderCache() { state_->ClearShaderCache(); }",
+              "`tvoid Renderer::ResetHistory() { FoveatedRenderImpl::CropMotion::Invalidate(2, 2); state_->ResetHistory(); }"
+            ) -join "`n"
+            if (-not $text.Contains($old)) { throw "Expected Renderer wrapper text missing after partial v00 patch" }
+            $text = $text.Replace($old, $new)
+            [IO.File]::WriteAllText((Resolve-Path $renderer), $text, [Text.UTF8Encoding]::new($false))
+            Remove-Item $rejects[0].FullName -Force
+          }
+
+          git diff --check
+          if ($LASTEXITCODE -ne 0) { throw "Patched source has whitespace errors" }
+          if (Get-ChildItem "runtime/open-shaders" -Filter "*.rej" -Recurse) { throw "Unexpected patch reject remains" }
+          git diff --stat
+
+      - name: Permit carrier-excluded CI package
+        shell: pwsh
+        run: |
+          $runtimePath = "runtime/open-shaders/cmake/Streamline-Runtime.cmake"
+          $text = Get-Content $runtimePath -Raw
+          $startToken = 'if(NOT EXISTS "${OPENNR_DLSSNR_RUNTIME_SOURCE}")'
+          $endToken = 'list(APPEND STREAMLINE_RUNTIME_FILES "${_opennr_dlssnr_runtime_destination}")'
+          $start = $text.IndexOf($startToken)
+          $endStart = $text.IndexOf($endToken, $start)
+          if ($start -lt 0 -or $endStart -lt 0) { throw "Could not locate DLSS-NR carrier staging block" }
+          $end = $endStart + $endToken.Length
+          $replacement = @(
+            'if(EXISTS "${OPENNR_DLSSNR_RUNTIME_SOURCE}")',
+            '    file(SIZE "${OPENNR_DLSSNR_RUNTIME_SOURCE}" _opennr_dlssnr_runtime_size)',
+            '    if(_opennr_dlssnr_runtime_size LESS 1048576)',
+            '        message(FATAL_ERROR',
+            '            "OpenNR Feature 18 carrier is implausibly small: ${_opennr_dlssnr_runtime_size} bytes"',
+            '        )',
+            '    endif()',
+            '    set(_opennr_dlssnr_runtime_destination',
+            '        "${STREAMLINE_RUNTIME_DIRECTORY}/nvngx_dlssnr.dll"',
+            '    )',
+            '    file(COPY_FILE',
+            '        "${OPENNR_DLSSNR_RUNTIME_SOURCE}"',
+            '        "${_opennr_dlssnr_runtime_destination}"',
+            '        ONLY_IF_DIFFERENT',
+            '    )',
+            '    list(APPEND STREAMLINE_RUNTIME_FILES "${_opennr_dlssnr_runtime_destination}")',
+            'else()',
+            '    message(WARNING',
+            '        "Building public-source OpenNR 2.20.1 without the locally supplied nvngx_dlssnr.dll carrier. "',
+            '        "CommunityShaders.dll will still be compiled from the patched 2.20.1-v00 sources."',
+            '    )',
+            'endif()'
+          ) -join "`n"
+          $text = $text.Substring(0, $start) + $replacement + $text.Substring($end)
+          Set-Content -Path $runtimePath -Value $text -NoNewline
+
+          $sourceValidator = "runtime/open-shaders/cmake/ValidateOpenNRSourceContracts.cmake"
+          $v = Get-Content $sourceValidator -Raw
+          $needle = '   NOT EXISTS "${_dlssnr_carrier_path}" OR'
+          if (-not $v.Contains($needle)) { throw "Could not locate carrier existence assertion in source validator" }
+          $v = $v.Replace($needle, '   FALSE OR')
+          $sizeStartToken = 'file(SIZE "${_dlssnr_carrier_path}" _source_dlssnr_size)'
+          $sizeStart = $v.IndexOf($sizeStartToken)
+          $sizeEndStart = $v.IndexOf('endif()', $sizeStart)
+          if ($sizeStart -lt 0 -or $sizeEndStart -lt 0) { throw "Could not locate carrier size assertion in source validator" }
+          $sizeEnd = $sizeEndStart + 'endif()'.Length
+          $sizeBlock = $v.Substring($sizeStart, $sizeEnd - $sizeStart)
+          $wrappedSizeBlock = 'if(EXISTS "${_dlssnr_carrier_path}")' + "`n" + $sizeBlock + "`nendif()"
+          $v = $v.Substring(0, $sizeStart) + $wrappedSizeBlock + $v.Substring($sizeEnd)
+          Set-Content -Path $sourceValidator -Value $v -NoNewline
+
+          $packageValidator = "runtime/open-shaders/cmake/ValidateOpenNRPackage.cmake"
+          $p = Get-Content $packageValidator -Raw
+          $requiredCarrier = '    "Shaders/Upscaling/Streamline/nvngx_dlssnr.dll"'
+          if (-not $p.Contains($requiredCarrier)) { throw "Could not locate carrier manifest entry in package validator" }
+          $p = $p.Replace($requiredCarrier, '')
+          $pkgSizeStartToken = 'file(SIZE "${PACKAGE_ROOT}/Shaders/Upscaling/Streamline/nvngx_dlssnr.dll" _dlssnr_size)'
+          $pkgSizeStart = $p.IndexOf($pkgSizeStartToken)
+          $pkgSizeEndStart = $p.IndexOf('endif()', $pkgSizeStart)
+          if ($pkgSizeStart -lt 0 -or $pkgSizeEndStart -lt 0) { throw "Could not locate carrier size assertion in package validator" }
+          $pkgSizeEnd = $pkgSizeEndStart + 'endif()'.Length
+          $pkgSizeBlock = $p.Substring($pkgSizeStart, $pkgSizeEnd - $pkgSizeStart)
+          $pkgWrapped = 'if(EXISTS "${PACKAGE_ROOT}/Shaders/Upscaling/Streamline/nvngx_dlssnr.dll")' + "`n" + $pkgSizeBlock + "`nelse()`n    set(_dlssnr_size 0)`nendif()"
+          $p = $p.Substring(0, $pkgSizeStart) + $pkgWrapped + $p.Substring($pkgSizeEnd)
+          $hashLine = 'file(SHA256 "${PACKAGE_ROOT}/Shaders/Upscaling/Streamline/nvngx_dlssnr.dll" _dlssnr_sha256)'
+          if (-not $p.Contains($hashLine)) { throw "Could not locate carrier hash assertion in package validator" }
+          $hashReplacement = @(
+            'if(EXISTS "${PACKAGE_ROOT}/Shaders/Upscaling/Streamline/nvngx_dlssnr.dll")',
+            '    file(SHA256 "${PACKAGE_ROOT}/Shaders/Upscaling/Streamline/nvngx_dlssnr.dll" _dlssnr_sha256)',
+            'else()',
+            '    set(_dlssnr_sha256 "carrier-excluded")',
+            'endif()'
+          ) -join "`n"
+          $p = $p.Replace($hashLine, $hashReplacement)
+          Set-Content -Path $packageValidator -Value $p -NoNewline
+
+      - name: Set up MSVC
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Install CMake
+        uses: lukka/get-cmake@v4.3.3
+        with:
+          cmakeVersion: "~4.2.0"
+          useCloudCache: false
+
+      - name: Bootstrap pinned vcpkg
+        shell: pwsh
+        run: |
+          $vcpkg = Join-Path $env:GITHUB_WORKSPACE "vcpkg"
+          git clone https://github.com/microsoft/vcpkg.git $vcpkg
+          Push-Location $vcpkg
+          $baseline = (Get-Content "$env:GITHUB_WORKSPACE/runtime/open-shaders/vcpkg.json" -Raw | ConvertFrom-Json).'builtin-baseline'
+          git checkout $baseline
+          & .\bootstrap-vcpkg.bat -disableMetrics
+          Pop-Location
+          "VCPKG_ROOT=$vcpkg" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Configure and package
+        shell: pwsh
+        working-directory: runtime/open-shaders
+        run: |
+          $dist = Join-Path $env:GITHUB_WORKSPACE "dist"
+          cmake --preset OpenNR-Package "-DDIST_PATH=$dist"
+          cmake --build --preset Package --parallel
+
+      - name: Mark revision and carrier requirement
+        shell: pwsh
+        run: |
+          @(
+            'OpenNR 2.20.1-v00 — gaze-history fix',
+            '',
+            'Base: upstream OpenNR 2.20.1 commit 9b6340870f3910d81917f167245885b50216654f.',
+            'CI carrier-support baseline: 441ec3d988e64cf6e3a4a719f9bf1713f4e7783f.',
+            '',
+            'v00 ports the previously successful OpenNR 2.15.1 gaze-history fix:',
+            '- preserve temporal history during ordinary small gaze-crop moves;',
+            '- compensate SR and Feature 18 motion vectors for crop-origin movement;',
+            '- keep independent SR/NR per-eye crop histories;',
+            '- reset on missing frame, crop resize, motion-scale change, invalid scale, or crop jump above 25% of the crop extent.',
+            '',
+            "NVIDIA's native Feature 18 carrier is intentionally not distributed in the public source tree:",
+            '  Shaders/Upscaling/Streamline/nvngx_dlssnr.dll',
+            '',
+            'Before using DLSS 5 / Feature 18, add a validated nvngx_dlssnr.dll from your existing licensed OpenNR installation to that path.'
+          ) | Set-Content -Path dist\README-2.20.1-v00.txt
+
+      - name: List output and hashes
+        shell: pwsh
+        run: |
+          Get-ChildItem -Recurse dist | Format-Table FullName,Length
+          Get-ChildItem -Recurse dist -File | ForEach-Object {
+            $h = Get-FileHash $_.FullName -Algorithm SHA256
+            "$($h.Hash)  $($_.FullName)"
+          } | Tee-Object -FilePath dist\SHA256SUMS.txt
+
+      - name: Upload package
+        uses: actions/upload-artifact@v4
+        with:
+          name: OpenNR-2.20.1-v00-gaze-history-carrier-excluded
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 14

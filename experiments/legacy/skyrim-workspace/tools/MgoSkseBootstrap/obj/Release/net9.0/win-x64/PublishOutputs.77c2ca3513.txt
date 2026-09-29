@@ -1,0 +1,4 @@
+D:\.CODEX_Projects\DLSS_5_SKYRIM\tools\MgoSkseBootstrap\publish\DLSS5-SKSE-Bridge.exe
+D:\.CODEX_Projects\DLSS_5_SKYRIM\tools\MgoSkseBootstrap\publish\DLSS5-SKSE-Bridge.dll
+D:\.CODEX_Projects\DLSS_5_SKYRIM\tools\MgoSkseBootstrap\publish\DLSS5-SKSE-Bridge.deps.json
+D:\.CODEX_Projects\DLSS_5_SKYRIM\tools\MgoSkseBootstrap\publish\DLSS5-SKSE-Bridge.runtimeconfig.json

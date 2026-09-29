@@ -1,0 +1,43 @@
+{
+  "schemaVersion": 1,
+  "project": "OpenNR-VR",
+  "role": "private teacher baseline",
+  "baseline": {
+    "displayName": "Open Shaders DLSSNR VR 0.4.5 (MGO Dev)",
+    "packageName": "DLSSNR-MGO-VR-Private-DLSSNR-Only",
+    "version": "0.4.5-mgo-vr.1-private-dev",
+    "variant": "single-mo2-fomod-private-dev-vr",
+    "generatedUtc": "2026-09-03T01:21:18.7209874Z",
+    "archivePath": "D:\\.CODEX_Projects\\DLSS_5_SKYRIM\\dist\\Open-Shaders-DLSSNR-VR-0.4.5-MGO-Dev-PRIVATE-DLSSNR-ONLY-MO2.zip",
+    "archiveSha256": "384B9EE1DE55A128BD842F8FFBE279B115F1451C6648873985036AE924D437CB",
+    "sourceCheckout": "D:\\.CODEX_Projects\\DLSS_5_SKYRIM\\vendor\\open-shaders-dlssnr-vr-091bfb4d",
+    "sourceCommit": "3bd930002a96135cff5b092a7e55e11cf28bc912",
+    "sourceBranch": "feature/dlssnr-vr",
+    "sourceDirty": true,
+    "fidelityFXSubmoduleCommit": "c6eb2b7f665ca4f4ddd95d45011af506baec3ec5"
+  },
+  "build": {
+    "configuration": "Release",
+    "generator": "Ninja",
+    "communityShadersVersion": "2.10.1.0",
+    "communityShadersSha256": "8DDBE76180F69F432114F7C933688AB462C629C9418D604E834191A6B837FFC6",
+    "communityShadersSigned": false
+  },
+  "teacherRuntime": {
+    "featureId": 18,
+    "runtimeDll": "nvngx_dlssnr.dll",
+    "runtimeVersion": "310,8,0,0",
+    "runtimeSha256": "E16BCF15E16E13F527491CDF7845B2FE6521A738D8F7C9C721866A8496E1FC8E",
+    "target": "Skyrim VR / MGO on RTX 50 / SM120",
+    "vr": true,
+    "defaultCaptureRoute": "post-upscale, before UI/image-space composite",
+    "defaultModelResolutionPercent": 100
+  },
+  "policy": {
+    "vendorSourceCheckout": false,
+    "vendorProprietaryRuntime": false,
+    "modifyTeacherCheckout": false,
+    "phase0Training": false,
+    "phase0RenderingReplacement": false
+  }
+}
