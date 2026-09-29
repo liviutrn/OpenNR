@@ -1,4 +1,5 @@
 name: Build OpenNR 2.20.1-v00
+# v00 build trigger after Renderer CRLF normalization
 
 on:
   push:
