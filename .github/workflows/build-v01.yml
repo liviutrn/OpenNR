@@ -36,7 +36,7 @@ jobs:
             'scripts/v01/apply-sequential-renderer-fixed2.ps1',
             'scripts/v01/apply-pass2-composite.ps1',
             'scripts/v01/apply-stereo-atlas.ps1',
-            'scripts/v01/apply-stereo-atlas-fixed.ps1',
+            'scripts/v01/apply-stereo-atlas-fixed2.ps1',
             'scripts/v01/apply-ui.ps1',
             'runtime/open-shaders/features/Upscaling/Shaders/Upscaling/NeuralRendering/SequentialCompositeCS.hlsl',
             'runtime/open-shaders/features/Upscaling/Shaders/Upscaling/NeuralRendering/StereoAtlasPackColorCS.hlsl',
@@ -64,7 +64,7 @@ jobs:
           @(
             'scripts/v01/apply-sequential-renderer-fixed2.ps1',
             'scripts/v01/apply-pass2-composite.ps1',
-            'scripts/v01/apply-stereo-atlas-fixed.ps1',
+            'scripts/v01/apply-stereo-atlas-fixed2.ps1',
             'scripts/v01/apply-ui.ps1'
           ) | ForEach-Object {
             Write-Host "Applying $_"
