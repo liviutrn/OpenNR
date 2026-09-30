@@ -34,6 +34,7 @@ jobs:
             'scripts/v01/apply-gaze-sequential-fixed3.ps1',
             'scripts/v01/apply-sequential-renderer.ps1',
             'scripts/v01/apply-sequential-renderer-fixed2.ps1',
+            'scripts/v01/apply-pass2-composite.ps1',
             'scripts/v01/permit-carrier-excluded.ps1'
           ) | ForEach-Object { if (-not (Test-Path $_)) { throw "Missing v01 input: $_" } }
           git diff --check
@@ -50,11 +51,12 @@ jobs:
         shell: pwsh
         run: pwsh -NoProfile -File scripts/v01/apply-gaze-sequential-fixed3.ps1
 
-      - name: Apply optional later v01 renderer stages
+      - name: Apply v01 renderer stages
         shell: pwsh
         run: |
           @(
             'scripts/v01/apply-sequential-renderer-fixed2.ps1',
+            'scripts/v01/apply-pass2-composite.ps1',
             'scripts/v01/apply-stereo-atlas.ps1',
             'scripts/v01/apply-ui.ps1'
           ) | ForEach-Object {
