@@ -5,6 +5,10 @@ on:
     branches: ["build/2.20.1-v01"]
   workflow_dispatch:
 
+concurrency:
+  group: opennr-v01-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
@@ -37,6 +41,7 @@ jobs:
             'scripts/v01/apply-pass2-composite.ps1',
             'scripts/v01/apply-stereo-atlas.ps1',
             'scripts/v01/apply-stereo-atlas-fixed2.ps1',
+            'scripts/v01/apply-atlas-safety.ps1',
             'scripts/v01/apply-ui.ps1',
             'runtime/open-shaders/features/Upscaling/Shaders/Upscaling/NeuralRendering/SequentialCompositeCS.hlsl',
             'runtime/open-shaders/features/Upscaling/Shaders/Upscaling/NeuralRendering/StereoAtlasPackColorCS.hlsl',
@@ -65,6 +70,7 @@ jobs:
             'scripts/v01/apply-sequential-renderer-fixed2.ps1',
             'scripts/v01/apply-pass2-composite.ps1',
             'scripts/v01/apply-stereo-atlas-fixed2.ps1',
+            'scripts/v01/apply-atlas-safety.ps1',
             'scripts/v01/apply-ui.ps1'
           ) | ForEach-Object {
             Write-Host "Applying $_"
@@ -125,6 +131,7 @@ jobs:
             '- independent pass-2 Feature 18 and edge-composite controls;',
             '- continuous gaze stabilization;',
             '- optional stereo atlas with configurable replicated-edge guard;',
+            '- atlas/native-stereo histories are isolated across mode handoff;',
             '- normal independent-eye route retained for A/B and fallback.',
             '',
             'nvngx_dlssnr.dll is intentionally carrier-excluded from this public artifact.',
