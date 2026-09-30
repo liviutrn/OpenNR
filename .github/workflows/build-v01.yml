@@ -35,6 +35,13 @@ jobs:
             'scripts/v01/apply-sequential-renderer.ps1',
             'scripts/v01/apply-sequential-renderer-fixed2.ps1',
             'scripts/v01/apply-pass2-composite.ps1',
+            'scripts/v01/apply-stereo-atlas.ps1',
+            'scripts/v01/apply-stereo-atlas-fixed.ps1',
+            'scripts/v01/apply-ui.ps1',
+            'runtime/open-shaders/features/Upscaling/Shaders/Upscaling/NeuralRendering/SequentialCompositeCS.hlsl',
+            'runtime/open-shaders/features/Upscaling/Shaders/Upscaling/NeuralRendering/StereoAtlasPackColorCS.hlsl',
+            'runtime/open-shaders/features/Upscaling/Shaders/Upscaling/NeuralRendering/StereoAtlasPackDepthCS.hlsl',
+            'runtime/open-shaders/features/Upscaling/Shaders/Upscaling/NeuralRendering/StereoAtlasPackMotionCS.hlsl',
             'scripts/v01/permit-carrier-excluded.ps1'
           ) | ForEach-Object { if (-not (Test-Path $_)) { throw "Missing v01 input: $_" } }
           git diff --check
@@ -57,14 +64,12 @@ jobs:
           @(
             'scripts/v01/apply-sequential-renderer-fixed2.ps1',
             'scripts/v01/apply-pass2-composite.ps1',
-            'scripts/v01/apply-stereo-atlas.ps1',
+            'scripts/v01/apply-stereo-atlas-fixed.ps1',
             'scripts/v01/apply-ui.ps1'
           ) | ForEach-Object {
-            if (Test-Path $_) {
-              Write-Host "Applying $_"
-              pwsh -NoProfile -File $_
-              if ($LASTEXITCODE -ne 0) { throw "v01 transformation failed: $_" }
-            }
+            Write-Host "Applying $_"
+            pwsh -NoProfile -File $_
+            if ($LASTEXITCODE -ne 0) { throw "v01 transformation failed: $_" }
           }
           git diff --check
           if ($LASTEXITCODE -ne 0) { throw 'Transformed v01 source has whitespace errors' }
@@ -114,10 +119,10 @@ jobs:
             'Base upstream commit: 9b6340870f3910d81917f167245885b50216654f',
             'v00 gaze-history base retained.',
             '',
-            'v01 goals:',
+            'v01 checkpoint includes:',
             '- 2x sequential Feature 18 with fixed/adaptive/eye-tracked crop;',
             '- pass-2 crop relative to live pass-1 crop;',
-            '- independent pass-2 tuning and edge controls;',
+            '- independent pass-2 Feature 18 and edge-composite controls;',
             '- continuous gaze stabilization;',
             '- optional stereo atlas with configurable replicated-edge guard;',
             '- normal independent-eye route retained for A/B and fallback.',
