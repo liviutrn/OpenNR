@@ -31,7 +31,7 @@ jobs:
             'scripts/v01/apply-v00-base.ps1',
             'scripts/v01/apply-settings.ps1',
             'scripts/v01/apply-gaze-sequential.ps1',
-            'scripts/v01/apply-gaze-sequential-fixed2.ps1',
+            'scripts/v01/apply-gaze-sequential-fixed3.ps1',
             'scripts/v01/permit-carrier-excluded.ps1'
           ) | ForEach-Object { if (-not (Test-Path $_)) { throw "Missing v01 input: $_" } }
           git diff --check
@@ -46,7 +46,7 @@ jobs:
 
       - name: Apply v01 gaze and sequential route
         shell: pwsh
-        run: pwsh -NoProfile -File scripts/v01/apply-gaze-sequential-fixed2.ps1
+        run: pwsh -NoProfile -File scripts/v01/apply-gaze-sequential-fixed3.ps1
 
       - name: Apply optional later v01 renderer stages
         shell: pwsh
