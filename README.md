@@ -1,4 +1,70 @@
-# OpenNR 2.20.1
+# OpenNR 2.20.1-v01 — Sequential Gaze + Stereo Atlas Experimental Build
+
+This branch is a substantially modified experimental build of **OpenNR 2.20.1**, based on the upstream OpenNR project by **olekspa**. The upstream project and attribution remain intact; the changes below describe the custom `liviutrn/OpenNR` v01 line.
+
+## What v01 changes
+
+The main v01 work is focused on **DLSS5 / Feature18 in VR**, especially eye-tracked foveated rendering, sequential neural rendering, and reducing Feature18's fixed invocation cost.
+
+v01 adds or changes:
+
+- **2× sequential Feature18 with fixed, adaptive, and eye-tracked crops** instead of restricting sequential NR to Full Eye.
+- **Relative Pass-2 coverage** at 100/90/80/70/60/50% of the current live Pass-1 crop.
+- A **compact reduced Pass-2 resource**, so smaller P2 regions reduce pixel-dependent work rather than evaluating a full-size texture and masking it afterward.
+- **Independent Pass-2 Feature18 tuning** for intensity, local tone, local structure, skin structure, style, AutoMask, and UI correction.
+- **Independent P2 edge compositing** with Hard Copy, Feather, Dither, Rectangle/Oval masks, falloff, feather width, and dither strength.
+- **Continuous gaze stabilization** replacing the old large hard crop-origin dead zone while retaining the working v00 crop-motion history compensation.
+- **Eye tracking + adaptive crop coexistence**: gaze owns center/origin; adaptive control may scale crop size around the live gaze point.
+- An optional **stereo-atlas mode** that packs `LEFT | replicated-edge guard | RIGHT` and can evaluate Feature18 once per stereo pair per pass.
+- A **configurable atlas guard**, default 50 px, with matching color/depth/motion-vector atlas packing.
+- **Dedicated atlas Feature18 history slots**, isolated from normal left/right histories.
+- **Atlas/native-stereo temporal handoff safety** so toggling/fallback cannot revive stale history.
+- **GPU-safe atlas failure handling**, waiting for D3D12/interop idle before retiring a potentially in-flight native Feature18 handle.
+- Normal independent-eye stereo retained as the **A/B and fail-safe fallback path**.
+- A reproducible GitHub Actions transformation/build/package pipeline for this experimental line.
+
+### Important current limitations
+
+v01 compiles and packages successfully, but some settings plumbing is intentionally ahead of renderer execution:
+
+- independent **Pass-2 model resolution** is not yet fully implemented;
+- the broader **adaptive FPS/frametime controller** still needs further work, including explicit budgeting of estimated P2 cost;
+- before/after-NR **sharpening** fields exist but are not yet a finished robust implementation;
+- stereo-atlas still requires real in-headset performance and image-quality validation.
+
+## v01 technical documentation
+
+For the complete architecture, implementation order, history rules, active transformation scripts, known limitations, build environment, artifact identity, and v02 continuation instructions, see:
+
+**[OpenNR 2.20.1-v01 Technical README](docs/versions/2.20.1-v01/README.md)**
+
+The original pre-implementation v01 design contract is preserved separately at:
+
+[docs/2.20.1-v01-IMPLEMENTATION.md](docs/2.20.1-v01-IMPLEMENTATION.md)
+
+## Validated v01 build
+
+Known-good v01 code baseline:
+
+`9b5e9ccffa931e3394044091be1a5c82e2486669`
+
+Successful GitHub Actions build:
+
+https://github.com/liviutrn/OpenNR/actions/runs/36716356725
+
+Artifact:
+
+`OpenNR-2.20.1-v01-carrier-excluded`
+
+Artifact SHA-256:
+
+`2cf53b1f7d60b54ec69d8cab03ff22cb7a47a23265bc3924c8572bbfa11ffb27`
+
+The public artifact intentionally excludes `nvngx_dlssnr.dll`; use a validated licensed carrier from an existing legitimate OpenNR installation.
+
+---
+
+# Base OpenNR 2.20.1 project
 
 OpenNR is a VR neural-rendering development project combining the native Open Shaders integration, synchronized capture, and separate model research. **2.20.1 adds an in-headset Settings Benchmark (live A/B of candidate settings against bracketing baselines, timed with the SteamVR compositor) and DLSS CNN presets E/F.** 2.20.0 added NR-only center coverage at 100% NR model resolution, eye-staggered temporal reuse, motion-vector fixes, Performance Overlay removal and the full-resolution NR lock. Saved user settings are not rewritten by the package.
 
