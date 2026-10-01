@@ -50,7 +50,6 @@ jobs:
             'scripts/v01/permit-carrier-excluded.ps1',
             'scripts/v02/README.md',
             'scripts/v02/apply-gaze-stability.ps1',
-            'scripts/v02/apply-gaze-stability-fixed.ps1',
             'scripts/v02/apply-atlas-motion-stability.ps1',
             'scripts/v02/apply-pass2-stability.ps1',
             'scripts/v02/apply-sharpening.ps1',
@@ -92,7 +91,7 @@ jobs:
       - name: Restore v00 gaze stability with configurable dead zone
         shell: pwsh
         run: |
-          pwsh -NoProfile -File scripts/v02/apply-gaze-stability-fixed.ps1
+          pwsh -NoProfile -File scripts/v02/apply-gaze-stability.ps1
           if ($LASTEXITCODE -ne 0) { throw 'v02 gaze stability transform failed' }
           git diff --check
           if ($LASTEXITCODE -ne 0) { throw 'Transformed v02 gaze source has whitespace errors' }
