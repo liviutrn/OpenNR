@@ -20,4 +20,44 @@ $text = $text.Replace($old, $new)
 & pwsh -NoProfile -File $source
 if ($LASTEXITCODE -ne 0) { throw "Sharpening fixed4 transform failed with exit code $LASTEXITCODE" }
 
-Write-Host 'v02 sharpening fixed4 function-boundary selector applied successfully.'
+# fixed3 removes the obsolete NR-specific sharpening members from the final
+# FoveatedRender settings contract. The v01 gaze/sequential transform also emits
+# six assignments to those members in Integration.cpp; remove only those exact
+# generated writes so the original Upscaling-tab sharpening remains the sole path.
+$integration = 'runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Integration.cpp'
+$integrationResolved = Resolve-Path $integration
+$integrationText = [IO.File]::ReadAllText($integrationResolved).Replace("`r`n", "`n")
+$staleAssignments = @(
+    'tuning\.secondPass\.sharpeningEnabled\s*=\s*settings\.neuralRenderingPass2\.sharpeningEnabled;',
+    'tuning\.secondPass\.sharpeningStrength\s*=\s*settings\.neuralRenderingPass2\.sharpeningStrength;',
+    'tuning\.secondPass\.sharpeningPlacement\s*=\s*settings\.neuralRenderingPass2\.sharpeningPlacement;',
+    'tuning\.sharpeningEnabled\s*=\s*settings\.neuralRenderingSharpeningEnabled;',
+    'tuning\.sharpeningStrength\s*=\s*settings\.neuralRenderingSharpeningStrength;',
+    'tuning\.sharpeningPlacement\s*=\s*settings\.neuralRenderingSharpeningPlacement;'
+)
+foreach ($assignment in $staleAssignments) {
+    $pattern = "(?m)^[ `t]*$assignment[ `t]*`n"
+    $rx = [regex]::new($pattern)
+    $matches = $rx.Matches($integrationText)
+    if ($matches.Count -ne 1) {
+        throw "Expected exactly one stale NR sharpening integration assignment for pattern '$assignment', found $($matches.Count)"
+    }
+    $integrationText = $rx.Replace($integrationText, '', 1)
+}
+[IO.File]::WriteAllText($integrationResolved, $integrationText, [Text.UTF8Encoding]::new($false))
+
+$verificationText = [IO.File]::ReadAllText($integrationResolved).Replace("`r`n", "`n")
+foreach ($identifier in @(
+    'tuning.secondPass.sharpeningEnabled',
+    'tuning.secondPass.sharpeningStrength',
+    'tuning.secondPass.sharpeningPlacement',
+    'tuning.sharpeningEnabled',
+    'tuning.sharpeningStrength',
+    'tuning.sharpeningPlacement'
+)) {
+    if ($verificationText.Contains($identifier)) {
+        throw "Stale NR sharpening integration write remains: $identifier"
+    }
+}
+
+Write-Host 'v02 sharpening fixed4 function-boundary selector and stale integration cleanup applied successfully.'
