@@ -22,10 +22,10 @@ if ($matches.Count -ne 1) {
 $match = $matches[0]
 $indent = $match.Groups['indent'].Value
 $insert = $match.Groups[1].Value +
-    $indent + '// Stereo atlas requires temporal reuse and staggered-eye reuse to be inactive.`n' +
-    $indent + '// Keep stale experimental settings from forcing independent-eye fallback.`n' +
-    $indent + 'tuning.temporalReuseCadence = 0;`n' +
-    $indent + 'tuning.temporalReuseStaggerEyes = false;`n'
+    $indent + "// Stereo atlas requires temporal reuse and staggered-eye reuse to be inactive.`n" +
+    $indent + "// Keep stale experimental settings from forcing independent-eye fallback.`n" +
+    $indent + "tuning.temporalReuseCadence = 0;`n" +
+    $indent + "tuning.temporalReuseStaggerEyes = false;`n"
 $text = $text.Substring(0, $match.Index) + $insert + $text.Substring($match.Index + $match.Length)
 Write-Normalized $integration $text
 
