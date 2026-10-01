@@ -1,0 +1,204 @@
+name: Build OpenNR 2.20.1-v05
+
+on:
+  push:
+    branches: ["build/2.20.1-v05"]
+  workflow_dispatch:
+
+concurrency:
+  group: opennr-v05-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build OpenNR 2.20.1-v05 checkpoint
+    runs-on: windows-2025
+    steps:
+      - name: Check out v05 branch
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 1
+
+      - name: Verify source contract
+        shell: pwsh
+        run: |
+          if ((Get-Content VERSION -Raw).Trim() -ne '2.20.1') { throw 'Wrong base version' }
+          @(
+            'scripts/v01/apply-v00-base.ps1','scripts/v01/apply-settings.ps1',
+            'scripts/v01/apply-gaze-sequential-fixed3.ps1','scripts/v01/apply-sequential-renderer-fixed2.ps1',
+            'scripts/v01/apply-pass2-composite.ps1','scripts/v01/apply-stereo-atlas-fixed2.ps1',
+            'scripts/v01/apply-atlas-safety.ps1','scripts/v01/apply-ui.ps1','scripts/v01/permit-carrier-excluded.ps1',
+            'scripts/v02/apply-gaze-stability.ps1','scripts/v02/apply-atlas-motion-stability.ps1',
+            'scripts/v02/apply-pass2-stability.ps1','scripts/v02/apply-sharpening-fixed4.ps1',
+            'scripts/v03/prepare-controller-contract.ps1','scripts/v03/apply-adaptive-relative-crop.ps1',
+            'scripts/v03/apply-gaze-fixation-stability.ps1','scripts/v03/apply-sharpness-range.ps1',
+            'scripts/v03/apply-smart-frametime-controller-fixed.ps1',
+            'scripts/v04/apply-unified-frametime-controller.ps1','scripts/v04/apply-unified-frametime-controller-fixed.ps1',
+            'scripts/v04/apply-atlas-adaptive-safety.ps1',
+            'scripts/v05/apply-simple-frametime-controller.ps1','docs/versions/2.20.1-v05/README.md'
+          ) | ForEach-Object { if (-not (Test-Path $_)) { throw "Missing input: $_" } }
+          git diff --check
+
+      - name: Reconstruct validated v00-v02 chain
+        shell: pwsh
+        run: |
+          pwsh -NoProfile -File scripts/v01/apply-v00-base.ps1
+          if ($LASTEXITCODE) { throw 'v00 failed' }
+          pwsh -NoProfile -File scripts/v01/apply-settings.ps1
+          if ($LASTEXITCODE) { throw 'v01 settings failed' }
+          pwsh -NoProfile -File scripts/v01/apply-gaze-sequential-fixed3.ps1
+          if ($LASTEXITCODE) { throw 'v01 gaze/sequential failed' }
+          @(
+            'scripts/v01/apply-sequential-renderer-fixed2.ps1','scripts/v01/apply-pass2-composite.ps1',
+            'scripts/v01/apply-stereo-atlas-fixed2.ps1','scripts/v01/apply-atlas-safety.ps1','scripts/v01/apply-ui.ps1',
+            'scripts/v02/apply-gaze-stability.ps1','scripts/v02/apply-atlas-motion-stability.ps1',
+            'scripts/v02/apply-pass2-stability.ps1','scripts/v02/apply-sharpening-fixed4.ps1'
+          ) | ForEach-Object {
+            Write-Host "Applying $_"
+            pwsh -NoProfile -File $_
+            if ($LASTEXITCODE) { throw "Transform failed: $_" }
+          }
+          git diff --check
+          if ($LASTEXITCODE) { throw 'Inherited transformed source has whitespace errors' }
+
+      - name: Reconstruct retained v03 non-controller changes
+        shell: pwsh
+        run: |
+          pwsh -NoProfile -File scripts/v03/prepare-controller-contract.ps1
+          if ($LASTEXITCODE) { throw 'controller contract cleanup failed' }
+          pwsh -NoProfile -File scripts/v03/apply-adaptive-relative-crop.ps1
+          if ($LASTEXITCODE) { throw 'relative adaptive crop failed' }
+          pwsh -NoProfile -File scripts/v03/apply-gaze-fixation-stability.ps1
+          if ($LASTEXITCODE) { throw 'gaze fixation stability failed' }
+          pwsh -NoProfile -File scripts/v03/apply-sharpness-range.ps1
+          if ($LASTEXITCODE) { throw 'extended sharpness failed' }
+          git diff --check
+
+      - name: Reconstruct v03 controller substrate
+        shell: pwsh
+        run: |
+          pwsh -NoProfile -File scripts/v03/apply-smart-frametime-controller-fixed.ps1
+          if ($LASTEXITCODE) { throw 'v03 controller substrate failed' }
+          git diff --check
+
+      - name: Reconstruct v04 atlas-safe controller substrate
+        shell: pwsh
+        run: |
+          pwsh -NoProfile -File scripts/v04/apply-unified-frametime-controller-fixed.ps1
+          if ($LASTEXITCODE) { throw 'v04 unified controller failed' }
+          pwsh -NoProfile -File scripts/v04/apply-atlas-adaptive-safety.ps1
+          if ($LASTEXITCODE) { throw 'v04 atlas adaptive safety failed' }
+          git diff --check
+          if ($LASTEXITCODE) { throw 'v04 transformed source has whitespace errors' }
+
+      - name: Apply v05 simple crop-first frametime controller
+        shell: pwsh
+        run: |
+          pwsh -NoProfile -File scripts/v05/apply-simple-frametime-controller.ps1
+          if ($LASTEXITCODE) { throw 'v05 simple controller failed' }
+          git diff --check
+          if ($LASTEXITCODE) { throw 'v05 transformed source has whitespace errors' }
+          git diff --stat
+
+      - name: Verify v05 generated-source invariants
+        shell: pwsh
+        run: |
+          $policy = Get-Content runtime/open-shaders/src/Features/Upscaling/NeuralRendering/RuntimePolicy.h -Raw
+          $fov = Get-Content runtime/open-shaders/src/Features/Upscaling/FoveatedRender.cpp -Raw
+          $fovh = Get-Content runtime/open-shaders/src/Features/Upscaling/FoveatedRender.h -Raw
+          $crop = Get-Content runtime/open-shaders/src/Features/Upscaling/NeuralRendering/AdaptiveCropController.h -Raw
+          $cropCpp = Get-Content runtime/open-shaders/src/Features/Upscaling/NeuralRendering/AdaptiveCropController.cpp -Raw
+          $integration = Get-Content runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Integration.cpp -Raw
+          $renderer = Get-Content runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Renderer.cpp -Raw
+          $gaze = Get-Content runtime/open-shaders/src/Features/Upscaling/GazeCropPolicy.h -Raw
+          $shader = Get-Content runtime/open-shaders/features/Upscaling/Shaders/Upscaling/RCAS/RCAS.hlsl -Raw
+
+          if ($policy -notmatch 'kFullResolutionNeuralRenderingOnly = false') { throw 'Runtime policy unexpectedly relocked' }
+          if ($fovh -notmatch 'neuralRenderingAdaptivePassIncreaseBelowMs = 14\.0f' -or $fovh -notmatch 'adaptiveFilteredFrameTimeMs') { throw 'v05 controller settings/state missing' }
+          if ($fov -notmatch '\[DLSSNR\]\[ADAPTIVE-v05\]' -or $fov -notmatch '\[DLSSNR\]\[BUDGET-v05\]') { throw 'v05 controller diagnostics missing' }
+          if ($fov -match '\[DLSSNR\]\[ADAPTIVE-v04\]' -or $fov -match '\[DLSSNR\]\[BUDGET-v04\]') { throw 'v04 decision body survived v05' }
+          if ($fov -match 'passCostMs' -or $fov -match 'adaptiveFastWorkloadMs' -or $fov -match 'adaptiveSlowWorkloadMs') { throw 'Predictive/dual-filter policy survived v05' }
+          if ($fov -match 'Use custom FPS target' -or $fov -match 'Headset refresh target' -or $fov -match 'Estimated DLSS5 NR pass cost') { throw 'Old automatic controller UI survived v05' }
+          if ($fov -notmatch 'Pass \+1 below.*10\.0f, 30\.0f' -or $fov -notmatch 'Pass -1 above.*10\.0f, 30\.0f') { throw '10-30 ms threshold controls missing' }
+          if ($crop -notmatch 'std::array<std::uint32_t, 3> kCoverageBuckets' -or $crop -notmatch '100, 80, 60') { throw 'Approved 100/80/60 crop ladder missing' }
+          if ($crop -match '100, 90, 80, 70, 60, 50') { throw 'Old six-tier crop ladder survived' }
+          if ($cropCpp -notmatch 'upshiftFrames, 1u, 240u' -or $cropCpp -notmatch 'minimumDwellFrames, 1u, 600u') { throw 'Hidden crop decision delay survived' }
+          if ($fov -notmatch 'base\.w \* scale' -or $fov -notmatch 'base\.h \* scale') { throw 'Relative-to-user-crop scaling regressed' }
+          if ($fov -notmatch '(?s)cropAtFloor.*adaptiveActivePasses > 0' -or $fov -notmatch '(?s)cropAtCeiling.*adaptiveActivePasses < adaptiveConfiguredPasses') { throw 'Pass decisions are not crop-endpoint gated' }
+          if ($fov -notmatch 'restoringPasses' -or $fov -notmatch 'NeuralRendering::ResetHistory\(\)') { throw 'Pass restoration history protection missing' }
+          if ($integration -notmatch 'adaptiveEligible && settings\.neuralRenderingAdaptiveEnabled &&\s*foveated\.adaptivePassInitialized') { throw 'Integration not keyed to v05 controller state' }
+          if ($integration -notmatch 'adaptiveActivePasses > 0 \? std::min\(foveated\.adaptiveActivePasses - 1u, 2u\)') { throw 'Adaptive pass wiring missing' }
+          if ($integration -notmatch 'adaptiveActivePasses == 0') { throw 'Zero-pass bypass missing' }
+          if ($integration -notmatch 'tuning\.modelResolutionPercent = settings\.neuralRenderingModelResolution') { throw 'User-selected NR resolution is not locked during adaptive control' }
+          if ($integration -notmatch 'tuning\.adaptiveResolution = false') { throw 'Adaptive model-resolution flag not disabled' }
+          if ($integration -notmatch 'tuning\.temporalReuseCadence = 0;\s*\r?\n\s*tuning\.temporalReuseStaggerEyes = false;') { throw 'Atlas temporal safety override missing' }
+          if ($renderer -notmatch 'passCount >= 1 && passCount <= 2 && !tuning\.adaptiveResolution') { throw 'Stereo Atlas compatibility guard changed unexpectedly' }
+          if ($gaze -notmatch 'microPixels' -or $gaze -match '> 2\.0f\)\s*\r?\n\s*return sample') { throw 'Validated gaze fixation contract regressed' }
+          if ($shader -notmatch 'deltaBoost = max\(sharpness, 1\.0\)') { throw 'Extended sharpness mapping regressed' }
+          if ($integration -match 'keep cropped/foveated regions on the established single-pass route') { throw 'Old crop/sequential restriction returned' }
+
+      - name: Permit carrier-excluded package
+        shell: pwsh
+        run: pwsh -NoProfile -File scripts/v01/permit-carrier-excluded.ps1
+
+      - name: Set up MSVC
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Install CMake
+        uses: lukka/get-cmake@v4.3.3
+        with:
+          cmakeVersion: "~4.2.0"
+          useCloudCache: false
+
+      - name: Bootstrap pinned vcpkg
+        shell: pwsh
+        run: |
+          $vcpkg = Join-Path $env:GITHUB_WORKSPACE 'vcpkg'
+          git clone https://github.com/microsoft/vcpkg.git $vcpkg
+          Push-Location $vcpkg
+          $baseline = (Get-Content "$env:GITHUB_WORKSPACE/runtime/open-shaders/vcpkg.json" -Raw | ConvertFrom-Json).'builtin-baseline'
+          git checkout $baseline
+          & .\bootstrap-vcpkg.bat -disableMetrics
+          Pop-Location
+          "VCPKG_ROOT=$vcpkg" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Configure and package
+        shell: pwsh
+        working-directory: runtime/open-shaders
+        run: |
+          $dist = Join-Path $env:GITHUB_WORKSPACE 'dist'
+          cmake --preset OpenNR-Package "-DDIST_PATH=$dist"
+          cmake --build --preset Package --parallel
+
+      - name: Add v05 package notes and hashes
+        shell: pwsh
+        run: |
+          @(
+            'OpenNR 2.20.1-v05',
+            'Base: v04 376fc570014d23ca25bd0b8258957d73df2ad517',
+            'Controller: simple manually configured SteamVR GPU-frametime thresholds; crop always has priority.',
+            'Defaults: pass +1 <14 ms; crop +1 <16 ms; crop -1 >18 ms; pass -1 >20 ms. All thresholds adjustable 10-30 ms.',
+            'Crop tiers: 100/80/60 percent of the user-selected crop. Center 60 therefore adapts as 60/48/36 percent effective crop.',
+            'Smoothing/hold/cooldown are configurable. No predictive pass cost, target-FPS policy, CPU/VRAM forcing, or adaptive model resolution.',
+            'Stereo Atlas protections and fixed user-selected NR model resolution are retained; 100 percent NR resolution remains 100 percent.',
+            'v03/v04 sequential, gaze stability, zero-pass safety and sharpening 0..3 work are retained.',
+            'nvngx_dlssnr.dll is carrier-excluded by design.'
+          ) | Set-Content dist\README-2.20.1-v05.txt
+          Get-ChildItem -Recurse dist -File | ForEach-Object {
+            $h = Get-FileHash $_.FullName -Algorithm SHA256
+            "$($h.Hash)  $($_.FullName)"
+          } | Tee-Object -FilePath dist\SHA256SUMS.txt
+
+      - name: Upload v05 checkpoint package
+        uses: actions/upload-artifact@v4
+        with:
+          name: OpenNR-2.20.1-v05-carrier-excluded
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 14
