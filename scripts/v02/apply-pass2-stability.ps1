@@ -67,22 +67,13 @@ $new = @'
 '@
 Replace-Exact $renderer $old $new
 
-# Keep the existing tier compatibility expression intact except for the compact
-# P2 resource predicate. The full-size P2 scratch is allocated lazily below.
-$old = @'
-				(!croppedSecondPass || Matches(tier.secondPassOutput, pass2OutputDesc)) &&
-'@
-$new = ''
-Replace-Exact $renderer $old $new
+Write-Host 'v02 reduced P2: remove compact scratch from tier identity'
+$pattern = '[ \t]*\(!croppedSecondPass \|\| Matches\(tier\.secondPassOutput, pass2OutputDesc\)\) &&[ \t]*\n'
+Replace-RegexOnce $renderer $pattern ''
 
-# Match only the return site instead of one large surrounding block. This keeps
-# the transform stable when adjacent v01/atlas code changes without changing the
-# generated runtime logic.
-$old = @'
-			if (resourcesMatch)
-				return true;
-'@
-$new = @'
+Write-Host 'v02 reduced P2: allocate the full-size scratch lazily'
+$pattern = '[ \t]*if \(resourcesMatch\)[ \t]*\n[ \t]*return true;'
+$replacement = @'
 			if (resourcesMatch) {
 				// At 100% P2 the normal full-size final output is used directly. If the
 				// user later selects <100%, allocate only a full-size P2 scratch; do not
@@ -98,7 +89,7 @@ $new = @'
 				return true;
 			}
 '@
-Replace-Exact $renderer $old $new
+Replace-RegexOnce $renderer $pattern $replacement
 
 Write-Host 'v02 reduced P2: evaluate centered subrect into the full-size scratch'
 $old = @'
