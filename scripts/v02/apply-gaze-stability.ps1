@@ -28,6 +28,20 @@ function Insert-Before-Unique {
     [IO.File]::WriteAllText($resolved, $text.Replace($Needle, $Insertion + $Needle), [Text.UTF8Encoding]::new($false))
 }
 
+function Insert-After-RegexUnique {
+    param([string]$Path,[string]$Pattern,[string]$Line)
+    $resolved = Resolve-Path $Path
+    $text = [IO.File]::ReadAllText($resolved).Replace("`r`n", "`n")
+    $rx = [regex]::new($Pattern, [Text.RegularExpressions.RegexOptions]::Multiline)
+    $matches = $rx.Matches($text)
+    if ($matches.Count -ne 1) { throw "Expected exactly one regex insertion anchor in $Path, found $($matches.Count)" }
+    $match = $matches[0]
+    $indent = $match.Groups['indent'].Value
+    $insertion = "`n" + $indent + $Line
+    $text = $text.Insert($match.Index + $match.Length, $insertion)
+    [IO.File]::WriteAllText($resolved, $text, [Text.UTF8Encoding]::new($false))
+}
+
 $gaze = 'runtime/open-shaders/src/Features/Upscaling/GazeCropPolicy.h'
 $header = 'runtime/open-shaders/src/Features/Upscaling/FoveatedRender.h'
 $foveated = 'runtime/open-shaders/src/Features/Upscaling/FoveatedRender.cpp'
@@ -78,37 +92,21 @@ $replacement = @'
 Replace-RegexOnce $gaze $pattern $replacement
 
 Write-Host 'v02 gaze stability: persist dead-zone setting'
-Replace-Exact $header @'
-		float neuralRenderingEyeTrackedSmoothingMs = 0.0f;
-		uint neuralRenderingEyeTrackedQuantizationPixels = 8;
-'@ @'
-		float neuralRenderingEyeTrackedSmoothingMs = 0.0f;
-		uint neuralRenderingEyeTrackedQuantizationPixels = 8;
-		float neuralRenderingEyeTrackedDeadZonePercent = 2.0f;
-'@
+Insert-After-RegexUnique $header '(?m)^(?<indent>\s*)uint neuralRenderingEyeTrackedQuantizationPixels = [0-9]+;$' 'float neuralRenderingEyeTrackedDeadZonePercent = 2.0f;'
 
 Replace-Exact $foveated '#include "FoveatedRender/Core.h"' @'
 #include "FoveatedRender/Core.h"
 #include "GazeCropPolicy.h"
 '@
 
-Replace-Exact $foveated @'
-	X(neuralRenderingEyeTrackedFoveation) \
-	X(neuralRenderingEyeTrackedSmoothingMs) \
-	X(neuralRenderingEyeTrackedQuantizationPixels)
-'@ @'
-	X(neuralRenderingEyeTrackedFoveation) \
-	X(neuralRenderingEyeTrackedSmoothingMs) \
-	X(neuralRenderingEyeTrackedQuantizationPixels) \
+Replace-Exact $foveated 'X(neuralRenderingEyeTrackedQuantizationPixels)' @'
+X(neuralRenderingEyeTrackedQuantizationPixels) \
 	X(neuralRenderingEyeTrackedDeadZonePercent)
 '@
 
-Replace-Exact $foveated @'
-	settings.neuralRenderingEyeTrackedSmoothingMs = std::clamp(settings.neuralRenderingEyeTrackedSmoothingMs, 0.0f, 250.0f);
-	settings.neuralRenderingEyeTrackedQuantizationPixels = std::clamp(settings.neuralRenderingEyeTrackedQuantizationPixels, 0u, 64u);
-'@ @'
-	settings.neuralRenderingEyeTrackedSmoothingMs = std::clamp(settings.neuralRenderingEyeTrackedSmoothingMs, 0.0f, 250.0f);
-	settings.neuralRenderingEyeTrackedQuantizationPixels = std::clamp(settings.neuralRenderingEyeTrackedQuantizationPixels, 0u, 64u);
+$quantizationClamp = 'settings.neuralRenderingEyeTrackedQuantizationPixels = std::clamp(settings.neuralRenderingEyeTrackedQuantizationPixels, 0u, 64u);'
+Replace-Exact $foveated $quantizationClamp @'
+settings.neuralRenderingEyeTrackedQuantizationPixels = std::clamp(settings.neuralRenderingEyeTrackedQuantizationPixels, 0u, 64u);
 	settings.neuralRenderingEyeTrackedDeadZonePercent = clampFinite(settings.neuralRenderingEyeTrackedDeadZonePercent, 2.0f, 1.0f, 10.0f);
 	FoveatedRenderImpl::GazeCropPolicy::SetDeadZonePercent(settings.neuralRenderingEyeTrackedDeadZonePercent);
 '@
