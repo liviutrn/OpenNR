@@ -20,20 +20,25 @@ function Replace-RegexOnce {
 }
 
 $renderer = 'runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Renderer.cpp'
+$composite = 'runtime/open-shaders/features/Upscaling/Shaders/Upscaling/NeuralRendering/SequentialCompositeCS.hlsl'
 
-Write-Host 'v02 compact P2: make native handle recreation checks pass-aware'
+Write-Host 'v02 reduced P2: keep the native Feature18 creation envelope full-size'
+# v01 resized the P2 native handle itself. Keep native creation dimensions stable
+# and let only the valid evaluation subrect change with P2 coverage.
 $pattern = '\t\t\tconst bool lowResolutionMotion = [^\n]+;\n\t\t\tfor \(std::uint32_t pass = 0; pass < passCount; \+\+pass\) \{.*?\n\t\t\t\}'
 $replacement = @'
 			const std::uint32_t pass2Coverage = passCount > 1 ? std::clamp(secondPassCoverage, 50u, 100u) : 100u;
 			for (std::uint32_t pass = 0; pass < passCount; ++pass) {
-				const bool compactPass2 = pass == 1 && pass2Coverage < 100;
-				const std::uint32_t expectedInputWidth = compactPass2 ? ScaleDimension(resourceModelWidth, pass2Coverage) : featureInputWidth;
-				const std::uint32_t expectedInputHeight = compactPass2 ? ScaleDimension(resourceModelHeight, pass2Coverage) : featureInputHeight;
-				const std::uint32_t expectedOutputWidth = compactPass2 ? ScaleDimension(resourceModelWidth, pass2Coverage) : resourceModelWidth;
-				const std::uint32_t expectedOutputHeight = compactPass2 ? ScaleDimension(resourceModelHeight, pass2Coverage) : resourceModelHeight;
-				const std::uint32_t expectedGuideWidth = compactPass2 ? ScaleDimension(sharedGuideWidth, pass2Coverage) : sharedGuideWidth;
-				const std::uint32_t expectedGuideHeight = compactPass2 ? ScaleDimension(sharedGuideHeight, pass2Coverage) : sharedGuideHeight;
-				const bool lowResolutionMotion = expectedGuideWidth <= expectedInputWidth && expectedGuideHeight <= expectedInputHeight;
+				const bool croppedPass2 = pass == 1 && pass2Coverage < 100;
+				const std::uint32_t expectedInputWidth = pass == 0 ? featureInputWidth : resourceModelWidth;
+				const std::uint32_t expectedInputHeight = pass == 0 ? featureInputHeight : resourceModelHeight;
+				const std::uint32_t expectedOutputWidth = resourceModelWidth;
+				const std::uint32_t expectedOutputHeight = resourceModelHeight;
+				const std::uint32_t evalColorWidth = croppedPass2 ? ScaleDimension(resourceModelWidth, pass2Coverage) : expectedInputWidth;
+				const std::uint32_t evalColorHeight = croppedPass2 ? ScaleDimension(resourceModelHeight, pass2Coverage) : expectedInputHeight;
+				const std::uint32_t evalGuideWidth = croppedPass2 ? ScaleDimension(sharedGuideWidth, pass2Coverage) : sharedGuideWidth;
+				const std::uint32_t evalGuideHeight = croppedPass2 ? ScaleDimension(sharedGuideHeight, pass2Coverage) : sharedGuideHeight;
+				const bool lowResolutionMotion = evalGuideWidth <= evalColorWidth && evalGuideHeight <= evalColorHeight;
 				const auto slot = FeatureSlot(eyeIndex, tierIndex, pass);
 				if (!Runtime::Instance().NeedsRecreation(slot, expectedInputWidth, expectedInputHeight,
 					expectedOutputWidth, expectedOutputHeight, lowResolutionMotion))
@@ -47,29 +52,119 @@ $replacement = @'
 '@
 Replace-RegexOnce $renderer $pattern $replacement
 
-Write-Host 'v02 compact P2: keep atlas on the validated full-P2 contract'
+Write-Host 'v02 reduced P2: use a full-size scratch without rebuilding the tier'
+$old = @'
+			const auto pass2ResourceWidth = ScaleDimension(resourceModelWidth, pass2Coverage);
+			const auto pass2ResourceHeight = ScaleDimension(resourceModelHeight, pass2Coverage);
+			const auto modelInputDesc = MakeSharedDesc(eye.color.desc, resourceModelWidth, resourceModelHeight, sharedFlags);
+			const auto outputDesc = MakeSharedDesc(eye.color.desc, resourceModelWidth, resourceModelHeight, sharedFlags);
+			const auto pass2OutputDesc = MakeSharedDesc(eye.color.desc, pass2ResourceWidth, pass2ResourceHeight, sharedFlags);
+'@
+$new = @'
+			const auto modelInputDesc = MakeSharedDesc(eye.color.desc, resourceModelWidth, resourceModelHeight, sharedFlags);
+			const auto outputDesc = MakeSharedDesc(eye.color.desc, resourceModelWidth, resourceModelHeight, sharedFlags);
+			const auto pass2OutputDesc = outputDesc;
+'@
+Replace-Exact $renderer $old $new
+
+$old = @'
+				Matches(tier.output, outputDesc) && intermediatesMatch &&
+				(!croppedSecondPass || Matches(tier.secondPassOutput, pass2OutputDesc)) &&
+				(!reducedResolution || (MatchesResolved(tier.resolved, resolvedDesc) && tier.resolvedSRV && tier.resolvedUAV));
+			if (resourcesMatch)
+				return true;
+'@
+$new = @'
+				Matches(tier.output, outputDesc) && intermediatesMatch &&
+				(!reducedResolution || (MatchesResolved(tier.resolved, resolvedDesc) && tier.resolvedSRV && tier.resolvedUAV));
+			if (resourcesMatch) {
+				// At 100% P2 the normal full-size final output is used directly. If the
+				// user later selects <100%, allocate only a full-size P2 scratch; do not
+				// rebuild the tier or retire otherwise-compatible Feature18 histories.
+				if (croppedSecondPass && !Matches(tier.secondPassOutput, pass2OutputDesc)) {
+					if (tier.secondPassOutput.resource11 && !interop.WaitForIdle())
+						return false;
+					tier.secondPassOutput = {};
+					if (!interop.CreateSharedTexture(pass2OutputDesc, tier.secondPassOutput,
+						("NeuralRendering::SecondPassOutput" + std::to_string(eyeIndex) + "_" + std::to_string(modelResolution)).c_str()))
+						return false;
+				}
+				return true;
+			}
+'@
+Replace-Exact $renderer $old $new
+
+Write-Host 'v02 reduced P2: evaluate centered subrect into the full-size scratch'
+$old = @'
+					guide.motionBaseX = guide.depthBaseX;
+					guide.motionBaseY = guide.depthBaseY;
+					guide.motionWidth = guideW;
+					guide.motionHeight = guideH;
+					guide.outputWidth = colorW;
+					guide.outputHeight = colorH;
+					guide.creationInputWidth = ScaleDimension(creationOutputWidth, pass2Coverage);
+					guide.creationInputHeight = ScaleDimension(creationOutputHeight, pass2Coverage);
+					guide.creationOutputWidth = guide.creationInputWidth;
+					guide.creationOutputHeight = guide.creationInputHeight;
+'@
+$new = @'
+					guide.motionBaseX = guide.depthBaseX;
+					guide.motionBaseY = guide.depthBaseY;
+					guide.motionWidth = guideW;
+					guide.motionHeight = guideH;
+					guide.outputBaseX = (outputWidth - colorW) / 2;
+					guide.outputBaseY = (outputHeight - colorH) / 2;
+					guide.outputWidth = colorW;
+					guide.outputHeight = colorH;
+					// Only the valid rectangle changes. Feature18 remains created against
+					// the same full-size P1/P2 envelope at every coverage setting.
+					guide.creationInputWidth = creationOutputWidth;
+					guide.creationInputHeight = creationOutputHeight;
+					guide.creationOutputWidth = creationOutputWidth;
+					guide.creationOutputHeight = creationOutputHeight;
+'@
+Replace-Exact $renderer $old $new
+
+Write-Host 'v02 reduced P2: composite from the centered full-size scratch region'
+Replace-Exact $composite `
+    'const float4 pass2 = Pass2Tex.Load(int3(local, 0));' `
+    'const float4 pass2 = Pass2Tex.Load(int3(dstPos, 0));'
+
+Write-Host 'v02 reduced P2: preserve the validated atlas contract'
 $atlasCompatible = 'const bool compatible = passCount >= 1 && passCount <= 2 && !tuning.adaptiveResolution &&'
 $atlasReplacement = @'
-// v01 atlas pass 2 has no independent GPU-safe recreation contract for
-			// changing compact dimensions. Reduced P2 therefore falls back to the
-			// corrected independent-eye path instead of reusing a stale atlas handle.
+// Keep the user-validated atlas path unchanged. Reduced P2 uses the corrected
+			// independent-eye stable-subrect path until that contract is separately
+			// implemented and validated for atlas resources.
 			const bool compactPass2 = passCount == 2 && tuning.secondPass.coveragePercent < 100;
 			const bool compatible = passCount >= 1 && passCount <= 2 && !compactPass2 && !tuning.adaptiveResolution &&
 '@
 Replace-Exact $renderer $atlasCompatible $atlasReplacement
 
+Write-Host 'v02 reduced P2: verify stable-envelope invariants'
 $text = [IO.File]::ReadAllText((Resolve-Path $renderer)).Replace("`r`n", "`n")
-if ($text -notmatch 'expectedInputWidth = compactPass2 \? ScaleDimension\(resourceModelWidth, pass2Coverage\)') {
-    throw 'Compact P2 native-handle dimensions are not used by recreation checks'
+$shaderText = [IO.File]::ReadAllText((Resolve-Path $composite)).Replace("`r`n", "`n")
+if ($text -notmatch 'expectedInputWidth = pass == 0 \? featureInputWidth : resourceModelWidth') {
+    throw 'P2 recreation contract is not using the stable full-size input envelope'
 }
-if ($text -notmatch 'expectedGuideWidth = compactPass2 \? ScaleDimension\(sharedGuideWidth, pass2Coverage\)') {
-    throw 'Compact P2 motion-vector low-resolution contract is not pass-aware'
+if ($text -match 'expectedInputWidth = compactPass2 \? ScaleDimension') {
+    throw 'Stale compact native-handle recreation logic remains'
+}
+if ($text -notmatch 'const auto pass2OutputDesc = outputDesc;') {
+    throw 'P2 scratch is not full-size'
+}
+if ($text -notmatch 'guide\.outputBaseX = \(outputWidth - colorW\) / 2;' -or
+    $text -notmatch 'guide\.creationInputWidth = creationOutputWidth;') {
+    throw 'P2 centered eval subrect is not backed by the full creation envelope'
+}
+if ($shaderText -notmatch 'Pass2Tex\.Load\(int3\(dstPos, 0\)\)') {
+    throw 'Sequential composite does not sample the centered full-size P2 scratch'
 }
 if ($text -notmatch 'const bool compactPass2 = passCount == 2 && tuning\.secondPass\.coveragePercent < 100;') {
-    throw 'Atlas reduced-P2 safety fallback was not installed'
+    throw 'Atlas reduced-P2 safety fallback was not preserved'
 }
 if ($text -notmatch 'passCount <= 2 && !compactPass2 && !tuning\.adaptiveResolution') {
-    throw 'Atlas compatibility does not fail closed for reduced pass 2'
+    throw 'Atlas compatibility does not fail closed for reduced P2'
 }
 
-Write-Host 'v02 compact reduced pass-2 stability repair applied successfully.'
+Write-Host 'v02 reduced pass-2 stable-envelope repair applied successfully.'
