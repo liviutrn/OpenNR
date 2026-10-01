@@ -55,7 +55,8 @@ jobs:
             'scripts/v02/apply-sharpening.ps1',
             'scripts/v02/apply-sharpening-fixed.ps1',
             'scripts/v02/apply-sharpening-fixed2.ps1',
-            'scripts/v02/apply-sharpening-fixed3.ps1'
+            'scripts/v02/apply-sharpening-fixed3.ps1',
+            'scripts/v02/apply-sharpening-fixed4.ps1'
           ) | ForEach-Object { if (-not (Test-Path $_)) { throw "Missing v02 input: $_" } }
           git diff --check
 
@@ -113,7 +114,7 @@ jobs:
       - name: Apply v02 verified NR sharpening
         shell: pwsh
         run: |
-          pwsh -NoProfile -File scripts/v02/apply-sharpening-fixed3.ps1
+          pwsh -NoProfile -File scripts/v02/apply-sharpening-fixed4.ps1
           if ($LASTEXITCODE -ne 0) { throw 'v02 sharpening transform failed' }
           git diff --check
           if ($LASTEXITCODE -ne 0) { throw 'Transformed v02 sharpening source has whitespace errors' }
