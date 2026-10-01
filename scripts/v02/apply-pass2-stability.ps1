@@ -9,28 +9,21 @@ function Replace-Exact {
     [IO.File]::WriteAllText($resolved, $text.Replace($Old,$New), [Text.UTF8Encoding]::new($false))
 }
 
+function Replace-RegexOnce {
+    param([string]$Path,[string]$Pattern,[string]$Replacement)
+    $resolved = Resolve-Path $Path
+    $text = [IO.File]::ReadAllText($resolved).Replace("`r`n", "`n")
+    $rx = [regex]::new($Pattern, [Text.RegularExpressions.RegexOptions]::Singleline)
+    $matches = $rx.Matches($text)
+    if ($matches.Count -ne 1) { throw "Expected exactly one regex source block in $Path, found $($matches.Count)" }
+    [IO.File]::WriteAllText($resolved, $rx.Replace($text,$Replacement,1), [Text.UTF8Encoding]::new($false))
+}
+
 $renderer = 'runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Renderer.cpp'
 
 Write-Host 'v02 compact P2: make native handle recreation checks pass-aware'
-$old = @'
-			const std::uint32_t featureInputWidth = modelResolution == 100 ? sharedColorWidth : resourceModelWidth;
-			const std::uint32_t featureInputHeight = modelResolution == 100 ? sharedColorHeight : resourceModelHeight;
-			const bool lowResolutionMotion = sharedGuideWidth <= featureInputWidth && sharedGuideHeight <= featureInputHeight;
-			for (std::uint32_t pass = 0; pass < passCount; ++pass) {
-				const auto slot = FeatureSlot(eyeIndex, tierIndex, pass);
-				if (!Runtime::Instance().NeedsRecreation(slot, featureInputWidth, featureInputHeight,
-					resourceModelWidth, resourceModelHeight, lowResolutionMotion))
-					continue;
-				if (!waited && !interop.WaitForIdle())
-					return false;
-				waited = true;
-				Runtime::Instance().ResetFeature(slot);
-				resetPending[eyeIndex][tierIndex] = true;
-			}
-'@
-$new = @'
-			const std::uint32_t featureInputWidth = modelResolution == 100 ? sharedColorWidth : resourceModelWidth;
-			const std::uint32_t featureInputHeight = modelResolution == 100 ? sharedColorHeight : resourceModelHeight;
+$pattern = '\t\t\tconst bool lowResolutionMotion = [^\n]+;\n\t\t\tfor \(std::uint32_t pass = 0; pass < passCount; \+\+pass\) \{.*?\n\t\t\t\}'
+$replacement = @'
 			const std::uint32_t pass2Coverage = passCount > 1 ? std::clamp(secondPassCoverage, 50u, 100u) : 100u;
 			for (std::uint32_t pass = 0; pass < passCount; ++pass) {
 				const bool compactPass2 = pass == 1 && pass2Coverage < 100;
@@ -52,7 +45,7 @@ $new = @'
 				resetPending[eyeIndex][tierIndex] = true;
 			}
 '@
-Replace-Exact $renderer $old $new
+Replace-RegexOnce $renderer $pattern $replacement
 
 Write-Host 'v02 compact P2: keep atlas on the validated full-P2 contract'
 $old = @'
