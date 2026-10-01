@@ -130,16 +130,63 @@ Replace-Exact $composite `
     'const float4 pass2 = Pass2Tex.Load(int3(local, 0));' `
     'const float4 pass2 = Pass2Tex.Load(int3(dstPos, 0));'
 
-Write-Host 'v02 reduced P2: preserve the validated atlas contract'
-$atlasCompatible = 'const bool compatible = passCount >= 1 && passCount <= 2 && !tuning.adaptiveResolution &&'
-$atlasReplacement = @'
-// Keep the user-validated atlas path unchanged. Reduced P2 uses the corrected
-			// independent-eye stable-subrect path until that contract is separately
-			// implemented and validated for atlas resources.
-			const bool compactPass2 = passCount == 2 && tuning.secondPass.coveragePercent < 100;
-			const bool compatible = passCount >= 1 && passCount <= 2 && !compactPass2 && !tuning.adaptiveResolution &&
+Write-Host 'v02 reduced P2 atlas: keep the native atlas P2 handle full-size'
+# The v01 atlas already packs a reduced P2 as a compact LEFT|guard|RIGHT rectangle
+# into the top-left of the existing full-size atlas resource. Preserve that compact
+# valid rectangle for performance, but create the native P2 handle against the full
+# atlas envelope so changing P2 coverage cannot invalidate/recreate Feature18.
+$old = @'
+			guide.creationInputWidth = atlasColorWidth;
+			guide.creationInputHeight = eyeColorHeight;
+			guide.creationOutputWidth = atlasColorWidth;
+			guide.creationOutputHeight = eyeColorHeight;
 '@
-Replace-Exact $renderer $atlasCompatible $atlasReplacement
+$new = @'
+			const auto atlasCreationColorWidth = stereoAtlas.colorEyeWidth * 2 + stereoAtlas.colorGuard;
+			const auto atlasCreationColorHeight = stereoAtlas.colorEyeHeight;
+			guide.creationInputWidth = atlasCreationColorWidth;
+			guide.creationInputHeight = atlasCreationColorHeight;
+			guide.creationOutputWidth = atlasCreationColorWidth;
+			guide.creationOutputHeight = atlasCreationColorHeight;
+'@
+Replace-Exact $renderer $old $new
+
+Write-Host 'v02 reduced P2 atlas: split compact atlas output into centered per-eye scratch regions'
+$old = @'
+		void SplitStereoAtlasOutput(ID3D11DeviceContext* context, ID3D11Resource* leftTarget, ID3D11Resource* rightTarget,
+			std::uint32_t eyeWidth, std::uint32_t eyeHeight, std::uint32_t guardWidth)
+		{
+			const D3D11_BOX leftBox{ 0, 0, 0, eyeWidth, eyeHeight, 1 };
+			const D3D11_BOX rightBox{ eyeWidth + guardWidth, 0, 0, eyeWidth * 2 + guardWidth, eyeHeight, 1 };
+			context->CopySubresourceRegion(leftTarget, 0, 0, 0, 0, stereoAtlas.output.resource11.Get(), 0, &leftBox);
+			context->CopySubresourceRegion(rightTarget, 0, 0, 0, 0, stereoAtlas.output.resource11.Get(), 0, &rightBox);
+		}
+'@
+$new = @'
+		void SplitStereoAtlasOutput(ID3D11DeviceContext* context, ID3D11Resource* leftTarget, ID3D11Resource* rightTarget,
+			std::uint32_t eyeWidth, std::uint32_t eyeHeight, std::uint32_t guardWidth,
+			std::uint32_t destinationOffsetX = 0, std::uint32_t destinationOffsetY = 0)
+		{
+			const D3D11_BOX leftBox{ 0, 0, 0, eyeWidth, eyeHeight, 1 };
+			const D3D11_BOX rightBox{ eyeWidth + guardWidth, 0, 0, eyeWidth * 2 + guardWidth, eyeHeight, 1 };
+			context->CopySubresourceRegion(leftTarget, 0, destinationOffsetX, destinationOffsetY, 0,
+				stereoAtlas.output.resource11.Get(), 0, &leftBox);
+			context->CopySubresourceRegion(rightTarget, 0, destinationOffsetX, destinationOffsetY, 0,
+				stereoAtlas.output.resource11.Get(), 0, &rightBox);
+		}
+'@
+Replace-Exact $renderer $old $new
+
+$old = @'
+					SplitStereoAtlasOutput(context, leftTier.secondPassOutput.resource11.Get(), rightTier.secondPassOutput.resource11.Get(),
+						pass2Width, pass2Height, pass2ColorGuard);
+'@
+$new = @'
+					SplitStereoAtlasOutput(context, leftTier.secondPassOutput.resource11.Get(), rightTier.secondPassOutput.resource11.Get(),
+						pass2Width, pass2Height, pass2ColorGuard,
+						(modelWidth - pass2Width) / 2, (modelHeight - pass2Height) / 2);
+'@
+Replace-Exact $renderer $old $new
 
 Write-Host 'v02 reduced P2: verify stable-envelope invariants'
 $text = [IO.File]::ReadAllText((Resolve-Path $renderer)).Replace("`r`n", "`n")
@@ -160,11 +207,19 @@ if ($text -notmatch 'guide\.outputBaseX = \(outputWidth - colorW\) / 2;' -or
 if ($shaderText -notmatch 'Pass2Tex\.Load\(int3\(dstPos, 0\)\)') {
     throw 'Sequential composite does not sample the centered full-size P2 scratch'
 }
-if ($text -notmatch 'const bool compactPass2 = passCount == 2 && tuning\.secondPass\.coveragePercent < 100;') {
-    throw 'Atlas reduced-P2 safety fallback was not preserved'
+if ($text -notmatch 'atlasCreationColorWidth = stereoAtlas\.colorEyeWidth \* 2 \+ stereoAtlas\.colorGuard' -or
+    $text -notmatch 'guide\.creationInputWidth = atlasCreationColorWidth;') {
+    throw 'Atlas P2 is not using the stable full-size native creation envelope'
 }
-if ($text -notmatch 'passCount <= 2 && !compactPass2 && !tuning\.adaptiveResolution') {
-    throw 'Atlas compatibility does not fail closed for reduced P2'
+if ($text -notmatch 'destinationOffsetX = 0, std::uint32_t destinationOffsetY = 0' -or
+    $text -notmatch '\(modelWidth - pass2Width\) / 2, \(modelHeight - pass2Height\) / 2') {
+    throw 'Reduced atlas P2 output is not split into centered per-eye scratch regions'
+}
+if ($text -match 'passCount <= 2 && !compactPass2 && !tuning\.adaptiveResolution') {
+    throw 'Reduced P2 is still disabled for stereo atlas'
+}
+if ($text -notmatch 'const bool compatible = passCount >= 1 && passCount <= 2 && !tuning\.adaptiveResolution') {
+    throw 'Stereo atlas compatibility gate was unexpectedly changed'
 }
 
-Write-Host 'v02 reduced pass-2 stable-envelope repair applied successfully.'
+Write-Host 'v02 reduced pass-2 stable-envelope repair, including stereo atlas, applied successfully.'
