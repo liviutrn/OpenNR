@@ -51,6 +51,29 @@ if ($verificationCount -ne 1) {
     throw "Expected one over-broad v05 legacy-state verification, found $verificationCount"
 }
 $sourceText = $sourceText.Replace($oldVerification, $newVerification)
+
+# The readable v05 UI replacement intentionally starts at the old adaptive block
+# and ends at the first Resolve/Pipeline separator. That range also consumes the
+# opening Experimental Pipeline CollapsingHeader from the inherited source. Put
+# that opening scope back so the later closing brace cannot escape the Neural
+# Rendering panel and move supportedRoute out of scope.
+$missingPipelineOpen = @'
+\t\t\t}
+
+\t\t\t\tImGui::SeparatorText("Resolve and Pipeline");
+'@
+$restoredPipelineOpen = @'
+\t\t\t}
+
+\t\t\tif (ImGui::CollapsingHeader("Experimental Pipeline")) {
+\t\t\t\tImGui::SeparatorText("Resolve and Pipeline");
+'@
+$pipelineOpenCount = ([regex]::Matches($sourceText, [regex]::Escape($missingPipelineOpen))).Count
+if ($pipelineOpenCount -ne 1) {
+    throw "Expected one v05 UI replacement missing Experimental Pipeline scope, found $pipelineOpenCount"
+}
+$sourceText = $sourceText.Replace($missingPipelineOpen, $restoredPipelineOpen)
+
 [IO.File]::WriteAllText($sourceResolved, $sourceText, [Text.UTF8Encoding]::new($false))
 
 & pwsh -NoProfile -File $source
