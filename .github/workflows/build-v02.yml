@@ -48,8 +48,9 @@ jobs:
             'runtime/open-shaders/features/Upscaling/Shaders/Upscaling/NeuralRendering/StereoAtlasPackDepthCS.hlsl',
             'runtime/open-shaders/features/Upscaling/Shaders/Upscaling/NeuralRendering/StereoAtlasPackMotionCS.hlsl',
             'scripts/v01/permit-carrier-excluded.ps1',
-            'scripts/v02/README.md'
-          ) | ForEach-Object { if (-not (Test-Path $_)) { throw "Missing v02 baseline input: $_" } }
+            'scripts/v02/README.md',
+            'scripts/v02/apply-sharpening.ps1'
+          ) | ForEach-Object { if (-not (Test-Path $_)) { throw "Missing v02 input: $_" } }
           git diff --check
 
       - name: Reconstruct v00 gaze-history base
@@ -79,14 +80,16 @@ jobs:
             if ($LASTEXITCODE -ne 0) { throw "v01 transformation failed: $_" }
           }
           git diff --check
-          if ($LASTEXITCODE -ne 0) { throw 'Transformed v02 baseline source has whitespace errors' }
-          git diff --stat
+          if ($LASTEXITCODE -ne 0) { throw 'Transformed v01 source has whitespace errors' }
 
-      - name: Verify zero-functional-change v02 baseline
+      - name: Apply v02 verified NR sharpening
         shell: pwsh
         run: |
-          Write-Host 'No v02 functional transform is applied in this baseline checkpoint.'
-          Write-Host 'The compiled source is the validated v01 transformation chain on the v02 branch.'
+          pwsh -NoProfile -File scripts/v02/apply-sharpening.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'v02 sharpening transform failed' }
+          git diff --check
+          if ($LASTEXITCODE -ne 0) { throw 'Transformed v02 sharpening source has whitespace errors' }
+          git diff --stat
 
       - name: Permit carrier-excluded CI package
         shell: pwsh
@@ -123,19 +126,23 @@ jobs:
           cmake --preset OpenNR-Package "-DDIST_PATH=$dist"
           cmake --build --preset Package --parallel
 
-      - name: Mark v02 baseline revision
+      - name: Mark v02 sharpening checkpoint
         shell: pwsh
         run: |
           @(
-            'OpenNR 2.20.1-v02 — zero-functional-change baseline',
+            'OpenNR 2.20.1-v02 — verified NR sharpening checkpoint',
             '',
             'v02 starts from v01 head 38983f3e000213a377096ab44dbee12484b6d29a.',
-            'This checkpoint intentionally applies no v02 functional transform.',
-            'It compiles the complete validated v01 transformation chain unchanged.',
+            'The complete validated v01 transformation chain is preserved first.',
             '',
-            'Planned v02 functional scope:',
-            '- verified before/after-NR sharpening, capped at 3.0;',
-            '- robust adaptive frametime/FPS controller with pass-cost estimation and stronger control logic.',
+            'This checkpoint adds:',
+            '- explicit before-NR and after-NR sharpening placement at the Feature18 boundary;',
+            '- 0.0 to 3.0 user sharpening range;',
+            '- safe normalization to the existing RCAS kernel 0..1 coefficient;',
+            '- build-time wiring assertions that both placements reach RCAS;',
+            '- periodic DLSSNR sharpening diagnostics.',
+            '',
+            'The adaptive-controller redesign is intentionally not stacked until this checkpoint compiles.',
             '',
             'nvngx_dlssnr.dll is intentionally carrier-excluded from this public artifact.',
             'Use the validated carrier from an existing licensed OpenNR installation.'
@@ -153,7 +160,7 @@ jobs:
       - name: Upload v02 checkpoint package
         uses: actions/upload-artifact@v4
         with:
-          name: OpenNR-2.20.1-v02-baseline-carrier-excluded
+          name: OpenNR-2.20.1-v02-sharpening-carrier-excluded
           path: dist/*
           if-no-files-found: error
           retention-days: 14
