@@ -1,24 +1,18 @@
 $ErrorActionPreference = 'Stop'
 
-# The first v03 controller checkpoint assumed the two inherited adaptive state
-# fields remained adjacent after the full v00/v01/v02 reconstruction. They do
-# not. Rewrite only that insertion inside the source transform so it anchors on
-# the unique adaptiveNextDownshiftIsCrop declaration and preserves all generated
-# fields around it.
-$source = 'scripts/v03/apply-smart-frametime-controller.ps1'
-$resolved = Resolve-Path $source
-$text = [IO.File]::ReadAllText($resolved).Replace("`r`n", "`n")
-
-$pattern = '(?s)Write-Host ''v03 controller: add explicit adaptive pass state''\n\$stateOld = @''\n.*?\n''@\n\$stateNew = @''\n.*?\n''@\nReplace-ExactOnce \$header \$stateOld \$stateNew'
-$rx = [regex]::new($pattern)
-$matches = $rx.Matches($text)
-if ($matches.Count -ne 1) {
-    throw "Expected one original adaptive-state insertion in smart controller transform, found $($matches.Count)"
-}
-
-$replacement = @'
-Write-Host 'v03 controller: add explicit adaptive pass state'
+# The original controller transform assumed two inherited fields were adjacent.
+# Insert the new pass state directly after the unique adaptiveNextDownshiftIsCrop
+# declaration, then disable only the brittle insertion call in the source
+# transform before executing the rest unchanged.
+$header = 'runtime/open-shaders/src/Features/Upscaling/FoveatedRender.h'
+$headerResolved = Resolve-Path $header
+$headerText = [IO.File]::ReadAllText($headerResolved).Replace("`r`n", "`n")
 $statePattern = '(?m)^(?<indent>\s*)bool adaptiveNextDownshiftIsCrop = true;$'
+$stateRx = [regex]::new($statePattern)
+$stateMatches = $stateRx.Matches($headerText)
+if ($stateMatches.Count -ne 1) {
+    throw "Expected one adaptiveNextDownshiftIsCrop declaration, found $($stateMatches.Count)"
+}
 $stateReplacement = @'
 ${indent}bool adaptiveNextDownshiftIsCrop = true;
 ${indent}// v03 pass controller. Adaptive mode intentionally caps automatic sequential
@@ -32,11 +26,19 @@ ${indent}bool adaptivePassInitialized = false;
 ${indent}float adaptiveFastWorkloadMs = 0.0f;
 ${indent}float adaptiveSlowWorkloadMs = 0.0f;
 '@
-Replace-RegexOnce $header $statePattern $stateReplacement
-'@
+$headerText = $stateRx.Replace($headerText, $stateReplacement, 1)
+[IO.File]::WriteAllText($headerResolved, $headerText, [Text.UTF8Encoding]::new($false))
 
-$text = $rx.Replace($text, $replacement, 1)
-[IO.File]::WriteAllText($resolved, $text, [Text.UTF8Encoding]::new($false))
+$source = 'scripts/v03/apply-smart-frametime-controller.ps1'
+$sourceResolved = Resolve-Path $source
+$sourceText = [IO.File]::ReadAllText($sourceResolved).Replace("`r`n", "`n")
+$oldCall = 'Replace-ExactOnce $header $stateOld $stateNew'
+$count = ([regex]::Matches($sourceText, [regex]::Escape($oldCall))).Count
+if ($count -ne 1) {
+    throw "Expected one brittle state insertion call in source transform, found $count"
+}
+$sourceText = $sourceText.Replace($oldCall, "Write-Host 'v03 adaptive pass state already inserted by fixed wrapper'")
+[IO.File]::WriteAllText($sourceResolved, $sourceText, [Text.UTF8Encoding]::new($false))
 
 & pwsh -NoProfile -File $source
 if ($LASTEXITCODE -ne 0) {
