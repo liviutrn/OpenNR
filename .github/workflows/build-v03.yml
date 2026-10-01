@@ -26,114 +26,72 @@ jobs:
       - name: Verify source contract
         shell: pwsh
         run: |
-          $version = (Get-Content VERSION -Raw).Trim()
-          if ($version -ne '2.20.1') { throw "Expected VERSION 2.20.1, got $version" }
+          if ((Get-Content VERSION -Raw).Trim() -ne '2.20.1') { throw 'Wrong base version' }
           @(
-            'runtime/open-shaders/CMakePresets.json',
-            'runtime/open-shaders/vcpkg.json',
-            'patches/2.20.1-v00-gaze-history.patch',
-            'scripts/v01/apply-v00-base.ps1',
-            'scripts/v01/apply-settings.ps1',
-            'scripts/v01/apply-gaze-sequential-fixed3.ps1',
-            'scripts/v01/apply-sequential-renderer-fixed2.ps1',
-            'scripts/v01/apply-pass2-composite.ps1',
-            'scripts/v01/apply-stereo-atlas-fixed2.ps1',
-            'scripts/v01/apply-atlas-safety.ps1',
-            'scripts/v01/apply-ui.ps1',
-            'scripts/v01/permit-carrier-excluded.ps1',
-            'scripts/v02/apply-gaze-stability.ps1',
-            'scripts/v02/apply-atlas-motion-stability.ps1',
-            'scripts/v02/apply-pass2-stability.ps1',
-            'scripts/v02/apply-sharpening-fixed4.ps1',
-            'scripts/v03/README.md',
-            'scripts/v03/prepare-controller-contract.ps1',
-            'scripts/v03/apply-adaptive-relative-crop.ps1',
-            'scripts/v03/apply-gaze-fixation-stability.ps1',
-            'scripts/v03/apply-sharpness-range.ps1',
-            'scripts/v03/apply-smart-frametime-controller.ps1'
-          ) | ForEach-Object { if (-not (Test-Path $_)) { throw "Missing v03 input: $_" } }
+            'scripts/v01/apply-v00-base.ps1','scripts/v01/apply-settings.ps1',
+            'scripts/v01/apply-gaze-sequential-fixed3.ps1','scripts/v01/apply-sequential-renderer-fixed2.ps1',
+            'scripts/v01/apply-pass2-composite.ps1','scripts/v01/apply-stereo-atlas-fixed2.ps1',
+            'scripts/v01/apply-atlas-safety.ps1','scripts/v01/apply-ui.ps1','scripts/v01/permit-carrier-excluded.ps1',
+            'scripts/v02/apply-gaze-stability.ps1','scripts/v02/apply-atlas-motion-stability.ps1',
+            'scripts/v02/apply-pass2-stability.ps1','scripts/v02/apply-sharpening-fixed4.ps1',
+            'scripts/v03/prepare-controller-contract.ps1','scripts/v03/apply-adaptive-relative-crop.ps1',
+            'scripts/v03/apply-gaze-fixation-stability.ps1','scripts/v03/apply-sharpness-range.ps1',
+            'scripts/v03/apply-smart-frametime-controller.ps1','scripts/v03/apply-smart-frametime-controller-fixed.ps1'
+          ) | ForEach-Object { if (-not (Test-Path $_)) { throw "Missing input: $_" } }
           git diff --check
 
-      - name: Reconstruct v00 gaze-history base
-        shell: pwsh
-        run: pwsh -NoProfile -File scripts/v01/apply-v00-base.ps1
-
-      - name: Apply v01 settings contracts
-        shell: pwsh
-        run: pwsh -NoProfile -File scripts/v01/apply-settings.ps1
-
-      - name: Apply v01 gaze and sequential route
-        shell: pwsh
-        run: pwsh -NoProfile -File scripts/v01/apply-gaze-sequential-fixed3.ps1
-
-      - name: Apply validated v01 renderer stages
+      - name: Reconstruct validated v00-v02 chain
         shell: pwsh
         run: |
+          pwsh -NoProfile -File scripts/v01/apply-v00-base.ps1
+          if ($LASTEXITCODE) { throw 'v00 failed' }
+          pwsh -NoProfile -File scripts/v01/apply-settings.ps1
+          if ($LASTEXITCODE) { throw 'v01 settings failed' }
+          pwsh -NoProfile -File scripts/v01/apply-gaze-sequential-fixed3.ps1
+          if ($LASTEXITCODE) { throw 'v01 gaze/sequential failed' }
           @(
-            'scripts/v01/apply-sequential-renderer-fixed2.ps1',
-            'scripts/v01/apply-pass2-composite.ps1',
-            'scripts/v01/apply-stereo-atlas-fixed2.ps1',
-            'scripts/v01/apply-atlas-safety.ps1',
-            'scripts/v01/apply-ui.ps1'
+            'scripts/v01/apply-sequential-renderer-fixed2.ps1','scripts/v01/apply-pass2-composite.ps1',
+            'scripts/v01/apply-stereo-atlas-fixed2.ps1','scripts/v01/apply-atlas-safety.ps1','scripts/v01/apply-ui.ps1',
+            'scripts/v02/apply-gaze-stability.ps1','scripts/v02/apply-atlas-motion-stability.ps1',
+            'scripts/v02/apply-pass2-stability.ps1','scripts/v02/apply-sharpening-fixed4.ps1'
           ) | ForEach-Object {
             Write-Host "Applying $_"
             pwsh -NoProfile -File $_
-            if ($LASTEXITCODE -ne 0) { throw "v01 transformation failed: $_" }
+            if ($LASTEXITCODE) { throw "Transform failed: $_" }
           }
           git diff --check
-          if ($LASTEXITCODE -ne 0) { throw 'Transformed v01 source has whitespace errors' }
+          if ($LASTEXITCODE) { throw 'Inherited transformed source has whitespace errors' }
 
-      - name: Reconstruct validated v02 checkpoint
-        shell: pwsh
-        run: |
-          @(
-            'scripts/v02/apply-gaze-stability.ps1',
-            'scripts/v02/apply-atlas-motion-stability.ps1',
-            'scripts/v02/apply-pass2-stability.ps1',
-            'scripts/v02/apply-sharpening-fixed4.ps1'
-          ) | ForEach-Object {
-            Write-Host "Applying $_"
-            pwsh -NoProfile -File $_
-            if ($LASTEXITCODE -ne 0) { throw "v02 transformation failed: $_" }
-          }
-          git diff --check
-          if ($LASTEXITCODE -ne 0) { throw 'Reconstructed v02 source has whitespace errors' }
-
-      - name: Apply v03 controller contract cleanup
+      - name: Apply v03 relative crop and resolution unlock
         shell: pwsh
         run: |
           pwsh -NoProfile -File scripts/v03/prepare-controller-contract.ps1
-          if ($LASTEXITCODE -ne 0) { throw 'v03 controller-contract preparation failed' }
-          git diff --check
-
-      - name: Apply v03 relative adaptive crop and resolution unlock
-        shell: pwsh
-        run: |
+          if ($LASTEXITCODE) { throw 'controller contract cleanup failed' }
           pwsh -NoProfile -File scripts/v03/apply-adaptive-relative-crop.ps1
-          if ($LASTEXITCODE -ne 0) { throw 'v03 relative-crop transform failed' }
+          if ($LASTEXITCODE) { throw 'relative adaptive crop failed' }
           git diff --check
 
       - name: Apply v03 gaze fixation stability
         shell: pwsh
         run: |
           pwsh -NoProfile -File scripts/v03/apply-gaze-fixation-stability.ps1
-          if ($LASTEXITCODE -ne 0) { throw 'v03 gaze transform failed' }
+          if ($LASTEXITCODE) { throw 'gaze fixation stability failed' }
           git diff --check
 
       - name: Apply v03 extended sharpness
         shell: pwsh
         run: |
           pwsh -NoProfile -File scripts/v03/apply-sharpness-range.ps1
-          if ($LASTEXITCODE -ne 0) { throw 'v03 sharpness transform failed' }
+          if ($LASTEXITCODE) { throw 'extended sharpness failed' }
           git diff --check
 
       - name: Apply v03 smart frametime controller
         shell: pwsh
         run: |
-          pwsh -NoProfile -File scripts/v03/apply-smart-frametime-controller.ps1
-          if ($LASTEXITCODE -ne 0) { throw 'v03 smart-controller transform failed' }
+          pwsh -NoProfile -File scripts/v03/apply-smart-frametime-controller-fixed.ps1
+          if ($LASTEXITCODE) { throw 'smart frametime controller failed' }
           git diff --check
-          if ($LASTEXITCODE -ne 0) { throw 'Transformed v03 source has whitespace errors' }
+          if ($LASTEXITCODE) { throw 'v03 transformed source has whitespace errors' }
           git diff --stat
 
       - name: Verify v03 generated-source invariants
@@ -149,12 +107,12 @@ jobs:
           if ($fovh -notmatch 'adaptiveActivePasses') { throw 'Adaptive pass state missing' }
           if ($fov -notmatch 'passWouldFit') { throw 'Pass-cost controller missing' }
           if ($integration -notmatch 'adaptiveActivePasses == 0') { throw 'Zero-pass bypass missing' }
-          if ($integration -match 'keep cropped/foveated regions on the established single-pass route') { throw 'Old cropped sequential restriction returned' }
-          if ($gaze -notmatch 'microPixels' -or $gaze -match '> 2\.0f\)\s*\r?\n\s*return sample') { throw 'Gaze fixation filter contract failed' }
+          if ($integration -match 'keep cropped/foveated regions on the established single-pass route') { throw 'Old crop restriction returned' }
+          if ($gaze -notmatch 'microPixels' -or $gaze -match '> 2\.0f\)\s*\r?\n\s*return sample') { throw 'Gaze contract failed' }
           if ($shader -notmatch 'deltaBoost = max\(sharpness, 1\.0\)') { throw 'Extended RCAS mapping missing' }
-          if ($integration -match 'tuning\.sharpeningEnabled|tuning\.secondPass\.sharpeningEnabled') { throw 'Removed NR-specific sharpening assignments returned' }
+          if ($integration -match 'tuning\.sharpeningEnabled|tuning\.secondPass\.sharpeningEnabled') { throw 'Removed NR sharpening writes returned' }
 
-      - name: Permit carrier-excluded CI package
+      - name: Permit carrier-excluded package
         shell: pwsh
         run: pwsh -NoProfile -File scripts/v01/permit-carrier-excluded.ps1
 
@@ -189,32 +147,15 @@ jobs:
           cmake --preset OpenNR-Package "-DDIST_PATH=$dist"
           cmake --build --preset Package --parallel
 
-      - name: Mark v03 integrated checkpoint
+      - name: Add v03 package notes and hashes
         shell: pwsh
         run: |
           @(
-            'OpenNR 2.20.1-v03 — adaptive controller + gaze stability checkpoint',
-            '',
-            'Base: user-tested v02 commit 067376ac5a57b997b053ef44503880c62c7e0535.',
-            '',
-            'v03 changes:',
-            '- shared DLSS RCAS slider extends to 3.0; 0..1 behavior is preserved and >1 safely boosts the bounded sharpening delta;',
-            '- gaze fixation uses continuous filtering plus a tiny pixel-scale lock; optional large dead zone can be 0%;',
-            '- adaptive model-resolution tiers are re-enabled and work with gaze-owned crops;',
-            '- adaptive crop is relative to the user-selected crop and can never expand above it;',
-            '- adaptive crop fixed-envelope resources remain available while gaze owns crop origin;',
-            '- pass-aware frametime controller selects 2, 1 or 0 Feature18 passes using configurable per-pass cost;',
-            '- severe pressure degrades quickly; restoration requires sustained predicted headroom;',
-            '- pass 2 remains relative to the live pass-1 crop and retains independent tuning/history architecture.',
-            '',
-            'nvngx_dlssnr.dll is intentionally carrier-excluded from this public artifact.',
-            'Use the validated carrier from an existing licensed OpenNR installation.'
-          ) | Set-Content -Path dist\README-2.20.1-v03.txt
-
-      - name: List output and hashes
-        shell: pwsh
-        run: |
-          Get-ChildItem -Recurse dist | Format-Table FullName,Length
+            'OpenNR 2.20.1-v03',
+            'Base: tested v02 067376ac5a57b997b053ef44503880c62c7e0535',
+            'Sharpness 0..3; gaze fixation stabilization; gaze-compatible relative crop/model adaptation; pass-aware 2/1/0 NR controller.',
+            'nvngx_dlssnr.dll is carrier-excluded by design.'
+          ) | Set-Content dist\README-2.20.1-v03.txt
           Get-ChildItem -Recurse dist -File | ForEach-Object {
             $h = Get-FileHash $_.FullName -Algorithm SHA256
             "$($h.Hash)  $($_.FullName)"
