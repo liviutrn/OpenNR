@@ -37,14 +37,13 @@ $new = @'
 '@
 Replace-Exact $postHeader $old $new
 
-$old = @'
-		return true;
-	}
-}
-'@
-$new = @'
-		return true;
-	}
+# Insert the new method immediately before the namespace's final closing brace. This is
+# deliberately independent of the exact formatting of ApplyDlssSharpening's last block.
+$postResolved = Resolve-Path $postCpp
+$postText = [IO.File]::ReadAllText($postResolved).Replace("`r`n", "`n").TrimEnd()
+$namespaceClose = $postText.LastIndexOf("`n}")
+if ($namespaceClose -lt 0) { throw 'Could not locate Postprocess namespace closing brace' }
+$method = @'
 
 	bool Postprocess::ApplyNeuralRenderingSharpening(Upscaling& upscaling, float strength, const char* placement)
 	{
@@ -95,9 +94,9 @@ $new = @'
 		}
 		return true;
 	}
-}
 '@
-Replace-Exact $postCpp $old $new
+$postText = $postText.Substring(0, $namespaceClose) + $method + $postText.Substring($namespaceClose) + "`n"
+[IO.File]::WriteAllText($postResolved, $postText, [Text.UTF8Encoding]::new($false))
 
 # The VR UI-composite hook is the clean boundary around Feature18: kMAIN already contains
 # the post-DLSS image before ApplyFoveatedLdr(), and contains the completed NR result after.
@@ -183,9 +182,11 @@ Replace-Exact $foveated $old $new
 # the setting serialized but disconnects either placement from the actual RCAS dispatch.
 $foveatedText = [IO.File]::ReadAllText((Resolve-Path $foveated)).Replace("`r`n", "`n")
 $postText = [IO.File]::ReadAllText((Resolve-Path $postCpp)).Replace("`r`n", "`n")
-if ($foveatedText -notmatch 'ApplyNeuralRenderingSharpening\([\s\S]*before-NR' -or
-    $foveatedText -notmatch 'ApplyNeuralRenderingSharpening\([\s\S]*after-NR') {
-    throw 'NR sharpening placement is not wired on both sides of ApplyFoveatedLdr'
+$beforeIndex = $foveatedText.IndexOf('"before-NR"')
+$nrIndex = $foveatedText.IndexOf('NeuralRendering::ApplyFoveatedLdr();')
+$afterIndex = $foveatedText.IndexOf('"after-NR"')
+if ($beforeIndex -lt 0 -or $nrIndex -lt 0 -or $afterIndex -lt 0 -or !($beforeIndex -lt $nrIndex -and $nrIndex -lt $afterIndex)) {
+    throw 'NR sharpening calls are not ordered literally before/after ApplyFoveatedLdr'
 }
 if ($postText -notmatch 'rcas\.ApplySharpen' -or $postText -notmatch 'strength / 3\.0f') {
     throw 'NR sharpening is not wired to RCAS with the v02 safe normalization'
