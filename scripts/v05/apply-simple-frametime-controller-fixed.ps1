@@ -96,13 +96,14 @@ $fovText = $fovText.Replace($routeTail, $outerRendererDecl)
 [IO.File]::WriteAllText($foveatedResolved, $fovText, [Text.UTF8Encoding]::new($false))
 
 # Fail in the transform stage, not minutes later in MSVC, if this scope contract
-# regresses again.
+# regresses again. Verify the exact outer-scope insertion we just performed rather
+# than depending on a later UI branch shape.
 $fovVerify = [IO.File]::ReadAllText($foveatedResolved).Replace("`r`n", "`n")
 if (([regex]::Matches($fovVerify, 'auto& neuralRenderer = NeuralRendering::Renderer::Instance\(\);')).Count -ne 1) {
     throw 'v05 neuralRenderer declaration count is not exactly one'
 }
-$outerScopePattern = '(?s)const bool supportedRoute = .*?perfMode\.IsHookActive\(\)\);\s*auto& neuralRenderer = NeuralRendering::Renderer::Instance\(\);.*?if \(!supportedRoute\)'
-if ($fovVerify -notmatch $outerScopePattern) {
-    throw 'v05 neuralRenderer is not anchored in the outer Neural Rendering UI scope'
+$outerInsertionCount = ([regex]::Matches($fovVerify, [regex]::Escape($outerRendererDecl))).Count
+if ($outerInsertionCount -ne 1) {
+    throw "v05 neuralRenderer outer-scope insertion count is $outerInsertionCount, expected one"
 }
 Write-Host 'v05 UI scope verification passed.'
