@@ -85,27 +85,16 @@ $replacement = @'
 Replace-RegexOnce $renderer $pattern $replacement
 
 Write-Host 'v02 reduced P2: evaluate centered subrect into the full-size scratch'
-$old = @'
-					guide.motionBaseX = guide.depthBaseX;
-					guide.motionBaseY = guide.depthBaseY;
-					guide.motionWidth = guideW;
-					guide.motionHeight = guideH;
-					guide.outputWidth = colorW;
-					guide.outputHeight = colorH;
-					guide.creationInputWidth = ScaleDimension(creationOutputWidth, pass2Coverage);
-					guide.creationInputHeight = ScaleDimension(creationOutputHeight, pass2Coverage);
-					guide.creationOutputWidth = guide.creationInputWidth;
-					guide.creationOutputHeight = guide.creationInputHeight;
-'@
-$new = @'
-					guide.motionBaseX = guide.depthBaseX;
-					guide.motionBaseY = guide.depthBaseY;
-					guide.motionWidth = guideW;
-					guide.motionHeight = guideH;
+$pattern = '[ \t]*guide\.outputWidth = colorW;[ \t]*\n[ \t]*guide\.outputHeight = colorH;'
+$replacement = @'
 					guide.outputBaseX = (outputWidth - colorW) / 2;
 					guide.outputBaseY = (outputHeight - colorH) / 2;
 					guide.outputWidth = colorW;
 					guide.outputHeight = colorH;
+'@
+Replace-RegexOnce $renderer $pattern $replacement
+$pattern = '[ \t]*guide\.creationInputWidth = ScaleDimension\(creationOutputWidth, pass2Coverage\);[ \t]*\n[ \t]*guide\.creationInputHeight = ScaleDimension\(creationOutputHeight, pass2Coverage\);[ \t]*\n[ \t]*guide\.creationOutputWidth = guide\.creationInputWidth;[ \t]*\n[ \t]*guide\.creationOutputHeight = guide\.creationInputHeight;'
+$replacement = @'
 					// Only the valid rectangle changes. Feature18 remains created against
 					// the same full-size P1/P2 envelope at every coverage setting.
 					guide.creationInputWidth = creationOutputWidth;
@@ -113,7 +102,7 @@ $new = @'
 					guide.creationOutputWidth = creationOutputWidth;
 					guide.creationOutputHeight = creationOutputHeight;
 '@
-Replace-Exact $renderer $old $new
+Replace-RegexOnce $renderer $pattern $replacement
 
 Write-Host 'v02 reduced P2: composite from the centered full-size scratch region'
 Replace-Exact $composite `
@@ -125,13 +114,8 @@ Write-Host 'v02 reduced P2 atlas: keep the native atlas P2 handle full-size'
 # into the top-left of the existing full-size atlas resource. Preserve that compact
 # valid rectangle for performance, but create the native P2 handle against the full
 # atlas envelope so changing P2 coverage cannot invalidate/recreate Feature18.
-$old = @'
-			guide.creationInputWidth = atlasColorWidth;
-			guide.creationInputHeight = eyeColorHeight;
-			guide.creationOutputWidth = atlasColorWidth;
-			guide.creationOutputHeight = eyeColorHeight;
-'@
-$new = @'
+$pattern = '[ \t]*guide\.creationInputWidth = atlasColorWidth;[ \t]*\n[ \t]*guide\.creationInputHeight = eyeColorHeight;[ \t]*\n[ \t]*guide\.creationOutputWidth = atlasColorWidth;[ \t]*\n[ \t]*guide\.creationOutputHeight = eyeColorHeight;'
+$replacement = @'
 			const auto atlasCreationColorWidth = stereoAtlas.colorEyeWidth * 2 + stereoAtlas.colorGuard;
 			const auto atlasCreationColorHeight = stereoAtlas.colorEyeHeight;
 			guide.creationInputWidth = atlasCreationColorWidth;
@@ -139,7 +123,7 @@ $new = @'
 			guide.creationOutputWidth = atlasCreationColorWidth;
 			guide.creationOutputHeight = atlasCreationColorHeight;
 '@
-Replace-Exact $renderer $old $new
+Replace-RegexOnce $renderer $pattern $replacement
 
 Write-Host 'v02 reduced P2 atlas: split compact atlas output into centered per-eye scratch regions'
 $old = @'
