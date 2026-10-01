@@ -49,6 +49,7 @@ jobs:
             'runtime/open-shaders/features/Upscaling/Shaders/Upscaling/NeuralRendering/StereoAtlasPackMotionCS.hlsl',
             'scripts/v01/permit-carrier-excluded.ps1',
             'scripts/v02/README.md',
+            'scripts/v02/apply-gaze-stability.ps1',
             'scripts/v02/apply-sharpening.ps1',
             'scripts/v02/apply-sharpening-fixed.ps1',
             'scripts/v02/apply-sharpening-fixed2.ps1',
@@ -84,6 +85,14 @@ jobs:
           }
           git diff --check
           if ($LASTEXITCODE -ne 0) { throw 'Transformed v01 source has whitespace errors' }
+
+      - name: Restore v00 gaze stability with configurable dead zone
+        shell: pwsh
+        run: |
+          pwsh -NoProfile -File scripts/v02/apply-gaze-stability.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'v02 gaze stability transform failed' }
+          git diff --check
+          if ($LASTEXITCODE -ne 0) { throw 'Transformed v02 gaze source has whitespace errors' }
 
       - name: Apply v02 verified NR sharpening
         shell: pwsh
@@ -133,19 +142,18 @@ jobs:
         shell: pwsh
         run: |
           @(
-            'OpenNR 2.20.1-v02 — verified NR sharpening checkpoint',
+            'OpenNR 2.20.1-v02 — gaze-stability + verified NR sharpening checkpoint',
             '',
             'v02 starts from v01 head 38983f3e000213a377096ab44dbee12484b6d29a.',
             'The complete validated v01 transformation chain is preserved first.',
             '',
             'This checkpoint adds:',
+            '- v00-style hard-hold gaze crop behavior restored;',
+            '- configurable 1% to 10% eye-axis gaze dead zone, default 2%;',
             '- explicit before-NR and after-NR sharpening placement at the Feature18 boundary;',
             '- 0.0 to 3.0 user sharpening range;',
             '- safe normalization to the existing RCAS kernel 0..1 coefficient;',
-            '- build-time wiring assertions that both placements reach RCAS;',
-            '- periodic DLSSNR sharpening diagnostics.',
-            '',
-            'The adaptive-controller redesign is intentionally not stacked until this checkpoint compiles.',
+            '- build-time wiring assertions that both placements reach RCAS.',
             '',
             'nvngx_dlssnr.dll is intentionally carrier-excluded from this public artifact.',
             'Use the validated carrier from an existing licensed OpenNR installation.'
