@@ -71,3 +71,38 @@ $sourceText = $sourceText.Replace($missingPipelineOpen, $restoredPipelineOpen)
 if ($LASTEXITCODE -ne 0) {
     throw "Corrected v05 simple controller transform failed with exit code $LASTEXITCODE"
 }
+
+# The inherited recovery/status UI originally declared neuralRenderer inside the
+# settings-enabled child scope. After the v05 panel rewrite those recovery/status
+# lines remain in the outer Neural Rendering panel, so keep their shared renderer
+# reference in that same outer scope. This is generated-source-only and does not
+# change renderer/controller behavior.
+$foveated = 'runtime/open-shaders/src/Features/Upscaling/FoveatedRender.cpp'
+$foveatedResolved = Resolve-Path $foveated
+$fovText = [IO.File]::ReadAllText($foveatedResolved).Replace("`r`n", "`n")
+$rendererDeclRx = [regex]::new('(?m)^[ \t]*auto& neuralRenderer = NeuralRendering::Renderer::Instance\(\);\n')
+$rendererDeclMatches = $rendererDeclRx.Matches($fovText)
+if ($rendererDeclMatches.Count -ne 1) {
+    throw "Expected one inherited neuralRenderer UI declaration, found $($rendererDeclMatches.Count)"
+}
+$fovText = $rendererDeclRx.Replace($fovText, '', 1)
+$routeTail = "`t`t`t`tglobals::features::upscaling.perfMode.IsHookActive()));`n"
+$routeTailCount = ([regex]::Matches($fovText, [regex]::Escape($routeTail))).Count
+if ($routeTailCount -ne 1) {
+    throw "Expected one Neural Rendering supportedRoute tail, found $routeTailCount"
+}
+$outerRendererDecl = $routeTail + "`t`tauto& neuralRenderer = NeuralRendering::Renderer::Instance();`n"
+$fovText = $fovText.Replace($routeTail, $outerRendererDecl)
+[IO.File]::WriteAllText($foveatedResolved, $fovText, [Text.UTF8Encoding]::new($false))
+
+# Fail in the transform stage, not minutes later in MSVC, if this scope contract
+# regresses again.
+$fovVerify = [IO.File]::ReadAllText($foveatedResolved).Replace("`r`n", "`n")
+if (([regex]::Matches($fovVerify, 'auto& neuralRenderer = NeuralRendering::Renderer::Instance\(\);')).Count -ne 1) {
+    throw 'v05 neuralRenderer declaration count is not exactly one'
+}
+$outerScopePattern = '(?s)const bool supportedRoute = .*?perfMode\.IsHookActive\(\)\);\s*auto& neuralRenderer = NeuralRendering::Renderer::Instance\(\);.*?if \(!supportedRoute\)'
+if ($fovVerify -notmatch $outerScopePattern) {
+    throw 'v05 neuralRenderer is not anchored in the outer Neural Rendering UI scope'
+}
+Write-Host 'v05 UI scope verification passed.'
