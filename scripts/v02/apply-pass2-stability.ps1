@@ -126,41 +126,22 @@ $replacement = @'
 Replace-RegexOnce $renderer $pattern $replacement
 
 Write-Host 'v02 reduced P2 atlas: split compact atlas output into centered per-eye scratch regions'
-$old = @'
-		void SplitStereoAtlasOutput(ID3D11DeviceContext* context, ID3D11Resource* leftTarget, ID3D11Resource* rightTarget,
-			std::uint32_t eyeWidth, std::uint32_t eyeHeight, std::uint32_t guardWidth)
-		{
-			const D3D11_BOX leftBox{ 0, 0, 0, eyeWidth, eyeHeight, 1 };
-			const D3D11_BOX rightBox{ eyeWidth + guardWidth, 0, 0, eyeWidth * 2 + guardWidth, eyeHeight, 1 };
-			context->CopySubresourceRegion(leftTarget, 0, 0, 0, 0, stereoAtlas.output.resource11.Get(), 0, &leftBox);
-			context->CopySubresourceRegion(rightTarget, 0, 0, 0, 0, stereoAtlas.output.resource11.Get(), 0, &rightBox);
-		}
-'@
-$new = @'
-		void SplitStereoAtlasOutput(ID3D11DeviceContext* context, ID3D11Resource* leftTarget, ID3D11Resource* rightTarget,
+$pattern = 'void SplitStereoAtlasOutput\(ID3D11DeviceContext\* context, ID3D11Resource\* leftTarget, ID3D11Resource\* rightTarget,\s*std::uint32_t eyeWidth, std::uint32_t eyeHeight, std::uint32_t guardWidth\)'
+$replacement = @'
+void SplitStereoAtlasOutput(ID3D11DeviceContext* context, ID3D11Resource* leftTarget, ID3D11Resource* rightTarget,
 			std::uint32_t eyeWidth, std::uint32_t eyeHeight, std::uint32_t guardWidth,
 			std::uint32_t destinationOffsetX = 0, std::uint32_t destinationOffsetY = 0)
-		{
-			const D3D11_BOX leftBox{ 0, 0, 0, eyeWidth, eyeHeight, 1 };
-			const D3D11_BOX rightBox{ eyeWidth + guardWidth, 0, 0, eyeWidth * 2 + guardWidth, eyeHeight, 1 };
-			context->CopySubresourceRegion(leftTarget, 0, destinationOffsetX, destinationOffsetY, 0,
-				stereoAtlas.output.resource11.Get(), 0, &leftBox);
-			context->CopySubresourceRegion(rightTarget, 0, destinationOffsetX, destinationOffsetY, 0,
-				stereoAtlas.output.resource11.Get(), 0, &rightBox);
-		}
 '@
-Replace-Exact $renderer $old $new
-
-$old = @'
-					SplitStereoAtlasOutput(context, leftTier.secondPassOutput.resource11.Get(), rightTier.secondPassOutput.resource11.Get(),
-						pass2Width, pass2Height, pass2ColorGuard);
-'@
-$new = @'
-					SplitStereoAtlasOutput(context, leftTier.secondPassOutput.resource11.Get(), rightTier.secondPassOutput.resource11.Get(),
+Replace-RegexOnce $renderer $pattern $replacement
+Replace-RegexOnce $renderer 'context->CopySubresourceRegion\(leftTarget, 0, 0, 0, 0, stereoAtlas\.output\.resource11\.Get\(\), 0, &leftBox\);' 'context->CopySubresourceRegion(leftTarget, 0, destinationOffsetX, destinationOffsetY, 0, stereoAtlas.output.resource11.Get(), 0, &leftBox);'
+Replace-RegexOnce $renderer 'context->CopySubresourceRegion\(rightTarget, 0, 0, 0, 0, stereoAtlas\.output\.resource11\.Get\(\), 0, &rightBox\);' 'context->CopySubresourceRegion(rightTarget, 0, destinationOffsetX, destinationOffsetY, 0, stereoAtlas.output.resource11.Get(), 0, &rightBox);'
+$pattern = 'SplitStereoAtlasOutput\(context, leftTier\.secondPassOutput\.resource11\.Get\(\), rightTier\.secondPassOutput\.resource11\.Get\(\),\s*pass2Width, pass2Height, pass2ColorGuard\);'
+$replacement = @'
+SplitStereoAtlasOutput(context, leftTier.secondPassOutput.resource11.Get(), rightTier.secondPassOutput.resource11.Get(),
 						pass2Width, pass2Height, pass2ColorGuard,
 						(modelWidth - pass2Width) / 2, (modelHeight - pass2Height) / 2);
 '@
-Replace-Exact $renderer $old $new
+Replace-RegexOnce $renderer $pattern $replacement
 
 Write-Host 'v02 reduced P2: verify stable-envelope invariants'
 $text = [IO.File]::ReadAllText((Resolve-Path $renderer)).Replace("`r`n", "`n")
