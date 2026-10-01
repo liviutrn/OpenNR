@@ -48,25 +48,15 @@ $replacement = @'
 Replace-RegexOnce $renderer $pattern $replacement
 
 Write-Host 'v02 compact P2: keep atlas on the validated full-P2 contract'
-$old = @'
-			const bool scalesMatch = std::abs(inputs[0].motionVectorScaleX - inputs[1].motionVectorScaleX) < 1e-4f &&
-				std::abs(inputs[0].motionVectorScaleY - inputs[1].motionVectorScaleY) < 1e-4f;
-			const bool compatible = passCount >= 1 && passCount <= 2 && !tuning.adaptiveResolution &&
-				tuning.temporalReuseCadence == 0 && !tuning.temporalReuseStaggerEyes && scalesMatch &&
-				modelWidth && modelHeight && guideWidth && guideHeight;
-'@
-$new = @'
-			const bool scalesMatch = std::abs(inputs[0].motionVectorScaleX - inputs[1].motionVectorScaleX) < 1e-4f &&
-				std::abs(inputs[0].motionVectorScaleY - inputs[1].motionVectorScaleY) < 1e-4f;
-			// v01 never gave atlas pass 2 an independent GPU-safe recreation contract
-			// for changing compact dimensions. Fail closed to the now-corrected
-			// independent-eye compact-P2 path instead of risking a stale atlas handle.
+$atlasCompatible = 'const bool compatible = passCount >= 1 && passCount <= 2 && !tuning.adaptiveResolution &&'
+$atlasReplacement = @'
+// v01 atlas pass 2 has no independent GPU-safe recreation contract for
+			// changing compact dimensions. Reduced P2 therefore falls back to the
+			// corrected independent-eye path instead of reusing a stale atlas handle.
 			const bool compactPass2 = passCount == 2 && tuning.secondPass.coveragePercent < 100;
 			const bool compatible = passCount >= 1 && passCount <= 2 && !compactPass2 && !tuning.adaptiveResolution &&
-				tuning.temporalReuseCadence == 0 && !tuning.temporalReuseStaggerEyes && scalesMatch &&
-				modelWidth && modelHeight && guideWidth && guideHeight;
 '@
-Replace-Exact $renderer $old $new
+Replace-Exact $renderer $atlasCompatible $atlasReplacement
 
 $text = [IO.File]::ReadAllText((Resolve-Path $renderer)).Replace("`r`n", "`n")
 if ($text -notmatch 'expectedInputWidth = compactPass2 \? ScaleDimension\(resourceModelWidth, pass2Coverage\)') {
@@ -77,6 +67,9 @@ if ($text -notmatch 'expectedGuideWidth = compactPass2 \? ScaleDimension\(shared
 }
 if ($text -notmatch 'const bool compactPass2 = passCount == 2 && tuning\.secondPass\.coveragePercent < 100;') {
     throw 'Atlas reduced-P2 safety fallback was not installed'
+}
+if ($text -notmatch 'passCount <= 2 && !compactPass2 && !tuning\.adaptiveResolution') {
+    throw 'Atlas compatibility does not fail closed for reduced pass 2'
 }
 
 Write-Host 'v02 compact reduced pass-2 stability repair applied successfully.'
