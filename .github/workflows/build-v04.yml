@@ -37,7 +37,8 @@ jobs:
             'scripts/v03/prepare-controller-contract.ps1','scripts/v03/apply-adaptive-relative-crop.ps1',
             'scripts/v03/apply-gaze-fixation-stability.ps1','scripts/v03/apply-sharpness-range.ps1',
             'scripts/v03/apply-smart-frametime-controller-fixed.ps1',
-            'scripts/v04/apply-unified-frametime-controller.ps1','scripts/v04/apply-atlas-adaptive-safety.ps1'
+            'scripts/v04/apply-unified-frametime-controller.ps1','scripts/v04/apply-unified-frametime-controller-fixed.ps1',
+            'scripts/v04/apply-atlas-adaptive-safety.ps1'
           ) | ForEach-Object { if (-not (Test-Path $_)) { throw "Missing input: $_" } }
           git diff --check
 
@@ -89,7 +90,7 @@ jobs:
       - name: Apply v04 unified frametime controller
         shell: pwsh
         run: |
-          pwsh -NoProfile -File scripts/v04/apply-unified-frametime-controller.ps1
+          pwsh -NoProfile -File scripts/v04/apply-unified-frametime-controller-fixed.ps1
           if ($LASTEXITCODE) { throw 'v04 unified controller failed' }
           pwsh -NoProfile -File scripts/v04/apply-atlas-adaptive-safety.ps1
           if ($LASTEXITCODE) { throw 'v04 atlas adaptive safety failed' }
