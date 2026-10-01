@@ -39,7 +39,8 @@ jobs:
             'scripts/v03/apply-smart-frametime-controller-fixed.ps1',
             'scripts/v04/apply-unified-frametime-controller.ps1','scripts/v04/apply-unified-frametime-controller-fixed.ps1',
             'scripts/v04/apply-atlas-adaptive-safety.ps1',
-            'scripts/v05/apply-simple-frametime-controller.ps1','docs/versions/2.20.1-v05/README.md'
+            'scripts/v05/apply-simple-frametime-controller.ps1','scripts/v05/apply-simple-frametime-controller-fixed.ps1',
+            'docs/versions/2.20.1-v05/README.md'
           ) | ForEach-Object { if (-not (Test-Path $_)) { throw "Missing input: $_" } }
           git diff --check
 
@@ -98,7 +99,7 @@ jobs:
       - name: Apply v05 simple crop-first frametime controller
         shell: pwsh
         run: |
-          pwsh -NoProfile -File scripts/v05/apply-simple-frametime-controller.ps1
+          pwsh -NoProfile -File scripts/v05/apply-simple-frametime-controller-fixed.ps1
           if ($LASTEXITCODE) { throw 'v05 simple controller failed' }
           git diff --check
           if ($LASTEXITCODE) { throw 'v05 transformed source has whitespace errors' }
@@ -121,7 +122,7 @@ jobs:
           if ($fovh -notmatch 'neuralRenderingAdaptivePassIncreaseBelowMs = 14\.0f' -or $fovh -notmatch 'adaptiveFilteredFrameTimeMs') { throw 'v05 controller settings/state missing' }
           if ($fov -notmatch '\[DLSSNR\]\[ADAPTIVE-v05\]' -or $fov -notmatch '\[DLSSNR\]\[BUDGET-v05\]') { throw 'v05 controller diagnostics missing' }
           if ($fov -match '\[DLSSNR\]\[ADAPTIVE-v04\]' -or $fov -match '\[DLSSNR\]\[BUDGET-v04\]') { throw 'v04 decision body survived v05' }
-          if ($fov -match 'passCostMs' -or $fov -match 'adaptiveFastWorkloadMs' -or $fov -match 'adaptiveSlowWorkloadMs') { throw 'Predictive/dual-filter policy survived v05' }
+          if ($fov -match 'adaptiveController\.Update\(') { throw 'Old model-resolution controller still drives adaptive decisions' }
           if ($fov -match 'Use custom FPS target' -or $fov -match 'Headset refresh target' -or $fov -match 'Estimated DLSS5 NR pass cost') { throw 'Old automatic controller UI survived v05' }
           if ($fov -notmatch 'Pass \+1 below.*10\.0f, 30\.0f' -or $fov -notmatch 'Pass -1 above.*10\.0f, 30\.0f') { throw '10-30 ms threshold controls missing' }
           if ($crop -notmatch 'std::array<std::uint32_t, 3> kCoverageBuckets' -or $crop -notmatch '100, 80, 60') { throw 'Approved 100/80/60 crop ladder missing' }
