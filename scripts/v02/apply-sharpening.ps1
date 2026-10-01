@@ -9,12 +9,30 @@ function Replace-Exact {
     [IO.File]::WriteAllText($resolved, $text.Replace($Old,$New), [Text.UTF8Encoding]::new($false))
 }
 
+function Replace-RegexOnce {
+    param([string]$Path,[string]$Pattern,[string]$Replacement)
+    $resolved = Resolve-Path $Path
+    $text = [IO.File]::ReadAllText($resolved).Replace("`r`n", "`n")
+    $rx = [regex]::new($Pattern, [Text.RegularExpressions.RegexOptions]::Singleline)
+    $matches = $rx.Matches($text)
+    if ($matches.Count -ne 1) { throw "Expected exactly one regex source block in $Path, found $($matches.Count)" }
+    [IO.File]::WriteAllText($resolved, $rx.Replace($text,$Replacement,1), [Text.UTF8Encoding]::new($false))
+}
+
+function Insert-After-Unique {
+    param([string]$Path,[string]$Needle,[string]$Insertion)
+    $resolved = Resolve-Path $Path
+    $text = [IO.File]::ReadAllText($resolved).Replace("`r`n", "`n")
+    $count = ([regex]::Matches($text, [regex]::Escape($Needle))).Count
+    if ($count -ne 1) { throw "Expected exactly one insertion anchor in $Path, found $count: $Needle" }
+    [IO.File]::WriteAllText($resolved, $text.Replace($Needle, $Needle + $Insertion), [Text.UTF8Encoding]::new($false))
+}
+
 $foveated = 'runtime/open-shaders/src/Features/Upscaling/FoveatedRender.cpp'
 $postHeader = 'runtime/open-shaders/src/Features/Upscaling/FoveatedRender/Postprocess.h'
 $postCpp = 'runtime/open-shaders/src/Features/Upscaling/FoveatedRender/Postprocess.cpp'
 
-# v01 serialized the NR-sharpening controls but intentionally did not execute them.
-# v02 makes the global NR control real and caps the user-facing strength at 3.0.
+Write-Host 'v02 sharpening: clamp settings to 0..3'
 Replace-Exact $foveated `
     'settings.neuralRenderingSharpeningStrength = clampFinite(settings.neuralRenderingSharpeningStrength, 0.0f, 0.0f, 5.0f);' `
     'settings.neuralRenderingSharpeningStrength = clampFinite(settings.neuralRenderingSharpeningStrength, 0.0f, 0.0f, 3.0f);'
@@ -22,10 +40,7 @@ Replace-Exact $foveated `
     'pass2.sharpeningStrength = clampFinite(pass2.sharpeningStrength, 0.0f, 0.0f, 5.0f);' `
     'pass2.sharpeningStrength = clampFinite(pass2.sharpeningStrength, 0.0f, 0.0f, 3.0f);'
 
-# Reuse the already-proven RCAS resource path instead of inventing a second sharpening
-# implementation. The v02 slider is 0..3; it maps monotonically to RCAS's safe 0..1
-# lobe multiplier so the denominator in the existing RCAS resolve cannot be driven into
-# the unstable >1 regime by a user-facing value above 1.
+Write-Host 'v02 sharpening: declare and implement NR RCAS stage'
 $old = @'
 		static bool ApplyDlssSharpening(Upscaling& upscaling);
 '@
@@ -37,8 +52,11 @@ $new = @'
 '@
 Replace-Exact $postHeader $old $new
 
-# Insert the new method immediately before the namespace's final closing brace. This is
-# deliberately independent of the exact formatting of ApplyDlssSharpening's last block.
+# std::clamp is used by the new path; do not rely on incidental transitive includes.
+Insert-After-Unique $postCpp '#include "../FoveatedRender.h"' "`n`n#include <algorithm>"
+
+# Insert the method immediately before the namespace's final closing brace. This is
+# intentionally independent of ApplyDlssSharpening's precise tail formatting.
 $postResolved = Resolve-Path $postCpp
 $postText = [IO.File]::ReadAllText($postResolved).Replace("`r`n", "`n").TrimEnd()
 $namespaceClose = $postText.LastIndexOf("`n}")
@@ -76,9 +94,8 @@ $method = @'
 			return false;
 		}
 
-		// The RCAS shader multiplies its bounded negative lobe by this value. Keep
-		// that coefficient <= 1.0; the 0..3 UI scale is intentionally ergonomic,
-		// not a literal multiplier of the RCAS lobe.
+		// The RCAS HLSL multiplies a bounded negative lobe by this value. Keep the
+		// actual kernel coefficient <= 1.0 even though the ergonomic UI scale is 0..3.
 		const float rcasStrength = std::clamp(strength / 3.0f, 0.0f, 1.0f);
 		context->OMSetRenderTargets(0, nullptr, nullptr);
 		upscaling.rcas.ApplySharpen(Util::AsReal(main.SRV), upscaling.sharpenerTexture->uav.get(), rcasStrength);
@@ -98,28 +115,13 @@ $method = @'
 $postText = $postText.Substring(0, $namespaceClose) + $method + $postText.Substring($namespaceClose) + "`n"
 [IO.File]::WriteAllText($postResolved, $postText, [Text.UTF8Encoding]::new($false))
 
-# The VR UI-composite hook is the clean boundary around Feature18: kMAIN already contains
-# the post-DLSS image before ApplyFoveatedLdr(), and contains the completed NR result after.
-# This makes the requested placement literal rather than approximate.
-$old = @'
-#include "FoveatedRender/Core.h"
-#include "NativeOpenVRGaze.h"
-'@
-$new = @'
-#include "FoveatedRender/Core.h"
-#include "FoveatedRender/Postprocess.h"
-#include "NativeOpenVRGaze.h"
-'@
-Replace-Exact $foveated $old $new
+Write-Host 'v02 sharpening: wire literal before/after Feature18 boundary'
+# Add Postprocess include by a single stable line, not by adjacency to another include.
+Insert-After-Unique $foveated '#include "FoveatedRender/Core.h"' "`n#include \"FoveatedRender/Postprocess.h\""
 
-$old = @'
-void FoveatedRender::UICompositeRenderHook::thunk(void* imageSpaceShader, RE::BSTriShape* shape, RE::ImageSpaceEffectParam* param)
-{
-	NeuralRendering::ApplyFoveatedLdr();
-	func(imageSpaceShader, shape, param);
-}
-'@
-$new = @'
+# Replace the hook body using the following function signature as the right boundary.
+$pattern = 'void FoveatedRender::UICompositeRenderHook::thunk\([^\n]*\)\s*\{.*?\n\}\n\nvoid FoveatedRender::ClearShaderCache\(\)'
+$replacement = @'
 void FoveatedRender::UICompositeRenderHook::thunk(void* imageSpaceShader, RE::BSTriShape* shape, RE::ImageSpaceEffectParam* param)
 {
 	auto& upscaling = globals::features::upscaling;
@@ -140,17 +142,20 @@ void FoveatedRender::UICompositeRenderHook::thunk(void* imageSpaceShader, RE::BS
 
 	func(imageSpaceShader, shape, param);
 }
-'@
-Replace-Exact $foveated $old $new
 
-# Expose only the now-executing global NR sharpening controls. P2's historical plumbing
-# remains serialized for compatibility but is intentionally not presented as a working
-# separate stage in v02.
-$old = @'
-				ImGui::SeparatorText("Stereo Atlas");
+void FoveatedRender::ClearShaderCache()
 '@
-$new = @'
-				ImGui::SeparatorText("NR Sharpening");
+Replace-RegexOnce $foveated $pattern $replacement
+
+Write-Host 'v02 sharpening: add user controls'
+# Insert before the unique Stereo Atlas separator, independent of indentation.
+$fovResolved = Resolve-Path $foveated
+$fovText = [IO.File]::ReadAllText($fovResolved).Replace("`r`n", "`n")
+$marker = 'ImGui::SeparatorText("Stereo Atlas");'
+$markerCount = ([regex]::Matches($fovText, [regex]::Escape($marker))).Count
+if ($markerCount -ne 1) { throw "Expected one Stereo Atlas UI marker, found $markerCount" }
+$ui = @'
+ImGui::SeparatorText("NR Sharpening");
 				bool nrSharpenChanged = false;
 				nrSharpenChanged |= ImGui::Checkbox("Enable NR sharpening", &settings.neuralRenderingSharpeningEnabled);
 				static const char* nrSharpenPlacement[] = { "Before NR", "After NR" };
@@ -176,10 +181,10 @@ $new = @'
 
 				ImGui::SeparatorText("Stereo Atlas");
 '@
-Replace-Exact $foveated $old $new
+$fovText = $fovText.Replace($marker, $ui)
+[IO.File]::WriteAllText($fovResolved, $fovText, [Text.UTF8Encoding]::new($false))
 
-# Build-time wiring assertions: these intentionally fail CI if a later source change leaves
-# the setting serialized but disconnects either placement from the actual RCAS dispatch.
+Write-Host 'v02 sharpening: verify executable wiring'
 $foveatedText = [IO.File]::ReadAllText((Resolve-Path $foveated)).Replace("`r`n", "`n")
 $postText = [IO.File]::ReadAllText((Resolve-Path $postCpp)).Replace("`r`n", "`n")
 $beforeIndex = $foveatedText.IndexOf('"before-NR"')
