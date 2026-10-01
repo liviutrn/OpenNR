@@ -2,8 +2,8 @@ $ErrorActionPreference = 'Stop'
 
 # Insert the v04-only state by anchoring to the unique slow-workload member.
 # This deliberately avoids assuming tabs/spaces or adjacency produced by the
-# inherited v03 wrapper. Then disable only the brittle insertion call in the
-# main v04 transform and execute every other rewrite unchanged.
+# inherited v03 wrapper. The function transforms are also rewritten to match
+# each function's own top-level boundary instead of a particular neighbour.
 $header = 'runtime/open-shaders/src/Features/Upscaling/FoveatedRender.h'
 $resolved = Resolve-Path $header
 $text = [IO.File]::ReadAllText($resolved).Replace("`r`n", "`n")
@@ -32,12 +32,38 @@ $text = $rx.Replace($text, $replacement, 1)
 $source = 'scripts/v04/apply-unified-frametime-controller.ps1'
 $sourceResolved = Resolve-Path $source
 $sourceText = [IO.File]::ReadAllText($sourceResolved).Replace("`r`n", "`n")
+
 $oldCall = 'Replace-ExactOnce $header $stateOld $stateNew'
 $count = ([regex]::Matches($sourceText, [regex]::Escape($oldCall))).Count
 if ($count -ne 1) {
     throw "Expected one brittle v04 state insertion call, found $count"
 }
 $sourceText = $sourceText.Replace($oldCall, "Write-Host 'v04 unified state already inserted by fixed wrapper'")
+
+$oldResetPattern = @'
+$resetPattern = '(?s)void FoveatedRender::ResetAdaptiveState\(\)\n\{.*?\n\}\n(?=\nbool FoveatedRender::IsEyeTrackedFoveationEnabled)'
+'@
+$newResetPattern = @'
+$resetPattern = '(?ms)^void FoveatedRender::ResetAdaptiveState\(\)\n\{.*?^\}\n'
+'@
+$resetCount = ([regex]::Matches($sourceText, [regex]::Escape($oldResetPattern.TrimEnd("`n")))).Count
+if ($resetCount -ne 1) {
+    throw "Expected one brittle ResetAdaptiveState pattern, found $resetCount"
+}
+$sourceText = $sourceText.Replace($oldResetPattern.TrimEnd("`n"), $newResetPattern.TrimEnd("`n"))
+
+$oldUpdatePattern = @'
+$updatePattern = '(?s)void FoveatedRender::UpdateAdaptiveState\(std::uint32_t frame, bool routeEligible\)\n\{.*?\n\}\n(?=\nUtil::Subrect::UVRegion FoveatedRender::GetEffectiveLeftUV)'
+'@
+$newUpdatePattern = @'
+$updatePattern = '(?ms)^void FoveatedRender::UpdateAdaptiveState\(std::uint32_t frame, bool routeEligible\)\n\{.*?^\}\n'
+'@
+$updateCount = ([regex]::Matches($sourceText, [regex]::Escape($oldUpdatePattern.TrimEnd("`n")))).Count
+if ($updateCount -ne 1) {
+    throw "Expected one brittle UpdateAdaptiveState pattern, found $updateCount"
+}
+$sourceText = $sourceText.Replace($oldUpdatePattern.TrimEnd("`n"), $newUpdatePattern.TrimEnd("`n"))
+
 [IO.File]::WriteAllText($sourceResolved, $sourceText, [Text.UTF8Encoding]::new($false))
 
 & pwsh -NoProfile -File $source
