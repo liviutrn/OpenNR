@@ -67,16 +67,22 @@ $new = @'
 '@
 Replace-Exact $renderer $old $new
 
+# Keep the existing tier compatibility expression intact except for the compact
+# P2 resource predicate. The full-size P2 scratch is allocated lazily below.
 $old = @'
-				Matches(tier.output, outputDesc) && intermediatesMatch &&
 				(!croppedSecondPass || Matches(tier.secondPassOutput, pass2OutputDesc)) &&
-				(!reducedResolution || (MatchesResolved(tier.resolved, resolvedDesc) && tier.resolvedSRV && tier.resolvedUAV));
+'@
+$new = ''
+Replace-Exact $renderer $old $new
+
+# Match only the return site instead of one large surrounding block. This keeps
+# the transform stable when adjacent v01/atlas code changes without changing the
+# generated runtime logic.
+$old = @'
 			if (resourcesMatch)
 				return true;
 '@
 $new = @'
-				Matches(tier.output, outputDesc) && intermediatesMatch &&
-				(!reducedResolution || (MatchesResolved(tier.resolved, resolvedDesc) && tier.resolvedSRV && tier.resolvedUAV));
 			if (resourcesMatch) {
 				// At 100% P2 the normal full-size final output is used directly. If the
 				// user later selects <100%, allocate only a full-size P2 scratch; do not
