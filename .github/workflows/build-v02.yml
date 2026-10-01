@@ -50,6 +50,9 @@ jobs:
             'scripts/v01/permit-carrier-excluded.ps1',
             'scripts/v02/README.md',
             'scripts/v02/apply-gaze-stability.ps1',
+            'scripts/v02/apply-gaze-stability-fixed.ps1',
+            'scripts/v02/apply-atlas-motion-stability.ps1',
+            'scripts/v02/apply-pass2-stability.ps1',
             'scripts/v02/apply-sharpening.ps1',
             'scripts/v02/apply-sharpening-fixed.ps1',
             'scripts/v02/apply-sharpening-fixed2.ps1',
@@ -89,10 +92,24 @@ jobs:
       - name: Restore v00 gaze stability with configurable dead zone
         shell: pwsh
         run: |
-          pwsh -NoProfile -File scripts/v02/apply-gaze-stability.ps1
+          pwsh -NoProfile -File scripts/v02/apply-gaze-stability-fixed.ps1
           if ($LASTEXITCODE -ne 0) { throw 'v02 gaze stability transform failed' }
           git diff --check
           if ($LASTEXITCODE -ne 0) { throw 'Transformed v02 gaze source has whitespace errors' }
+
+      - name: Apply atlas-motion and compact-P2 repairs
+        shell: pwsh
+        run: |
+          @(
+            'scripts/v02/apply-atlas-motion-stability.ps1',
+            'scripts/v02/apply-pass2-stability.ps1'
+          ) | ForEach-Object {
+            Write-Host "Applying $_"
+            pwsh -NoProfile -File $_
+            if ($LASTEXITCODE -ne 0) { throw "v02 regression transform failed: $_" }
+          }
+          git diff --check
+          if ($LASTEXITCODE -ne 0) { throw 'Transformed v02 renderer source has whitespace errors' }
 
       - name: Apply v02 verified NR sharpening
         shell: pwsh
@@ -138,22 +155,22 @@ jobs:
           cmake --preset OpenNR-Package "-DDIST_PATH=$dist"
           cmake --build --preset Package --parallel
 
-      - name: Mark v02 sharpening checkpoint
+      - name: Mark v02 integrated checkpoint
         shell: pwsh
         run: |
           @(
-            'OpenNR 2.20.1-v02 — gaze-stability + verified NR sharpening checkpoint',
+            'OpenNR 2.20.1-v02 — integrated regression-fix checkpoint',
             '',
-            'v02 starts from v01 head 38983f3e000213a377096ab44dbee12484b6d29a.',
-            'The complete validated v01 transformation chain is preserved first.',
+            'Base: validated OpenNR 2.20.1-v01 transformation chain.',
             '',
-            'This checkpoint adds:',
-            '- v00-style hard-hold gaze crop behavior restored;',
+            'v02 corrections in this package:',
+            '- v00-style hard-hold gaze crop restored;',
             '- configurable 1% to 10% eye-axis gaze dead zone, default 2%;',
-            '- explicit before-NR and after-NR sharpening placement at the Feature18 boundary;',
-            '- 0.0 to 3.0 user sharpening range;',
-            '- safe normalization to the existing RCAS kernel 0..1 coefficient;',
-            '- build-time wiring assertions that both placements reach RCAS.',
+            '- atlas crop-motion compensation no longer inherits dormant per-eye reset flags;',
+            '- reduced sequential pass 2 uses pass-aware native Feature18 handle dimensions;',
+            '- reduced pass 2 fails closed from atlas to corrected independent-eye stereo;',
+            '- before-NR / after-NR RCAS sharpening is wired at the Feature18 boundary;',
+            '- sharpening user range is 0.0 to 3.0 and maps safely to RCAS 0..1.',
             '',
             'nvngx_dlssnr.dll is intentionally carrier-excluded from this public artifact.',
             'Use the validated carrier from an existing licensed OpenNR installation.'
@@ -171,7 +188,7 @@ jobs:
       - name: Upload v02 checkpoint package
         uses: actions/upload-artifact@v4
         with:
-          name: OpenNR-2.20.1-v02-sharpening-carrier-excluded
+          name: OpenNR-2.20.1-v02-carrier-excluded
           path: dist/*
           if-no-files-found: error
           retention-days: 14
