@@ -57,17 +57,8 @@ $sourceText = $sourceText.Replace($oldVerification, $newVerification)
 # opening Experimental Pipeline CollapsingHeader from the inherited source. Put
 # that opening scope back so the later closing brace cannot escape the Neural
 # Rendering panel and move supportedRoute out of scope.
-$missingPipelineOpen = @'
-\t\t\t}
-
-\t\t\t\tImGui::SeparatorText("Resolve and Pipeline");
-'@
-$restoredPipelineOpen = @'
-\t\t\t}
-
-\t\t\tif (ImGui::CollapsingHeader("Experimental Pipeline")) {
-\t\t\t\tImGui::SeparatorText("Resolve and Pipeline");
-'@
+$missingPipelineOpen = "`t`t`t}`n`n`t`t`t`tImGui::SeparatorText(`"Resolve and Pipeline`");"
+$restoredPipelineOpen = "`t`t`t}`n`n`t`t`tif (ImGui::CollapsingHeader(`"Experimental Pipeline`")) {`n`t`t`t`tImGui::SeparatorText(`"Resolve and Pipeline`");"
 $pipelineOpenCount = ([regex]::Matches($sourceText, [regex]::Escape($missingPipelineOpen))).Count
 if ($pipelineOpenCount -ne 1) {
     throw "Expected one v05 UI replacement missing Experimental Pipeline scope, found $pipelineOpenCount"
