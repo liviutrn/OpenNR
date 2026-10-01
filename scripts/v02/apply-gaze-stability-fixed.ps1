@@ -8,7 +8,8 @@ $text = [IO.File]::ReadAllText($resolved).Replace("`r`n", "`n")
 # FoveatedRender::Settings. v01 transforms do not guarantee that layout. Rewrite
 # only that insertion in the transform so it anchors on the unique quantization
 # field and preserves whatever default value the inherited source carries.
-$rx = [regex]::new("(?s)Write-Host 'v02 gaze stability: persist dead-zone setting'\nReplace-Exact \$header @'.*?'@ @'.*?'@\n\nReplace-Exact \$foveated '#include \"FoveatedRender/Core\.h\"'")
+$pattern = '(?s)Write-Host ''v02 gaze stability: persist dead-zone setting''\nReplace-Exact \$header @''.*?''@ @''.*?''@\n\nReplace-Exact \$foveated ''#include "FoveatedRender/Core\.h"'''
+$rx = [regex]::new($pattern)
 $matches = $rx.Matches($text)
 if ($matches.Count -ne 1) { throw "Expected one gaze settings insertion block, found $($matches.Count)" }
 $replacement = @'
