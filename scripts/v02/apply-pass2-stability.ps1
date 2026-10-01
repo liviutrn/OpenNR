@@ -53,19 +53,12 @@ $replacement = @'
 Replace-RegexOnce $renderer $pattern $replacement
 
 Write-Host 'v02 reduced P2: use a full-size scratch without rebuilding the tier'
-$old = @'
-			const auto pass2ResourceWidth = ScaleDimension(resourceModelWidth, pass2Coverage);
-			const auto pass2ResourceHeight = ScaleDimension(resourceModelHeight, pass2Coverage);
-			const auto modelInputDesc = MakeSharedDesc(eye.color.desc, resourceModelWidth, resourceModelHeight, sharedFlags);
-			const auto outputDesc = MakeSharedDesc(eye.color.desc, resourceModelWidth, resourceModelHeight, sharedFlags);
-			const auto pass2OutputDesc = MakeSharedDesc(eye.color.desc, pass2ResourceWidth, pass2ResourceHeight, sharedFlags);
-'@
-$new = @'
-			const auto modelInputDesc = MakeSharedDesc(eye.color.desc, resourceModelWidth, resourceModelHeight, sharedFlags);
-			const auto outputDesc = MakeSharedDesc(eye.color.desc, resourceModelWidth, resourceModelHeight, sharedFlags);
-			const auto pass2OutputDesc = outputDesc;
-'@
-Replace-Exact $renderer $old $new
+# Match these declarations independently. Other v01/v02 transforms may insert
+# adjacent declarations, but the three P2 descriptor statements themselves are
+# the contract that must change.
+Replace-RegexOnce $renderer '[ \t]*const auto pass2ResourceWidth = ScaleDimension\(resourceModelWidth, pass2Coverage\);[ \t]*\n' ''
+Replace-RegexOnce $renderer '[ \t]*const auto pass2ResourceHeight = ScaleDimension\(resourceModelHeight, pass2Coverage\);[ \t]*\n' ''
+Replace-RegexOnce $renderer '[ \t]*const auto pass2OutputDesc = MakeSharedDesc\(eye\.color\.desc,\s*pass2ResourceWidth,\s*pass2ResourceHeight,\s*sharedFlags\);[ \t]*\n' "`t`t`tconst auto pass2OutputDesc = outputDesc;`n"
 
 Write-Host 'v02 reduced P2: remove compact scratch from tier identity'
 $pattern = '[ \t]*\(!croppedSecondPass \|\| Matches\(tier\.secondPassOutput, pass2OutputDesc\)\) &&[ \t]*\n'
