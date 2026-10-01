@@ -9,6 +9,16 @@ function Replace-Exact {
     [IO.File]::WriteAllText($resolved, $text.Replace($Old,$New), [Text.UTF8Encoding]::new($false))
 }
 
+function Replace-RegexOnce {
+    param([string]$Path,[string]$Pattern,[string]$Replacement)
+    $resolved = Resolve-Path $Path
+    $text = [IO.File]::ReadAllText($resolved).Replace("`r`n", "`n")
+    $rx = [regex]::new($Pattern, [Text.RegularExpressions.RegexOptions]::Singleline)
+    $matches = $rx.Matches($text)
+    if ($matches.Count -ne 1) { throw "Expected exactly one regex source block in $Path, found $($matches.Count)" }
+    [IO.File]::WriteAllText($resolved, $rx.Replace($text,$Replacement,1), [Text.UTF8Encoding]::new($false))
+}
+
 # Do not run the old v02 apply-sharpening.ps1 transform. It introduced a second,
 # NR-specific sharpening UI and dispatch around Feature18. The intended control is
 # the original Upscaling-tab DLSS sharpening, so repair that existing route instead.
@@ -17,50 +27,26 @@ $foveated = 'runtime/open-shaders/src/Features/Upscaling/FoveatedRender.cpp'
 $post = 'runtime/open-shaders/src/Features/Upscaling/FoveatedRender/Postprocess.cpp'
 
 Write-Host 'v02 sharpening: remove latent NR-specific sharpening settings'
-$empty = ''
-Replace-Exact $header @'
-		bool sharpeningEnabled = false;
-		float sharpeningStrength = 0.0f;  // 0..5
-		uint sharpeningPlacement = 1;     // 0=before NR, 1=after NR
-'@ $empty
-Replace-Exact $header @'
-		bool neuralRenderingSharpeningEnabled = false;
-		float neuralRenderingSharpeningStrength = 0.0f;  // 0..5
-		uint neuralRenderingSharpeningPlacement = 1;     // 0=before NR, 1=after NR
-'@ $empty
+# Remove the v01 placeholder fields by identity rather than relying on their
+# comments/adjacency. They are never part of the final v02 contract.
+Replace-RegexOnce $header '(?m)^[ \t]*bool sharpeningEnabled = false;[^\n]*\n' ''
+Replace-RegexOnce $header '(?m)^[ \t]*float sharpeningStrength = 0\.0f;[^\n]*\n' ''
+Replace-RegexOnce $header '(?m)^[ \t]*uint sharpeningPlacement = 1;[^\n]*\n' ''
+Replace-RegexOnce $header '(?m)^[ \t]*bool neuralRenderingSharpeningEnabled = false;[^\n]*\n' ''
+Replace-RegexOnce $header '(?m)^[ \t]*float neuralRenderingSharpeningStrength = 0\.0f;[^\n]*\n' ''
+Replace-RegexOnce $header '(?m)^[ \t]*uint neuralRenderingSharpeningPlacement = 1;[^\n]*\n' ''
 
-$old = @'
-	X(ditherStrength) \
-	X(sharpeningEnabled) \
-	X(sharpeningStrength) \
-	X(sharpeningPlacement)
-'@
-$new = @'
-	X(ditherStrength)
-'@
-Replace-Exact $foveated $old $new
+$pattern = '(?m)^[ \t]*X\(ditherStrength\) \\\s*\n[ \t]*X\(sharpeningEnabled\) \\\s*\n[ \t]*X\(sharpeningStrength\) \\\s*\n[ \t]*X\(sharpeningPlacement\)[ \t]*$'
+Replace-RegexOnce $foveated $pattern "`tX(ditherStrength)"
 
-$old = @'
-	X(neuralRenderingResultHaloSuppression) \
-	X(neuralRenderingSharpeningEnabled) \
-	X(neuralRenderingSharpeningStrength) \
-	X(neuralRenderingSharpeningPlacement) \
-	X(neuralRenderingStabilizeMode) \
-'@
-$new = @'
-	X(neuralRenderingResultHaloSuppression) \
-	X(neuralRenderingStabilizeMode) \
-'@
-Replace-Exact $foveated $old $new
+$pattern = '(?m)^[ \t]*X\(neuralRenderingResultHaloSuppression\) \\\s*\n[ \t]*X\(neuralRenderingSharpeningEnabled\) \\\s*\n[ \t]*X\(neuralRenderingSharpeningStrength\) \\\s*\n[ \t]*X\(neuralRenderingSharpeningPlacement\) \\\s*\n[ \t]*X\(neuralRenderingStabilizeMode\) \\\s*$'
+$replacement = "`tX(neuralRenderingResultHaloSuppression) \`n`tX(neuralRenderingStabilizeMode) \"
+Replace-RegexOnce $foveated $pattern $replacement
 
-Replace-Exact $foveated @'
-	settings.neuralRenderingSharpeningStrength = clampFinite(settings.neuralRenderingSharpeningStrength, 0.0f, 0.0f, 5.0f);
-	settings.neuralRenderingSharpeningPlacement = std::min(settings.neuralRenderingSharpeningPlacement, 1u);
-'@ $empty
-Replace-Exact $foveated @'
-	pass2.sharpeningStrength = clampFinite(pass2.sharpeningStrength, 0.0f, 0.0f, 5.0f);
-	pass2.sharpeningPlacement = std::min(pass2.sharpeningPlacement, 1u);
-'@ $empty
+Replace-RegexOnce $foveated '(?m)^[ \t]*settings\.neuralRenderingSharpeningStrength = clampFinite\([^\n]+\);[ \t]*\n' ''
+Replace-RegexOnce $foveated '(?m)^[ \t]*settings\.neuralRenderingSharpeningPlacement = std::min\([^\n]+\);[ \t]*\n' ''
+Replace-RegexOnce $foveated '(?m)^[ \t]*pass2\.sharpeningStrength = clampFinite\([^\n]+\);[ \t]*\n' ''
+Replace-RegexOnce $foveated '(?m)^[ \t]*pass2\.sharpeningPlacement = std::min\([^\n]+\);[ \t]*\n' ''
 
 Write-Host 'v02 sharpening: repair the original foveated/PerfMode DLSS RCAS route'
 $old = @'
