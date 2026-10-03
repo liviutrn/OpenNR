@@ -1,0 +1,64 @@
+name: Extract v05 effective source
+
+on:
+  push:
+    branches: ["scratch/extract-v05-effective-source"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  extract:
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 1
+
+      - name: Reconstruct v05 effective source
+        shell: pwsh
+        run: |
+          $scripts = @(
+            'scripts/v01/apply-v00-base.ps1',
+            'scripts/v01/apply-settings.ps1',
+            'scripts/v01/apply-gaze-sequential-fixed3.ps1',
+            'scripts/v01/apply-sequential-renderer-fixed2.ps1',
+            'scripts/v01/apply-pass2-composite.ps1',
+            'scripts/v01/apply-stereo-atlas-fixed2.ps1',
+            'scripts/v01/apply-atlas-safety.ps1',
+            'scripts/v01/apply-ui.ps1',
+            'scripts/v02/apply-gaze-stability.ps1',
+            'scripts/v02/apply-atlas-motion-stability.ps1',
+            'scripts/v02/apply-pass2-stability.ps1',
+            'scripts/v02/apply-sharpening-fixed4.ps1',
+            'scripts/v03/prepare-controller-contract.ps1',
+            'scripts/v03/apply-adaptive-relative-crop.ps1',
+            'scripts/v03/apply-gaze-fixation-stability.ps1',
+            'scripts/v03/apply-sharpness-range.ps1',
+            'scripts/v03/apply-smart-frametime-controller-fixed.ps1',
+            'scripts/v04/apply-unified-frametime-controller-fixed.ps1',
+            'scripts/v04/apply-atlas-adaptive-safety.ps1',
+            'scripts/v05/apply-simple-frametime-controller-fixed.ps1'
+          )
+          foreach ($script in $scripts) {
+            Write-Host "Applying $script"
+            pwsh -NoProfile -File $script
+            if ($LASTEXITCODE) { throw "Transform failed: $script" }
+          }
+          git diff --check
+          if ($LASTEXITCODE) { throw 'Generated source has whitespace errors' }
+          git diff -- runtime/open-shaders/src runtime/open-shaders/features runtime/open-shaders/CMakeLists.txt | Out-File -Encoding utf8 v05-effective.patch
+
+      - name: Upload effective source snapshot
+        uses: actions/upload-artifact@v4
+        with:
+          name: v05-effective-source
+          path: |
+            v05-effective.patch
+            runtime/open-shaders/src/Features/Upscaling/**
+            runtime/open-shaders/features/Upscaling/Shaders/**
+            runtime/open-shaders/CMakeLists.txt
+          if-no-files-found: error
+          retention-days: 7
