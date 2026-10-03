@@ -155,7 +155,10 @@ endforeach()
 foreach(_contract IN ITEMS
     "gPreviousDepth"
     "gStabilizeMode == 2u"
-    "IsBoundedMotion"
+    "IsFiniteMotion(rawMotion) && all(isfinite(motion))"
+    "previousPosition >= 0.5.xx"
+    "previousPosition <= colorLimit - 0.5"
+    "motionValid && IsHistoryValid"
     "gHaloSuppression"
 )
     string(FIND "${_result_shaping_shader}" "${_contract}" _contract_index)
