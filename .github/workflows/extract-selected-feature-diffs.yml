@@ -1,0 +1,71 @@
+name: Extract selected feature diffs
+
+on:
+  push:
+    branches: ["scratch/extract-v05-effective-source"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  extract:
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 1
+      - name: Generate isolated feature patches
+        shell: pwsh
+        run: |
+          git config user.email "actions@github.com"
+          git config user.name "GitHub Actions"
+          New-Item -ItemType Directory -Force isolated | Out-Null
+          function Run-Script([string]$p) {
+            Write-Host "Applying $p"
+            pwsh -NoProfile -File $p
+            if ($LASTEXITCODE) { throw "Failed: $p" }
+          }
+          function Commit-And-Save([string]$name) {
+            git add runtime/open-shaders
+            git commit -m "snapshot $name" --no-verify
+            if ($LASTEXITCODE) { throw "Commit failed: $name" }
+            git show --format=fuller --binary HEAD | Out-File -Encoding utf8 "isolated/$name.patch"
+          }
+
+          Run-Script 'scripts/v01/apply-v00-base.ps1'
+          Commit-And-Save '01-gaze-history'
+
+          Run-Script 'scripts/v01/apply-settings.ps1'
+          Run-Script 'scripts/v01/apply-gaze-sequential-fixed3.ps1'
+          Run-Script 'scripts/v01/apply-sequential-renderer-fixed2.ps1'
+          Run-Script 'scripts/v01/apply-pass2-composite.ps1'
+          Commit-And-Save 'prerequisites-unwanted'
+
+          Run-Script 'scripts/v01/apply-stereo-atlas-fixed2.ps1'
+          Run-Script 'scripts/v01/apply-atlas-safety.ps1'
+          Commit-And-Save '02-atlas-and-safety'
+
+          Run-Script 'scripts/v02/apply-gaze-stability.ps1'
+          Commit-And-Save '03-gaze-stability'
+
+          Run-Script 'scripts/v02/apply-atlas-motion-stability.ps1'
+          Commit-And-Save '04-atlas-gaze-history-fix'
+
+          Run-Script 'scripts/v02/apply-sharpening-fixed4.ps1'
+          Commit-And-Save '05-sharpening-repair'
+
+          Run-Script 'scripts/v03/apply-gaze-fixation-stability.ps1'
+          Commit-And-Save '06-gaze-fixation-final'
+
+          Run-Script 'scripts/v03/apply-sharpness-range.ps1'
+          Commit-And-Save '07-sharpness-range'
+
+          git diff --check
+      - uses: actions/upload-artifact@v4
+        with:
+          name: selected-feature-diffs
+          path: isolated/*.patch
+          if-no-files-found: error
+          retention-days: 7
