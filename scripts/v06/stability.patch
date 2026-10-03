@@ -2692,15 +2692,6 @@
  	void CreateComputeShader();
 --- a/runtime/open-shaders/src/Features/Upscaling.cpp
 +++ b/runtime/open-shaders/src/Features/Upscaling.cpp
-@@ -401,7 +401,7 @@
- 		if (auto _tt = Util::HoverTooltipWrapper())
- 			ImGui::TextUnformatted(T(TKEY("enable_sharpening_tooltip"), "Applies RCAS sharpening to the DLSS output. Off by default; DLSS already resolves a sharp image."));
- 		if (settings.sharpnessEnabledDLSS)
--			ImGui::SliderFloat(T(TKEY("sharpness"), "Sharpness"), &settings.sharpnessDLSS, 0.0f, 1.0f, "%.1f");
-+			ImGui::SliderFloat(T(TKEY("sharpness"), "Sharpness"), &settings.sharpnessDLSS, 0.0f, 3.0f, "%.1f");
- 
- 		const char* presets[] = {
- 			T(TKEY("dlss_model_preset_default"), "Default"),
 @@ -695,6 +695,54 @@
  				{ "cropChanged", gaze.cropChanged }, { "historyReset", gaze.historyReset },
  				{ "cropChangeCount", gaze.cropChangeCount }, { "historyResetCount", gaze.historyResetCount } });
@@ -2768,21 +2759,13 @@
  			const std::uint32_t effectiveTemporalReuseCadence = alternateRouteDisablesReuse ? 0u :
  				settings.neuralRenderingTemporalReuseCadence;
  			return json({ { "resultShapingEnabled", settings.neuralRenderingResultShapingEnabled },
-@@ -905,7 +954,7 @@
- 			}
- 
- 			if (settings.sharpnessEnabledDLSS)
--				ImGui::SliderFloat(T(TKEY("sharpness"), "Sharpness"), &settings.sharpnessDLSS, 0.0f, 1.0f, "%.1f");
-+				ImGui::SliderFloat(T(TKEY("sharpness"), "Sharpness"), &settings.sharpnessDLSS, 0.0f, 3.0f, "%.1f");
- 
- 			const char* presets[] = {
- 				T(TKEY("dlss_model_preset_default"), "Default"),
-@@ -3356,9 +3405,9 @@
+@@ -3356,10 +3405,9 @@
  
  		CS_GPU_PASS("Upscaling::Sharpening");
  
--		float currentSharpness = (-2.0f * settings.sharpnessDLSS) + 2.0f;
--		currentSharpness = exp2(-currentSharpness);
+-		float currentSharpness = settings.sharpnessDLSS <= 1.0f ?
+-			exp2(-((-2.0f * settings.sharpnessDLSS) + 2.0f)) :
+-			std::clamp(settings.sharpnessDLSS, 1.0f, 3.0f);
 -		rcas.ApplySharpen(perfMode.GetRefraTempSRV(), perfMode.GetTestTextureUAV(), currentSharpness);
 +		const float currentSharpness = RCAS::MapSliderStrength(settings.sharpnessDLSS);
 +		if (!rcas.ApplySharpen(perfMode.GetRefraTempSRV(), perfMode.GetTestTextureUAV(), currentSharpness))
@@ -2790,12 +2773,13 @@
  		return;
  	}
  
-@@ -3381,11 +3430,11 @@
+@@ -3382,12 +3430,11 @@
  		// Match FSR3's slider->RCAS conversion exactly (ffx_fsr3upscaler.cpp + FsrRcasCon):
  		//   sharpenessRemapped = -2*slider + 2   (sharpness in stops)
  		//   rcasAttenuation    = exp2(-sharpenessRemapped) = exp2(2*slider - 2)
--		float currentSharpness = (-2.0f * settings.sharpnessDLSS) + 2.0f;
--		currentSharpness = exp2(-currentSharpness);
+-		float currentSharpness = settings.sharpnessDLSS <= 1.0f ?
+-			exp2(-((-2.0f * settings.sharpnessDLSS) + 2.0f)) :
+-			std::clamp(settings.sharpnessDLSS, 1.0f, 3.0f);
 +		const float currentSharpness = RCAS::MapSliderStrength(settings.sharpnessDLSS);
  
  		// DLSS has already written to sharpenerTexture; sharpen directly into kMAIN.UAV.
