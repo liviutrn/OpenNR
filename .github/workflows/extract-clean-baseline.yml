@@ -1,0 +1,30 @@
+name: Extract clean baseline
+
+on:
+  push:
+    branches: ["scratch/extract-v05-effective-source"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  extract:
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: build/2.20.1-clean-rebuild
+          submodules: recursive
+          fetch-depth: 1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: clean-baseline-source
+          path: |
+            runtime/open-shaders/src/Features/Upscaling/**
+            runtime/open-shaders/features/Upscaling/Shaders/**
+            runtime/open-shaders/src/Features/Upscaling.cpp
+            runtime/open-shaders/src/ConfigManager.cpp
+            runtime/open-shaders/CMakeLists.txt
+          if-no-files-found: error
+          retention-days: 7
