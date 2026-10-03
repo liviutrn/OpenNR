@@ -118,6 +118,14 @@ jobs:
           $gaze = Get-Content runtime/open-shaders/src/Features/Upscaling/GazeCropPolicy.h -Raw
           $shader = Get-Content runtime/open-shaders/features/Upscaling/Shaders/Upscaling/RCAS/RCAS.hlsl -Raw
 
+          foreach ($signature in @(
+            'bool FoveatedRender::IsEyeTrackedFoveationEnabled\(\) const',
+            'Util::Subrect::UVRegion FoveatedRender::GetEffectiveLeftUV\(\) const',
+            'Util::Subrect::UVRegion FoveatedRender::GetEffectiveRightUV\(\) const'
+          )) {
+            if (([regex]::Matches($fov, "(?m)^$signature\r?\n\{")).Count -ne 1) { throw "Missing or duplicate crop/gaze helper definition: $signature" }
+          }
+
           if ($policy -notmatch 'kFullResolutionNeuralRenderingOnly = false') { throw 'Runtime policy unexpectedly relocked' }
           if ($fovh -notmatch 'neuralRenderingAdaptivePassIncreaseBelowMs = 14\.0f' -or $fovh -notmatch 'adaptiveFilteredFrameTimeMs') { throw 'v05 controller settings/state missing' }
           if ($fov -notmatch '\[DLSSNR\]\[ADAPTIVE-v05\]' -or $fov -notmatch '\[DLSSNR\]\[BUDGET-v05\]') { throw 'v05 controller diagnostics missing' }

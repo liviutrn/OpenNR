@@ -110,7 +110,7 @@ $clampReplacement = @'
 Replace-ExactOnce $foveated $clampAnchor $clampReplacement
 
 Write-Host 'v05: reset only the state owned by the simple controller'
-$resetPattern = '(?ms)^void FoveatedRender::ResetAdaptiveState\(\)\n\{.*?^\}\n'
+$resetPattern = '(?ms)^void FoveatedRender::ResetAdaptiveState\(\)\n\{.*?^\}(?=\n)'
 $resetReplacement = @'
 void FoveatedRender::ResetAdaptiveState()
 {
@@ -147,7 +147,7 @@ void FoveatedRender::ResetAdaptiveState()
 Replace-RegexOnce $foveated $resetPattern $resetReplacement
 
 Write-Host 'v05: replace v04 policy with crop-first manual-threshold controller'
-$updatePattern = '(?ms)^void FoveatedRender::UpdateAdaptiveState\(std::uint32_t frame, bool routeEligible\)\n\{.*?^\}\n'
+$updatePattern = '(?ms)^void FoveatedRender::UpdateAdaptiveState\(std::uint32_t frame, bool routeEligible\)\n\{.*?^\}(?=\n)'
 $updateReplacement = @'
 void FoveatedRender::UpdateAdaptiveState(std::uint32_t frame, bool routeEligible)
 {

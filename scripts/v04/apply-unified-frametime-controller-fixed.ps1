@@ -44,7 +44,7 @@ $oldResetPattern = @'
 $resetPattern = '(?s)void FoveatedRender::ResetAdaptiveState\(\)\n\{.*?\n\}\n(?=\nbool FoveatedRender::IsEyeTrackedFoveationEnabled)'
 '@
 $newResetPattern = @'
-$resetPattern = '(?ms)^void FoveatedRender::ResetAdaptiveState\(\)\n\{.*?^\}\n'
+$resetPattern = '(?ms)^void FoveatedRender::ResetAdaptiveState\(\)\n\{.*?^\}(?=\n)'
 '@
 $resetCount = ([regex]::Matches($sourceText, [regex]::Escape($oldResetPattern.TrimEnd("`n")))).Count
 if ($resetCount -ne 1) {
@@ -56,7 +56,7 @@ $oldUpdatePattern = @'
 $updatePattern = '(?s)void FoveatedRender::UpdateAdaptiveState\(std::uint32_t frame, bool routeEligible\)\n\{.*?\n\}\n(?=\nUtil::Subrect::UVRegion FoveatedRender::GetEffectiveLeftUV)'
 '@
 $newUpdatePattern = @'
-$updatePattern = '(?ms)^void FoveatedRender::UpdateAdaptiveState\(std::uint32_t frame, bool routeEligible\)\n\{.*?^\}\n'
+$updatePattern = '(?ms)^void FoveatedRender::UpdateAdaptiveState\(std::uint32_t frame, bool routeEligible\)\n\{.*?^\}(?=\n)'
 '@
 $updateCount = ([regex]::Matches($sourceText, [regex]::Escape($oldUpdatePattern.TrimEnd("`n")))).Count
 if ($updateCount -ne 1) {
