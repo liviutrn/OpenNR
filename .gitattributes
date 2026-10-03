@@ -9,3 +9,8 @@ patches/*.patch -text
 # assertions remain deterministic.
 scripts/v01/*.ps1 text eol=lf
 .github/workflows/*.yml text eol=lf
+
+# Unified patch context has a leading space before source indentation.
+scripts/v06/*.patch -text whitespace=-blank-at-eol,-space-before-tab
+scripts/v06/*.py text eol=lf
+scripts/v06/*.h text eol=lf

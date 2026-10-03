@@ -1,0 +1,2830 @@
+--- a/runtime/open-shaders/features/Upscaling/Shaders/Upscaling/FoveatedRender/CropMotionCS.hlsl
++++ b/runtime/open-shaders/features/Upscaling/Shaders/Upscaling/FoveatedRender/CropMotionCS.hlsl
+@@ -2,6 +2,8 @@
+ {
+ 	uint2 Extent;
+ 	float2 OriginOffset;
++	float2 MotionUVScale;
++	float2 Padding;
+ };
+ Texture2D<float2> Source : register(t0);
+ RWTexture2D<float2> Output : register(u0);
+@@ -13,5 +15,17 @@
+ 		return;
+ 	float2 motion = Source.Load(int3(id.xy, 0));
+ 	bool invalid = any(!isfinite(motion)) || any(asuint(motion) == 0x00800000u);
+-	Output[id.xy] = invalid ? motion : motion + OriginOffset;
++	if (invalid) {
++		Output[id.xy] = motion;
++		return;
++	}
++	const float2 compensated = motion + OriginOffset;
++	const float2 previousPosition = float2(id.xy) + 0.5 + compensated * MotionUVScale * float2(Extent);
++	const float precisionPixels = 0.001;
++	const bool insideHistory = all(isfinite(previousPosition)) &&
++		all(previousPosition >= 0.5 - precisionPixels) &&
++		all(previousPosition <= float2(Extent) - 0.5 + precisionPixels);
++	// Reject outside the eye/atlas vertically without depending on an invalid-value convention.
++	const float2 rejected = float2(0.0, 2.0 / MotionUVScale.y);
++	Output[id.xy] = insideHistory ? compensated : rejected;
+ }
+--- /dev/null
++++ b/runtime/open-shaders/features/Upscaling/Shaders/Upscaling/NeuralRendering/LadderAtlasGuidesCS.hlsl
+@@ -0,0 +1,39 @@
++cbuffer LadderAtlas : register(b0)
++{
++	uint4 gCurrent; // model width/height, guide width/height
++	uint4 gPrevious; // model width/height, color width/height
++	uint4 gLayout; // color width/height, color guard, previous color guard
++	float4 gLeftOrigin;
++	float4 gRightOrigin;
++	float4 gMotionScale; // scene color pixels, native model pixels
++	uint4 gFlags; // previous valid, guide guard, resident model height, padding
++};
++Texture2D<float2> gLeftMotion : register(t0);
++Texture2D<float2> gRightMotion : register(t1);
++Texture2D<float> gLeftDepth : register(t2);
++Texture2D<float> gRightDepth : register(t3);
++RWTexture2D<float2> gMotion : register(u0);
++RWTexture2D<float> gDepth : register(u1);
++
++[numthreads(8,8,1)]
++void main(uint3 id : SV_DispatchThreadID)
++{
++	const uint rightStart = gCurrent.z + gFlags.y;
++	if (id.x >= rightStart + gCurrent.z || id.y >= gCurrent.w) return;
++	const bool right = id.x >= rightStart;
++	const uint x = right ? id.x - rightStart : min(id.x, gCurrent.z - 1);
++	const uint2 pixel = uint2(x, id.y);
++	const float2 raw = right ? gRightMotion.Load(int3(pixel,0)) : gLeftMotion.Load(int3(pixel,0));
++	gDepth[id.xy] = right ? gRightDepth.Load(int3(pixel,0)) : gLeftDepth.Load(int3(pixel,0));
++	const float4 origin = right ? gRightOrigin : gLeftOrigin;
++	const float2 previousColor = (float2(pixel) + 0.5) * float2(gLayout.xy) / float2(gCurrent.zw) +
++		origin.xy - origin.zw + raw * gMotionScale.xy;
++	const float2 previousModel = previousColor * float2(gPrevious.xy) / max(float2(gPrevious.zw), 1.0);
++	const float2 currentModel = (float2(pixel) + 0.5) * float2(gCurrent.xy) / float2(gCurrent.zw);
++	const bool valid = gFlags.x != 0 && all(isfinite(raw)) && !any(asuint(raw) == 0x00800000u) &&
++		all(previousModel >= 0.5) && all(previousModel <= float2(gPrevious.xy) - 0.5);
++	float2 delta = previousModel - currentModel;
++	if (right) delta.x += float(gPrevious.x + gLayout.w) - float(gCurrent.x + gLayout.z);
++	const float2 rejection = float2(0.0, 2.0 * gFlags.z / gMotionScale.w);
++	gMotion[id.xy] = valid ? delta / gMotionScale.zw : rejection;
++}
+--- a/runtime/open-shaders/features/Upscaling/Shaders/Upscaling/NeuralRendering/ResultShapingCS.hlsl
++++ b/runtime/open-shaders/features/Upscaling/Shaders/Upscaling/NeuralRendering/ResultShapingCS.hlsl
+@@ -28,6 +28,12 @@
+ 	uint gShapeEnabled;
+ 	uint gStabilizeMode;
+ 	uint gStabilizeDetail;
++	float gHistoryEdgeFadePixels;
++	float gTransitionWeightScale;
++	float2 gPadding;
++	uint4 gPreviousLayout;
++	float2 gOriginDelta;
++	float2 gLayoutPadding;
+ };
+ 
+ Texture2D<float4> gInput : register(t0);
+@@ -57,7 +63,22 @@
+ 
+ float2 ColorUV(float2 pixel)
+ {
+-	return (pixel + 0.5) / float2(max(gColorWidth, 1u), max(gColorHeight, 1u));
++	uint width, height;
++	gInput.GetDimensions(width, height);
++	return clamp(pixel + 0.5, 0.5, float2(gColorWidth, gColorHeight) - 0.5) / float2(width, height);
++}
++
++
++float2 PreviousUV(float2 position)
++{
++	uint width, height;
++	gPreviousInput.GetDimensions(width, height);
++	return position / float2(width, height);
++}
++uint2 PreviousGuidePixel(float2 position)
++{
++	return min(uint2(max(position, 0.0) * float2(gPreviousLayout.zw) / max(float2(gPreviousLayout.xy), 1.0)),
++		max(gPreviousLayout.zw, 1u) - 1u);
+ }
+ 
+ uint2 GuidePixel(float2 colorPosition)
+@@ -75,6 +96,9 @@
+ 
+ float3 PreviousDeltaAt(float2 uv)
+ {
++	uint width, height;
++	gPreviousInput.GetDimensions(width, height);
++	uv = clamp(uv * float2(width, height), 0.5, float2(gPreviousLayout.xy) - 0.5) / float2(width, height);
+ 	return gPreviousResult.SampleLevel(gLinearClamp, uv, 0).rgb -
+ 		gPreviousInput.SampleLevel(gLinearClamp, uv, 0).rgb;
+ }
+@@ -82,20 +106,9 @@
+ float3 CurrentLowFrequencyDelta(float2 pixel)
+ {
+ 	const float radiusPixels = max(gDetailRadius, 0.1) * 0.01 * max(gColorHeight, 1u);
+-	const float2 offset = radiusPixels / float2(max(gColorWidth, 1u), max(gColorHeight, 1u));
+-	const float3 center = CurrentDeltaAt(pixel);
+-	const float2 uv = ColorUV(pixel);
+-	const float3 horizontal =
+-		gNRResult.SampleLevel(gLinearClamp, uv + float2(offset.x, 0.0), 0).rgb -
+-		gInput.SampleLevel(gLinearClamp, uv + float2(offset.x, 0.0), 0).rgb +
+-		gNRResult.SampleLevel(gLinearClamp, uv - float2(offset.x, 0.0), 0).rgb -
+-		gInput.SampleLevel(gLinearClamp, uv - float2(offset.x, 0.0), 0).rgb;
+-	const float3 vertical =
+-		gNRResult.SampleLevel(gLinearClamp, uv + float2(0.0, offset.y), 0).rgb -
+-		gInput.SampleLevel(gLinearClamp, uv + float2(0.0, offset.y), 0).rgb +
+-		gNRResult.SampleLevel(gLinearClamp, uv - float2(0.0, offset.y), 0).rgb -
+-		gInput.SampleLevel(gLinearClamp, uv - float2(0.0, offset.y), 0).rgb;
+-	return (center * 4.0 + horizontal + vertical) / 8.0;
++	return (CurrentDeltaAt(pixel) * 4.0 + CurrentDeltaAt(pixel + float2(radiusPixels,0)) +
++		CurrentDeltaAt(pixel - float2(radiusPixels,0)) + CurrentDeltaAt(pixel + float2(0,radiusPixels)) +
++		CurrentDeltaAt(pixel - float2(0,radiusPixels))) / 8.0;
+ }
+ 
+ float SoftCeiling(float value, float ceiling)
+@@ -117,7 +130,9 @@
+ float3 PreviousLowFrequencyDelta(float2 uv)
+ {
+ 	const float radiusPixels = max(gDetailRadius, 0.1) * 0.01 * max(gColorHeight, 1u);
+-	const float2 offset = radiusPixels / float2(max(gColorWidth, 1u), max(gColorHeight, 1u));
++	uint resourceWidth, resourceHeight;
++	gInput.GetDimensions(resourceWidth, resourceHeight);
++	const float2 offset = radiusPixels / float2(resourceWidth, resourceHeight);
+ 	const float3 center = PreviousDeltaAt(uv);
+ 	return (center * 4.0 +
+ 		PreviousDeltaAt(uv + float2(offset.x, 0.0)) +
+@@ -203,19 +218,28 @@
+ 	return lumaDelta.xxx + chromaDelta;
+ }
+ 
+-bool IsBoundedMotion(float2 motion, float2 limit)
+-{
+-	return all(motion == motion) && all(abs(motion) <= limit);
++bool IsFiniteMotion(float2 motion)
++{
++	return all(isfinite(motion)) && !any(asuint(motion) == 0x00800000u);
++}
++
++float HistoryEdgeWeight(float2 previousPosition)
++{
++	if (gHistoryEdgeFadePixels <= 0.0)
++		return 1.0;
++	const float2 edgeDistance = min(previousPosition - 0.5,
++		float2(gPreviousLayout.xy) - 0.5 - previousPosition);
++	return saturate(min(edgeDistance.x, edgeDistance.y) / gHistoryEdgeFadePixels);
+ }
+ 
+ bool IsHistoryValid(float2 pixel, float2 previousPosition, float3 baseColor)
+ {
+-	const float2 colorLimit = float2(gColorWidth, gColorHeight);
++	const float2 colorLimit = float2(gPreviousLayout.xy);
+ 	if (!all(previousPosition >= 0.5.xx) || !all(previousPosition <= colorLimit - 0.5))
+ 		return false;
+ 
+ 	const float currentDepth = gDepth.Load(int3(GuidePixel(pixel), 0));
+-	const float previousDepth = gPreviousDepth.Load(int3(GuidePixel(previousPosition - 0.5), 0));
++	const float previousDepth = gPreviousDepth.Load(int3(PreviousGuidePixel(previousPosition), 0));
+ 	if (!(abs(currentDepth) > 1e-6) || !(abs(previousDepth) > 1e-6) ||
+ 		!(abs(currentDepth) < 1e20) || !(abs(previousDepth) < 1e20))
+ 		return false;
+@@ -223,7 +247,7 @@
+ 	if (abs(currentDepth - previousDepth) > gDepthThreshold * depthScale)
+ 		return false;
+ 
+-	const float previousLuma = dot(gPreviousInput.SampleLevel(gLinearClamp, ColorUV(previousPosition - 0.5), 0).rgb, kLuma);
++	const float previousLuma = dot(gPreviousInput.SampleLevel(gLinearClamp, PreviousUV(previousPosition), 0).rgb, kLuma);
+ 	const float currentLuma = dot(baseColor, kLuma);
+ 	const float colorScale = max(max(abs(currentLuma), abs(previousLuma)), 0.05);
+ 	return abs(currentLuma - previousLuma) / colorScale <= gColorTolerance;
+@@ -252,17 +276,17 @@
+ 		bool motionValid = true;
+ 		if (gStabilizeMode == 2u)
+ 		{
+-			const float2 motion = gMotionVectors.Load(int3(GuidePixel(pixelPosition), 0)) *
+-				float2(gMotionScaleX, gMotionScaleY);
+-			motionValid = IsBoundedMotion(motion, float2(gColorWidth, gColorHeight) * 0.5);
+-			previousPosition += motion;
++			const float2 rawMotion = gMotionVectors.Load(int3(GuidePixel(pixelPosition), 0));
++			const float2 motion = rawMotion * float2(gMotionScaleX, gMotionScaleY);
++			motionValid = IsFiniteMotion(rawMotion) && all(isfinite(motion));
++			previousPosition += motion + gOriginDelta;
+ 		}
+ 
+ 		if (motionValid && IsHistoryValid(pixelPosition, previousPosition, baseColor.rgb))
+ 		{
+-			const float2 previousUV = ColorUV(previousPosition - 0.5);
++			const float2 previousUV = PreviousUV(previousPosition);
+ 			const float3 previousDelta = PreviousDeltaAt(previousUV);
+-			const float historyWeight = exp(-max(gFrameDeltaSeconds, 1.0 / 240.0) /
++			const float historyWeight = gTransitionWeightScale * HistoryEdgeWeight(previousPosition) * exp(-max(gFrameDeltaSeconds, 1.0 / 240.0) /
+ 				max(gStabilizeTimeMs * 0.001, 0.001));
+ 			if (gStabilizeDetail != 0u)
+ 			{
+--- a/runtime/open-shaders/src/Features/Upscaling/CropMotion.cpp
++++ b/runtime/open-shaders/src/Features/Upscaling/CropMotion.cpp
+@@ -27,8 +27,10 @@
+ 		{
+ 			std::uint32_t width, height;
+ 			float dx, dy;
++			float scaleX, scaleY;
++			float padding0, padding1;
+ 		};
+-		static_assert(sizeof(Constants) == 16);
++		static_assert(sizeof(Constants) == 32);
+ 
+ 		bool EnsureResources(Slot& slot, ID3D11Resource* source)
+ 		{
+@@ -100,6 +102,13 @@
+ 			slot.pending.valid = false;
+ 			return nullptr;
+ 		}
++		const float rejectedY = 2.0f / scale[1];
++		constexpr float halfFloatMax = 65504.0f;
++		if (!std::isfinite(rejectedY) ||
++			(slot.desc.Format == DXGI_FORMAT_R16G16_FLOAT && std::abs(rejectedY) > halfFloatMax)) {
++			reset = true;
++			return source;
++		}
+ 		CS_GPU_PASS("FoveatedRender::CropMotion");
+ 		auto* context = globals::d3d::context;
+ 		ComPtr<ID3D11ComputeShader> oldShader;
+@@ -114,7 +123,7 @@
+ 		context->CSGetConstantBuffers(0, 1, &oldConstants);
+ 		ID3D11UnorderedAccessView* nullOutput = nullptr;
+ 		context->CSSetUnorderedAccessViews(0, 1, &nullOutput, nullptr);
+-		const Constants data{ guideWidth, guideHeight, offset[0], offset[1] };
++		const Constants data{ guideWidth, guideHeight, offset[0], offset[1], scale[0], scale[1], 0.0f, 0.0f };
+ 		context->UpdateSubresource(constants.Get(), 0, nullptr, &data, 0, 0);
+ 		context->CSSetShader(shader.Get(), nullptr, 0);
+ 		context->CSSetShaderResources(0, 1, slot.sourceView.GetAddressOf());
+--- a/runtime/open-shaders/src/Features/Upscaling/CropMotionHistory.h
++++ b/runtime/open-shaders/src/Features/Upscaling/CropMotionHistory.h
+@@ -25,12 +25,10 @@
+ 	{
+ 		const double dx = double(current.x) - previous.region.x;
+ 		const double dy = double(current.y) - previous.region.y;
+-		constexpr double maxShiftFraction = 0.25;
+ 		reset = reset || !previous.valid || std::uint32_t(frame - previous.frame) != 1 ||
+ 			current.width != previous.region.width || current.height != previous.region.height ||
+ 			!current.width || !current.height || scale != previous.scale ||
+-			!std::isfinite(scale[0]) || !std::isfinite(scale[1]) || !scale[0] || !scale[1] ||
+-			std::abs(dx) > current.width * maxShiftFraction || std::abs(dy) > current.height * maxShiftFraction;
++			!std::isfinite(scale[0]) || !std::isfinite(scale[1]) || !scale[0] || !scale[1];
+ 		if (reset)
+ 			return {};
+ 		return { float(dx / (double(current.width) * scale[0])),
+--- a/runtime/open-shaders/src/Features/Upscaling/FoveatedRender/Bridge.cpp
++++ b/runtime/open-shaders/src/Features/Upscaling/FoveatedRender/Bridge.cpp
+@@ -26,6 +26,12 @@
+ 
+ 	if (!IsRouteActive())
+ 		return;
++	const auto frame = globals::state ? globals::state->frameCount : UINT32_MAX;
++	if (frame == mvecScaleFrame && eyeIndex < mvecScales.size()) {
++		outX = mvecScales[eyeIndex][0];
++		outY = mvecScales[eyeIndex][1];
++		return;
++	}
+ 
+ 	auto& enhancer = globals::features::upscaling.foveatedRender;
+ 	// Use the effective per-eye UV. Adaptive crop is deliberately a centered
+@@ -42,3 +48,10 @@
+ 	outX = (uv.w > 0.0f) ? (1.0f / uv.w) : 1.0f;
+ 	outY = (uv.h > 0.0f) ? (1.0f / uv.h) : 1.0f;
+ }
++
++void FoveatedRenderImpl::Bridge::SetMvecScaleForFrame(uint32_t frame,
++	const std::array<std::array<float, 2>, 2>& scales)
++{
++	mvecScales = scales;
++	mvecScaleFrame = frame;
++}
+--- a/runtime/open-shaders/src/Features/Upscaling/FoveatedRender/Bridge.h
++++ b/runtime/open-shaders/src/Features/Upscaling/FoveatedRender/Bridge.h
+@@ -1,4 +1,6 @@
+ #pragma once
++
++#include <array>
+ 
+ // FoveatedRenderImpl::Bridge — single point of contact between the FoveatedRender
+ // subsystem and the rest of Community Shaders (Upscaling, Streamline).
+@@ -23,6 +25,10 @@
+ 	// presets (e.g. Nasal Convergence) can size the two eyes' subrects differently.
+ 	// Returns {1,1} when route is inactive or that eye's subrect is full-eye.
+ 	void ComputeMvecScale(uint32_t eyeIndex, float& outX, float& outY);
++	/** Publish exact integer crop scales shared by SR and NR for one frame. */
++	void SetMvecScaleForFrame(uint32_t frame, const std::array<std::array<float, 2>, 2>& scales);
++	inline std::array<std::array<float, 2>, 2> mvecScales{};
++	inline uint32_t mvecScaleFrame = UINT32_MAX;
+ 
+ 	// Set/cleared by ExecuteFoveatedRoute to indicate that the foveated subrect
+ 	// execute path is actually running this frame. SetConstants checks this so
+--- a/runtime/open-shaders/src/Features/Upscaling/FoveatedRender/Core.cpp
++++ b/runtime/open-shaders/src/Features/Upscaling/FoveatedRender/Core.cpp
+@@ -1299,7 +1299,8 @@
+ 			cb->MaskRadiusX = std::max(0.5f, cb->MaskCenterX);
+ 			cb->MaskRadiusY = std::max(0.5f, cb->MaskCenterY);
+ 			const float maskScale = adaptiveMask ?
+-				foveated.adaptiveCropController.VisibleCoverage() / foveated.adaptiveCropController.RenderCoverage() : 1.0f;
++				std::clamp(foveated.adaptiveCropController.VisibleCoverage() /
++					std::max(foveated.adaptiveCropController.RenderCoverage(), 1u), 0.0f, 1.0f) : 1.0f;
+ 			cb->MaskRadiusX *= maskScale;
+ 			cb->MaskRadiusY *= maskScale;
+ 			cb->_pad0 = maskScale;
+@@ -1724,11 +1725,12 @@
+ 
+ 		activeSubrectUVHash = 0;
+ 		neuralGuidesFrame = UINT32_MAX;
++		neuralCropPlanFrame = UINT32_MAX;
+ 		CropMotion::Clear();
+ 		ResetAdaptiveCropHandoff();
+ 	}
+ 
+-	void Core::InvalidateTemporalState()
++	void Core::InvalidateTemporalState(bool resetNeuralHistory)
+ 	{
+ 		CropMotion::Invalidate();
+ 		// A crop can move without changing the intermediate dimensions. In that
+@@ -1737,13 +1739,14 @@
+ 		vrTemporalFrameIdx = 0;
+ 		vrTemporalHistoryValid = false;
+ 		neuralGuidesFrame = UINT32_MAX;
++		neuralCropPlanFrame = UINT32_MAX;
+ 		// Keep the displayed image only while the adaptive crop controller is in
+ 		// its short transition. Ordinary crop/menu/history resets must fail closed
+ 		// rather than blend against an unrelated frame.
+ 		const auto& foveated = globals::features::upscaling.foveatedRender;
+ 		if (!foveated.IsAdaptiveCropRuntimeActive() || !foveated.IsAdaptiveCropTransitioning())
+ 			ResetAdaptiveCropHandoff();
+-		NeuralRendering::ResetHistory();
++		if (resetNeuralHistory) NeuralRendering::ResetHistory();
+ 	}
+ 
+ 	void Core::ClearShaderCache()
+--- a/runtime/open-shaders/src/Features/Upscaling/FoveatedRender/Core.h
++++ b/runtime/open-shaders/src/Features/Upscaling/FoveatedRender/Core.h
+@@ -1,4 +1,6 @@
+ #pragma once
++
++#include "CropGeometry.h"
+ 
+ // ============================================================================
+ // FoveatedRenderImpl::Core — GPU resource pool & mode-dispatch entry point
+@@ -90,7 +92,7 @@
+ 		// Drop crop-sensitive temporal state even when the replacement resources
+ 		// keep the same dimensions. A moved subrect must not inherit old guides
+ 		// or DLSSNR history from the previous eye region.
+-		static void InvalidateTemporalState();
++		static void InvalidateTemporalState(bool resetNeuralHistory = true);
+ 		static void ClearShaderCache();
+ 
+ 		// ── Own VR resources (independent from Upscaling) ──
+@@ -177,6 +179,8 @@
+ 
+ 		// Subrect UV hash for resource recreation detection
+ 		static inline uint64_t activeSubrectUVHash = 0;
++		static inline CropGeometry::FramePlan neuralCropPlan{};
++		static inline uint32_t neuralCropPlanFrame = UINT32_MAX;
+ 		static inline uint32_t neuralGuidesFrame = UINT32_MAX;
+ 
+ 		// Full-SBS history for the optional adaptive crop transition. These are
+--- /dev/null
++++ b/runtime/open-shaders/src/Features/Upscaling/FoveatedRender/CropGeometry.h
+@@ -0,0 +1,70 @@
++#pragma once
++
++#include <algorithm>
++#include <array>
++#include <cmath>
++#include <cstdint>
++
++namespace FoveatedRenderImpl::CropGeometry
++{
++	struct PixelRect
++	{
++		std::uint32_t x = 0;
++		std::uint32_t y = 0;
++		std::uint32_t width = 0;
++		std::uint32_t height = 0;
++	};
++
++	struct EyePlan
++	{
++		PixelRect input;
++		PixelRect output;
++	};
++
++	struct FramePlan
++	{
++		std::uint32_t fullInputWidth = 0;
++		std::uint32_t fullInputHeight = 0;
++		std::uint32_t fullOutputWidth = 0;
++		std::uint32_t fullOutputHeight = 0;
++		std::array<EyePlan, 2> eyes{};
++	};
++
++	inline PixelRect MakePixelRect(float x, float y, float width, float height,
++		std::uint32_t fullWidth, std::uint32_t fullHeight)
++	{
++		if (!fullWidth || !fullHeight)
++			return {};
++
++		const auto normalized = [](float value) {
++			return std::clamp(std::isfinite(value) ? value : 0.0f, 0.0f, 1.0f);
++		};
++		const auto toPixels = [](float value, std::uint32_t dimension) {
++			return static_cast<std::uint32_t>(static_cast<double>(value) * dimension);
++		};
++		const auto left = std::min(toPixels(normalized(x), fullWidth), fullWidth - 1);
++		const auto top = std::min(toPixels(normalized(y), fullHeight), fullHeight - 1);
++		const auto rectWidth = std::clamp(toPixels(normalized(width), fullWidth), 1u, fullWidth - left);
++		const auto rectHeight = std::clamp(toPixels(normalized(height), fullHeight), 1u, fullHeight - top);
++		return { left, top, rectWidth, rectHeight };
++	}
++
++	inline EyePlan MakeEyePlan(float x, float y, float width, float height,
++		std::uint32_t fullInputWidth, std::uint32_t fullInputHeight,
++		std::uint32_t fullOutputWidth, std::uint32_t fullOutputHeight)
++	{
++		return {
++			.input = MakePixelRect(x, y, width, height, fullInputWidth, fullInputHeight),
++			.output = MakePixelRect(x, y, width, height, fullOutputWidth, fullOutputHeight),
++		};
++	}
++
++	inline std::array<float, 2> MotionVectorScale(std::uint32_t fullWidth, std::uint32_t fullHeight,
++		const PixelRect& crop)
++	{
++		return {
++			crop.width ? static_cast<float>(fullWidth) / crop.width : 1.0f,
++			crop.height ? static_cast<float>(fullHeight) / crop.height : 1.0f,
++		};
++	}
++}
+--- a/runtime/open-shaders/src/Features/Upscaling/FoveatedRender/Modes.cpp
++++ b/runtime/open-shaders/src/Features/Upscaling/FoveatedRender/Modes.cpp
+@@ -57,6 +57,11 @@
+ 		const auto frame = globals::state ? globals::state->frameCount : 0;
+ 		globals::features::upscaling.foveatedRender.UpdateAdaptiveState(frame, true);
+ 		auto p = VRDlssParams::Resolve(upscalingTexture, depthTexture, reactiveMask, transparencyMask, motionVectors);
++		Core::neuralCropPlanFrame = UINT32_MAX;
++		std::array<std::array<float, 2>, 2> motionScales{};
++		for (uint32_t eye = 0; eye < motionScales.size(); ++eye)
++			motionScales[eye] = CropGeometry::MotionVectorScale(p.eyeWidthIn, p.eyeHeightIn, p.cropPlan.eyes[eye].input);
++		Bridge::SetMvecScaleForFrame(frame, motionScales);
+ 		// Preserve the source guides for the optional display-space crop handoff.
+ 		Core::vrAdaptiveCropDepthSource = p.depthTexture;
+ 		Core::vrAdaptiveCropMotionSource = p.motionVectors;
+@@ -66,7 +71,7 @@
+ 		// Gaze loss changes history, not resource identity: fixed-size crops
+ 		// retain their allocations across tracking and static fallback.
+ 		const bool fixedEnvelopeCandidate = globals::features::upscaling.foveatedRender.IsAdaptiveCropRuntimeActive() &&
+-			!p.eyeTrackedGazeActive && !Core::vrSubrectFixedEnvelopeRejected;
++			!Core::vrSubrectFixedEnvelopeRejected;
+ 		const Util::Subrect::UVRegion envelopeUV{ 0.0f, 0.0f, 1.0f, 1.0f };
+ 		uint64_t uvHash = fixedEnvelopeCandidate ?
+ 			ComputeSubrectUVHash(envelopeUV, envelopeUV, (uint32_t)p.mode, false) :
+@@ -93,6 +98,10 @@
+ 		                  ExecuteDefaultMode(streamline, p);
+ 		for (uint32_t eye = 0; eye < 2; ++eye)
+ 			CropMotion::Commit(eye, result && Core::neuralGuidesFrame == frame && p.eyeTrackedGazeConfigured && !p.isFullEye);
++		if (result && Core::neuralGuidesFrame == frame) {
++			Core::neuralCropPlan = p.cropPlan;
++			Core::neuralCropPlanFrame = frame;
++		}
+ 		Bridge::foveatedEvaluating = false;
+ 		Bridge::gazeHistoryReset = false;
+ 		return result;
+@@ -139,7 +148,7 @@
+ 
+ 		// ── Subrect path: crop per-eye, DLSS at subrect size, stretch back ──
+ 		const bool fixedEnvelopeCandidate = globals::features::upscaling.foveatedRender.IsAdaptiveCropRuntimeActive() &&
+-			!p.eyeTrackedGazeActive && !Core::vrSubrectFixedEnvelopeRejected;
++			!Core::vrSubrectFixedEnvelopeRejected;
+ 
+ 		// The shared resource path requires symmetric eye extents. Fail closed rather
+ 		// than write out of bounds; regular centered crop is the supported adaptive
+@@ -150,28 +159,24 @@
+ 			return false;
+ 		}
+ 
+-		const Util::Subrect::UVRegion* eyeUVs[2] = { &p.leftUV, &p.rightUV };
++
+ 
+ 		// EnsureVRSubrectTextures allocates a shared per-eye envelope. The per-eye
+ 		// loop below still uses each eye's UV for the valid copy/dispatch extent.
+-		uint32_t allocSubInW = std::max<uint32_t>(1, (uint32_t)(p.eyeWidthIn * p.leftUV.w));
+-		uint32_t allocSubInH = std::max<uint32_t>(1, (uint32_t)(p.eyeHeightIn * p.leftUV.h));
+-		uint32_t allocSubOutW = std::max<uint32_t>(1, (uint32_t)(p.eyeWidthOut * p.leftUV.w));
+-		uint32_t allocSubOutH = std::max<uint32_t>(1, (uint32_t)(p.eyeHeightOut * p.leftUV.h));
+-		const auto scaleDimension = [](std::uint32_t dimension, std::uint32_t percentage) {
+-			return std::max<std::uint32_t>(1, static_cast<std::uint32_t>(
+-				(static_cast<std::uint64_t>(dimension) * percentage + 50) / 100));
+-		};
++		uint32_t allocSubInW = p.cropPlan.eyes[0].input.width;
++		uint32_t allocSubInH = p.cropPlan.eyes[0].input.height;
++		uint32_t allocSubOutW = p.cropPlan.eyes[0].output.width;
++		uint32_t allocSubOutH = p.cropPlan.eyes[0].output.height;
+ 		// Re-anchor the envelope to the configured adaptive maximum, not to the
+ 		// current tier. This matters after a route/device reset while the controller
+ 		// is already at a reduced tier: restoration must not grow the backing set one
+ 		// tier at a time and recreate resources again.
+-		const std::uint32_t envelopeCoverage = std::clamp(
+-			globals::features::upscaling.foveatedRender.GetAdaptiveCropMaximumCoverage(), 60u, 85u);
+-		const uint32_t envelopeSubInW = fixedEnvelopeCandidate ? scaleDimension(p.eyeWidthIn, envelopeCoverage) : allocSubInW;
+-		const uint32_t envelopeSubInH = fixedEnvelopeCandidate ? scaleDimension(p.eyeHeightIn, envelopeCoverage) : allocSubInH;
+-		const uint32_t envelopeSubOutW = fixedEnvelopeCandidate ? scaleDimension(p.eyeWidthOut, envelopeCoverage) : allocSubOutW;
+-		const uint32_t envelopeSubOutH = fixedEnvelopeCandidate ? scaleDimension(p.eyeHeightOut, envelopeCoverage) : allocSubOutH;
++		const auto selectedCrop = globals::features::upscaling.foveatedRender.subrectController.GetUV();
++		const uint32_t envelopeSubInW = fixedEnvelopeCandidate ? std::max(allocSubInW, static_cast<uint32_t>(p.eyeWidthIn * selectedCrop.w)) : allocSubInW;
++		const uint32_t envelopeSubInH = fixedEnvelopeCandidate ? std::max(allocSubInH, static_cast<uint32_t>(p.eyeHeightIn * selectedCrop.h)) : allocSubInH;
++		const uint32_t envelopeSubOutW = fixedEnvelopeCandidate ? std::max(allocSubOutW, static_cast<uint32_t>(p.eyeWidthOut * selectedCrop.w)) : allocSubOutW;
++		const uint32_t envelopeSubOutH = fixedEnvelopeCandidate ? std::max(allocSubOutH, static_cast<uint32_t>(p.eyeHeightOut * selectedCrop.h)) : allocSubOutH;
++
+ 
+ 		const auto frame = globals::state ? globals::state->frameCount : 0;
+ 		if (!EnsureVRSubrectTextures(envelopeSubInW, envelopeSubInH, envelopeSubOutW, envelopeSubOutH,
+@@ -186,7 +191,10 @@
+ 			// the old Streamline handles before they can observe the replacement.
+ 			Core::vrSubrectResourceContractChanged = false;
+ 			streamline.DestroyDLSSResources();
+-			Core::InvalidateTemporalState();
++			const auto& foveated = globals::features::upscaling.foveatedRender;
++			const bool preserveAtlasHistory = foveated.adaptivePassInitialized &&
++				foveated.settings.neuralRenderingAdaptiveEnabled && foveated.settings.neuralRenderingSinglePassLadder;
++			Core::InvalidateTemporalState(!preserveAtlasHistory);
+ 			logger::debug("[FOVEATED] Streamline handles invalidated after subrect resource contract change frame={}", frame);
+ 		}
+ 
+@@ -201,15 +209,13 @@
+ 		// Crop subrect per-eye from mask-cleared snapshot (not kMAIN which was overwritten by stretch)
+ 		auto context = globals::d3d::context;
+ 		for (uint32_t i = 0; i < 2; ++i) {
+-			const auto& uv = *eyeUVs[i];
+-			// Per-eye sizing — right eye uses rightUV.w/h, not leftUV.
+-			uint32_t subInW = std::max<uint32_t>(1, (uint32_t)(p.eyeWidthIn * uv.w));
+-			uint32_t subInH = std::max<uint32_t>(1, (uint32_t)(p.eyeHeightIn * uv.h));
+-			uint32_t subOutW = std::max<uint32_t>(1, (uint32_t)(p.eyeWidthOut * uv.w));
+-			uint32_t subOutH = std::max<uint32_t>(1, (uint32_t)(p.eyeHeightOut * uv.h));
+-
+-			uint32_t cropX = (uint32_t)(uv.x * p.eyeWidthIn);
+-			uint32_t cropY = (uint32_t)(uv.y * p.eyeHeightIn);
++			const auto& crop = p.cropPlan.eyes[i];
++			uint32_t subInW = crop.input.width;
++			uint32_t subInH = crop.input.height;
++			uint32_t subOutW = crop.output.width;
++			uint32_t subOutH = crop.output.height;
++			uint32_t cropX = crop.input.x;
++			uint32_t cropY = crop.input.y;
+ 			uint32_t sbsX = (i == 1 ? p.eyeWidthIn : 0) + cropX;
+ 			D3D11_BOX sbsCrop = { sbsX, cropY, 0, sbsX + subInW, cropY + subInH, 1 };
+ 
+@@ -266,13 +272,11 @@
+ 
+ 		// Write DLSS output back at subrect position (with optional blend)
+ 		for (uint32_t i = 0; i < 2; ++i) {
+-			const auto& uv = *eyeUVs[i];
+-			// Per-eye sizing.
+-			uint32_t subOutW = std::max<uint32_t>(1, (uint32_t)(p.eyeWidthOut * uv.w));
+-			uint32_t subOutH = std::max<uint32_t>(1, (uint32_t)(p.eyeHeightOut * uv.h));
+-
+-			uint32_t dstCropX = (uint32_t)(uv.x * p.eyeWidthOut);
+-			uint32_t dstCropY = (uint32_t)(uv.y * p.eyeHeightOut);
++			const auto& crop = p.cropPlan.eyes[i];
++			uint32_t subOutW = crop.output.width;
++			uint32_t subOutH = crop.output.height;
++			uint32_t dstCropX = crop.output.x;
++			uint32_t dstCropY = crop.output.y;
+ 			uint32_t dstX = (i == 1 ? p.eyeWidthOut : 0) + dstCropX;
+ 			if (!BlendSubrectToOutput(Core::vrSubrectColorOut[i]->resource.get(), p.colorDst, p.colorDstUAV,
+ 					dstX, dstCropY, subOutW, subOutH)) {
+--- a/runtime/open-shaders/src/Features/Upscaling/FoveatedRender/Params.cpp
++++ b/runtime/open-shaders/src/Features/Upscaling/FoveatedRender/Params.cpp
+@@ -60,11 +60,8 @@
+ 		p.mode = enhancer.GetDlssMode();
+ 		p.leftUV = enhancer.GetEffectiveLeftUV();
+ 		p.rightUV = enhancer.GetEffectiveRightUV();
+-		const NativeOpenVRGaze::Config gazeConfig{
+-			.enabled = enhancer.settings.neuralRenderingEyeTrackedFoveation,
+-			.smoothingMs = enhancer.settings.neuralRenderingEyeTrackedSmoothingMs,
+-			.quantizationPixels = enhancer.settings.neuralRenderingEyeTrackedQuantizationPixels,
+-		};
++		const auto gazeConfig = NativeOpenVRGaze::MakeConfig(enhancer.settings,
++			enhancer.subrectController.GetUV().w, enhancer.subrectController.GetUV().h);
+ 		const bool gazeRequested = gazeConfig.enabled && enhancer.settings.neuralRenderingEnabled &&
+ 			p.mode == FoveatedRender::DlssMode::kDefault &&
+ 			upscaling.GetUpscaleMethod() == Upscaling::UpscaleMethod::kDLSS;
+@@ -83,6 +80,14 @@
+ 		p.jitterX = upscaling.jitter.x;
+ 		p.jitterY = upscaling.jitter.y;
+ 
++		p.cropPlan.fullInputWidth = p.eyeWidthIn;
++		p.cropPlan.fullInputHeight = p.eyeHeightIn;
++		p.cropPlan.fullOutputWidth = p.eyeWidthOut;
++		p.cropPlan.fullOutputHeight = p.eyeHeightOut;
++		p.cropPlan.eyes[0] = CropGeometry::MakeEyePlan(p.leftUV.x, p.leftUV.y, p.leftUV.w, p.leftUV.h,
++			p.eyeWidthIn, p.eyeHeightIn, p.eyeWidthOut, p.eyeHeightOut);
++		p.cropPlan.eyes[1] = CropGeometry::MakeEyePlan(p.rightUV.x, p.rightUV.y, p.rightUV.w, p.rightUV.h,
++			p.eyeWidthIn, p.eyeHeightIn, p.eyeWidthOut, p.eyeHeightOut);
+ 		return p;
+ 	}
+ }
+--- a/runtime/open-shaders/src/Features/Upscaling/FoveatedRender/Params.h
++++ b/runtime/open-shaders/src/Features/Upscaling/FoveatedRender/Params.h
+@@ -1,4 +1,6 @@
+ #pragma once
++
++#include "CropGeometry.h"
+ 
+ #include "../FoveatedRender.h"
+ #include "Utils/Subrect.h"
+@@ -12,6 +14,7 @@
+ 	// testTexture (see Params.cpp).
+ 	struct VRDlssParams
+ 	{
++		CropGeometry::FramePlan cropPlan{};
+ 		// Dimensions
+ 		uint32_t renderW;       // SBS render width  (after DRS)
+ 		uint32_t renderH;       // SBS render height (after DRS)
+--- a/runtime/open-shaders/src/Features/Upscaling/FoveatedRender/Postprocess.cpp
++++ b/runtime/open-shaders/src/Features/Upscaling/FoveatedRender/Postprocess.cpp
+@@ -21,10 +21,7 @@
+ 			return false;
+ 		}
+ 
+-		// Keep the original Upscaling-tab RCAS curve and 0..1 control semantics.
+-		float currentSharpness = upscaling.settings.sharpnessDLSS <= 1.0f ?
+-			exp2(-((-2.0f * upscaling.settings.sharpnessDLSS) + 2.0f)) :
+-			std::clamp(upscaling.settings.sharpnessDLSS, 1.0f, 3.0f);
++		const float currentSharpness = RCAS::MapSliderStrength(upscaling.settings.sharpnessDLSS);
+ 		context->OMSetRenderTargets(0, nullptr, nullptr);
+ 
+ 		// PerfMode + foveated DLSS writes the reconstructed display-resolution
+@@ -41,7 +38,8 @@
+ 			}
+ 
+ 			context->CopyResource(perfMode.GetRefraTempTex(), perfMode.GetTestTexture());
+-			upscaling.rcas.ApplySharpen(perfMode.GetRefraTempSRV(), perfMode.GetTestTextureUAV(), currentSharpness);
++			if (!upscaling.rcas.ApplySharpen(perfMode.GetRefraTempSRV(), perfMode.GetTestTextureUAV(), currentSharpness))
++				return false;
+ 			if (globals::game::stateUpdateFlags)
+ 				globals::game::stateUpdateFlags->set(RE::BSGraphics::ShaderFlags::DIRTY_RENDERTARGET);
+ 			return true;
+@@ -68,7 +66,10 @@
+ 			return false;
+ 		}
+ 
+-		upscaling.rcas.ApplySharpen(Util::AsReal(main.SRV), upscaling.sharpenerTexture->uav.get(), currentSharpness);
++		if (!upscaling.rcas.ApplySharpen(Util::AsReal(main.SRV), upscaling.sharpenerTexture->uav.get(), currentSharpness)) {
++			mainResource->Release();
++			return false;
++		}
+ 		context->CopyResource(mainResource, upscaling.sharpenerTexture->resource.get());
+ 		mainResource->Release();
+ 
+--- a/runtime/open-shaders/src/Features/Upscaling/FoveatedRender.cpp
++++ b/runtime/open-shaders/src/Features/Upscaling/FoveatedRender.cpp
+@@ -12,6 +12,7 @@
+ #include "FoveatedRender/Core.h"
+ #include "GazeCropPolicy.h"
+ #include "NativeOpenVRGaze.h"
++#include "NeuralRendering/AdaptiveController.h"
+ #include "NeuralRendering/Integration.h"
+ #include "NeuralRendering/FuturePipeline.h"
+ #include "NeuralRendering/Renderer.h"
+@@ -221,7 +222,28 @@
+ 	X(neuralRenderingEyeTrackedFoveation) \
+ 	X(neuralRenderingEyeTrackedSmoothingMs) \
+ 	X(neuralRenderingEyeTrackedQuantizationPixels) \
+-	X(neuralRenderingEyeTrackedDeadZonePercent)
++	X(neuralRenderingEyeTrackedDeadZonePercent) \
++	X(neuralRenderingEyeTrackedAdaptiveSmoothing) \
++	X(neuralRenderingEyeTrackedFreezeCrop) \
++	X(neuralRenderingEyeTrackedResponsiveness) \
++	X(neuralRenderingEyeTrackedSlowPercent) \
++	X(neuralRenderingEyeTrackedFastPercent) \
++	X(neuralRenderingEyeTrackedJumpPercent) \
++	X(neuralRenderingEyeTrackedJumpSpeed) \
++	X(neuralRenderingEyeTrackedMaxLagPercent) \
++	X(neuralRenderingSinglePassLadder) \
++	X(neuralRenderingLadderBudgetMs) \
++	X(neuralRenderingLadderReserveMs) \
++	X(neuralRenderingLadderHandoffMs) \
++	X(neuralRenderingAdaptiveFirstPassPriority) \
++	X(neuralRenderingAdaptiveFirstPassIncreaseBelowMs) \
++	X(neuralRenderingAdaptiveFirstPassHoldMs) \
++	X(neuralRenderingAdaptiveFirstPassCostGuard) \
++	X(neuralRenderingAdaptiveFirstPassCostMs) \
++	X(neuralRenderingAdaptiveFirstPassMarginMs) \
++	X(neuralRenderingAdaptiveFirstPassRetryMs) \
++	X(neuralRenderingAdaptiveRelativeCropFloor) \
++	X(neuralRenderingAdaptiveRelativeCropStep)
+ 
+ template <typename BasicJsonType>
+ void to_json(BasicJsonType& json, const FoveatedRender::Settings& settings)
+@@ -255,7 +277,6 @@
+ void FoveatedRender::PostPostLoad()
+ {
+ 	bootSnapshot.LatchIfNeeded(settings);
+-	adaptiveController.Reset();
+ 	adaptiveCropController.Reset();
+ 
+ 	// Opt into the stereo extension so the controller tracks a separate
+@@ -572,10 +593,25 @@
+ 	settings.neuralRenderingAdaptiveCropUpshiftFrames = std::clamp(settings.neuralRenderingAdaptiveCropUpshiftFrames, 8u, 240u);
+ 	settings.neuralRenderingAdaptiveCropMinimumDwellFrames = std::clamp(settings.neuralRenderingAdaptiveCropMinimumDwellFrames, 8u, 600u);
+ 	settings.neuralRenderingAdaptiveCropTransitionFrames = std::clamp(settings.neuralRenderingAdaptiveCropTransitionFrames, 2u, 24u);
+-	settings.neuralRenderingEyeTrackedSmoothingMs = std::clamp(settings.neuralRenderingEyeTrackedSmoothingMs, 0.0f, 250.0f);
++	settings.neuralRenderingEyeTrackedSmoothingMs = clampFinite(settings.neuralRenderingEyeTrackedSmoothingMs, 60.0f, 0.0f, 250.0f);
++	settings.neuralRenderingEyeTrackedResponsiveness = clampFinite(settings.neuralRenderingEyeTrackedResponsiveness, 8.0f, 0.0f, 50.0f);
++	settings.neuralRenderingEyeTrackedSlowPercent = clampFinite(settings.neuralRenderingEyeTrackedSlowPercent, 10.0f, 0.0f, 50.0f);
++	settings.neuralRenderingEyeTrackedFastPercent = clampFinite(settings.neuralRenderingEyeTrackedFastPercent, 100.0f, 5.0f, 200.0f);
++	settings.neuralRenderingEyeTrackedJumpPercent = clampFinite(settings.neuralRenderingEyeTrackedJumpPercent, 100.0f, 5.0f, 200.0f);
++	settings.neuralRenderingEyeTrackedJumpSpeed = clampFinite(settings.neuralRenderingEyeTrackedJumpSpeed, 20.0f, 1.0f, 100.0f);
++	settings.neuralRenderingEyeTrackedMaxLagPercent = clampFinite(settings.neuralRenderingEyeTrackedMaxLagPercent, 25.0f, 0.0f, 50.0f);
++	settings.neuralRenderingLadderBudgetMs = clampFinite(settings.neuralRenderingLadderBudgetMs, 20.0f, 10.0f, 30.0f);
++	settings.neuralRenderingLadderReserveMs = clampFinite(settings.neuralRenderingLadderReserveMs, 1.0f, 0.5f, 5.0f);
++	settings.neuralRenderingLadderHandoffMs = clampFinite(settings.neuralRenderingLadderHandoffMs, 150.0f, 0.0f, 500.0f);
++	settings.neuralRenderingAdaptiveFirstPassIncreaseBelowMs = clampFinite(settings.neuralRenderingAdaptiveFirstPassIncreaseBelowMs, 14.0f, 10.0f, 30.0f);
++	settings.neuralRenderingAdaptiveFirstPassHoldMs = clampFinite(settings.neuralRenderingAdaptiveFirstPassHoldMs, 1200.0f, 0.0f, 5000.0f);
++	settings.neuralRenderingAdaptiveFirstPassCostMs = clampFinite(settings.neuralRenderingAdaptiveFirstPassCostMs, 6.0f, 0.0f, 20.0f);
++	settings.neuralRenderingAdaptiveFirstPassMarginMs = clampFinite(settings.neuralRenderingAdaptiveFirstPassMarginMs, 1.0f, 0.0f, 5.0f);
++	settings.neuralRenderingAdaptiveFirstPassRetryMs = clampFinite(settings.neuralRenderingAdaptiveFirstPassRetryMs, 3000.0f, 0.0f, 10000.0f);
++	settings.neuralRenderingAdaptiveRelativeCropFloor = std::clamp(settings.neuralRenderingAdaptiveRelativeCropFloor, 60u, 100u) / 5u * 5u;
++	settings.neuralRenderingAdaptiveRelativeCropStep = std::clamp(settings.neuralRenderingAdaptiveRelativeCropStep, 5u, 20u) / 5u * 5u;
+ 	settings.neuralRenderingEyeTrackedQuantizationPixels = std::clamp(settings.neuralRenderingEyeTrackedQuantizationPixels, 0u, 64u);
+ 	settings.neuralRenderingEyeTrackedDeadZonePercent = clampFinite(settings.neuralRenderingEyeTrackedDeadZonePercent, 0.0f, 0.0f, 10.0f);
+-	FoveatedRenderImpl::GazeCropPolicy::SetDeadZonePercent(settings.neuralRenderingEyeTrackedDeadZonePercent);
+ 	// Preset clamping reads from Upscaling::Settings now.
+ 	auto& sharedPreset = globals::features::upscaling.settings.presetDLSS;
+ 	sharedPreset = std::min(sharedPreset, 6u);
+@@ -625,15 +661,9 @@
+ 	const std::uint32_t manualPasses = std::clamp(settings.neuralRenderingMultiPass + 1u, 1u, 3u);
+ 	const bool restoringPasses = adaptivePassInitialized && adaptiveActivePasses < manualPasses;
+ 	const bool cropWasActive = adaptiveCropController.IsRuntimeActive();
+-	adaptiveController.Reset();
+ 	adaptiveCropController.Reset();
+-	adaptiveNextDownshiftIsCrop = true;
+-	adaptiveCropDiagnosticGeneration = UINT64_MAX;
+ 	adaptiveConfiguredPasses = manualPasses;
+ 	adaptiveActivePasses = manualPasses;
+-	adaptivePassDwellFrames = 0;
+-	adaptivePassPressureFrames = 0;
+-	adaptivePassHeadroomFrames = 0;
+ 	adaptivePassInitialized = false;
+ 	adaptiveCropTargetCoverage = 100;
+ 	adaptiveFilteredFrameTimeMs = 0.0f;
+@@ -646,6 +676,13 @@
+ 	adaptiveLastActionFrom = 0;
+ 	adaptiveLastActionTo = 0;
+ 	adaptiveLastActionFrameTimeMs = 0.0f;
++	adaptivePolicyObserved = false;
++	adaptiveWorkloadObserved = false;
++	adaptiveLadderStage = 0;
++	adaptiveModelResolution = 100;
++	adaptiveBlockedGrowthStage = UINT32_MAX;
++	adaptiveGrowthBaselineMs = adaptiveBlockedGrowthBaselineMs = 0.0f;
++	adaptiveFirstPassRetryRemainingMs = 0.0f;
+ 	if (cropWasActive)
+ 		FoveatedRenderImpl::Core::ResetAdaptiveCropHandoff();
+ 	if (restoringPasses)
+@@ -662,6 +699,8 @@
+ 
+ void FoveatedRender::UpdateAdaptiveState(std::uint32_t frame, bool routeEligible)
+ {
++	if (adaptiveUpdateFrame == frame) return;
++	adaptiveUpdateFrame = frame;
+ 	const auto& nrRenderer = NeuralRendering::Renderer::Instance();
+ 	const auto& streamline = globals::features::upscaling.streamline;
+ 	const bool recentDLSSFailure = streamline.lastDLSSFailureFrame != UINT32_MAX &&
+@@ -677,13 +716,17 @@
+ 	const std::uint32_t manualPasses = std::clamp(settings.neuralRenderingMultiPass + 1u, 1u, 3u);
+ 	// Adaptive mode is intentionally 0/1/2 passes. Manual 3x remains available
+ 	// when the controller is disabled. This also matches the stereo-atlas stage cap.
+-	const std::uint32_t requestedPasses = std::min(manualPasses, 2u);
++	const bool singlePassLadder = settings.neuralRenderingSinglePassLadder;
++	const std::uint32_t requestedPasses = singlePassLadder ? 1u : std::min(manualPasses, 2u);
++	if (adaptivePassInitialized && adaptiveLadderModeObserved != singlePassLadder)
++		ResetAdaptiveState();
++	adaptiveLadderModeObserved = singlePassLadder;
+ 
+ 	if (!settings.neuralRenderingAdaptiveEnabled || !nrEligible) {
+ 		if (adaptivePassInitialized || adaptiveCropController.IsRuntimeActive())
+ 			ResetAdaptiveState();
+-		adaptiveConfiguredPasses = manualPasses;
+-		adaptiveActivePasses = manualPasses;
++		adaptiveConfiguredPasses = settings.neuralRenderingAdaptiveEnabled && singlePassLadder ? 1u : manualPasses;
++		adaptiveActivePasses = adaptiveConfiguredPasses;
+ 		return;
+ 	}
+ 
+@@ -691,10 +734,30 @@
+ 	const auto rightUV = subrectController.GetRightEyeUV();
+ 	const bool geometryCompatible = leftUV.w > 0.01f && leftUV.h > 0.01f &&
+ 		rightUV.w > 0.01f && rightUV.h > 0.01f &&
+-		std::abs(leftUV.w - rightUV.w) <= 0.0005f &&
+-		std::abs(leftUV.h - rightUV.h) <= 0.0005f;
++		leftUV.w == rightUV.w && leftUV.h == rightUV.h;
+ 	const bool eyeTrackingOwnsOrigin = IsEyeTrackedFoveationEnabled();
+ 	const bool cropPolicyAvailable = geometryCompatible;
++	const bool decisionsSuspended = globals::state->isLoadingMenuOpen ||
++		globals::state->IsPausedOrMenuOpen(globals::game::ui);
++	const bool envelopeRejected = FoveatedRenderImpl::Core::vrSubrectFixedEnvelopeRejected ||
++		FoveatedRenderImpl::Core::vrSubrectNeuralFixedEnvelopeRejected;
++	const auto& upscaling = globals::features::upscaling;
++	const auto displaySize = upscaling.perfMode.IsHookActive() ? upscaling.perfMode.GetDisplayScreenSize() : globals::state->screenSize;
++	const float renderWidth = upscaling.perfMode.IsHookActive() ? static_cast<float>(upscaling.perfMode.GetRenderEyeWidth() * 2u) : displaySize.x * upscaling.resolutionScale.x;
++	const float renderHeight = upscaling.perfMode.IsHookActive() ? static_cast<float>(upscaling.perfMode.GetRenderEyeHeight()) : displaySize.y * upscaling.resolutionScale.y;
++	const std::array<float, 10> workloadKey{ leftUV.w, leftUV.h, rightUV.w, rightUV.h,
++		displaySize.x, displaySize.y, renderWidth, renderHeight,
++		static_cast<float>(upscaling.settings.qualityMode), static_cast<float>(upscaling.settings.presetDLSS) };
++	if (adaptiveWorkloadObserved && adaptiveWorkloadKey != workloadKey) {
++		adaptiveFilteredFrameTimeMs = 0.0f;
++		adaptiveDecreaseHoldMs = adaptiveIncreaseHoldMs = 0.0f;
++		adaptivePendingAction = 0;
++		adaptiveBlockedGrowthStage = UINT32_MAX;
++		adaptiveGrowthBaselineMs = adaptiveBlockedGrowthBaselineMs = 0.0f;
++		adaptiveCooldownRemainingMs = settings.neuralRenderingAdaptiveCooldownMs;
++	}
++	adaptiveWorkloadKey = workloadKey;
++	adaptiveWorkloadObserved = true;
+ 
+ 	if (!adaptivePassInitialized) {
+ 		adaptivePassInitialized = true;
+@@ -719,22 +782,46 @@
+ 			oldConfigured, adaptiveConfiguredPasses, adaptiveActivePasses);
+ 	}
+ 
+-	if (!cropPolicyAvailable)
+-		adaptiveCropTargetCoverage = 100;
+-	else if (adaptiveCropTargetCoverage >= 90)
+-		adaptiveCropTargetCoverage = 100;
+-	else if (adaptiveCropTargetCoverage >= 70)
+-		adaptiveCropTargetCoverage = 80;
+-	else
+-		adaptiveCropTargetCoverage = 60;
++	const NeuralRendering::SimpleFramePolicy::Config policyConfig{
++		.singlePassLadder = singlePassLadder,
++		.budget = settings.neuralRenderingLadderBudgetMs,
++		.reserve = settings.neuralRenderingLadderReserveMs,
++		.passIncrease = settings.neuralRenderingAdaptivePassIncreaseBelowMs,
++		.cropIncrease = settings.neuralRenderingAdaptiveCropIncreaseBelowMs,
++		.cropDecrease = settings.neuralRenderingAdaptiveCropDecreaseAboveMs,
++		.passDecrease = settings.neuralRenderingAdaptivePassDecreaseAboveMs,
++		.firstPassPriority = settings.neuralRenderingAdaptiveFirstPassPriority,
++		.firstPassIncrease = settings.neuralRenderingAdaptiveFirstPassIncreaseBelowMs,
++		.costGuard = settings.neuralRenderingAdaptiveFirstPassCostGuard,
++		.firstPassCost = settings.neuralRenderingAdaptiveFirstPassCostMs,
++		.safetyMargin = settings.neuralRenderingAdaptiveFirstPassMarginMs,
++		.decreaseHold = settings.neuralRenderingAdaptiveDecreaseHoldMs,
++		.increaseHold = settings.neuralRenderingAdaptiveIncreaseHoldMs,
++		.firstPassHold = settings.neuralRenderingAdaptiveFirstPassHoldMs,
++		.cooldown = settings.neuralRenderingAdaptiveCooldownMs,
++		.smoothing = settings.neuralRenderingAdaptiveSmoothingMs,
++		.retryDelay = settings.neuralRenderingAdaptiveFirstPassRetryMs,
++		.cropFloor = std::clamp(singlePassLadder ? 60u : settings.neuralRenderingAdaptiveRelativeCropFloor, 60u, 100u) / 5u * 5u,
++		.cropStep = std::clamp(singlePassLadder ? 20u : settings.neuralRenderingAdaptiveRelativeCropStep, 5u, 20u) / 5u * 5u,
++		.transitionFrames = settings.neuralRenderingAdaptiveCropTransitionFrames,
++	};
++	if (!adaptivePolicyObserved || !(adaptivePolicyConfig == policyConfig)) {
++		adaptivePolicyConfig = policyConfig;
++		adaptivePolicyObserved = true;
++		adaptiveBlockedGrowthStage = UINT32_MAX;
++		adaptiveDecreaseHoldMs = adaptiveIncreaseHoldMs = 0.0f;
++		adaptivePendingAction = 0;
++	}
++	adaptiveCropTargetCoverage = cropPolicyAvailable ?
++		std::clamp(adaptiveCropTargetCoverage, policyConfig.cropFloor, 100u) : 100u;
+ 
+ 	float gpuFrameTimeMs = -1.0f;
+ 	float sampleDeltaMs = 11.1f;
+ 	bool freshTiming = false;
++	bool timingAttempted = false;
+ 	static std::uint32_t timingFrame = UINT32_MAX;
+-	static std::uint32_t sampledEngineFrame = UINT32_MAX;
+-	if (globals::game::isVR && frame != sampledEngineFrame) {
+-		sampledEngineFrame = frame;
++	if (globals::game::isVR) {
++		timingAttempted = true;
+ 		if (auto* compositor = RE::BSOpenVR::GetIVRCompositor()) {
+ 			vr::Compositor_FrameTiming timing{};
+ 			timing.m_nSize = sizeof(timing);
+@@ -753,6 +840,7 @@
+ 
+ 	bool qualityChanged = false;
+ 	if (freshTiming) {
++		adaptiveFirstPassRetryRemainingMs = std::max(0.0f, adaptiveFirstPassRetryRemainingMs - sampleDeltaMs);
+ 		adaptiveLastFrameTimeMs = gpuFrameTimeMs;
+ 		// A single loading hitch must not dominate the EMA for seconds. The 60 ms
+ 		// filter cap is still far above the highest configurable 30 ms threshold,
+@@ -776,28 +864,33 @@
+ 			const std::uint32_t renderCrop = adaptiveCropController.IsRuntimeActive() ?
+ 				adaptiveCropController.RenderCoverage() : 100u;
+ 			const bool cropCanShrink = cropPolicyAvailable && !cropTransitioning &&
+-				adaptiveCropTargetCoverage > 60;
++				adaptiveCropTargetCoverage > policyConfig.cropFloor;
+ 			const bool cropCanGrow = cropPolicyAvailable && !cropTransitioning &&
+ 				adaptiveCropTargetCoverage < 100;
+ 			const bool cropAtFloor = !cropPolicyAvailable ||
+-				(!cropTransitioning && adaptiveCropTargetCoverage <= 60 && renderCrop <= 60);
++				(!cropTransitioning && adaptiveCropTargetCoverage <= policyConfig.cropFloor && renderCrop <= policyConfig.cropFloor);
+ 			const bool cropAtCeiling = !cropPolicyAvailable ||
+ 				(!cropTransitioning && adaptiveCropTargetCoverage >= 100 && renderCrop >= 100);
+ 
+-			// Action codes: 1=crop down, 2=crop up, 3=pass down, 4=pass up.
+-			// Crop always has priority. Passes are touched only after crop has reached
+-			// its relevant end of the 100/80/60 ladder (or crop is unavailable).
+-			adaptivePendingAction = 0;
+-			if (cropCanShrink && adaptiveFilteredFrameTimeMs > settings.neuralRenderingAdaptiveCropDecreaseAboveMs)
+-				adaptivePendingAction = 1;
+-			else if (cropAtFloor && adaptiveActivePasses > 0 &&
+-				adaptiveFilteredFrameTimeMs > settings.neuralRenderingAdaptivePassDecreaseAboveMs)
+-				adaptivePendingAction = 3;
+-			else if (cropCanGrow && adaptiveFilteredFrameTimeMs < settings.neuralRenderingAdaptiveCropIncreaseBelowMs)
+-				adaptivePendingAction = 2;
+-			else if (cropAtCeiling && adaptiveActivePasses < adaptiveConfiguredPasses &&
+-				adaptiveFilteredFrameTimeMs < settings.neuralRenderingAdaptivePassIncreaseBelowMs)
+-				adaptivePendingAction = 4;
++			const auto previousAction = adaptivePendingAction;
++
++			if (singlePassLadder) {
++				const bool blocked = adaptiveBlockedGrowthStage == adaptiveLadderStage &&
++					adaptiveFilteredFrameTimeMs > adaptiveBlockedGrowthBaselineMs - policyConfig.reserve;
++				adaptivePendingAction = NeuralRendering::SinglePassLadder::Select(adaptiveLadderStage,
++					adaptiveFilteredFrameTimeMs, policyConfig.budget, policyConfig.reserve,
++					cropTransitioning || !cropPolicyAvailable || envelopeRejected || decisionsSuspended, blocked);
++			} else {
++				adaptivePendingAction = NeuralRendering::SimpleFramePolicy::Select(policyConfig, {
++					.filteredMs = adaptiveFilteredFrameTimeMs,
++					.passes = adaptiveActivePasses, .ceiling = adaptiveConfiguredPasses,
++					.canShrink = cropCanShrink, .canGrow = cropCanGrow,
++					.atFloor = cropAtFloor, .atCeiling = cropAtCeiling,
++					.transitioning = cropTransitioning || envelopeRejected || decisionsSuspended, .retryRemaining = adaptiveFirstPassRetryRemainingMs });
++			}
++
++			if (previousAction != adaptivePendingAction)
++				adaptiveDecreaseHoldMs = adaptiveIncreaseHoldMs = 0.0f;
+ 
+ 			const bool decreasing = adaptivePendingAction == 1 || adaptivePendingAction == 3;
+ 			const bool increasing = adaptivePendingAction == 2 || adaptivePendingAction == 4;
+@@ -814,26 +907,49 @@
+ 
+ 			const bool actionReady = decreasing ?
+ 				adaptiveDecreaseHoldMs >= settings.neuralRenderingAdaptiveDecreaseHoldMs :
+-				(increasing && adaptiveIncreaseHoldMs >= settings.neuralRenderingAdaptiveIncreaseHoldMs);
++				(increasing && adaptiveIncreaseHoldMs >=
++					(policyConfig.firstPassPriority && adaptiveActivePasses == 0 && adaptivePendingAction == 4 ?
++						policyConfig.firstPassHold : policyConfig.increaseHold));
+ 			if (adaptivePendingAction != 0 && actionReady) {
+ 				adaptiveLastAction = adaptivePendingAction;
+ 				adaptiveLastActionFrameTimeMs = adaptiveFilteredFrameTimeMs;
+-				switch (adaptivePendingAction) {
++				if (singlePassLadder) {
++					const auto oldStage = adaptiveLadderStage;
++					if (adaptivePendingAction == 1) {
++						adaptiveLadderStage = std::min(4u, oldStage + 1);
++						if (adaptiveLastActionFrom == adaptiveLadderStage && adaptiveGrowthBaselineMs > 0.0f) {
++							adaptiveBlockedGrowthStage = adaptiveLadderStage;
++							adaptiveBlockedGrowthBaselineMs = adaptiveGrowthBaselineMs;
++						}
++					} else {
++						adaptiveLadderStage = oldStage - 1;
++						adaptiveGrowthBaselineMs = adaptiveFilteredFrameTimeMs;
++					}
++					adaptiveLastActionFrom = oldStage;
++					adaptiveLastActionTo = adaptiveLadderStage;
++					const auto quality = NeuralRendering::SinglePassLadder::Level(adaptiveLadderStage);
++					adaptiveCropTargetCoverage = quality.crop;
++					adaptiveModelResolution = quality.model;
++					adaptiveActivePasses = 1;
++					qualityChanged = true;
++				} else switch (adaptivePendingAction) {
+ 				case 1:
+ 					adaptiveLastActionFrom = adaptiveCropTargetCoverage;
+-					adaptiveCropTargetCoverage = adaptiveCropTargetCoverage > 80 ? 80u : 60u;
++					adaptiveCropTargetCoverage = NeuralRendering::SimpleFramePolicy::StepCrop(adaptiveCropTargetCoverage, policyConfig.cropFloor, policyConfig.cropStep, false);
+ 					adaptiveLastActionTo = adaptiveCropTargetCoverage;
+ 					qualityChanged = true;
+ 					break;
+ 				case 2:
+ 					adaptiveLastActionFrom = adaptiveCropTargetCoverage;
+-					adaptiveCropTargetCoverage = adaptiveCropTargetCoverage < 80 ? 80u : 100u;
++					adaptiveCropTargetCoverage = NeuralRendering::SimpleFramePolicy::StepCrop(adaptiveCropTargetCoverage, policyConfig.cropFloor, policyConfig.cropStep, true);
+ 					adaptiveLastActionTo = adaptiveCropTargetCoverage;
+ 					qualityChanged = true;
+ 					break;
+ 				case 3:
+ 					adaptiveLastActionFrom = adaptiveActivePasses;
+ 					--adaptiveActivePasses;
++					if (adaptiveActivePasses == 0 && policyConfig.firstPassPriority)
++						adaptiveFirstPassRetryRemainingMs = policyConfig.retryDelay;
+ 					adaptiveLastActionTo = adaptiveActivePasses;
+ 					qualityChanged = true;
+ 					break;
+@@ -858,11 +974,17 @@
+ 		}
+ 	}
+ 
++	if (timingAttempted && !freshTiming) {
++		adaptiveDecreaseHoldMs = adaptiveIncreaseHoldMs = 0.0f;
++		adaptivePendingAction = 0;
++	}
++
+ 	NeuralRendering::AdaptiveCropController::Config cropConfig;
+ 	cropConfig.enabled = cropPolicyAvailable;
+-	cropConfig.hold = false;
++	cropConfig.hold = envelopeRejected || decisionsSuspended;
+ 	cropConfig.maximumCoverage = 100;
+-	cropConfig.minimumCoverage = 60;
++	cropConfig.minimumCoverage = policyConfig.cropFloor;
++	cropConfig.stepCoverage = policyConfig.cropStep;
+ 	// v05 owns smoothing, hysteresis, holds and cooldown. The crop controller is
+ 	// only a stereo-safe actuator/handoff mechanism, so its own decision delays
+ 	// are one frame and cannot create a hidden second policy.
+@@ -873,8 +995,8 @@
+ 	const bool cropWasActive = adaptiveCropController.IsRuntimeActive();
+ 	const std::uint32_t previousRenderCrop = cropWasActive ? adaptiveCropController.RenderCoverage() : 100u;
+ 	const std::uint32_t currentCrop = cropWasActive ? adaptiveCropController.ActiveCoverage() : 100u;
+-	const bool driveCropDown = cropPolicyAvailable && currentCrop > adaptiveCropTargetCoverage;
+-	const bool driveCropUp = cropPolicyAvailable && currentCrop < adaptiveCropTargetCoverage;
++	const bool driveCropDown = cropPolicyAvailable && !envelopeRejected && !decisionsSuspended && currentCrop > adaptiveCropTargetCoverage;
++	const bool driveCropUp = cropPolicyAvailable && !envelopeRejected && !decisionsSuspended && currentCrop < adaptiveCropTargetCoverage;
+ 	// Eye/gaze tracking keeps ownership of crop origin. Adaptive v05 changes only
+ 	// scale relative to that live user-selected crop, exactly as v03 established.
+ 	adaptiveCropController.Update(frame, cropConfig, cropPolicyAvailable,
+@@ -887,31 +1009,30 @@
+ 	if (adaptiveCropController.IsRuntimeActive() && previousRenderCrop != committedRenderCrop) {
+ 		// Invalidate once when a 100/80/60 geometry handoff commits. Gaze motion at
+ 		// a stable tier does not hit this path, so the v03 gaze-history fix remains.
+-		FoveatedRenderImpl::Core::InvalidateTemporalState();
++		if (!singlePassLadder) FoveatedRenderImpl::Core::InvalidateTemporalState();
+ 		logger::info("[DLSSNR][ADAPTIVE-v05] crop geometry commit {}% -> {}% of selected crop frame={}",
+ 			previousRenderCrop, committedRenderCrop, frame);
+ 	}
+ 
+ 	if (qualityChanged) {
+-		const char* action = adaptiveLastAction == 1 ? "crop-down" :
++		const char* action = singlePassLadder ? (adaptiveLastAction == 1 ? "quality-down" : "quality-up") :
++			adaptiveLastAction == 1 ? "crop-down" :
+ 			adaptiveLastAction == 2 ? "crop-up" :
+ 			adaptiveLastAction == 3 ? "pass-down" : "pass-up";
+ 		logger::info("[DLSSNR][ADAPTIVE-v05] action={} {} -> {} raw={:.2f}ms filtered={:.2f}ms passes={}/{} cropTarget={} atlas={} gaze={}",
+ 			action, adaptiveLastActionFrom, adaptiveLastActionTo,
+ 			adaptiveLastFrameTimeMs, adaptiveFilteredFrameTimeMs,
+ 			adaptiveActivePasses, adaptiveConfiguredPasses, adaptiveCropTargetCoverage,
+-			settings.neuralRenderingStereoAtlas, eyeTrackingOwnsOrigin);
+-	}
+-
+-	static std::uint32_t lastBudgetLog = UINT32_MAX;
+-	if (frame % 300 == 0 && frame != lastBudgetLog) {
+-		lastBudgetLog = frame;
++			nrRenderer.IsStereoAtlasActive(), eyeTrackingOwnsOrigin);
++	}
++
++	if (frame % 300 == 0) {
+ 		logger::info("[DLSSNR][BUDGET-v05] frame={} fresh={} raw={:.2f} filtered={:.2f} passes={}/{} cropRender={} cropTarget={} decHold={:.0f} incHold={:.0f} cooldown={:.0f} atlas={} gaze={}",
+ 			frame, freshTiming, adaptiveLastFrameTimeMs, adaptiveFilteredFrameTimeMs,
+ 			adaptiveActivePasses, adaptiveConfiguredPasses,
+ 			adaptiveCropController.IsRuntimeActive() ? adaptiveCropController.RenderCoverage() : 100u,
+ 			adaptiveCropTargetCoverage, adaptiveDecreaseHoldMs, adaptiveIncreaseHoldMs,
+-			adaptiveCooldownRemainingMs, settings.neuralRenderingStereoAtlas, eyeTrackingOwnsOrigin);
++			adaptiveCooldownRemainingMs, nrRenderer.IsStereoAtlasActive(), eyeTrackingOwnsOrigin);
+ 	}
+ }
+ Util::Subrect::UVRegion FoveatedRender::GetEffectiveLeftUV() const
+@@ -1498,8 +1619,21 @@
+ 				ImGui::SeparatorText("Simple Frametime Controller");
+ 				ImGui::Checkbox("Enable adaptive performance controller", &settings.neuralRenderingAdaptiveEnabled);
+ 				if (auto _tt = Util::HoverTooltipWrapper())
+-					drawWrapped("Direct SteamVR GPU-frametime thresholds only. Crop has priority: 100% -> 80% -> 60% of your selected crop before pass count is reduced. Recovery also restores crop first, then passes.");
++					drawWrapped("The one-pass atlas ladder reduces crop to 80%, then 60%, then NR resolution to 85%, then 70%. Recovery reverses that order. Crop percentages are relative to your selected crop. Legacy thresholds are available with the ladder disabled.");
+ 				if (settings.neuralRenderingAdaptiveEnabled) {
++					ImGui::Checkbox("One-pass atlas ladder", &settings.neuralRenderingSinglePassLadder);
++					if (settings.neuralRenderingSinglePassLadder) {
++						ImGui::SliderFloat("GPU budget", &settings.neuralRenderingLadderBudgetMs, 10.0f, 30.0f, "%.1f ms");
++						ImGui::SliderFloat("Recovery headroom", &settings.neuralRenderingLadderReserveMs, 0.5f, 5.0f, "%.1f ms");
++						ImGui::SliderFloat("NR transition smoothing", &settings.neuralRenderingLadderHandoffMs, 0.0f, 500.0f, "%.0f ms");
++						ImGui::TextDisabled("One NR pass required: crop 100/80/60, then NR 100/85/70. Atlas required.");
++						ImGui::TextDisabled("Stage %u: crop %u%%, NR %u%% | atlas %s", adaptiveLadderStage,
++							adaptiveCropTargetCoverage, adaptiveModelResolution, NeuralRendering::Renderer::Instance().IsStereoAtlasActive() ? "active" : "not active");
++						if (adaptiveLadderStage == 4 && adaptiveFilteredFrameTimeMs > settings.neuralRenderingLadderBudgetMs)
++							drawWarningWrapped("Budget cannot be met at the minimum quality. One NR pass remains enabled.");
++					}
++					ImGui::BeginDisabled(settings.neuralRenderingSinglePassLadder);
++
+ 					ImGui::SliderFloat("Pass +1 below", &settings.neuralRenderingAdaptivePassIncreaseBelowMs, 10.0f, 30.0f, "%.1f ms");
+ 					ImGui::SliderFloat("Crop +1 tier below", &settings.neuralRenderingAdaptiveCropIncreaseBelowMs, 10.0f, 30.0f, "%.1f ms");
+ 					ImGui::SliderFloat("Crop -1 tier above", &settings.neuralRenderingAdaptiveCropDecreaseAboveMs, 10.0f, 30.0f, "%.1f ms");
+@@ -1509,10 +1643,33 @@
+ 						settings.neuralRenderingAdaptiveCropDecreaseAboveMs < settings.neuralRenderingAdaptivePassDecreaseAboveMs;
+ 					if (!orderedThresholds)
+ 						drawWarningWrapped("Thresholds overlap. Recommended hysteresis order: Pass + < Crop + < Crop - < Pass -. Values are kept exactly as configured; the controller does not silently rewrite them.");
++					ImGui::EndDisabled();
+ 					ImGui::SliderFloat("Frametime smoothing", &settings.neuralRenderingAdaptiveSmoothingMs, 0.0f, 1000.0f, "%.0f ms");
+ 					ImGui::SliderFloat("Decrease hold", &settings.neuralRenderingAdaptiveDecreaseHoldMs, 0.0f, 2500.0f, "%.0f ms");
+ 					ImGui::SliderFloat("Increase hold", &settings.neuralRenderingAdaptiveIncreaseHoldMs, 0.0f, 5000.0f, "%.0f ms");
+ 					ImGui::SliderFloat("Cooldown after change", &settings.neuralRenderingAdaptiveCooldownMs, 0.0f, 5000.0f, "%.0f ms");
++					ImGui::BeginDisabled(settings.neuralRenderingSinglePassLadder);
++					int relativeFloor = static_cast<int>(settings.neuralRenderingAdaptiveRelativeCropFloor);
++					if (ImGui::SliderInt("Relative crop floor", &relativeFloor, 60, 100, "%d%%"))
++						settings.neuralRenderingAdaptiveRelativeCropFloor = static_cast<uint>(relativeFloor / 5 * 5);
++					int relativeStep = static_cast<int>(settings.neuralRenderingAdaptiveRelativeCropStep);
++					if (ImGui::SliderInt("Relative crop step", &relativeStep, 5, 20, "%d points"))
++						settings.neuralRenderingAdaptiveRelativeCropStep = static_cast<uint>(relativeStep / 5 * 5);
++					ImGui::Checkbox("Restore first NR pass before growing crop", &settings.neuralRenderingAdaptiveFirstPassPriority);
++					if (settings.neuralRenderingAdaptiveFirstPassPriority) {
++						ImGui::SliderFloat("First pass 0 -> 1 below", &settings.neuralRenderingAdaptiveFirstPassIncreaseBelowMs, 10.0f, 30.0f, "%.1f ms");
++						ImGui::SliderFloat("First pass restore hold", &settings.neuralRenderingAdaptiveFirstPassHoldMs, 0.0f, 5000.0f, "%.0f ms");
++						ImGui::SliderFloat("First pass retry delay", &settings.neuralRenderingAdaptiveFirstPassRetryMs, 0.0f, 10000.0f, "%.0f ms");
++						ImGui::Checkbox("Check first pass cost before restoring", &settings.neuralRenderingAdaptiveFirstPassCostGuard);
++						if (settings.neuralRenderingAdaptiveFirstPassCostGuard) {
++							ImGui::SliderFloat("Estimated first pass cost", &settings.neuralRenderingAdaptiveFirstPassCostMs, 0.0f, 20.0f, "%.1f ms");
++							ImGui::SliderFloat("First pass safety margin", &settings.neuralRenderingAdaptiveFirstPassMarginMs, 0.0f, 5.0f, "%.1f ms");
++						}
++						ImGui::TextDisabled("First-pass retry remaining: %.0f ms", adaptiveFirstPassRetryRemainingMs);
++						if (adaptiveActivePasses == 0)
++							drawDisabledWrapped("Crop growth waits for first-pass restoration. Cost guard compares predicted time against the crop-decrease threshold.");
++					}
++					ImGui::EndDisabled();
+ 
+ 					const auto selectedCrop = subrectController.GetUV();
+ 					const float selectedCropPercent = std::clamp(std::min(selectedCrop.w, selectedCrop.h) * 100.0f, 0.0f, 100.0f);
+@@ -1532,14 +1689,16 @@
+ 						adaptiveIncreaseHoldMs, settings.neuralRenderingAdaptiveIncreaseHoldMs,
+ 						adaptiveCooldownRemainingMs);
+ 					if (adaptiveLastAction != 0) {
+-						if (adaptiveLastAction <= 2)
++						if (settings.neuralRenderingSinglePassLadder)
++							ImGui::TextDisabled("Last action: ladder %u -> %u at %.2f ms", adaptiveLastActionFrom, adaptiveLastActionTo, adaptiveLastActionFrameTimeMs);
++						else if (adaptiveLastAction <= 2)
+ 							ImGui::TextDisabled("Last action: crop %u%% -> %u%% at %.2f ms",
+ 								adaptiveLastActionFrom, adaptiveLastActionTo, adaptiveLastActionFrameTimeMs);
+ 						else
+ 							ImGui::TextDisabled("Last action: passes %u -> %u at %.2f ms",
+ 								adaptiveLastActionFrom, adaptiveLastActionTo, adaptiveLastActionFrameTimeMs);
+ 					}
+-					drawDisabledWrapped("Crop tiers are always 100%, 80%, and 60% of your selected crop. Example: Center 60% becomes 60% -> 48% -> 36%.");
++					drawDisabledWrapped("Crop floor and steps are relative to the selected crop, rounded to five-point increments. Defaults reproduce 100/80/60. First-pass priority changes only recovery from zero passes.");
+ 				}
+ 			}
+ 
+@@ -1640,23 +1799,29 @@
+ 				}
+ 
+ 				ImGui::SeparatorText("Stereo Atlas");
+-				bool atlas = settings.neuralRenderingStereoAtlas;
++				const bool atlasRequired = settings.neuralRenderingAdaptiveEnabled && settings.neuralRenderingSinglePassLadder;
++				bool atlas = atlasRequired || settings.neuralRenderingStereoAtlas;
++				ImGui::BeginDisabled(atlasRequired);
+ 				if (ImGui::Checkbox("Stereo atlas (experimental)", &atlas)) {
+ 					settings.neuralRenderingStereoAtlas = atlas;
+ 					NeuralRendering::RequestHistoryReset();
+ 				}
++				ImGui::EndDisabled();
++				if (atlasRequired) drawDisabledWrapped("Required by the one-pass ladder. Runtime failure is reported; independent-eye fallback is disabled.");
+ 				if (auto _tt = Util::HoverTooltipWrapper())
+-					drawWrapped("Packs LEFT | replicated-edge guard | RIGHT and runs one native Feature18 evaluation per sequential pass. Normal independent-eye stereo remains the fallback/A-B path.");
+-				if (settings.neuralRenderingStereoAtlas) {
++					drawWrapped(atlasRequired ?
++						"Packs both eyes with an edge guard into one native evaluation. Strict ladder reports failures without switching routes." :
++						"Packs both eyes with an edge guard into one native evaluation per pass. Legacy mode can fall back to independent-eye stereo.");
++				if (atlas) {
+ 					int atlasGuard = static_cast<int>(settings.neuralRenderingStereoAtlasGuardPixels);
+ 					if (ImGui::SliderInt("Atlas guard width", &atlasGuard, 8, 256, "%d px")) {
+ 						settings.neuralRenderingStereoAtlasGuardPixels = static_cast<uint>(atlasGuard);
+ 						NeuralRendering::RequestHistoryReset();
+ 					}
+ 					drawDisabledWrapped("Default 50 px. Guard halves replicate the adjacent eye edge and are discarded when atlas output is split.");
+-					if (settings.neuralRenderingMultiPass >= 2)
++					if (!atlasRequired && settings.neuralRenderingMultiPass >= 2)
+ 						drawWarningWrapped("Stereo atlas currently supports single-pass and 2x sequential. 3x falls back to independent-eye stereo.");
+-					if (settings.neuralRenderingTemporalReuseCadence != 0)
++					if (!atlasRequired && settings.neuralRenderingTemporalReuseCadence != 0)
+ 						drawWarningWrapped("Temporal residual-reuse modes fall back to independent-eye stereo while atlas is enabled.");
+ 				}
+ 
+@@ -1764,14 +1929,23 @@
+ 				if (settings.neuralRenderingEyeTrackedFoveation) {
+ 					ImGui::SliderFloat("Fixation smoothing", &settings.neuralRenderingEyeTrackedSmoothingMs,
+ 						0.0f, 250.0f, "%.0f ms");
+-					drawWrapped("Eye movements respond immediately; smoothing applies only to tiny fixation noise. Crop motion resets temporal history.");
+-										if (ImGui::SliderFloat("Gaze crop dead zone", &settings.neuralRenderingEyeTrackedDeadZonePercent,
++					ImGui::Checkbox("Adaptive gaze smoothing", &settings.neuralRenderingEyeTrackedAdaptiveSmoothing);
++					ImGui::Checkbox("Freeze crop at selected centre (comparison)", &settings.neuralRenderingEyeTrackedFreezeCrop);
++					if (settings.neuralRenderingEyeTrackedAdaptiveSmoothing) {
++						ImGui::SliderFloat("Gaze movement responsiveness", &settings.neuralRenderingEyeTrackedResponsiveness, 0.0f, 50.0f, "%.1f");
++						ImGui::SliderFloat("Slow movement zone", &settings.neuralRenderingEyeTrackedSlowPercent, 0.0f, 50.0f, "%.0f%% of selected crop");
++						ImGui::SliderFloat("Fast movement zone", &settings.neuralRenderingEyeTrackedFastPercent, 5.0f, 200.0f, "%.0f%% of selected crop");
++						ImGui::SliderFloat("Immediate gaze jump distance", &settings.neuralRenderingEyeTrackedJumpPercent, 5.0f, 200.0f, "%.0f%% of selected crop");
++						ImGui::SliderFloat("Immediate gaze jump speed", &settings.neuralRenderingEyeTrackedJumpSpeed, 1.0f, 100.0f, "%.1f crops/s");
++						ImGui::SliderFloat("Maximum gaze lag", &settings.neuralRenderingEyeTrackedMaxLagPercent, 0.0f, 50.0f, "%.0f%% of selected crop");
++					}
++					drawWrapped("Small slow movements are stabilized; fast gaze jumps bypass smoothing. Ordinary crop motion retains compensated temporal history. Set quantization to zero for continuous movement.");
++					if (ImGui::SliderFloat("Gaze crop dead zone", &settings.neuralRenderingEyeTrackedDeadZonePercent,
+ 						0.0f, 10.0f, "%.1f%% of eye")) {
+ 						settings.neuralRenderingEyeTrackedDeadZonePercent = std::clamp(settings.neuralRenderingEyeTrackedDeadZonePercent, 0.0f, 10.0f);
+-						FoveatedRenderImpl::GazeCropPolicy::SetDeadZonePercent(settings.neuralRenderingEyeTrackedDeadZonePercent);
+ 					}
+ 					if (auto _tt = Util::HoverTooltipWrapper())
+-						drawWrapped("Optional large gaze-origin hold zone. 0% is recommended for low-lag tracking; v03 still applies a tiny 1.5-3 px fixation lock to suppress tracker tremble. Larger values intentionally trade recenter latency for extra stability.");
++						drawWrapped("Optional large gaze-origin hold zone. 0% is recommended for continuous adaptive tracking. Legacy smoothing retains a small fixation guard. Larger values intentionally trade recenter latency for extra stability.");
+ 					int quantizationPixels = static_cast<int>(std::min(settings.neuralRenderingEyeTrackedQuantizationPixels, 64u));
+ 					if (ImGui::SliderInt("Crop movement quantization", &quantizationPixels, 0, 64, quantizationPixels == 0 ? "Off" : "%d input px"))
+ 						settings.neuralRenderingEyeTrackedQuantizationPixels = static_cast<uint>(std::clamp(quantizationPixels, 0, 64));
+@@ -1801,10 +1975,7 @@
+ 
+ 			}
+ 
+-				if (adaptiveController.MemoryCeiling() < 100)
+-					ImGui::TextDisabled("VRAM-limited NR ceiling: %u%%. Reset retries higher tiers.", adaptiveController.MemoryCeiling());
+ 				if (neuralRenderer.IsFailureLatched() || neuralRenderer.IsRecoveryLimited() ||
+-					adaptiveController.MemoryCeiling() < 100 ||
+ 					FoveatedRenderImpl::Core::vrSubrectFixedEnvelopeRejected ||
+ 					FoveatedRenderImpl::Core::vrSubrectNeuralFixedEnvelopeRejected) {
+ 					drawWarningWrapped("Neural rendering recovery or adaptive crop is limited after a failure. Reset to retry.");
+--- a/runtime/open-shaders/src/Features/Upscaling/FoveatedRender.h
++++ b/runtime/open-shaders/src/Features/Upscaling/FoveatedRender.h
+@@ -1,4 +1,7 @@
+ #pragma once
++
++#include "NeuralRendering/SimpleFramePolicy.h"
++#include "NeuralRendering/SinglePassLadder.h"
+ 
+ // ============================================================================
+ // FoveatedRender — VR DLSS enhancement mode of Upscaling
+@@ -23,7 +26,6 @@
+ 
+ #include "../../Utils/BootSnapshot.h"
+ #include "../../Utils/Subrect.h"
+-#include "NeuralRendering/AdaptiveController.h"
+ #include "NeuralRendering/AdaptiveCropController.h"
+ 
+ #include <chrono>
+@@ -154,6 +156,10 @@
+ 		// an explicitly enabled foveated-DLSS session.
+ 		bool neuralRenderingEnabled = true;
+ 		uint neuralRenderingModelResolution = 100;
++		bool neuralRenderingSinglePassLadder = true;
++		float neuralRenderingLadderBudgetMs = 20.0f;
++		float neuralRenderingLadderReserveMs = 1.0f;
++		float neuralRenderingLadderHandoffMs = 150.0f;
+ 		// NR-only centered coverage (linear %, per axis). DLSS stays full eye; Feature 18
+ 		// runs at 100% model resolution on the center and is edge-blended onto DLSS.
+ 		uint neuralRenderingCoverage = 100;
+@@ -265,9 +271,26 @@
+ 		// and falls back to the persisted static crop whenever the native API is
+ 		// unavailable, stale, unfocused, or in a menu/loading context.
+ 		bool neuralRenderingEyeTrackedFoveation = false;
+-		float neuralRenderingEyeTrackedSmoothingMs = 0.0f;
+-		uint neuralRenderingEyeTrackedQuantizationPixels = 8;
++		float neuralRenderingEyeTrackedSmoothingMs = 60.0f;
++		uint neuralRenderingEyeTrackedQuantizationPixels = 0;
+ 		float neuralRenderingEyeTrackedDeadZonePercent = 0.0f;
++		bool neuralRenderingEyeTrackedAdaptiveSmoothing = true;
++		bool neuralRenderingEyeTrackedFreezeCrop = false;
++		float neuralRenderingEyeTrackedResponsiveness = 8.0f;
++		float neuralRenderingEyeTrackedSlowPercent = 10.0f;
++		float neuralRenderingEyeTrackedFastPercent = 100.0f;
++		float neuralRenderingEyeTrackedJumpPercent = 100.0f;
++		float neuralRenderingEyeTrackedJumpSpeed = 20.0f;
++		float neuralRenderingEyeTrackedMaxLagPercent = 25.0f;
++		bool neuralRenderingAdaptiveFirstPassPriority = false;
++		float neuralRenderingAdaptiveFirstPassIncreaseBelowMs = 14.0f;
++		float neuralRenderingAdaptiveFirstPassHoldMs = 1200.0f;
++		bool neuralRenderingAdaptiveFirstPassCostGuard = false;
++		float neuralRenderingAdaptiveFirstPassCostMs = 6.0f;
++		float neuralRenderingAdaptiveFirstPassMarginMs = 1.0f;
++		float neuralRenderingAdaptiveFirstPassRetryMs = 3000.0f;
++		uint neuralRenderingAdaptiveRelativeCropFloor = 60;
++		uint neuralRenderingAdaptiveRelativeCropStep = 20;
+ 	};
+ 
+ 	inline static constexpr Util::Settings::RestartTable<Settings, 1> kRestartFields{ {
+@@ -291,33 +314,21 @@
+ 	static constexpr const char* kPresetNasalConvergence70 = "Nasal Convergence 70%";  ///< 70% crop biased toward nasal convergence.
+ 
+ 	Settings settings;
+-	NeuralRendering::AdaptiveController adaptiveController;
+ 	NeuralRendering::AdaptiveCropController adaptiveCropController;
+ 	Util::Subrect::Controller subrectController;
+-	// Pressure alternates crop -> NR -> crop when both controllers can help.
+-	// Restoration remains NR-first because crop is gated on NR maximum.
+-	bool adaptiveNextDownshiftIsCrop = true;
+-	// v03 pass controller. Adaptive mode intentionally caps automatic sequential
+-	// operation at two passes; 3x remains available when the controller is off.
+ 	std::uint32_t adaptiveActivePasses = 1;
+ 	std::uint32_t adaptiveConfiguredPasses = 1;
+-	std::uint32_t adaptivePassDwellFrames = 0;
+-	std::uint32_t adaptivePassPressureFrames = 0;
+-	std::uint32_t adaptivePassHeadroomFrames = 0;
+ 	bool adaptivePassInitialized = false;
+-	float adaptiveFastWorkloadMs = 0.0f;
+-	float adaptiveSlowWorkloadMs = 0.0f;
+-	// v04: one controller owns pass count and relative crop target. The old
+-	// model-resolution controller remains present for ABI/source compatibility
+-	// but is deliberately not a decision maker while adaptive v04 is active.
++	std::uint32_t adaptiveUpdateFrame = UINT32_MAX;
++	std::array<float, 10> adaptiveWorkloadKey{};
++	bool adaptiveWorkloadObserved = false;
+ 	std::uint32_t adaptiveCropTargetCoverage = 100;
+-	float adaptiveOverBudgetMs = 0.0f;
+-	float adaptiveHeadroomMs = 0.0f;
+-	float adaptiveCooldownMs = 0.0f;
+-	float adaptiveLastGpuMs = 0.0f;
+-	float adaptiveLastCpuMs = 0.0f;
+-	std::uint32_t adaptiveOutlierStreak = 0;
+-	bool adaptiveGpuLimited = true;
++	std::uint32_t adaptiveLadderStage = 0;
++	std::uint32_t adaptiveModelResolution = 100;
++	bool adaptiveLadderModeObserved = false;
++	std::uint32_t adaptiveBlockedGrowthStage = UINT32_MAX;
++	float adaptiveGrowthBaselineMs = 0.0f;
++	float adaptiveBlockedGrowthBaselineMs = 0.0f;
+ 	// v05 authoritative controller state. Inherited v03/v04 diagnostic members
+ 	// remain for source compatibility but do not participate in v05 decisions.
+ 	float adaptiveFilteredFrameTimeMs = 0.0f;
+@@ -326,11 +337,13 @@
+ 	float adaptiveIncreaseHoldMs = 0.0f;
+ 	float adaptiveCooldownRemainingMs = 0.0f;
+ 	std::uint32_t adaptivePendingAction = 0;
++	NeuralRendering::SimpleFramePolicy::Config adaptivePolicyConfig{};
++	bool adaptivePolicyObserved = false;
++	float adaptiveFirstPassRetryRemainingMs = 0.0f;
+ 	std::uint32_t adaptiveLastAction = 0;
+ 	std::uint32_t adaptiveLastActionFrom = 0;
+ 	std::uint32_t adaptiveLastActionTo = 0;
+ 	float adaptiveLastActionFrameTimeMs = 0.0f;
+-	std::uint64_t adaptiveCropDiagnosticGeneration = UINT64_MAX;
+ 
+ 	// Called from Upscaling::DrawSettings. DrawEnable renders the always-visible
+ 	// header + Enable checkbox at the parent's top level; DrawSettings renders
+--- /dev/null
++++ b/runtime/open-shaders/src/Features/Upscaling/GazeAdaptivePolicy.h
+@@ -0,0 +1,87 @@
++#pragma once
++
++#include <algorithm>
++#include <array>
++#include <cmath>
++
++namespace FoveatedRenderImpl::GazeCropPolicy
++{
++	struct AdaptiveSettings
++	{
++		float smoothingMs = 60.0f;
++		float responsiveness = 8.0f;
++		float slowPercent = 10.0f;
++		float fastPercent = 100.0f;
++		float jumpPercent = 100.0f;
++		float jumpSpeed = 20.0f;
++		float maxLagPercent = 25.0f;
++	};
++
++	inline float FiniteClamp(float value, float fallback, float minimum, float maximum)
++	{
++		return std::clamp(std::isfinite(value) ? value : fallback, minimum, maximum);
++	}
++
++	/** Filter crop-relative noise with bounded lag and immediate large-movement response. */
++	struct AdaptiveFilter
++	{
++		std::array<float, 2> previousSample{};
++		std::array<float, 2> velocity{};
++		bool valid = false;
++
++		void Reset(const std::array<float, 2>& sample)
++		{
++			previousSample = sample;
++			velocity = {};
++			valid = true;
++		}
++
++		std::array<float, 2> Update(const std::array<float, 2>& previous,
++			const std::array<float, 2>& sample, float deltaMs,
++			float referenceWidth, float referenceHeight, const AdaptiveSettings& config)
++		{
++			if (!std::isfinite(sample[0]) || !std::isfinite(sample[1]))
++				return previous;
++			if (!valid) {
++				Reset(sample);
++				return sample;
++			}
++			const float elapsed = FiniteClamp(deltaMs, 11.1f, 0.1f, 100.0f);
++			const std::array<float, 2> extent{
++				FiniteClamp(referenceWidth, 0.5f, 0.01f, 1.0f),
++				FiniteClamp(referenceHeight, 0.5f, 0.01f, 1.0f) };
++			const float derivativeAlpha = 1.0f - std::exp(-elapsed / 20.0f);
++			std::array<float, 2> displacement{};
++			float rawSpeedSquared = 0.0f;
++			for (unsigned axis = 0; axis < 2; ++axis) {
++				const float derivative = (sample[axis] - previousSample[axis]) / extent[axis] * 1000.0f / elapsed;
++				velocity[axis] += derivativeAlpha * (derivative - velocity[axis]);
++				rawSpeedSquared += derivative * derivative;
++				displacement[axis] = (sample[axis] - previous[axis]) / extent[axis];
++			}
++			previousSample = sample;
++			const float distance = std::hypot(displacement[0], displacement[1]);
++			const float speed = std::hypot(velocity[0], velocity[1]);
++			const float smoothing = FiniteClamp(config.smoothingMs, 60.0f, 0.0f, 250.0f);
++			const float jump = FiniteClamp(config.jumpPercent, 100.0f, 5.0f, 200.0f) * 0.01f;
++			const float jumpSpeed = FiniteClamp(config.jumpSpeed, 20.0f, 1.0f, 100.0f);
++			if (smoothing == 0.0f || distance >= jump || std::sqrt(rawSpeedSquared) >= jumpSpeed) {
++				Reset(sample);
++				return sample;
++			}
++			const float slow = FiniteClamp(config.slowPercent, 10.0f, 0.0f, 50.0f) * 0.01f;
++			const float fast = std::max(slow + 0.01f, FiniteClamp(config.fastPercent, 100.0f, 5.0f, 200.0f) * 0.01f);
++			const float t = std::clamp((distance - slow) / (fast - slow), 0.0f, 1.0f);
++			const float distanceResponse = t * t * (3.0f - 2.0f * t);
++			const float gain = FiniteClamp(config.responsiveness, 8.0f, 0.0f, 50.0f);
++			const float timeConstant = smoothing / (1.0f + gain * speed);
++			const float baseAlpha = 1.0f - std::exp(-elapsed / std::max(timeConstant, 0.1f));
++			float alpha = baseAlpha + (1.0f - baseAlpha) * distanceResponse;
++			const float maxLag = FiniteClamp(config.maxLagPercent, 25.0f, 0.0f, 50.0f) * 0.01f;
++			if (distance > 0.0f)
++				alpha = std::max(alpha, 1.0f - maxLag / distance);
++			return { std::clamp(previous[0] + (sample[0] - previous[0]) * alpha, 0.0f, 1.0f),
++				std::clamp(previous[1] + (sample[1] - previous[1]) * alpha, 0.0f, 1.0f) };
++		}
++	};
++}
+--- a/runtime/open-shaders/src/Features/Upscaling/GazeCropPolicy.h
++++ b/runtime/open-shaders/src/Features/Upscaling/GazeCropPolicy.h
+@@ -7,17 +7,6 @@
+ 
+ namespace FoveatedRenderImpl::GazeCropPolicy
+ {
+-	// v03 keeps the validated crop-motion history compensation, but fixes the
+-	// fixation policy. v02 bypassed filtering whenever a gaze sample moved more
+-	// than two pixels, so ordinary tracker noise could become raw crop motion.
+-	// The optional large dead zone remains available, including 0 = disabled.
+-	inline float gDeadZonePercent = 0.0f;
+-
+-	inline void SetDeadZonePercent(float percent)
+-	{
+-		gDeadZonePercent = std::clamp(std::isfinite(percent) ? percent : 0.0f, 0.0f, 10.0f);
+-	}
+-
+ 	/** Continuous, frame-rate-independent fixation filtering with fast saccade response. */
+ 	inline std::array<float, 2> Filter(const std::array<float, 2>& previous,
+ 		const std::array<float, 2>& sample, float deltaMs, float smoothingMs,
+@@ -41,24 +30,22 @@
+ 			previous[1] + (sample[1] - previous[1]) * alpha };
+ 	}
+ 
+-	/**
+-	 * Stable fixation without a large mandatory lag zone.
+-	 * A 1.5-3 pixel micro guard is always present to keep a fixed gaze genuinely
+-	 * fixed. The user percentage dead zone is optional and only enlarges it.
+-	 */
++	/** Resolve a bounded origin using the selected dead zone and quantization. */
+ 	inline float ResolveOrigin(float previous, float sample, float extent,
+-		std::uint32_t pixels, std::uint32_t quantizationPixels, bool havePrevious)
++		std::uint32_t pixels, std::uint32_t quantizationPixels, bool havePrevious,
++		bool continuousOrigin = true, float deadZonePercent = 0.0f)
+ 	{
+ 		const float maxOrigin = std::max(0.0f, 1.0f - extent);
+ 		const float desired = std::clamp(sample - extent * 0.5f, 0.0f, maxOrigin);
+-		if (!havePrevious)
++		if (!havePrevious || !std::isfinite(previous))
+ 			return desired;
++		previous = std::clamp(previous, 0.0f, maxOrigin);
+ 
+ 		const float pixel = pixels ? 1.0f / static_cast<float>(pixels) : 0.0f;
+ 		const float microPixels = std::clamp(static_cast<float>(std::max(quantizationPixels, 1u)) * 0.25f, 1.5f, 3.0f);
+ 		const float microGuard = pixel * microPixels;
+-		const float userGuard = std::clamp(gDeadZonePercent * 0.01f, 0.0f, 0.10f);
+-		const float guard = std::max(microGuard, userGuard);
++		const float userGuard = std::clamp((std::isfinite(deadZonePercent) ? deadZonePercent : 0.0f) * 0.01f, 0.0f, 0.10f);
++		const float guard = continuousOrigin ? userGuard : std::max(microGuard, userGuard);
+ 		if (std::abs(desired - previous) <= guard)
+ 			return previous;
+ 
+--- a/runtime/open-shaders/src/Features/Upscaling/NativeOpenVRGaze.cpp
++++ b/runtime/open-shaders/src/Features/Upscaling/NativeOpenVRGaze.cpp
+@@ -65,6 +65,7 @@
+ 			bool haveFiltered = false;
+ 			bool wasInvalid = false;
+ 			bool wasDynamic = false;
++			GazeCropPolicy::AdaptiveFilter leftFilter{}, rightFilter{};
+ 			std::array<float, 2> filteredLeft{};
+ 			std::array<float, 2> filteredRight{};
+ 			std::array<float, 2> rawLeft{};
+@@ -106,7 +107,16 @@
+ 		bool SameConfig(const Config& a_lhs, const Config& a_rhs)
+ 		{
+ 			return a_lhs.enabled == a_rhs.enabled && NearlyEqual(a_lhs.smoothingMs, a_rhs.smoothingMs) &&
+-				a_lhs.quantizationPixels == a_rhs.quantizationPixels;
++				a_lhs.quantizationPixels == a_rhs.quantizationPixels &&
++				a_lhs.adaptiveSmoothing == a_rhs.adaptiveSmoothing && a_lhs.freezeCrop == a_rhs.freezeCrop &&
++				NearlyEqual(a_lhs.deadZonePercent, a_rhs.deadZonePercent) &&
++				NearlyEqual(a_lhs.referenceWidth, a_rhs.referenceWidth) && NearlyEqual(a_lhs.referenceHeight, a_rhs.referenceHeight) &&
++				NearlyEqual(a_lhs.adaptive.responsiveness, a_rhs.adaptive.responsiveness) &&
++				NearlyEqual(a_lhs.adaptive.slowPercent, a_rhs.adaptive.slowPercent) &&
++				NearlyEqual(a_lhs.adaptive.fastPercent, a_rhs.adaptive.fastPercent) &&
++				NearlyEqual(a_lhs.adaptive.jumpPercent, a_rhs.adaptive.jumpPercent) &&
++				NearlyEqual(a_lhs.adaptive.jumpSpeed, a_rhs.adaptive.jumpSpeed) &&
++				NearlyEqual(a_lhs.adaptive.maxLagPercent, a_rhs.adaptive.maxLagPercent);
+ 		}
+ 
+ 		void ClearSampleStateLocked()
+@@ -115,6 +125,8 @@
+ 			state.haveFiltered = false;
+ 			state.wasInvalid = false;
+ 			state.wasDynamic = false;
++			state.leftFilter = {};
++			state.rightFilter = {};
+ 			state.filteredLeft = {};
+ 			state.filteredRight = {};
+ 			state.rawLeft = {};
+@@ -239,11 +251,14 @@
+ 		Util::Subrect::UVRegion CropFromCenter(
+ 			const Util::Subrect::UVRegion& base, const std::array<float, 2>& center,
+ 			const Util::Subrect::UVRegion& previous, bool havePrevious,
+-			std::uint32_t width, std::uint32_t height, std::uint32_t quantization)
++			std::uint32_t width, std::uint32_t height, std::uint32_t quantization, const Config& config)
+ 		{
+ 			auto result = base;
+-			result.x = GazeCropPolicy::ResolveOrigin(previous.x, center[0], base.w, width, quantization, havePrevious);
+-			result.y = GazeCropPolicy::ResolveOrigin(previous.y, center[1], base.h, height, quantization, havePrevious);
++			havePrevious = havePrevious && NearlyEqual(base.w, previous.w) && NearlyEqual(base.h, previous.h);
++			result.x = GazeCropPolicy::ResolveOrigin(previous.x, center[0], base.w, width, quantization, havePrevious,
++				config.adaptiveSmoothing, config.deadZonePercent);
++			result.y = GazeCropPolicy::ResolveOrigin(previous.y, center[1], base.h, height, quantization, havePrevious,
++				config.adaptiveSmoothing, config.deadZonePercent);
+ 			return result;
+ 		}
+ 
+@@ -284,12 +299,6 @@
+ 
+ 			const bool inputKeyChanged = !state.sampleStateValid ||
+ 				!SameConfig(a_config, state.cachedConfig) ||
+-				!NearlyEqual(baseLeft.w, state.cachedBaseLeft.w) ||
+-				!NearlyEqual(baseLeft.h, state.cachedBaseLeft.h) ||
+-				!NearlyEqual(baseRight.w, state.cachedBaseRight.w) ||
+-				!NearlyEqual(baseRight.h, state.cachedBaseRight.h) ||
+-				a_eyeWidth != state.cachedEyeWidth ||
+-				a_eyeHeight != state.cachedEyeHeight ||
+ 				state.cachedAllowDynamic != a_allowDynamic;
+ 			if (inputKeyChanged) {
+ 				ClearSampleStateLocked();
+@@ -368,16 +377,26 @@
+ 				state.rawRight = rightUV;
+ 				++state.sampleSequence;
+ 
+-				const bool reacquired = !state.haveFiltered || state.wasInvalid || inputKeyChanged;
++				const bool reacquired = !state.haveFiltered || inputKeyChanged ||
++					(state.wasInvalid && (!state.wasDynamic || ElapsedMs(state.lastValidAt, now) > kStaleHoldMs));
+ 				const auto previousLeft = state.filteredLeft;
+ 				const auto previousRight = state.filteredRight;
+ 				if (reacquired) {
+ 					state.filteredLeft = leftUV;
+ 					state.filteredRight = rightUV;
++					state.leftFilter.Reset(leftUV);
++					state.rightFilter.Reset(rightUV);
+ 					result.historyReset = true;
+ 				} else {
+-					state.filteredLeft = GazeCropPolicy::Filter(previousLeft, leftUV, dtMs, a_config.smoothingMs, a_eyeWidth, a_eyeHeight);
+-					state.filteredRight = GazeCropPolicy::Filter(previousRight, rightUV, dtMs, a_config.smoothingMs, a_eyeWidth, a_eyeHeight);
++					if (a_config.adaptiveSmoothing) {
++						state.filteredLeft = state.leftFilter.Update(previousLeft, leftUV, dtMs,
++							a_config.referenceWidth, a_config.referenceHeight, a_config.adaptive);
++						state.filteredRight = state.rightFilter.Update(previousRight, rightUV, dtMs,
++							a_config.referenceWidth, a_config.referenceHeight, a_config.adaptive);
++					} else {
++						state.filteredLeft = GazeCropPolicy::Filter(previousLeft, leftUV, dtMs, a_config.smoothingMs, a_eyeWidth, a_eyeHeight);
++						state.filteredRight = GazeCropPolicy::Filter(previousRight, rightUV, dtMs, a_config.smoothingMs, a_eyeWidth, a_eyeHeight);
++					}
+ 				}
+ 				state.haveFiltered = true;
+ 				state.wasInvalid = false;
+@@ -385,11 +404,11 @@
+ 				state.wasDynamic = true;
+ 
+ 				result.leftUV = CropFromCenter(baseLeft, state.filteredLeft, state.cachedResult.leftUV,
+-					state.cacheValid && !reacquired, a_eyeWidth, a_eyeHeight, a_config.quantizationPixels);
++					state.cacheValid && !reacquired, a_eyeWidth, a_eyeHeight, a_config.quantizationPixels, a_config);
+ 				result.rightUV = CropFromCenter(baseRight, state.filteredRight, state.cachedResult.rightUV,
+-					state.cacheValid && !reacquired, a_eyeWidth, a_eyeHeight, a_config.quantizationPixels);
+-				result.dynamic = true;
+-				result.diagnostics.dynamic = true;
++					state.cacheValid && !reacquired, a_eyeWidth, a_eyeHeight, a_config.quantizationPixels, a_config);
++				result.dynamic = !a_config.freezeCrop;
++				result.diagnostics.dynamic = result.dynamic;
+ 				result.diagnostics.usingFallback = false;
+ 				result.diagnostics.filteredLeftUV = state.filteredLeft;
+ 				result.diagnostics.filteredRightUV = state.filteredRight;
+@@ -408,8 +427,10 @@
+ 				const float ageMs = ElapsedMs(state.lastValidAt, now);
+ 				result.diagnostics.sampleAgeMs = ageMs;
+ 				if (ageMs <= kStaleHoldMs) {
+-					result.leftUV = state.cachedResult.leftUV;
+-					result.rightUV = state.cachedResult.rightUV;
++					result.leftUV = CropFromCenter(baseLeft, state.filteredLeft, state.cachedResult.leftUV,
++						state.cacheValid, a_eyeWidth, a_eyeHeight, a_config.quantizationPixels, a_config);
++					result.rightUV = CropFromCenter(baseRight, state.filteredRight, state.cachedResult.rightUV,
++						state.cacheValid, a_eyeWidth, a_eyeHeight, a_config.quantizationPixels, a_config);
+ 					result.dynamic = true;
+ 					result.diagnostics.dynamic = true;
+ 					result.diagnostics.holding = true;
+@@ -488,13 +509,18 @@
+ 		std::lock_guard lock(stateMutex);
+ 		// VRS, DLSS and NR must share one crop despite input/output dimension differences.
+ 		// Resampling mid-frame would misalign color, native guides and the shading-rate map.
+-		if (state.cacheValid && state.cachedFrame == a_frame &&
+-			SameConfig(a_config, state.cachedConfig) && SameRegion(a_baseLeftUV, state.cachedBaseLeft) &&
+-			SameRegion(a_baseRightUV, state.cachedBaseRight) && state.cachedAllowDynamic == a_allowDynamic)
++		if (state.cacheValid && state.cachedFrame == a_frame)
+ 			return state.cachedResult;
+ 
+ 		auto result = ResolveLocked(a_config, a_baseLeftUV, a_baseRightUV,
+ 			a_eyeWidth, a_eyeHeight, a_frame, a_allowDynamic);
++		if (a_config.freezeCrop) {
++			result.leftUV = SanitizeRegion(a_baseLeftUV);
++			result.rightUV = SanitizeRegion(a_baseRightUV);
++			result.dynamic = false;
++			result.diagnostics.dynamic = false;
++			result.historyReset = false;
++		}
+ 		const bool cropChanged = state.cacheValid && (a_config.enabled || state.cachedResult.diagnostics.experimentEnabled) &&
+ 			(!SameRegion(result.leftUV, state.cachedResult.leftUV) || !SameRegion(result.rightUV, state.cachedResult.rightUV));
+ 		// Each reconstruction stage compensates ordinary origin changes against its last successful frame.
+--- a/runtime/open-shaders/src/Features/Upscaling/NativeOpenVRGaze.h
++++ b/runtime/open-shaders/src/Features/Upscaling/NativeOpenVRGaze.h
+@@ -1,6 +1,7 @@
+ #pragma once
+ 
+ #include "Utils/Subrect.h"
++#include "GazeAdaptivePolicy.h"
+ 
+ #include <array>
+ #include <cstdint>
+@@ -33,8 +34,34 @@
+ 	{
+ 		bool enabled = false;
+ 		float smoothingMs = 0.0f;
+-		std::uint32_t quantizationPixels = 8;
++		std::uint32_t quantizationPixels = 0;
++		bool adaptiveSmoothing = true;
++		bool freezeCrop = false;
++		float deadZonePercent = 0.0f;
++		float referenceWidth = 0.5f;
++		float referenceHeight = 0.5f;
++		GazeCropPolicy::AdaptiveSettings adaptive{};
+ 	};
++
++	/** Build the same crop/filter contract for VRS, SR and NR. */
++	template <class Settings>
++	Config MakeConfig(const Settings& settings, float width, float height)
++	{
++		Config result{};
++		result.enabled = settings.neuralRenderingEyeTrackedFoveation;
++		result.smoothingMs = settings.neuralRenderingEyeTrackedSmoothingMs;
++		result.quantizationPixels = settings.neuralRenderingEyeTrackedQuantizationPixels;
++		result.adaptiveSmoothing = settings.neuralRenderingEyeTrackedAdaptiveSmoothing;
++		result.freezeCrop = settings.neuralRenderingEyeTrackedFreezeCrop;
++		result.deadZonePercent = settings.neuralRenderingEyeTrackedDeadZonePercent;
++		result.referenceWidth = width;
++		result.referenceHeight = height;
++		result.adaptive = { result.smoothingMs, settings.neuralRenderingEyeTrackedResponsiveness,
++			settings.neuralRenderingEyeTrackedSlowPercent, settings.neuralRenderingEyeTrackedFastPercent,
++			settings.neuralRenderingEyeTrackedJumpPercent, settings.neuralRenderingEyeTrackedJumpSpeed,
++			settings.neuralRenderingEyeTrackedMaxLagPercent };
++		return result;
++	}
+ 
+ 	struct Diagnostics
+ 	{
+--- a/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/AdaptiveCropController.cpp
++++ b/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/AdaptiveCropController.cpp
+@@ -55,6 +55,7 @@
+ 		normalized.upshiftFrames = std::clamp(normalized.upshiftFrames, 1u, 240u);
+ 		normalized.minimumDwellFrames = std::clamp(normalized.minimumDwellFrames, 1u, 600u);
+ 		normalized.transitionFrames = std::clamp(normalized.transitionFrames, 2u, 24u);
++		normalized.stepCoverage = std::clamp(normalized.stepCoverage, 5u, 20u) / 5u * 5u;
+ 		return normalized;
+ 	}
+ 
+@@ -118,7 +119,7 @@
+ 			config.downshiftFrames != config_.downshiftFrames ||
+ 			config.upshiftFrames != config_.upshiftFrames ||
+ 			config.minimumDwellFrames != config_.minimumDwellFrames ||
+-			config.transitionFrames != config_.transitionFrames || maximumBucket != maximumBucket_;
++			config.transitionFrames != config_.transitionFrames || config.stepCoverage != config_.stepCoverage || maximumBucket != maximumBucket_;
+ 		config_ = config;
+ 		maximumBucket_ = maximumBucket;
+ 		minimumBucket_ = minimumBucket;
+@@ -170,6 +171,11 @@
+ 		activeBucket_ = std::clamp(activeBucket_, maximumBucket_, minimumBucket_);
+ 		targetBucket_ = std::clamp(targetBucket_, maximumBucket_, minimumBucket_);
+ 
++		if (config.hold) {
++			overrunFrames_ = headroomFrames_ = 0;
++			return;
++		}
++
+ 		if (transitionFrameCount_ != 0) {
+ 			if (transitionFrame_ + 1 >= transitionFrameCount_) {
+ 				transitionFrame_ = 0;
+@@ -180,7 +186,7 @@
+ 		}
+ 
+ 		++dwellFrames_;
+-		if (nrTransitioning || config.hold) {
++		if (nrTransitioning) {
+ 			overrunFrames_ = 0;
+ 			headroomFrames_ = 0;
+ 			return;
+@@ -202,11 +208,11 @@
+ 		if (dwellFrames_ >= config.minimumDwellFrames && transitionFrameCount_ == 0 &&
+ 			!nrTransitioning && allowDownshift &&
+ 				overrunFrames_ >= config.downshiftFrames && activeBucket_ < minimumBucket_)
+-			StartTransition(activeBucket_ + 1, config.transitionFrames);
++			StartTransition(std::min(minimumBucket_, activeBucket_ + config.stepCoverage / 5u), config.transitionFrames);
+ 		else if (dwellFrames_ >= config.minimumDwellFrames && transitionFrameCount_ == 0 &&
+ 			!nrTransitioning && nrAtMaximum &&
+ 				headroomFrames_ >= config.upshiftFrames && activeBucket_ > maximumBucket_)
+-			StartTransition(activeBucket_ - 1, config.transitionFrames);
++			StartTransition(activeBucket_ - std::min(activeBucket_ - maximumBucket_, config.stepCoverage / 5u), config.transitionFrames);
+ 	}
+ 
+ 	std::uint32_t AdaptiveCropController::ActiveCoverage() const
+@@ -255,6 +261,7 @@
+ 			return static_cast<float>(ActiveCoverage());
+ 		const float t = HandoffAlpha();
+ 		const float smooth = t * t * (3.0f - 2.0f * t);
+-		return previousCoverage_ + (static_cast<float>(ActiveCoverage()) - previousCoverage_) * smooth;
++		return std::min(static_cast<float>(RenderCoverage()),
++			previousCoverage_ + (static_cast<float>(ActiveCoverage()) - previousCoverage_) * smooth);
+ 	}
+ }
+--- a/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/AdaptiveCropController.h
++++ b/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/AdaptiveCropController.h
+@@ -41,6 +41,7 @@
+ 			std::uint32_t upshiftFrames = 24;
+ 			std::uint32_t minimumDwellFrames = 60;
+ 			std::uint32_t transitionFrames = 8;
++			std::uint32_t stepCoverage = 20;
+ 		};
+ 
+ 		void Reset();
+@@ -66,7 +67,7 @@
+ 		[[nodiscard]] std::uint64_t Generation() const { return generation_; }
+ 		static const char* ResetReasonName(ResetReason reason);
+ 
+-		static constexpr const std::array<std::uint32_t, 3>& CoverageBuckets()
++		static constexpr const std::array<std::uint32_t, 9>& CoverageBuckets()
+ 		{
+ 			return kCoverageBuckets;
+ 		}
+@@ -76,8 +77,8 @@
+ 		// at the requested 60% floor. The named centered presets can still retain
+ 		// lower manual choices for compatibility; adaptive crop fails closed below
+ 		// this floor.
+-		static constexpr std::array<std::uint32_t, 3> kCoverageBuckets{
+-			100, 80, 60 };
++		static constexpr std::array<std::uint32_t, 9> kCoverageBuckets{
++			100, 95, 90, 85, 80, 75, 70, 65, 60 };
+ 
+ 		static std::uint32_t FindBucketAtOrBelow(std::uint32_t coverage);
+ 		static std::uint32_t FindBucketIndexAtOrBelow(std::uint32_t coverage);
+--- a/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Integration.cpp
++++ b/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Integration.cpp
+@@ -144,7 +144,6 @@
+ 			const bool adaptive = adaptiveEligible && settings.neuralRenderingAdaptiveEnabled &&
+ 				foveated.adaptivePassInitialized;
+ 			const bool adaptiveCrop = adaptive && foveated.IsAdaptiveCropRuntimeActive();
+-			const auto& controller = foveated.adaptiveController;
+ 			// v04 keeps model resolution fixed while adaptive is active. This avoids
+ 			// atlas fallback/resource recreation and leaves pass/crop as the only knobs.
+ 			const int prewarmDirection = 0;
+@@ -156,7 +155,7 @@
+ 				settings.neuralRenderingStyle,
+ 				settings.neuralRenderingAutoMask,
+ 				settings.neuralRenderingUICorrection,
+-				adaptive ? foveated.adaptiveController.ActiveResolution() : settings.neuralRenderingModelResolution,
++				settings.neuralRenderingModelResolution,
+ 				settings.neuralRenderingResolveMode,
+ 				// Keep the two experimental stage-order features mutually exclusive:
+ 				// pre-upscale already adds a second NR route before the normal DLSS pass.
+@@ -169,10 +168,10 @@
+ 				settings.neuralRenderingTemporalReuseResetAfterSkip,
+ 				adaptive,
+ 				!adaptiveCrop,
+-				adaptive ? foveated.adaptiveController.HandoffAlpha() : 1.0f,
++				1.0f,
+ 				adaptive ? settings.neuralRenderingTemporalDepthThreshold : 0.05f,
+ 				prewarmDirection,
+-				adaptive ? controller.MemoryCeiling() : 100u,
++				100u,
+ 				settings.neuralRenderingResultShapingEnabled,
+ 				settings.neuralRenderingResultEditStrength,
+ 				settings.neuralRenderingResultBrightening,
+@@ -232,18 +231,17 @@
+ 			tuning.secondPass.featherWidth = settings.neuralRenderingPass2.featherWidth;
+ 			tuning.secondPass.falloffCurve = settings.neuralRenderingPass2.falloffCurve;
+ 			tuning.secondPass.ditherStrength = settings.neuralRenderingPass2.ditherStrength;
+-			tuning.stereoAtlas = settings.neuralRenderingStereoAtlas;
++			tuning.singlePassLadder = adaptiveEligible && settings.neuralRenderingAdaptiveEnabled && settings.neuralRenderingSinglePassLadder;
++			tuning.ladderHandoffMs = settings.neuralRenderingLadderHandoffMs;
++			if (tuning.singlePassLadder) tuning.multiPass = 0;
++			tuning.stereoAtlas = tuning.singlePassLadder || settings.neuralRenderingStereoAtlas;
+ 			tuning.stereoAtlasGuardPixels = settings.neuralRenderingStereoAtlasGuardPixels;
+ 			tuning.adaptiveSecondPassCostMs = settings.neuralRenderingAdaptiveSecondPassCostMs;
+ 			if (adaptive)
+ 				tuning.multiPass = foveated.adaptiveActivePasses > 0 ? std::min(foveated.adaptiveActivePasses - 1u, 2u) : 0u;
+-			if (adaptive) {
+-				// Pass/crop adaptation must not set adaptiveResolution: the stereo-atlas
+-				// native route intentionally rejects that flag and would otherwise fall
+-				// back to two independent eye evaluations. Keep the user-selected model
+-				// resolution stable and let the unified controller change only work that
+-				// is safe to vary frame-to-frame.
+-				tuning.modelResolutionPercent = settings.neuralRenderingModelResolution;
++			if (adaptive || tuning.singlePassLadder) {
++				// The atlas ladder owns its model tier; the old independent-eye tier controller stays inactive.
++				tuning.modelResolutionPercent = tuning.singlePassLadder ? foveated.adaptiveModelResolution : settings.neuralRenderingModelResolution;
+ 				tuning.adaptiveResolution = false;
+ 				// Stereo atlas requires temporal reuse and staggered-eye reuse to be inactive.
+ 				// Keep stale experimental settings from forcing independent-eye fallback.
+@@ -667,11 +665,8 @@
+ 		D3D11_TEXTURE2D_DESC totalDesc{};
+ 		 total.texture->GetDesc(Util::AsW32(&totalDesc));
+ 
+-		const FoveatedRenderImpl::NativeOpenVRGaze::Config gazeConfig{
+-			.enabled = foveated.settings.neuralRenderingEyeTrackedFoveation,
+-			.smoothingMs = foveated.settings.neuralRenderingEyeTrackedSmoothingMs,
+-			.quantizationPixels = foveated.settings.neuralRenderingEyeTrackedQuantizationPixels,
+-		};
++		const auto gazeConfig = FoveatedRenderImpl::NativeOpenVRGaze::MakeConfig(foveated.settings,
++			foveated.subrectController.GetUV().w, foveated.subrectController.GetUV().h);
+ 		const bool gazeRequested = gazeConfig.enabled && foveated.settings.neuralRenderingEnabled &&
+ 			foveated.GetDlssMode() == FoveatedRender::DlssMode::kDefault &&
+ 			upscaling.GetUpscaleMethod() == Upscaling::UpscaleMethod::kDLSS;
+@@ -698,6 +693,11 @@
+ 		if (leftUV.w != rightUV.w || leftUV.h != rightUV.h)
+ 			return false;
+ 		const std::uint32_t eyeWidth = totalDesc.Width / 2;
++		const auto& cropPlan = FoveatedRenderImpl::Core::neuralCropPlan;
++		const bool sharedCropPlan = FoveatedRenderImpl::Core::neuralCropPlanFrame == frame &&
++			cropPlan.fullOutputWidth == eyeWidth && cropPlan.fullOutputHeight == totalDesc.Height;
++		if (gaze.dynamic && !sharedCropPlan)
++			return false;
+ 		std::uint32_t outWidth = std::max<std::uint32_t>(1, static_cast<std::uint32_t>(eyeWidth * leftUV.w));
+ 		std::uint32_t outHeight = std::max<std::uint32_t>(1, static_cast<std::uint32_t>(totalDesc.Height * leftUV.h));
+ 			// The fixed crop envelope is a backing-resource contract only. Feature
+@@ -709,6 +709,11 @@
+ 				return false;
+ 			std::uint32_t guideWidth = fullGuideWidth;
+ 			std::uint32_t guideHeight = fullGuideHeight;
++
++		if (sharedCropPlan && !fullEye) {
++			outWidth = cropPlan.eyes[0].output.width;
++			outHeight = cropPlan.eyes[0].output.height;
++		}
+ 
+ 		// NR-only coverage: DLSS stays full eye and every NR pixel stays at 100%
+ 		// model resolution. Feature 18 runs on a centered region cropped from the
+@@ -796,8 +801,10 @@
+ 		std::array<Renderer::StereoEyeInput, 2> inputs{};
+ 		for (std::uint32_t eye = 0; eye < 2; ++eye) {
+ 			const auto& uv = *eyeUVs[eye];
+-			const std::uint32_t x = (eye ? eyeWidth : 0) + static_cast<std::uint32_t>(eyeWidth * uv.x);
+-			const std::uint32_t y = static_cast<std::uint32_t>(totalDesc.Height * uv.y);
++			const std::uint32_t x = (eye ? eyeWidth : 0) + (sharedCropPlan ?
++				cropPlan.eyes[eye].output.x : static_cast<std::uint32_t>(eyeWidth * uv.x));
++			const std::uint32_t y = sharedCropPlan ? cropPlan.eyes[eye].output.y :
++				static_cast<std::uint32_t>(totalDesc.Height * uv.y);
+ 			float motionScaleX = 1.0f;
+ 			float motionScaleY = 1.0f;
+ 			FoveatedRenderImpl::Bridge::ComputeMvecScale(eye, motionScaleX, motionScaleY);
+@@ -833,7 +840,7 @@
+ 				Util::AsReal(total.texture), inputs, guideWidth, guideHeight,
+ 				outWidth, outHeight, tuning, destination, destinationUAV, wantsEdgeBlend && destinationUAV != nullptr,
+ 				resourceEnvelope);
+-			if (!succeeded && resourceEnvelope.IsValid() &&
++			if (!succeeded && !tuning.singlePassLadder && resourceEnvelope.IsValid() &&
+ 				Renderer::Instance().IsFailureRecoverable()) {
+ 				// A native Feature 18 failure is not allowed to leave the runtime
+ 				// latched on the experimental envelope. Drop only the NR renderer's
+--- a/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Renderer.cpp
++++ b/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Renderer.cpp
+@@ -431,6 +431,9 @@
+ 			std::uint32_t regionX = 0;
+ 			std::uint32_t regionY = 0;
+ 			std::uint32_t modelResolution = 0;
++			std::uint32_t historyFrame = UINT32_MAX;
++			std::uint32_t historyWidth = 0, historyHeight = 0, historyGuideWidth = 0, historyGuideHeight = 0;
++			float transitionRemainingMs = 0.0f;
+ 			DXGI_FORMAT format = DXGI_FORMAT_UNKNOWN;
+ 			bool valid = false;
+ 			bool historyAllocationFailed = false;
+@@ -446,6 +449,7 @@
+ 			bool uiCorrection = false;
+ 			bool adaptiveResolution = false;
+ 			bool adaptiveHandoff = false;
++			bool singlePassLadder = false;
+ 			bool operator==(const ResultShapingConfigKey&) const = default;
+ 		};
+ 
+@@ -496,8 +500,14 @@
+ 			std::uint32_t shapeEnabled = 0;
+ 			std::uint32_t stabilizeMode = 0;
+ 			std::uint32_t stabilizeDetail = 0;
++			float historyEdgeFadePixels = 0.0f;
++			float transitionWeightScale = 1.0f;
++			std::array<float, 2> padding{};
++			std::array<std::uint32_t, 4> previousLayout{};
++			std::array<float, 2> originDelta{};
++			std::array<float, 2> layoutPadding{};
+ 		};
+-		static_assert(sizeof(ResultShapingConstants) == 112);
++		static_assert(sizeof(ResultShapingConstants) == 160);
+ 
+ 		ResultShapingConfigKey MakeResultShapingConfigKey(const Tuning& tuning)
+ 		{
+@@ -510,7 +520,7 @@
+ 					tuning.resultHaloSuppression, tuning.stabilizeTimeMs, tuning.stabilizeDepthThreshold,
+ 					tuning.stabilizeColorTolerance, tuning.intensity, tuning.localToneStrength,
+ 					tuning.localStructureStrength, tuning.skinStructureStrength },
+-				.integers = { tuning.stabilizeMode, tuning.modelResolutionPercent, tuning.modelResolveMode,
++				.integers = { tuning.stabilizeMode, tuning.singlePassLadder ? 0u : tuning.modelResolutionPercent, tuning.modelResolveMode,
+ 					tuning.multiPass, tuning.style, tuning.temporalReuseCadence },
+ 				.enabled = tuning.resultShapingEnabled,
+ 				.stabilizeDetail = tuning.stabilizeDetail,
+@@ -518,6 +528,7 @@
+ 				.uiCorrection = tuning.uiCorrection,
+ 				.adaptiveResolution = tuning.adaptiveResolution,
+ 				.adaptiveHandoff = tuning.adaptiveHandoff,
++				.singlePassLadder = tuning.singlePassLadder,
+ 			};
+ 		}
+ 
+@@ -988,7 +999,7 @@
+ 					 tuning.modelResolveMode == 1))
+ 					return LatchFailure("model input downsample stereo", E_FAIL);
+ 				auto guideInput = input;
+-				if (input.compensateCropMotion) {
++				if (input.compensateCropMotion && !tuning.singlePassLadder) {
+ 					bool reset = stereoAtlasActiveLastFrame ? stereoAtlasResetPending : resetPending[eyeIndex][tierIndex];
+ 					ID3D11Resource* nrMotion = FoveatedRenderImpl::CropMotion::Prepare(2 + eyeIndex, input.motionVectors,
+ 						{ input.sourceX, input.sourceY, colorWidth, colorHeight }, guideWidth, guideHeight,
+@@ -1029,7 +1040,7 @@
+ 					break;
+ 				}
+ 			}
+-			if (temporalLayoutChanged) {
++			if (temporalLayoutChanged && IsTemporalReuseConfigured(tuning)) {
+ 				// A moving crop changes the meaning of every local history sample. The
+ 				// first frame at the new region must be a native anchor for both eyes.
+ 				InvalidateTemporalHistory();
+@@ -1271,7 +1282,7 @@
+ 			const auto atlasResult = ApplyStereoAtlasNative(device, context, inputs, tierIndex,
+ 				colorWidth, colorHeight, guideWidth, guideHeight, modelWidth, modelHeight,
+ 				modelResolution, passCount, tuning);
+-			if (atlasResult == StereoAtlasResult::Failed) {
++			if (atlasResult == StereoAtlasResult::Failed || (tuning.singlePassLadder && atlasResult != StereoAtlasResult::Applied)) {
+ #if defined(OPENNR_CAPTURE_ENABLED)
+ 				if (captureFrame)
+ 					globals::features::openNRCapture.AbortFrame();
+@@ -1335,6 +1346,7 @@
+ 			}
+ 
+ 			D3D11_BOX outputBox{ 0, 0, 0, colorWidth, colorHeight, 1 };
++			std::array<ID3D11Resource*, 2> preparedWriteback{};
+ 			for (std::uint32_t eyeIndex = 0; eyeIndex < inputs.size(); ++eyeIndex) {
+ 				const auto& input = inputs[eyeIndex];
+ 				auto& eye = eyes[eyeIndex];
+@@ -1374,6 +1386,7 @@
+ 				ID3D11Resource* shapedOutput = ApplyResultShaping(device, context, eye, eyeIndex,
+ 					neuralOutput, neuralOutputSRV, colorWidth, colorHeight, guideWidth, guideHeight,
+ 					input.sourceX, input.sourceY, input.motionVectorScaleX, input.motionVectorScaleY, tuning);
++				if (failureLatched) return false;
+ 				ID3D11ShaderResourceView* shapedOutputSRV = shapedOutput == neuralOutput ?
+ 					neuralOutputSRV : eye.resultShaping.output.srv.Get();
+ 				ID3D11Resource* writebackOutput = shapedOutput;
+@@ -1382,11 +1395,17 @@
+ 						colorWidth, colorHeight, guideWidth, guideHeight,
+ 						input.motionVectorScaleX, input.motionVectorScaleY,
+ 						input.sourceX, input.sourceY, tuning);
++				preparedWriteback[eyeIndex] = writebackOutput;
++			}
++			for (std::uint32_t eyeIndex = 0; eyeIndex < inputs.size(); ++eyeIndex) {
++				const auto& input = inputs[eyeIndex];
++				ID3D11Resource* writebackOutput = preparedWriteback[eyeIndex];
+ 				if (blendSubrect && destinationUAV) {
+ 					// Keep the original background in `writeback` and composite the NR
+ 					// crop over it with the same edge treatment as standard foveated DLSS.
+-					FoveatedRenderImpl::Ops::BlendSubrectToOutput(writebackOutput, writeback, destinationUAV,
+-						input.sourceX, input.sourceY, colorWidth, colorHeight);
++					if (!FoveatedRenderImpl::Ops::BlendSubrectToOutput(writebackOutput, writeback, destinationUAV,
++						input.sourceX, input.sourceY, colorWidth, colorHeight))
++						return LatchFailure("stereo crop writeback", E_FAIL);
+ 				} else {
+ 					context->CopySubresourceRegion(writeback, 0, input.sourceX, input.sourceY, 0,
+ 						writebackOutput, 0, &outputBox);
+@@ -1541,6 +1560,7 @@
+ 				eyeReset.fill(true);
+ 			ResetAdaptivePrewarmState();
+ 			failureLatched = false;
++			failureOperation.clear();
+ 			copyDepthGuideCS.Reset();
+ 			modelResolutionCS.Reset();
+ 			temporalSnapshotCS.Reset();
+@@ -1552,8 +1572,11 @@
+ 			stereoAtlasColorPackCS.Reset();
+ 			stereoAtlasDepthPackCS.Reset();
+ 			stereoAtlasMotionPackCS.Reset();
++			ladderAtlasGuidesCS.Reset();
++			ladderAtlasGeometry.valid = false;
+ 			sequentialCompositeCB.Reset();
+ 			stereoAtlasPackCB.Reset();
++			ladderAtlasCB.Reset();
+ 			stereoAtlas = {};
+ 			stereoAtlasResetPending = true;
+ 			stereoAtlasActiveLastFrame = false;
+@@ -1581,6 +1604,7 @@
+ 
+ 		void ResetHistory()
+ 		{
++			stereoAtlasResetPending = true;
+ 			for (auto& eyeReset : resetPending)
+ 				eyeReset.fill(true);
+ 			for (auto& eye : eyes)
+@@ -1602,10 +1626,14 @@
+ 			stereoAtlasColorPackCS.Reset();
+ 			stereoAtlasDepthPackCS.Reset();
+ 			stereoAtlasMotionPackCS.Reset();
++			ladderAtlasGuidesCS.Reset();
++			ladderAtlasGeometry.valid = false;
+ 			for (auto& eye : eyes)
+ 				eye.resultShaping.valid = false;
+ 		}
+ 
++		[[nodiscard]] const char* StatusText() const { return failureLatched ? failureOperation.c_str() : ToString(Runtime::Instance().Status()); }
++		[[nodiscard]] bool IsStereoAtlasActive() const { return stereoAtlasActiveLastFrame && !failureLatched; }
+ 		[[nodiscard]] bool IsFailureLatched() const { return failureLatched; }
+ 		[[nodiscard]] bool IsFailureRecoverable() const { return failureLatched && recoverableFailure; }
+ 		[[nodiscard]] bool IsRecoveryLimited() const { return recoveryAttempted; }
+@@ -1661,7 +1689,7 @@
+ 
+ 		void SyncTemporalReuseConfig(const Tuning& tuning, std::uint32_t modelResolution, std::uint32_t passCount)
+ 		{
+-			const TemporalHistoryConfig next{ tuning.adaptiveResolution, modelResolution, tuning.temporalReuseCadence,
++			const TemporalHistoryConfig next{ tuning.adaptiveResolution, tuning.singlePassLadder ? 100u : modelResolution, tuning.temporalReuseCadence,
+ 				tuning.temporalReuseDepthThreshold, tuning.temporalReuseColorTolerance, passCount };
+ 			if (temporalConfigInitialized && temporalConfig == next)
+ 				return;
+@@ -1805,38 +1833,47 @@
+ 			std::uint32_t eyeIndex, std::uint32_t colorWidth, std::uint32_t colorHeight,
+ 			std::uint32_t guideWidth, std::uint32_t guideHeight,
+ 			std::uint32_t regionX, std::uint32_t regionY, std::uint32_t modelResolution,
+-			bool needHistory)
++			bool needHistory, bool preserveCropMotion, bool stableHistory)
+ 		{
+ 			if (!device || !colorWidth || !colorHeight || !guideWidth || !guideHeight)
+ 				return false;
+ 
++			const auto resourceWidth = stableHistory ? eye.color.desc.Width : colorWidth;
++			const auto resourceHeight = stableHistory ? eye.color.desc.Height : colorHeight;
++			const auto resourceGuideWidth = stableHistory ? eye.depth.desc.Width : guideWidth;
++			const auto resourceGuideHeight = stableHistory ? eye.depth.desc.Height : guideHeight;
+ 			const DXGI_FORMAT colorFormat = eye.color.desc.Format;
+ 			auto& state = eye.resultShaping;
+-			const bool outputMatches = state.width == colorWidth && state.height == colorHeight &&
+-				state.guideWidth == guideWidth && state.guideHeight == guideHeight && state.format == colorFormat &&
++			const bool outputMatches = state.width == resourceWidth && state.height == resourceHeight &&
++				state.guideWidth == resourceGuideWidth && state.guideHeight == resourceGuideHeight && state.format == colorFormat &&
+ 				state.output.resource && state.output.srv && state.output.uav;
+ 			if (!outputMatches) {
+ 				ResultShapingEyeState replacement;
+-				replacement.width = colorWidth;
+-				replacement.height = colorHeight;
+-				replacement.guideWidth = guideWidth;
+-				replacement.guideHeight = guideHeight;
++				replacement.width = resourceWidth;
++				replacement.height = resourceHeight;
++				replacement.guideWidth = resourceGuideWidth;
++				replacement.guideHeight = resourceGuideHeight;
+ 				replacement.regionX = regionX;
+ 				replacement.regionY = regionY;
+ 				replacement.modelResolution = modelResolution;
+ 				replacement.format = colorFormat;
+ 				const std::string suffix = eyeIndex == 0 ? "Left" : "Right";
+-				if (!EnsureResultShapingTexture(device, colorWidth, colorHeight, colorFormat,
++				if (!EnsureResultShapingTexture(device, resourceWidth, resourceHeight, colorFormat,
+ 					replacement.output, ("NeuralRendering::ResultShapingOutput" + suffix).c_str()))
+ 					return false;
+ 				state = std::move(replacement);
+ 			} else if (state.regionX != regionX || state.regionY != regionY ||
+ 				state.modelResolution != modelResolution) {
+-				state.valid = false;
++				if (!preserveCropMotion || (!stableHistory && state.modelResolution != modelResolution) ||
++					std::uint32_t(globals::state->frameCount - state.historyFrame) != 1u)
++					state.valid = false;
+ 				state.regionX = regionX;
+ 				state.regionY = regionY;
+ 				state.modelResolution = modelResolution;
+ 			}
++
++			if (state.valid && std::uint32_t(globals::state->frameCount - state.historyFrame) != 1u)
++				state.valid = false;
+ 
+ 			if (needHistory && !HasResultShapingHistory(state) && !state.historyAllocationFailed) {
+ 				std::array<TemporalTexture, 2> history;
+@@ -1844,13 +1881,13 @@
+ 				TemporalTexture previousDepth;
+ 				const std::string suffix = eyeIndex == 0 ? "Left" : "Right";
+ 				const bool historyCreated =
+-					EnsureResultShapingTexture(device, colorWidth, colorHeight, colorFormat,
++					EnsureResultShapingTexture(device, resourceWidth, resourceHeight, colorFormat,
+ 						history[0], ("NeuralRendering::ResultShapingHistoryA" + suffix).c_str()) &&
+-					EnsureResultShapingTexture(device, colorWidth, colorHeight, colorFormat,
++					EnsureResultShapingTexture(device, resourceWidth, resourceHeight, colorFormat,
+ 						history[1], ("NeuralRendering::ResultShapingHistoryB" + suffix).c_str()) &&
+-					EnsureResultShapingTexture(device, colorWidth, colorHeight, colorFormat,
++					EnsureResultShapingTexture(device, resourceWidth, resourceHeight, colorFormat,
+ 						previousBase, ("NeuralRendering::ResultShapingBase" + suffix).c_str()) &&
+-					EnsureResultShapingTexture(device, guideWidth, guideHeight, DXGI_FORMAT_R32_FLOAT,
++					EnsureResultShapingTexture(device, resourceGuideWidth, resourceGuideHeight, DXGI_FORMAT_R32_FLOAT,
+ 						previousDepth, ("NeuralRendering::ResultShapingDepth" + suffix).c_str());
+ 				if (historyCreated) {
+ 					state.history = std::move(history);
+@@ -1933,21 +1970,29 @@
+ 			std::uint32_t regionX, std::uint32_t regionY, float motionScaleX, float motionScaleY,
+ 			const Tuning& tuning)
+ 		{
+-			const bool stabilizeConfigured = tuning.stabilizeMode != 0;
++			const bool stabilizeConfigured = tuning.stabilizeMode != 0 || tuning.singlePassLadder;
+ 			const bool stabilizeAllowed = stabilizeConfigured && tuning.temporalReuseCadence == 0;
+ 			if ((!tuning.resultShapingEnabled || !HasResultShapingEffect(tuning)) && !stabilizeAllowed)
+ 				return nrOutput;
+ 
+ 			auto& state = eye.resultShaping;
++			const bool cropMoved = state.regionX != regionX || state.regionY != regionY;
++			const auto previousLayout = std::array<std::uint32_t, 4>{ state.historyWidth, state.historyHeight, state.historyGuideWidth, state.historyGuideHeight };
++			const auto originDelta = std::array<float, 2>{ float(double(regionX) - state.regionX), float(double(regionY) - state.regionY) };
++			const bool layoutChanged = state.historyWidth != colorWidth || state.historyHeight != colorHeight || state.modelResolution != tuning.modelResolutionPercent;
++			if (tuning.singlePassLadder && layoutChanged && state.valid)
++				state.transitionRemainingMs = tuning.ladderHandoffMs;
++			const bool bridgeActive = tuning.singlePassLadder && state.transitionRemainingMs > 0.0f;
+ 			const bool hasDepth = eye.depth.srv11 && eye.depth.resource11;
+-			std::uint32_t stabilizeMode = stabilizeAllowed && hasDepth ? tuning.stabilizeMode : 0u;
++			std::uint32_t stabilizeMode = stabilizeAllowed && hasDepth ? (bridgeActive ? 2u : tuning.stabilizeMode) : 0u;
+ 			if (stabilizeMode == 2u && (!eye.motionVectors.srv11 || !std::isfinite(motionScaleX) || !std::isfinite(motionScaleY)))
+ 				stabilizeMode = 0;
+ 			if (!nrOutput || !nrOutputSRV || !eye.color.srv11 || !context ||
+ 				!EnsureResultShapingResources(device, eye, eyeIndex, colorWidth, colorHeight,
+-					guideWidth, guideHeight, regionX, regionY, tuning.modelResolutionPercent, stabilizeMode != 0) ||
++					guideWidth, guideHeight, regionX, regionY, tuning.modelResolutionPercent, stabilizeAllowed, stabilizeMode == 2u || tuning.singlePassLadder, tuning.singlePassLadder) ||
+ 				!EnsureResultShapingShader(device)) {
+ 				state.valid = false;
++				if (tuning.singlePassLadder) LatchFailure("ladder residual handoff", E_FAIL);
+ 				if (!resultShapingFailureLogged) {
+ 					logger::warn("[DLSSNR] result shaping unavailable; using the unmodified NR output");
+ 					resultShapingFailureLogged = true;
+@@ -1979,7 +2024,7 @@
+ 			constants.motionScaleX = GuideToColorMotionScale(motionScaleX, colorWidth, guideWidth);
+ 			constants.motionScaleY = GuideToColorMotionScale(motionScaleY, colorHeight, guideHeight);
+ 			constants.frameDeltaSeconds = frameDeltaSeconds;
+-			constants.stabilizeTimeMs = tuning.stabilizeTimeMs;
++			constants.stabilizeTimeMs = bridgeActive ? tuning.ladderHandoffMs : tuning.stabilizeTimeMs;
+ 			constants.editStrength = tuning.resultEditStrength;
+ 			constants.brightening = tuning.resultBrightening;
+ 			constants.darkening = tuning.resultDarkening;
+@@ -1999,7 +2044,13 @@
+ 			constants.colorTolerance = tuning.stabilizeColorTolerance;
+ 			constants.shapeEnabled = tuning.resultShapingEnabled ? 1u : 0u;
+ 			constants.stabilizeMode = stabilizeMode;
+-			constants.stabilizeDetail = tuning.stabilizeDetail ? 1u : 0u;
++			constants.stabilizeDetail = bridgeActive || tuning.stabilizeDetail ? 1u : 0u;
++			constants.historyEdgeFadePixels = cropMoved || bridgeActive ? 2.0f : 0.0f;
++			constants.previousLayout = previousLayout;
++			if (!tuning.singlePassLadder)
++				constants.previousLayout = { colorWidth, colorHeight, guideWidth, guideHeight };
++			constants.originDelta = tuning.singlePassLadder ? originDelta : std::array<float, 2>{};
++			constants.transitionWeightScale = bridgeActive ? std::clamp(state.transitionRemainingMs / std::max(tuning.ladderHandoffMs, 1.0f), 0.0f, 1.0f) : 1.0f;
+ 
+ 			CS_GPU_PASS("NeuralRendering::ResultShaping");
+ 			context->UpdateSubresource(resultShapingCB.Get(), 0, nullptr, &constants, 0, 0);
+@@ -2032,8 +2083,16 @@
+ 				// The stabilized result already sits in the next history slot; only the
+ 				// per-frame input and depth guides need a copy.
+ 				state.historyIndex = nextIndex;
+-				context->CopyResource(state.previousBase.resource.Get(), eye.color.resource11.Get());
+-				context->CopyResource(state.previousDepth.resource.Get(), eye.depth.resource11.Get());
++				state.historyFrame = globals::state->frameCount;
++				state.historyWidth = colorWidth;
++				state.historyHeight = colorHeight;
++				state.historyGuideWidth = guideWidth;
++				state.historyGuideHeight = guideHeight;
++				state.transitionRemainingMs = std::max(0.0f, state.transitionRemainingMs - frameDeltaSeconds * 1000.0f);
++				const D3D11_BOX baseBox{ 0, 0, 0, colorWidth, colorHeight, 1 };
++				const D3D11_BOX depthBox{ 0, 0, 0, guideWidth, guideHeight, 1 };
++				context->CopySubresourceRegion(state.previousBase.resource.Get(), 0, 0, 0, 0, eye.color.resource11.Get(), 0, &baseBox);
++				context->CopySubresourceRegion(state.previousDepth.resource.Get(), 0, 0, 0, 0, eye.depth.resource11.Get(), 0, &depthBox);
+ 				state.valid = true;
+ 			} else {
+ 				state.valid = false;
+@@ -3287,6 +3346,7 @@
+ 
+ 		void ResetStereoAtlasFeatures()
+ 		{
++			ladderAtlasGeometry.valid = false;
+ 			for (std::uint32_t tier = 0; tier < kResolutionTierCount; ++tier)
+ 				for (std::uint32_t pass = 0; pass < kCascadePassCount; ++pass)
+ 					Runtime::Instance().ResetFeature(AtlasFeatureSlot(tier, pass));
+@@ -3417,13 +3477,8 @@
+ 			std::uint32_t colorGuard, std::uint32_t guideGuard,
+ 			float motionScaleX, float motionScaleY, const Tuning& tuning, bool reset)
+ 		{
+-			ID3D12GraphicsCommandList* commandList = nullptr;
+-			if (!interop.BeginD3D12(&commandList))
+-				return false;
+ 			const auto atlasColorWidth = eyeColorWidth * 2 + colorGuard;
+ 			const auto atlasGuideWidth = eyeGuideWidth * 2 + guideGuard;
+-			TransitionEvaluationResources(commandList, stereoAtlas.color.resource12.Get(), stereoAtlas.depth.resource12.Get(),
+-				stereoAtlas.motionVectors.resource12.Get(), stereoAtlas.output.resource12.Get(), true);
+ 			Feature18GuideContract guide{};
+ 			guide.colorWidth = atlasColorWidth;
+ 			guide.colorHeight = eyeColorHeight;
+@@ -3442,8 +3497,21 @@
+ 			guide.motionVectorScaleX = motionScaleX;
+ 			guide.motionVectorScaleY = motionScaleY;
+ 			guide.motionVectorsLowResolution = atlasGuideWidth <= atlasColorWidth && eyeGuideHeight <= eyeColorHeight;
++			const auto slot = AtlasFeatureSlot(tuning.singlePassLadder ? 0u : tierIndex, passIndex);
++			if (Runtime::Instance().NeedsRecreation(slot, atlasCreationColorWidth, atlasCreationColorHeight,
++				atlasCreationColorWidth, atlasCreationColorHeight, guide.motionVectorsLowResolution)) {
++				if (!interop.WaitForIdle()) return false;
++				Runtime::Instance().ResetFeature(slot);
++				ladderAtlasGeometry.valid = false;
++				reset = true;
++				logger::info("[DLSSNR][Atlas] native history reset: creation contract changed slot={}", slot);
++			}
++			ID3D12GraphicsCommandList* commandList = nullptr;
++			if (!interop.BeginD3D12(&commandList)) return false;
++			TransitionEvaluationResources(commandList, stereoAtlas.color.resource12.Get(), stereoAtlas.depth.resource12.Get(),
++				stereoAtlas.motionVectors.resource12.Get(), stereoAtlas.output.resource12.Get(), true);
+ 			const auto passTuning = TuningForCascadePass(tuning, passIndex);
+-			const bool succeeded = Runtime::Instance().Execute(commandList, AtlasFeatureSlot(tierIndex, passIndex),
++			const bool succeeded = Runtime::Instance().Execute(commandList, slot,
+ 				stereoAtlas.color.resource12.Get(), stereoAtlas.depth.resource12.Get(), stereoAtlas.motionVectors.resource12.Get(),
+ 				stereoAtlas.output.resource12.Get(), guide, passTuning, reset);
+ 			TransitionEvaluationResources(commandList, stereoAtlas.color.resource12.Get(), stereoAtlas.depth.resource12.Get(),
+@@ -3461,6 +3529,81 @@
+ 			const D3D11_BOX rightBox{ eyeWidth + guardWidth, 0, 0, eyeWidth * 2 + guardWidth, eyeHeight, 1 };
+ 			context->CopySubresourceRegion(leftTarget, 0, destinationOffsetX, destinationOffsetY, 0, stereoAtlas.output.resource11.Get(), 0, &leftBox);
+ 			context->CopySubresourceRegion(rightTarget, 0, destinationOffsetX, destinationOffsetY, 0, stereoAtlas.output.resource11.Get(), 0, &rightBox);
++		}
++
++
++		struct LadderAtlasGeometry
++		{
++			std::uint32_t modelWidth = 0, modelHeight = 0, colorWidth = 0, colorHeight = 0, guard = 0, frame = UINT32_MAX;
++			std::array<std::array<std::uint32_t, 2>, 2> origins{};
++			bool valid = false;
++		};
++		struct LadderAtlasConstants
++		{
++			std::array<std::uint32_t, 4> current{}, previous{}, layout{};
++			std::array<float, 4> leftOrigin{}, rightOrigin{}, motionScale{};
++			std::array<std::uint32_t, 4> flags{};
++		};
++		static_assert(sizeof(LadderAtlasConstants) == 112);
++
++		bool PackLadderGuides(ID3D11Device* device, ID3D11DeviceContext* context,
++			const std::array<StereoEyeInput, 2>& inputs,
++			std::uint32_t colorWidth, std::uint32_t colorHeight,
++			std::uint32_t modelWidth, std::uint32_t modelHeight,
++			std::uint32_t guideWidth, std::uint32_t guideHeight, std::uint32_t colorGuard, std::uint32_t guideGuard)
++		{
++			if (!ladderAtlasGuidesCS.Get(L"Data\\Shaders\\Upscaling\\NeuralRendering\\LadderAtlasGuidesCS.hlsl", {}, "cs_5_0", "main", "NeuralRendering::LadderAtlasGuides"))
++				return false;
++			if (!ladderAtlasCB) {
++				D3D11_BUFFER_DESC desc{};
++				desc.ByteWidth = sizeof(LadderAtlasConstants);
++				desc.Usage = D3D11_USAGE_DEFAULT;
++				desc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
++				if (FAILED(device->CreateBuffer(&desc, nullptr, ladderAtlasCB.GetAddressOf()))) return false;
++				Util::SetResourceName(ladderAtlasCB.Get(), "NeuralRendering::LadderAtlasCB");
++			}
++			const auto frame = globals::state->frameCount;
++			const bool previousValid = ladderAtlasGeometry.valid &&
++				std::uint32_t(frame - ladderAtlasGeometry.frame) == 1u && !stereoAtlasResetPending;
++			LadderAtlasConstants data{};
++			data.current = { modelWidth, modelHeight, guideWidth, guideHeight };
++			data.previous = { ladderAtlasGeometry.modelWidth, ladderAtlasGeometry.modelHeight,
++				ladderAtlasGeometry.colorWidth, ladderAtlasGeometry.colorHeight };
++			data.layout = { colorWidth, colorHeight, colorGuard, ladderAtlasGeometry.guard };
++			for (unsigned eye = 0; eye < 2; ++eye) {
++				auto& origin = eye ? data.rightOrigin : data.leftOrigin;
++				origin = { float(inputs[eye].sourceX), float(inputs[eye].sourceY),
++					float(ladderAtlasGeometry.origins[eye][0]), float(ladderAtlasGeometry.origins[eye][1]) };
++			}
++			data.motionScale = {
++				GuideToColorMotionScale(inputs[0].motionVectorScaleX, colorWidth, guideWidth),
++				GuideToColorMotionScale(inputs[0].motionVectorScaleY, colorHeight, guideHeight),
++				inputs[0].motionVectorScaleX * float(modelWidth) / guideWidth,
++				inputs[0].motionVectorScaleY * float(modelHeight) / guideHeight };
++			if (!std::isfinite(data.motionScale[2]) || !std::isfinite(data.motionScale[3]) ||
++				data.motionScale[2] == 0.0f || data.motionScale[3] == 0.0f ||
++				std::abs(2.0f * stereoAtlas.colorEyeHeight / data.motionScale[3]) > 65504.0f)
++				return false;
++			data.flags = { previousValid ? 1u : 0u, guideGuard, stereoAtlas.colorEyeHeight, 0u };
++			CS_GPU_PASS("NeuralRendering::LadderAtlasGuides");
++			context->UpdateSubresource(ladderAtlasCB.Get(), 0, nullptr, &data, 0, 0);
++			ID3D11ShaderResourceView* sources[]{ eyes[0].motionVectors.srv11.Get(), eyes[1].motionVectors.srv11.Get(),
++				eyes[0].depth.srv11.Get(), eyes[1].depth.srv11.Get() };
++			ID3D11UnorderedAccessView* targets[]{ stereoAtlas.motionVectors.uav11.Get(), stereoAtlas.depth.uav11.Get() };
++			ID3D11Buffer* cb = ladderAtlasCB.Get();
++			context->CSSetShader(ladderAtlasGuidesCS.get(), nullptr, 0);
++			context->CSSetConstantBuffers(0, 1, &cb);
++			context->CSSetShaderResources(0, 4, sources);
++			context->CSSetUnorderedAccessViews(0, 2, targets, nullptr);
++			context->Dispatch((guideWidth * 2 + guideGuard + 7) / 8, (guideHeight + 7) / 8, 1);
++			ID3D11ShaderResourceView* nullSources[4]{};
++			ID3D11UnorderedAccessView* nullTargets[2]{};
++			ID3D11Buffer* nullCB = nullptr;
++			context->CSSetShaderResources(0, 4, nullSources);
++			context->CSSetUnorderedAccessViews(0, 2, nullTargets, nullptr);
++			context->CSSetConstantBuffers(0, 1, &nullCB);
++			context->CSSetShader(nullptr, nullptr, 0);
++			return true;
+ 		}
+ 
+ 		StereoAtlasResult ApplyStereoAtlasNative(ID3D11Device* device, ID3D11DeviceContext* context,
+@@ -3477,14 +3620,22 @@
+ 				}
+ 				return StereoAtlasResult::FallBack;
+ 			}
++			if (stereoAtlasModeObserved && stereoAtlasSinglePassMode != tuning.singlePassLadder) {
++				if (!interop.WaitForIdle()) return StereoAtlasResult::Failed;
++				ResetStereoAtlasFeatures();
++				stereoAtlasActiveLastFrame = false;
++			}
++			stereoAtlasModeObserved = true;
++			stereoAtlasSinglePassMode = tuning.singlePassLadder;
+ 			const bool scalesMatch = std::abs(inputs[0].motionVectorScaleX - inputs[1].motionVectorScaleX) < 1e-4f &&
+ 				std::abs(inputs[0].motionVectorScaleY - inputs[1].motionVectorScaleY) < 1e-4f;
+-			const bool compatible = passCount >= 1 && passCount <= 2 && !tuning.adaptiveResolution &&
++			const bool compatible = (!tuning.singlePassLadder || passCount == 1) && passCount >= 1 && passCount <= 2 && !tuning.adaptiveResolution &&
+ 				tuning.temporalReuseCadence == 0 && !tuning.temporalReuseStaggerEyes && scalesMatch &&
+ 				modelWidth && modelHeight && guideWidth && guideHeight;
+ 			if (!compatible) {
+ 				if (!stereoAtlasFallbackLogged) {
+-					logger::warn("[DLSSNR][Atlas] incompatible route; falling back to independent-eye Feature18");
++					logger::warn("[DLSSNR][Atlas] incompatible route; strict={} passes={} scalesMatch={}",
++					tuning.singlePassLadder, passCount, scalesMatch);
+ 					stereoAtlasFallbackLogged = true;
+ 				}
+ 				if (stereoAtlasActiveLastFrame && interop.WaitForIdle()) ResetStereoAtlasFeatures();
+@@ -3496,31 +3647,54 @@
+ 			const auto colorGuard = std::clamp(ScaleDimension(requestedGuard, modelResolution), 1u, modelWidth);
+ 			const auto guideGuard = std::clamp(static_cast<std::uint32_t>(std::lround(
+ 				static_cast<double>(colorGuard) * guideWidth / std::max(modelWidth, 1u))), 1u, guideWidth);
+-			if (!EnsureStereoAtlasResources(device, modelWidth, modelHeight, guideWidth, guideHeight, colorGuard, guideGuard))
++			const auto residentModelWidth = tuning.singlePassLadder ? eyes[0].color.desc.Width : eyes[0].tiers[tierIndex].reducedResolution ?
++				eyes[0].tiers[tierIndex].modelInput.desc.Width : eyes[0].color.desc.Width;
++			const auto residentModelHeight = tuning.singlePassLadder ? eyes[0].color.desc.Height : eyes[0].tiers[tierIndex].reducedResolution ?
++				eyes[0].tiers[tierIndex].modelInput.desc.Height : eyes[0].color.desc.Height;
++			if (!EnsureStereoAtlasResources(device, residentModelWidth, residentModelHeight,
++				eyes[0].depth.desc.Width, eyes[0].depth.desc.Height,
++				tuning.singlePassLadder ? requestedGuard : colorGuard,
++				tuning.singlePassLadder ? std::max(guideGuard, static_cast<std::uint32_t>(std::ceil(
++					double(requestedGuard) * eyes[0].depth.desc.Width / std::max(1.0, double(eyes[0].color.desc.Width) * 0.70)))) : guideGuard))
+ 				return StereoAtlasResult::FallBack;
+ 
+ 			auto& leftTier = eyes[0].tiers[tierIndex];
+ 			auto& rightTier = eyes[1].tiers[tierIndex];
+ 			ID3D11ShaderResourceView* leftInput = leftTier.reducedResolution ? leftTier.modelInput.srv11.Get() : eyes[0].color.srv11.Get();
+ 			ID3D11ShaderResourceView* rightInput = rightTier.reducedResolution ? rightTier.modelInput.srv11.Get() : eyes[1].color.srv11.Get();
+-			if (!leftInput || !rightInput || !eyes[0].depth.srv11 || !eyes[1].depth.srv11 ||
+-				!eyes[0].motionVectors.srv11 || !eyes[1].motionVectors.srv11 ||
+-				!PackStereoAtlas(device, context, leftInput, rightInput,
++			if (!leftInput || !rightInput || colorWidth > eyes[0].color.desc.Width || colorWidth > eyes[1].color.desc.Width ||
++				colorHeight > eyes[0].color.desc.Height || colorHeight > eyes[1].color.desc.Height ||
++				modelWidth > residentModelWidth || modelHeight > residentModelHeight ||
++				guideWidth > eyes[0].depth.desc.Width || guideWidth > eyes[1].depth.desc.Width ||
++				guideHeight > eyes[0].depth.desc.Height || guideHeight > eyes[1].depth.desc.Height)
++				return StereoAtlasResult::Failed;
++			bool packed = false;
++			if (tuning.singlePassLadder) {
++				if (!EnsureStereoAtlasPackResources(device)) return StereoAtlasResult::FallBack;
++				packed = DispatchStereoAtlasPack(context, stereoAtlasColorPackCS.get(), leftInput, rightInput,
++					stereoAtlas.color.uav11.Get(), modelWidth, modelHeight, colorGuard, 0, 0) &&
++					PackLadderGuides(device, context, inputs, colorWidth, colorHeight,
++						modelWidth, modelHeight, guideWidth, guideHeight, colorGuard, guideGuard);
++			} else {
++				packed = PackStereoAtlas(device, context, leftInput, rightInput,
+ 					eyes[0].depth.srv11.Get(), eyes[1].depth.srv11.Get(),
+ 					eyes[0].motionVectors.srv11.Get(), eyes[1].motionVectors.srv11.Get(),
+-					modelWidth, modelHeight, guideWidth, guideHeight, colorGuard, guideGuard))
+-				return StereoAtlasResult::FallBack;
+-
+-			const float motionScaleX = inputs[0].motionVectorScaleX * static_cast<float>(modelWidth) / colorWidth;
+-			const float motionScaleY = inputs[0].motionVectorScaleY * static_cast<float>(modelHeight) / colorHeight;
++					modelWidth, modelHeight, guideWidth, guideHeight, colorGuard, guideGuard);
++			}
++			if (!leftInput || !rightInput || !packed) return StereoAtlasResult::FallBack;
++			const float motionScaleX = inputs[0].motionVectorScaleX * float(modelWidth) / (tuning.singlePassLadder ? guideWidth : colorWidth);
++			const float motionScaleY = inputs[0].motionVectorScaleY * float(modelHeight) / (tuning.singlePassLadder ? guideHeight : colorHeight);
++
+ 			const bool enteringAtlas = !stereoAtlasActiveLastFrame;
+ 			const bool reset = stereoAtlasResetPending ||
++				(tuning.singlePassLadder && (!ladderAtlasGeometry.valid ||
++					std::uint32_t(globals::state->frameCount - ladderAtlasGeometry.frame) != 1u)) ||
+ 				(enteringAtlas && (resetPending[0][tierIndex] || resetPending[1][tierIndex])) ||
+ 				(temporalSkippedSinceFull && tuning.temporalReuseResetAfterSkip);
+ 			if (!EvaluateStereoAtlasPass(tierIndex, 0, modelWidth, modelHeight, guideWidth, guideHeight,
+ 				colorGuard, guideGuard, motionScaleX, motionScaleY, tuning, reset)) {
+ 				if (interop.WaitForIdle())
+-					Runtime::Instance().ResetFeature(AtlasFeatureSlot(tierIndex, 0));
++					Runtime::Instance().ResetFeature(AtlasFeatureSlot(tuning.singlePassLadder ? 0u : tierIndex, 0));
+ 				stereoAtlasResetPending = true;
+ 				return StereoAtlasResult::FallBack;
+ 			}
+@@ -3572,6 +3746,11 @@
+ 				}
+ 			}
+ 
++			if (tuning.singlePassLadder) {
++				ladderAtlasGeometry = { modelWidth, modelHeight, colorWidth, colorHeight, colorGuard,
++					globals::state->frameCount,
++					{{ { inputs[0].sourceX, inputs[0].sourceY }, { inputs[1].sourceX, inputs[1].sourceY } }}, true };
++			} else ladderAtlasGeometry.valid = false;
+ 			stereoAtlasResetPending = false;
+ 			stereoAtlasActiveLastFrame = true;
+ 			stereoAtlasFallbackLogged = false;
+@@ -3586,6 +3765,7 @@
+ 		bool LatchFailure(const char* operation, HRESULT error)
+ 		{
+ 			failureLatched = true;
++			failureOperation = operation;
+ 			failureTime = std::chrono::steady_clock::now();
+ 			recoverableFailure = error == E_OUTOFMEMORY || static_cast<std::uint32_t>(error) == 0xBAD00002u;
+ 			logger::error("[DLSSNR] {} failed hr/ngx=0x{:08X} status={} detail={}",
+@@ -3616,6 +3796,11 @@
+ 		Microsoft::WRL::ComPtr<ID3D11Buffer> resultShapingCB;
+ 		Microsoft::WRL::ComPtr<ID3D11SamplerState> resultShapingSampler;
+ 		std::array<EyeResources, 2> eyes;
++		LadderAtlasGeometry ladderAtlasGeometry;
++		bool stereoAtlasModeObserved = false;
++		bool stereoAtlasSinglePassMode = false;
++		Util::LazyShader<ID3D11ComputeShader> ladderAtlasGuidesCS;
++		Microsoft::WRL::ComPtr<ID3D11Buffer> ladderAtlasCB;
+ 		StereoAtlasResources stereoAtlas;
+ 		std::array<std::array<bool, kResolutionTierCount>, 2> resetPending{};
+ 		bool stereoAtlasResetPending = true;
+@@ -3648,6 +3833,7 @@
+ 		std::uint32_t adaptivePrewarmGuideHeight = 0;
+ 		std::array<bool, 2> adaptivePrewarmResourcesReady{};
+ 		std::array<bool, 2> adaptivePrewarmRejected{};
++		std::string failureOperation;
+ 		bool failureLatched = false;
+ 		bool recoveryAttempted = false;
+ 		bool recoverableFailure = false;
+@@ -3686,11 +3872,12 @@
+ 	bool Renderer::Reset() { FoveatedRenderImpl::CropMotion::Invalidate(2, 2); return state_->Reset(); }
+ 	void Renderer::ClearShaderCache() { state_->ClearShaderCache(); }
+ 	void Renderer::ResetHistory() { FoveatedRenderImpl::CropMotion::Invalidate(2, 2); state_->ResetHistory(); }
++	bool Renderer::IsStereoAtlasActive() const { return state_->IsStereoAtlasActive(); }
+ 	bool Renderer::IsFailureLatched() const { return state_->IsFailureLatched(); }
+ 	bool Renderer::IsFailureRecoverable() const { return state_->IsFailureRecoverable(); }
+ 	bool Renderer::IsRecoveryLimited() const { return state_->IsRecoveryLimited(); }
+ 	bool Renderer::IsAdaptiveTierReady(std::uint32_t modelResolution) const { return state_->IsAdaptiveTierReady(modelResolution); }
+ 	std::uint32_t Renderer::NgxResult() const { return Runtime::Instance().NgxResult(); }
+ 	std::uint64_t Renderer::SuccessfulFrames() const { return Runtime::Instance().SuccessfulFrames(); }
+-	const char* Renderer::StatusText() const { return ToString(Runtime::Instance().Status()); }
++	const char* Renderer::StatusText() const { return state_->StatusText(); }
+ }
+--- a/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Renderer.h
++++ b/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Renderer.h
+@@ -79,6 +79,7 @@
+ 		bool Reset();
+ 		void ResetHistory();
+ 
++		[[nodiscard]] bool IsStereoAtlasActive() const;
+ 		[[nodiscard]] bool IsFailureLatched() const;
+ 		[[nodiscard]] bool IsFailureRecoverable() const;
+ 		/** @brief Holds adaptive upshifts after the session's bounded recovery attempt. */
+--- a/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Runtime.h
++++ b/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Runtime.h
+@@ -123,6 +123,8 @@
+ 		// v01-only fields are trailing so all pre-v01 aggregate initializers retain
+ 		// their exact field mapping. Integration assigns them explicitly.
+ 		SequentialPassTuning secondPass{};
++		bool singlePassLadder = false;
++		float ladderHandoffMs = 150.0f;
+ 		bool stereoAtlas = false;
+ 		std::uint32_t stereoAtlasGuardPixels = 50;
+ 		float adaptiveSecondPassCostMs = 6.0f;
+--- /dev/null
++++ b/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/SimpleFramePolicy.h
+@@ -0,0 +1,77 @@
++#pragma once
++
++#include <algorithm>
++#include <cstdint>
++
++namespace NeuralRendering::SimpleFramePolicy
++{
++	struct Config
++	{
++		bool singlePassLadder = false;
++		float budget = 20.0f;
++		float reserve = 1.0f;
++		float passIncrease = 14.0f;
++		float cropIncrease = 16.0f;
++		float cropDecrease = 18.0f;
++		float passDecrease = 20.0f;
++		bool firstPassPriority = false;
++		float firstPassIncrease = 14.0f;
++		bool costGuard = false;
++		float firstPassCost = 6.0f;
++		float safetyMargin = 1.0f;
++		float decreaseHold = 350.0f;
++		float increaseHold = 1200.0f;
++		float firstPassHold = 1200.0f;
++		float cooldown = 1000.0f;
++		float smoothing = 250.0f;
++		float retryDelay = 3000.0f;
++		std::uint32_t cropFloor = 60;
++		std::uint32_t cropStep = 20;
++		std::uint32_t transitionFrames = 8;
++		bool operator==(const Config&) const = default;
++	};
++
++	struct State
++	{
++		float filteredMs = 0.0f;
++		std::uint32_t passes = 1;
++		std::uint32_t ceiling = 1;
++		bool canShrink = false;
++		bool canGrow = false;
++		bool atFloor = false;
++		bool atCeiling = false;
++		bool transitioning = false;
++		float retryRemaining = 0.0f;
++	};
++
++	/** Select one action; timing holds and cooldown remain owned by the caller. */
++	inline std::uint32_t Select(const Config& config, const State& state)
++	{
++		if (state.transitioning)
++			return 0;
++		if (state.canShrink && state.filteredMs > config.cropDecrease)
++			return 1;
++		if (state.atFloor && state.passes > 0 && state.filteredMs > config.passDecrease)
++			return 3;
++		if (config.firstPassPriority && state.passes == 0 && state.ceiling > 0) {
++			const bool affordable = !config.costGuard ||
++				state.filteredMs + config.firstPassCost + config.safetyMargin < config.cropDecrease;
++			return state.retryRemaining <= 0.0f && state.filteredMs < config.firstPassIncrease && affordable ? 4u : 0u;
++		}
++		if (state.canGrow && state.filteredMs < config.cropIncrease)
++			return 2;
++		if (state.atCeiling && state.passes < state.ceiling && state.filteredMs < config.passIncrease)
++			return 4;
++		return 0;
++	}
++
++	/** Return a legal relative crop target without exceeding the selected crop. */
++	inline std::uint32_t StepCrop(std::uint32_t current, std::uint32_t floor,
++		std::uint32_t step, bool increase)
++	{
++		floor = std::clamp(floor, 60u, 100u);
++		current = std::clamp(current, floor, 100u);
++		step = std::clamp(step, 5u, 20u);
++		return increase ? std::min(100u, current + step) : std::max(floor, current - step);
++	}
++}
+--- /dev/null
++++ b/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/SinglePassLadder.h
+@@ -0,0 +1,21 @@
++#pragma once
++#include <algorithm>
++#include <array>
++#include <cstdint>
++#include <cmath>
++
++namespace NeuralRendering::SinglePassLadder
++{
++	struct Quality { std::uint32_t crop, model; };
++	inline constexpr std::array<Quality, 5> levels{ Quality{100,100}, {80,100}, {60,100}, {60,85}, {60,70} };
++	inline Quality Level(std::uint32_t stage) { return levels[std::min(stage, 4u)]; }
++	inline std::uint32_t Select(std::uint32_t stage, float ms, float budget, float reserve,
++		bool transitioning, bool growthBlocked)
++	{
++		if (transitioning || stage >= levels.size() || !std::isfinite(ms) || !std::isfinite(budget) ||
++			!std::isfinite(reserve) || ms <= 0.0f || budget <= 0.0f || reserve < 0.0f || reserve >= budget) return 0;
++		if (ms > budget && stage < 4) return 1;
++		if (ms < budget - reserve && stage > 0 && !growthBlocked) return 2;
++		return 0;
++	}
++}
+--- a/runtime/open-shaders/src/Features/Upscaling/RCAS/RCAS.cpp
++++ b/runtime/open-shaders/src/Features/Upscaling/RCAS/RCAS.cpp
+@@ -33,23 +33,24 @@
+ 	rcasComputeShader.attach((ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\Upscaling\\RCAS\\RCAS.hlsl", defines, "cs_5_0"));
+ }
+ 
+-void RCAS::ApplySharpen(ID3D11ShaderResourceView* inputSRV, ID3D11UnorderedAccessView* outputUAV, float sharpness)
++bool RCAS::ApplySharpen(ID3D11ShaderResourceView* inputSRV, ID3D11UnorderedAccessView* outputUAV, float sharpness)
+ {
+-	if (!rcasComputeShader) {
++	if (!rcasComputeShader || !rcasConfigCB || !inputSRV || !outputUAV || !std::isfinite(sharpness)) {
+ 		logger::warn("[RCAS] Compute shader not compiled");
+-		return;
++		return false;
+ 	}
+ 
+ 	CS_GPU_PASS("Upscaling::RCAS");
+ 
+ 	auto context = globals::d3d::context;
++	if (!context) return false;
+ 
+ 	// Derived from outputUAV, not state->screenSize -- under PerfMode that's polluted to
+ 	// render res while sharpening targets are display res, silently under-dispatching.
+ 	D3D11_TEXTURE2D_DESC outputDesc{};
+ 	if (!Util::GetTexture2DDesc(outputUAV, outputDesc)) {
+ 		logger::warn("[RCAS] Could not resolve output texture dimensions");
+-		return;
++		return false;
+ 	}
+ 	uint32_t screenWidth = outputDesc.Width;
+ 	uint32_t screenHeight = outputDesc.Height;
+@@ -80,4 +81,5 @@
+ 	context->CSSetUnorderedAccessViews(0, 1, nullUAVs, nullptr);
+ 
+ 	context->CSSetShader(nullptr, nullptr, 0);
++	return true;
+ }
+--- a/runtime/open-shaders/src/Features/Upscaling/RCAS/RCAS.h
++++ b/runtime/open-shaders/src/Features/Upscaling/RCAS/RCAS.h
+@@ -3,6 +3,8 @@
+ #include "../../../Buffer.h"
+ #include "../../../State.h"
+ 
++#include <algorithm>
++#include <cmath>
+ #include <d3d11_4.h>
+ #include <winrt/base.h>
+ 
+@@ -30,9 +32,17 @@
+ 	 *
+ 	 * @param inputTexture SRV of the texture to sharpen (typically kMAIN render target).
+ 	 * @param outputUAV UAV to write sharpened result to.
+-	 * @param sharpness Sharpening strength (0.0 = no sharpening, higher = more sharp).
++	 * @param sharpness RCAS attenuation/extended strength after slider conversion.
++	 * @return True when the sharpening dispatch was submitted.
+ 	 */
+-	void ApplySharpen(ID3D11ShaderResourceView* inputTexture, ID3D11UnorderedAccessView* outputUAV, float sharpness);
++	bool ApplySharpen(ID3D11ShaderResourceView* inputTexture, ID3D11UnorderedAccessView* outputUAV, float sharpness);
++
++	/** @brief Convert the shared 0–3 slider to RCAS attenuation/extended strength. */
++	static float MapSliderStrength(float strength)
++	{
++		strength = std::clamp(std::isfinite(strength) ? strength : 0.0f, 0.0f, 3.0f);
++		return strength <= 1.0f ? std::exp2(2.0f * strength - 2.0f) : strength;
++	}
+ 
+ private:
+ 	void CreateComputeShader();
+--- a/runtime/open-shaders/src/Features/Upscaling.cpp
++++ b/runtime/open-shaders/src/Features/Upscaling.cpp
+@@ -401,7 +401,7 @@
+ 		if (auto _tt = Util::HoverTooltipWrapper())
+ 			ImGui::TextUnformatted(T(TKEY("enable_sharpening_tooltip"), "Applies RCAS sharpening to the DLSS output. Off by default; DLSS already resolves a sharp image."));
+ 		if (settings.sharpnessEnabledDLSS)
+-			ImGui::SliderFloat(T(TKEY("sharpness"), "Sharpness"), &settings.sharpnessDLSS, 0.0f, 1.0f, "%.1f");
++			ImGui::SliderFloat(T(TKEY("sharpness"), "Sharpness"), &settings.sharpnessDLSS, 0.0f, 3.0f, "%.1f");
+ 
+ 		const char* presets[] = {
+ 			T(TKEY("dlss_model_preset_default"), "Default"),
+@@ -695,6 +695,54 @@
+ 				{ "cropChanged", gaze.cropChanged }, { "historyReset", gaze.historyReset },
+ 				{ "cropChangeCount", gaze.cropChangeCount }, { "historyResetCount", gaze.historyResetCount } });
+ 		});
++	FEATURE_COMMAND("freezeGazeCrop",
++		"Keep gaze tracking active while freezing the crop at the selected static centre for stability comparison. Params: enabled (boolean). Takes effect next frame.",
++		[](Feature*, const json& args) {
++			if (!args.contains("enabled") || !args["enabled"].is_boolean())
++				throw std::invalid_argument("enabled must be a boolean");
++			foveatedRender.settings.neuralRenderingEyeTrackedFreezeCrop = args["enabled"].get<bool>();
++		});
++	FEATURE_QUERY("adaptiveFrameStatus",
++		"Read live NR passes, crop coverage, ladder stage/model resolution, selected budget/headroom, actual atlas status and failure. Pending actions: 0 hold, 1 quality down, 2 quality up; legacy only 3 pass down, 4 pass up. Params: none.",
++		[](const Feature*, const json&) -> json {
++			return json({ { "singlePassLadder", foveatedRender.settings.neuralRenderingSinglePassLadder },
++				{ "adaptiveEnabled", foveatedRender.settings.neuralRenderingAdaptiveEnabled },
++				{ "budgetMs", foveatedRender.settings.neuralRenderingLadderBudgetMs },
++				{ "recoveryHeadroomMs", foveatedRender.settings.neuralRenderingLadderReserveMs },
++				{ "recoveryThresholdMs", foveatedRender.settings.neuralRenderingLadderBudgetMs - foveatedRender.settings.neuralRenderingLadderReserveMs },
++				{ "handoffMs", foveatedRender.settings.neuralRenderingLadderHandoffMs },
++				{ "ladderStage", foveatedRender.adaptiveLadderStage },
++				{ "nrResolutionPercent", foveatedRender.adaptiveModelResolution },
++				{ "atlasActive", NeuralRendering::Renderer::Instance().IsStereoAtlasActive() },
++				{ "failureLatched", NeuralRendering::Renderer::Instance().IsFailureLatched() },
++				{ "status", NeuralRendering::Renderer::Instance().StatusText() },
++				{ "passes", foveatedRender.adaptiveActivePasses },
++				{ "configuredPasses", foveatedRender.adaptiveConfiguredPasses },
++				{ "cropTarget", foveatedRender.adaptiveCropTargetCoverage },
++				{ "cropRender", foveatedRender.adaptiveCropController.RenderCoverage() },
++				{ "filteredMs", foveatedRender.adaptiveFilteredFrameTimeMs },
++				{ "pendingAction", foveatedRender.adaptivePendingAction },
++				{ "cooldownMs", foveatedRender.adaptiveCooldownRemainingMs },
++				{ "firstPassRetryMs", foveatedRender.adaptiveFirstPassRetryRemainingMs } });
++		});
++	FEATURE_COMMAND("configureSinglePassBudget",
++		"Set live single-pass ladder budget/headroom/handoff without restarting. Optional numeric params: budgetMs [10,30], recoveryHeadroomMs [0.5,5], handoffMs [0,500]. Rejects invalid values atomically. Does not enable the controller or save settings to disk.",
++		[](Feature*, const json& args) {
++			const auto read = [&](const char* name, float current, float minimum, float maximum) {
++				if (!args.contains(name)) return current;
++				if (!args[name].is_number()) throw std::invalid_argument(std::string(name) + " must be numeric");
++				const auto value = args[name].get<float>();
++				if (!std::isfinite(value) || value < minimum || value > maximum)
++					throw std::invalid_argument(std::string(name) + " is outside its supported range");
++				return value;
++			};
++			const float budget = read("budgetMs", foveatedRender.settings.neuralRenderingLadderBudgetMs, 10.0f, 30.0f);
++			const float reserve = read("recoveryHeadroomMs", foveatedRender.settings.neuralRenderingLadderReserveMs, 0.5f, 5.0f);
++			const float handoff = read("handoffMs", foveatedRender.settings.neuralRenderingLadderHandoffMs, 0.0f, 500.0f);
++			foveatedRender.settings.neuralRenderingLadderBudgetMs = budget;
++			foveatedRender.settings.neuralRenderingLadderReserveMs = reserve;
++			foveatedRender.settings.neuralRenderingLadderHandoffMs = handoff;
++		});
+ 	FEATURE_COMMAND("resetNeuralRendering",
+ 		"Queue the same full NR/DLSS/adaptive-failure reset as the Neural Rendering menu button. Executes on the next render update; does not edit settings. Params: none.",
+ 		[](Feature*, const json&) { NeuralRendering::RequestReset(); });
+@@ -712,8 +760,9 @@
+ 			const auto& settings = foveatedRender.settings;
+ 			const auto& nr = NeuralRendering::Renderer::Instance();
+ 			const bool adaptiveNR = settings.neuralRenderingAdaptiveEnabled &&
+-				foveatedRender.adaptiveController.IsEnabled();
+-			const bool alternateRouteDisablesReuse = adaptiveNR || settings.neuralRenderingPreUpscale != 0;
++				foveatedRender.adaptivePassInitialized;
++			const bool movingCrop = foveatedRender.IsEyeTrackedFoveationEnabled() || foveatedRender.IsAdaptiveCropRuntimeActive();
++			const bool alternateRouteDisablesReuse = adaptiveNR || movingCrop || settings.neuralRenderingPreUpscale != 0;
+ 			const std::uint32_t effectiveTemporalReuseCadence = alternateRouteDisablesReuse ? 0u :
+ 				settings.neuralRenderingTemporalReuseCadence;
+ 			return json({ { "resultShapingEnabled", settings.neuralRenderingResultShapingEnabled },
+@@ -905,7 +954,7 @@
+ 			}
+ 
+ 			if (settings.sharpnessEnabledDLSS)
+-				ImGui::SliderFloat(T(TKEY("sharpness"), "Sharpness"), &settings.sharpnessDLSS, 0.0f, 1.0f, "%.1f");
++				ImGui::SliderFloat(T(TKEY("sharpness"), "Sharpness"), &settings.sharpnessDLSS, 0.0f, 3.0f, "%.1f");
+ 
+ 			const char* presets[] = {
+ 				T(TKEY("dlss_model_preset_default"), "Default"),
+@@ -3356,9 +3405,9 @@
+ 
+ 		CS_GPU_PASS("Upscaling::Sharpening");
+ 
+-		float currentSharpness = (-2.0f * settings.sharpnessDLSS) + 2.0f;
+-		currentSharpness = exp2(-currentSharpness);
+-		rcas.ApplySharpen(perfMode.GetRefraTempSRV(), perfMode.GetTestTextureUAV(), currentSharpness);
++		const float currentSharpness = RCAS::MapSliderStrength(settings.sharpnessDLSS);
++		if (!rcas.ApplySharpen(perfMode.GetRefraTempSRV(), perfMode.GetTestTextureUAV(), currentSharpness))
++			globals::d3d::context->CopyResource(perfMode.GetTestTexture(), perfMode.GetRefraTempTex());
+ 		return;
+ 	}
+ 
+@@ -3381,11 +3430,11 @@
+ 		// Match FSR3's slider->RCAS conversion exactly (ffx_fsr3upscaler.cpp + FsrRcasCon):
+ 		//   sharpenessRemapped = -2*slider + 2   (sharpness in stops)
+ 		//   rcasAttenuation    = exp2(-sharpenessRemapped) = exp2(2*slider - 2)
+-		float currentSharpness = (-2.0f * settings.sharpnessDLSS) + 2.0f;
+-		currentSharpness = exp2(-currentSharpness);
++		const float currentSharpness = RCAS::MapSliderStrength(settings.sharpnessDLSS);
+ 
+ 		// DLSS has already written to sharpenerTexture; sharpen directly into kMAIN.UAV.
+-		rcas.ApplySharpen(sharpenerTexture->srv.get(), Util::AsReal(main.UAV), currentSharpness);
++		if (!rcas.ApplySharpen(sharpenerTexture->srv.get(), Util::AsReal(main.UAV), currentSharpness))
++			context->CopyResource(Util::AsReal(main.texture), sharpenerTexture->resource.get());
+ 	} else {
+ 		// Sharpening is disabled: resolve the DLSS output without altering it.
+ 		context->CopyResource(Util::AsReal(main.texture), sharpenerTexture->resource.get());
+--- a/runtime/open-shaders/src/Features/VRS.cpp
++++ b/runtime/open-shaders/src/Features/VRS.cpp
+@@ -327,16 +327,15 @@
+ 	frameInfo.renderWidth = std::max(static_cast<int>(renderSize.x), 1);
+ 	frameInfo.renderHeight = std::max(static_cast<int>(renderSize.y), 1);
+ 	auto& foveated = upscaling.foveatedRender;
++	if (foveated.IsActive())
++		foveated.UpdateAdaptiveState(globals::state->frameCount, true);
+ 	auto leftUV = foveated.GetEffectiveLeftUV();
+ 	auto rightUV = foveated.GetEffectiveRightUV();
+ 	if (vrsSettings.enable && foveated.IsActive() && foveated.settings.neuralRenderingEyeTrackedFoveation &&
+ 		foveated.settings.neuralRenderingEnabled && foveated.GetDlssMode() == FoveatedRender::DlssMode::kDefault &&
+ 		upscaling.GetUpscaleMethod() == Upscaling::UpscaleMethod::kDLSS) {
+-		const FoveatedRenderImpl::NativeOpenVRGaze::Config config{
+-			.enabled = true,
+-			.smoothingMs = foveated.settings.neuralRenderingEyeTrackedSmoothingMs,
+-			.quantizationPixels = foveated.settings.neuralRenderingEyeTrackedQuantizationPixels,
+-		};
++		const auto config = FoveatedRenderImpl::NativeOpenVRGaze::MakeConfig(foveated.settings,
++			foveated.subrectController.GetUV().w, foveated.subrectController.GetUV().h);
+ 		const auto gaze = FoveatedRenderImpl::NativeOpenVRGaze::ResolveForFrame(config, leftUV, rightUV,
+ 			frameInfo.renderWidth / 2, frameInfo.renderHeight, globals::state->frameCount,
+ 			FoveatedRenderImpl::NativeOpenVRGaze::IsDynamicGazeAllowed());
