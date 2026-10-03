@@ -150,6 +150,15 @@ jobs:
           if ($shader -notmatch 'deltaBoost = max\(sharpness, 1\.0\)') { throw 'Extended sharpness mapping regressed' }
           if ($integration -match 'keep cropped/foveated regions on the established single-pass route') { throw 'Old crop/sequential restriction returned' }
 
+      - name: Capture generated v5 patch inputs
+        run: |
+          python -c "import json,zipfile; from pathlib import Path; paths=json.loads(Path('scripts/v06/source-contract.json').read_text()); z=zipfile.ZipFile('v05-patch-inputs.zip','w',zipfile.ZIP_DEFLATED); [z.write(p,p) for p,h in paths.items() if h is not None]; z.close()"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: v05-patch-inputs
+          path: v05-patch-inputs.zip
+          retention-days: 1
+
       - name: Apply v06 stability and controller extensions
         shell: pwsh
         run: |
