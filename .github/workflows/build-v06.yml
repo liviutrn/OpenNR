@@ -213,6 +213,12 @@ jobs:
           cmakeVersion: "~4.2.0"
           useCloudCache: false
 
+      - name: Verify full runtime source contracts
+        shell: pwsh
+        run: |
+          cmake "-DSOURCE_ROOT=$env:GITHUB_WORKSPACE/runtime/open-shaders" -P runtime/open-shaders/cmake/ValidateOpenNRSourceContracts.cmake
+          if ($LASTEXITCODE) { throw 'Full runtime source contracts failed' }
+
       - name: Bootstrap pinned vcpkg
         shell: pwsh
         run: |

@@ -456,7 +456,7 @@ if(_menu_header_title_index EQUAL -1)
 endif()
 
 foreach(_contract IN ITEMS
-    "NativeOpenVRGaze::Config"
+    "NativeOpenVRGaze::MakeConfig"
     "NativeOpenVRGaze::ResolveForFrame"
     "neuralRenderingEyeTrackedFoveation"
     "Native OpenVR gaze provider"
