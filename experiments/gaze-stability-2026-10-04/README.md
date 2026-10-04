@@ -1,5 +1,10 @@
 # Moving gaze crop: coordinate investigation
 
+Latest corrected baseline and ranked investigation:
+[Causal reassessment](causal-reassessment.md). The current build has
+shaking but no flickering/regeneration; the original build had the
+opposite behavior.
+
 Follow-up for the user's 0.5× Performance SR setting:
 [Performance SR and historical gaze audit](performance-audit.md).
 

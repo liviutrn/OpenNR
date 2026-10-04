@@ -1,5 +1,9 @@
 # Follow-up: Performance SR and historical gaze invariants
 
+Read the subsequent [causal reassessment](causal-reassessment.md)
+for the user's corrected baseline: the historical successful fix had
+shaking, and the current build has no flickering/regeneration.
+
 User clarification: SR uses DLSS Performance, approximately 0.5 × 0.5
 render resolution (25% of display pixels). The crop-size slider and NR
 model-resolution slider are separate from that SR ratio.
