@@ -509,7 +509,7 @@ index 454f67e..1f0784d 100644
  		Tuning tuning = GetTuning(foveated, true);
  		if (!fullEye && tuning.adaptiveResolution && !tuning.adaptiveHandoff && !adaptiveCropHandoffDisabledLogged) {
 diff --git a/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Renderer.cpp b/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Renderer.cpp
-index 24d3561..8200d5c 100644
+index 24d3561..7bcb5a7 100644
 --- a/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Renderer.cpp
 +++ b/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Renderer.cpp
 @@ -603,6 +603,11 @@ namespace NeuralRendering
@@ -519,8 +519,8 @@ index 24d3561..8200d5c 100644
 +			std::array<float, 4> modelSampling{ 1, 1, 0, 0 };
 +			std::array<float, 2> sceneColorMotionScale{};
 +			bool movingCrop = false;
-+			ComPtr<ID3D11Resource> alignmentMotionSource;
-+			ComPtr<ID3D11ShaderResourceView> alignmentMotionSRV;
++			Microsoft::WRL::ComPtr<ID3D11Resource> alignmentMotionSource;
++			Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> alignmentMotionSRV;
  			std::array<TierResources, kResolutionTierCount> tiers;
  			TemporalEyeState temporal;
  			ResultShapingEyeState resultShaping;
@@ -740,7 +740,7 @@ index 24d3561..8200d5c 100644
  		D3D12Interop interop;
  		Util::LazyShader<ID3D11ComputeShader> copyDepthGuideCS;
 +		Util::LazyShader<ID3D11ComputeShader> alignGuidesCS;
-+		ComPtr<ID3D11Buffer> alignGuidesCB;
++		Microsoft::WRL::ComPtr<ID3D11Buffer> alignGuidesCB;
  		Util::LazyShader<ID3D11ComputeShader> modelResolutionCS;
  		Util::LazyShader<ID3D11ComputeShader> temporalSnapshotCS;
  		Util::LazyShader<ID3D11ComputeShader> temporalAccumulateCS;
