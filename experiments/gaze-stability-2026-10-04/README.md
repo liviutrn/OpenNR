@@ -1,5 +1,8 @@
 # Moving gaze crop: coordinate investigation
 
+Follow-up for the user's 0.5× Performance SR setting:
+[Performance SR and historical gaze audit](performance-audit.md).
+
 Investigated the generated source for v6-r1, commit
 `b33f184e0a2b5c659351de625a40feb5381c8cda`. These are coordinate and
 sampling reproductions, not DLSS/Feature18 GPU measurements. No runtime
