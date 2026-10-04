@@ -1,0 +1,103 @@
+diff --git a/runtime/open-shaders/features/Upscaling/Shaders/Upscaling/NeuralRendering/LadderAtlasGuidesCS.hlsl b/runtime/open-shaders/features/Upscaling/Shaders/Upscaling/NeuralRendering/LadderAtlasGuidesCS.hlsl
+index d917f69..15ca121 100644
+--- a/runtime/open-shaders/features/Upscaling/Shaders/Upscaling/NeuralRendering/LadderAtlasGuidesCS.hlsl
++++ b/runtime/open-shaders/features/Upscaling/Shaders/Upscaling/NeuralRendering/LadderAtlasGuidesCS.hlsl
+@@ -30,10 +30,14 @@ void main(uint3 id : SV_DispatchThreadID)
+ 		origin.xy - origin.zw + raw * gMotionScale.xy;
+ 	const float2 previousModel = previousColor * float2(gPrevious.xy) / max(float2(gPrevious.zw), 1.0);
+ 	const float2 currentModel = (float2(pixel) + 0.5) * float2(gCurrent.xy) / float2(gCurrent.zw);
+-	const bool valid = gFlags.x != 0 && all(isfinite(raw)) && !any(asuint(raw) == 0x00800000u) &&
+-		all(previousModel >= 0.5) && all(previousModel <= float2(gPrevious.xy) - 0.5);
+-	float2 delta = previousModel - currentModel;
++	const bool sourceValid = all(isfinite(raw)) && !any(asuint(raw) == 0x00800000u);
++	const bool valid = gFlags.x != 0 && sourceValid &&
++		all(previousModel >= 0.5 - 0.001) && all(previousModel <= float2(gPrevious.xy) - 0.5 + 0.001);
++	const bool sameLayout = all(gCurrent.xy == gPrevious.xy) && all(gLayout.xy == gPrevious.zw);
++	float2 delta = sameLayout ? (origin.xy - origin.zw) * float2(gCurrent.xy) / float2(gLayout.xy) +
++		raw * gMotionScale.zw : previousModel - currentModel;
+ 	if (right) delta.x += float(gPrevious.x + gLayout.w) - float(gCurrent.x + gLayout.z);
+ 	const float2 rejection = float2(0.0, 2.0 * gFlags.z / gMotionScale.w);
+-	gMotion[id.xy] = valid ? delta / gMotionScale.zw : rejection;
++	const bool unchanged = sameLayout && all(origin.xy == origin.zw) && (!right || gLayout.z == gLayout.w);
++	gMotion[id.xy] = !sourceValid ? raw : valid ? (unchanged ? raw : delta / gMotionScale.zw) : rejection;
+ }
+diff --git a/runtime/open-shaders/src/Features/Upscaling/FoveatedRender.h b/runtime/open-shaders/src/Features/Upscaling/FoveatedRender.h
+index 50dafa2..bea5463 100644
+--- a/runtime/open-shaders/src/Features/Upscaling/FoveatedRender.h
++++ b/runtime/open-shaders/src/Features/Upscaling/FoveatedRender.h
+@@ -271,7 +271,7 @@ struct FoveatedRender
+ 		// and falls back to the persisted static crop whenever the native API is
+ 		// unavailable, stale, unfocused, or in a menu/loading context.
+ 		bool neuralRenderingEyeTrackedFoveation = false;
+-		float neuralRenderingEyeTrackedSmoothingMs = 60.0f;
++		float neuralRenderingEyeTrackedSmoothingMs = 0.0f;
+ 		uint neuralRenderingEyeTrackedQuantizationPixels = 0;
+ 		float neuralRenderingEyeTrackedDeadZonePercent = 0.0f;
+ 		bool neuralRenderingEyeTrackedAdaptiveSmoothing = true;
+diff --git a/runtime/open-shaders/src/Features/Upscaling/FoveatedRender/CropGeometry.h b/runtime/open-shaders/src/Features/Upscaling/FoveatedRender/CropGeometry.h
+index ed1fa7f..c1ac034 100644
+--- a/runtime/open-shaders/src/Features/Upscaling/FoveatedRender/CropGeometry.h
++++ b/runtime/open-shaders/src/Features/Upscaling/FoveatedRender/CropGeometry.h
+@@ -59,6 +59,12 @@ namespace FoveatedRenderImpl::CropGeometry
+ 		};
+ 	}
+ 
++	/** Native NR consumes guide-pixel units, independently of shader model-pixel reprojection. */
++	inline float NativeGuideMotionScale(float guideScale, std::uint32_t modelExtent, std::uint32_t colorExtent)
++	{
++		return colorExtent ? guideScale * static_cast<float>(modelExtent) / colorExtent : 0.0f;
++	}
++
+ 	inline std::array<float, 2> MotionVectorScale(std::uint32_t fullWidth, std::uint32_t fullHeight,
+ 		const PixelRect& crop)
+ 	{
+diff --git a/runtime/open-shaders/src/Features/Upscaling/GazeCropPolicy.h b/runtime/open-shaders/src/Features/Upscaling/GazeCropPolicy.h
+index 0d7ee9a..38ecbda 100644
+--- a/runtime/open-shaders/src/Features/Upscaling/GazeCropPolicy.h
++++ b/runtime/open-shaders/src/Features/Upscaling/GazeCropPolicy.h
+@@ -20,9 +20,9 @@ namespace FoveatedRenderImpl::GazeCropPolicy
+ 		const float dy = (sample[1] - previous[1]) * static_cast<float>(height);
+ 		const float distancePixels = std::sqrt(dx * dx + dy * dy);
+ 
+-		// Even with user smoothing at zero, damp only fixation-scale noise. Once
+-		// movement is clearly intentional the response becomes effectively direct.
+-		const float effectiveMs = requested > 0.0f ? requested : 8.0f;
++		if (requested == 0.0f)
++			return sample;
++		const float effectiveMs = requested;
+ 		const float baseAlpha = 1.0f - std::exp(-elapsed / std::max(effectiveMs, 0.1f));
+ 		const float motionBoost = std::clamp((distancePixels - 2.0f) / 24.0f, 0.0f, 1.0f);
+ 		const float alpha = std::clamp(baseAlpha + (1.0f - baseAlpha) * motionBoost, 0.0f, 1.0f);
+@@ -45,7 +45,8 @@ namespace FoveatedRenderImpl::GazeCropPolicy
+ 		const float microPixels = std::clamp(static_cast<float>(std::max(quantizationPixels, 1u)) * 0.25f, 1.5f, 3.0f);
+ 		const float microGuard = pixel * microPixels;
+ 		const float userGuard = std::clamp((std::isfinite(deadZonePercent) ? deadZonePercent : 0.0f) * 0.01f, 0.0f, 0.10f);
+-		const float guard = continuousOrigin ? userGuard : std::max(microGuard, userGuard);
++		const bool directOrigin = continuousOrigin || (deadZonePercent == 0.0f && quantizationPixels == 0u);
++		const float guard = directOrigin ? userGuard : std::max(microGuard, userGuard);
+ 		if (std::abs(desired - previous) <= guard)
+ 			return previous;
+ 
+diff --git a/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Renderer.cpp b/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Renderer.cpp
+index 68d12dc..24d3561 100644
+--- a/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Renderer.cpp
++++ b/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Renderer.cpp
+@@ -3,6 +3,7 @@
+ 
+ #include "D3D12Interop.h"
+ #include "RuntimePolicy.h"
++#include "../FoveatedRender/CropGeometry.h"
+ #include "Deferred.h"
+ #if defined(OPENNR_CAPTURE_ENABLED)
+ #include "Features/OpenNRCapture.h"
+@@ -3682,8 +3683,8 @@ namespace NeuralRendering
+ 					modelWidth, modelHeight, guideWidth, guideHeight, colorGuard, guideGuard);
+ 			}
+ 			if (!leftInput || !rightInput || !packed) return StereoAtlasResult::FallBack;
+-			const float motionScaleX = inputs[0].motionVectorScaleX * float(modelWidth) / (tuning.singlePassLadder ? guideWidth : colorWidth);
+-			const float motionScaleY = inputs[0].motionVectorScaleY * float(modelHeight) / (tuning.singlePassLadder ? guideHeight : colorHeight);
++			const float motionScaleX = FoveatedRenderImpl::CropGeometry::NativeGuideMotionScale(inputs[0].motionVectorScaleX, modelWidth, colorWidth);
++			const float motionScaleY = FoveatedRenderImpl::CropGeometry::NativeGuideMotionScale(inputs[0].motionVectorScaleY, modelHeight, colorHeight);
+ 
+ 			const bool enteringAtlas = !stereoAtlasActiveLastFrame;
+ 			const bool reset = stereoAtlasResetPending ||

@@ -42,6 +42,17 @@ for name in ("neuralRenderingLadderBudgetMs", "neuralRenderingLadderReserveMs", 
 require("gContinuousOrigin" not in gaze and "gDeadZonePercent" not in read(src / "GazeCropPolicy.h"),
         "Gaze policy still depends on global configuration")
 
+require("NativeGuideMotionScale(inputs[0].motionVectorScaleX, modelWidth, colorWidth)" in renderer and
+        "NativeGuideMotionScale(inputs[0].motionVectorScaleY, modelHeight, colorHeight)" in renderer,
+        "Native atlas motion scale diverges from legacy guide-pixel contract")
+ladder_shader = read(shaders / "NeuralRendering/LadderAtlasGuidesCS.hlsl")
+require("unchanged ? raw" in ladder_shader and "!sourceValid ? raw" in ladder_shader,
+        "Stationary/invalid atlas motion no longer preserves the source representation")
+require("raw * gMotionScale.zw : previousModel - currentModel" in ladder_shader,
+        "Equal-layout crop motion still subtracts large model coordinates")
+require("if (requested == 0.0f)" in read(src / "GazeCropPolicy.h"),
+        "Zero gaze smoothing still adds hidden filtering")
+
 layout_cpp = ["#include <array>\n#include <cstdint>\n"]
 contracts = [
     (src / "CropMotion.cpp", "Constants", shaders / "FoveatedRender/CropMotionCS.hlsl", 32),

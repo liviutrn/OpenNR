@@ -60,7 +60,7 @@ Feature18 dynamic-resolution or per-pixel-reset specification.
 ## Gaze controls
 
 Adaptive gaze smoothing is enabled by default. New configurations start with
-60 ms fixation smoothing and zero pixel quantization; existing saved values
+zero fixation smoothing and zero pixel quantization; existing saved values
 remain selected. Set smoothing to zero for a direct response.
 
 Controls: fixation smoothing, movement responsiveness, slow/fast movement zones,
@@ -209,3 +209,34 @@ corrections, SR-only invalidation, stereo writeback failure handling, removal of
 inactive controller state, and shared fail-safe sharpening. It also lists the
 remaining build/runtime and inherited feature gaps. `verify-stack.py` checks the
 specific integration invariants and CPU/HLSL buffer layouts before the CI build.
+
+## v06-r1 head-motion correction
+
+The user's headset test found head-motion flicker only with the forced one-pass
+atlas ladder; legacy behavior remained usable. Crop transitions no longer showed
+black borders. This revision retains the crop actuator/envelope/writeback fixes.
+
+The strict atlas sent native Feature18 guide motion scaled by model/guide extent;
+the legacy route scales it by model/color extent. At 100% model resolution the
+former inflates native motion by the SR color/guide ratio (1.5x at a 2/3 render
+scale). The native atlas now shares the legacy guide-unit conversion. Shader
+model-pixel coordinates still use their separate model/guide conversion.
+The strict guide pack also preserves raw motion exactly for unchanged crop/layout,
+avoiding cancellation of small motion against large absolute pixel coordinates.
+Compensated equal-layout moves use origin delta directly; invalid source-vector
+representations and overlap rejection remain intact. Packing offsets and previous
+model geometry still handle crop/resolution transitions.
+
+Zero fixation smoothing now means direct gaze samples in both filter modes.
+Zero deadzone plus zero quantization also bypasses the legacy hidden micro-guard.
+New configs default to zero smoothing; existing saved smoothing values are kept,
+so select zero explicitly when testing an existing installation. The adaptive
+filter remains an optional control. This correction adds no new blur/history pass
+and does not suppress real tracking loss or scene-cut resets.
+
+CI tests native/legacy scale parity over full/reduced guide sizes and 100/85/70
+NR resolutions, plus direct subpixel gaze responses in both origin modes.
+Shader checks guard exact unchanged motion and source-invalid preservation.
+Headset acceptance remains pending: stationary centre and live gaze, all five
+ladder states, head rotations/translations, shrink/growth, and tracking loss.
+Tracker noise and proprietary backend behavior cannot be certified from CPU tests.

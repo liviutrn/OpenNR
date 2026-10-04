@@ -1,0 +1,7 @@
+{
+  "runtime/open-shaders/features/Upscaling/Shaders/Upscaling/NeuralRendering/LadderAtlasGuidesCS.hlsl": "2142bf602564d181d195c527bf63468802653701ede5834dd697ab0557e2f6a0",
+  "runtime/open-shaders/src/Features/Upscaling/FoveatedRender.h": "b00ff3560c25a4344bae4a12f0024353fcc74c67fea0ad912dd01b7b874c1127",
+  "runtime/open-shaders/src/Features/Upscaling/GazeCropPolicy.h": "a02fae10ea8c565ba8305b0e15955ce4aedba6685b7c792e3adbb8ca6e5d2196",
+  "runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Renderer.cpp": "ece0cc15f3bde9855537b64fd843f7b6026f343d62cc4d1365254942329ff5e9",
+  "runtime/open-shaders/src/Features/Upscaling/FoveatedRender/CropGeometry.h": "a2a056e33be0b50f9bf37a80bbf2d786597bad923845b0429f07512316b2bdf5"
+}

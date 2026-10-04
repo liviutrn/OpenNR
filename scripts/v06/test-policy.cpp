@@ -220,7 +220,8 @@ int main()
 
 	const float continuous = ResolveOrigin(0.25f, 0.5005f, 0.5f, 1000, 0, true, true, 0);
 	const float legacy = ResolveOrigin(0.25f, 0.5005f, 0.5f, 1000, 0, true, false, 0);
-	assert(continuous > 0.25f && legacy == 0.25f);
+	assert(continuous > 0.25f && legacy == continuous);
+	assert(ResolveOrigin(0.25f, 0.5005f, 0.5f, 1000, 1, true, false, 0) == 0.25f);
 	assert(ResolveOrigin(0.25f, 0.5005f, 0.5f, 1000, 0, true, true, 1) == 0.25f);
 	assert(ResolveOrigin(0.9f, 1.0f, 0.8f, 1000, 0, true, true, 10) <= 0.2f);
 	assert(std::isfinite(ResolveOrigin(std::numeric_limits<float>::quiet_NaN(), 0.5f, 0.5f, 1000, 0, true)));
