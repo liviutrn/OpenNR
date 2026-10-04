@@ -1,0 +1,799 @@
+diff --git a/runtime/open-shaders/features/Upscaling/Shaders/Upscaling/FoveatedRender/SubrectBlendCS.hlsl b/runtime/open-shaders/features/Upscaling/Shaders/Upscaling/FoveatedRender/SubrectBlendCS.hlsl
+index 4a49083..d37e524 100644
+--- a/runtime/open-shaders/features/Upscaling/Shaders/Upscaling/FoveatedRender/SubrectBlendCS.hlsl
++++ b/runtime/open-shaders/features/Upscaling/Shaders/Upscaling/FoveatedRender/SubrectBlendCS.hlsl
+@@ -24,6 +24,8 @@ cbuffer BlendCB : register(b0)
+ 	float MaskRadiusX;     // Subrect-local oval radii, in pixels
+ 	float MaskRadiusY;
+ 	float _pad0;
++	float2 SourceScale;
++	float2 SourceOffset;
+ };
+ 
+ Texture2D<float4> SrcTex : register(t0);    // DLSS subrect output
+@@ -73,6 +75,20 @@ float FalloffAlpha(float normalizedDistance, float curve)
+ 	uint2 dstPos = uint2(tid.x + DstOffsetX, tid.y + DstOffsetY);
+ 
+ 	float4 dlss = SrcTex.Load(int3(srcPos, 0));
++	if (any(SourceScale != 1.0.xx) || any(SourceOffset != 0.0.xx)) {
++		const float2 position = clamp((float2(tid.xy) + 0.5) * SourceScale + SourceOffset,
++			0.5.xx, float2(SubWidth, SubHeight) - 0.5) - 0.5;
++		const uint2 first = uint2(floor(position));
++		const uint2 last = min(first + 1u, uint2(SubWidth, SubHeight) - 1u);
++		const float2 fraction = frac(position);
++		const uint2 offset = uint2(SrcOffsetX, 0);
++		dlss = lerp(lerp(SrcTex.Load(int3(first + offset, 0)), SrcTex.Load(int3(uint2(last.x, first.y) + offset, 0)), fraction.x),
++			lerp(SrcTex.Load(int3(uint2(first.x, last.y) + offset, 0)), SrcTex.Load(int3(last + offset, 0)), fraction.x), fraction.y);
++	}
++	if (BlendMode == 2u) {
++		DstTex[dstPos] = dlss;
++		return;
++	}
+ 
+ 	// Distance from the selected mask edge in subrect-local space.
+ 	//
+diff --git a/runtime/open-shaders/features/Upscaling/Shaders/Upscaling/NeuralRendering/AlignGuidesCS.hlsl b/runtime/open-shaders/features/Upscaling/Shaders/Upscaling/NeuralRendering/AlignGuidesCS.hlsl
+new file mode 100644
+index 0000000..2dfad98
+--- /dev/null
++++ b/runtime/open-shaders/features/Upscaling/Shaders/Upscaling/NeuralRendering/AlignGuidesCS.hlsl
+@@ -0,0 +1,22 @@
++cbuffer GuideAlignment : register(b0)
++{
++	uint2 gExtent;
++	uint2 gSourceOffset;
++	float2 gScale;
++	float2 gOffset;
++};
++Texture2D<float> gSourceDepth : register(t0);
++Texture2D<float2> gSourceMotion : register(t1);
++RWTexture2D<float> gDepth : register(u0);
++RWTexture2D<float2> gMotion : register(u1);
++
++[numthreads(8, 8, 1)]
++void main(uint3 id : SV_DispatchThreadID)
++{
++	if (any(id.xy >= gExtent)) return;
++	const float2 position = clamp((float2(id.xy) + 0.5) * gScale + gOffset,
++		0.5.xx, float2(gExtent) - 0.5);
++	const uint2 source = uint2(position) + gSourceOffset;
++	gDepth[id.xy] = gSourceDepth.Load(int3(source, 0));
++	gMotion[id.xy] = gSourceMotion.Load(int3(source, 0));
++}
+diff --git a/runtime/open-shaders/features/Upscaling/Shaders/Upscaling/NeuralRendering/LadderAtlasGuidesCS.hlsl b/runtime/open-shaders/features/Upscaling/Shaders/Upscaling/NeuralRendering/LadderAtlasGuidesCS.hlsl
+index 15ca121..bd9f8dc 100644
+--- a/runtime/open-shaders/features/Upscaling/Shaders/Upscaling/NeuralRendering/LadderAtlasGuidesCS.hlsl
++++ b/runtime/open-shaders/features/Upscaling/Shaders/Upscaling/NeuralRendering/LadderAtlasGuidesCS.hlsl
+@@ -7,6 +7,9 @@ cbuffer LadderAtlas : register(b0)
+ 	float4 gRightOrigin;
+ 	float4 gMotionScale; // scene color pixels, native model pixels
+ 	uint4 gFlags; // previous valid, guide guard, resident model height, padding
++	float4 gModelPitch;
++	float4 gLeftPhase;
++	float4 gRightPhase;
+ };
+ Texture2D<float2> gLeftMotion : register(t0);
+ Texture2D<float2> gRightMotion : register(t1);
+@@ -22,22 +25,27 @@ void main(uint3 id : SV_DispatchThreadID)
+ 	if (id.x >= rightStart + gCurrent.z || id.y >= gCurrent.w) return;
+ 	const bool right = id.x >= rightStart;
+ 	const uint x = right ? id.x - rightStart : min(id.x, gCurrent.z - 1);
+-	const uint2 pixel = uint2(x, id.y);
++	const float4 origin = right ? gRightOrigin : gLeftOrigin;
++	const float4 phase = right ? gRightPhase : gLeftPhase;
++	const float2 currentModel = (float2(x, id.y) + 0.5) * float2(gCurrent.xy) / float2(gCurrent.zw);
++	const float2 currentColor = currentModel * gModelPitch.xy + phase.xy;
++	const uint2 pixel = uint2(clamp(currentColor * float2(gCurrent.zw) / float2(gLayout.xy),
++		0.0.xx, float2(gCurrent.zw) - 1.0));
+ 	const float2 raw = right ? gRightMotion.Load(int3(pixel,0)) : gLeftMotion.Load(int3(pixel,0));
+ 	gDepth[id.xy] = right ? gRightDepth.Load(int3(pixel,0)) : gLeftDepth.Load(int3(pixel,0));
+-	const float4 origin = right ? gRightOrigin : gLeftOrigin;
+-	const float2 previousColor = (float2(pixel) + 0.5) * float2(gLayout.xy) / float2(gCurrent.zw) +
+-		origin.xy - origin.zw + raw * gMotionScale.xy;
+-	const float2 previousModel = previousColor * float2(gPrevious.xy) / max(float2(gPrevious.zw), 1.0);
+-	const float2 currentModel = (float2(pixel) + 0.5) * float2(gCurrent.xy) / float2(gCurrent.zw);
++	const float2 previousColor = currentColor + origin.xy - origin.zw + raw * gMotionScale.xy;
++	const float2 previousModel = (previousColor - phase.zw) / max(gModelPitch.zw, 1e-6);
++
+ 	const bool sourceValid = all(isfinite(raw)) && !any(asuint(raw) == 0x00800000u);
+ 	const bool valid = gFlags.x != 0 && sourceValid &&
+ 		all(previousModel >= 0.5 - 0.001) && all(previousModel <= float2(gPrevious.xy) - 0.5 + 0.001);
+-	const bool sameLayout = all(gCurrent.xy == gPrevious.xy) && all(gLayout.xy == gPrevious.zw);
+-	float2 delta = sameLayout ? (origin.xy - origin.zw) * float2(gCurrent.xy) / float2(gLayout.xy) +
+-		raw * gMotionScale.zw : previousModel - currentModel;
++	const bool sameLayout = all(gCurrent.xy == gPrevious.xy) && all(gLayout.xy == gPrevious.zw) && all(gModelPitch.xy == gModelPitch.zw);
++	float2 delta = sameLayout ? (origin.xy - origin.zw + phase.xy - phase.zw +
++		raw * gMotionScale.xy) / gModelPitch.xy : previousModel - currentModel;
+ 	if (right) delta.x += float(gPrevious.x + gLayout.w) - float(gCurrent.x + gLayout.z);
+ 	const float2 rejection = float2(0.0, 2.0 * gFlags.z / gMotionScale.w);
+-	const bool unchanged = sameLayout && all(origin.xy == origin.zw) && (!right || gLayout.z == gLayout.w);
++	const bool unchanged = sameLayout && all(origin.xy == origin.zw) && all(phase.xy == phase.zw) &&
++		all(abs(gMotionScale.xy / gModelPitch.xy - gMotionScale.zw) <= 1e-5 * abs(gMotionScale.zw)) &&
++		(!right || gLayout.z == gLayout.w);
+ 	gMotion[id.xy] = !sourceValid ? raw : valid ? (unchanged ? raw : delta / gMotionScale.zw) : rejection;
+ }
+diff --git a/runtime/open-shaders/features/Upscaling/Shaders/Upscaling/NeuralRendering/ModelResolutionCS.hlsl b/runtime/open-shaders/features/Upscaling/Shaders/Upscaling/NeuralRendering/ModelResolutionCS.hlsl
+index e1cd15c..f050721 100644
+--- a/runtime/open-shaders/features/Upscaling/Shaders/Upscaling/NeuralRendering/ModelResolutionCS.hlsl
++++ b/runtime/open-shaders/features/Upscaling/Shaders/Upscaling/NeuralRendering/ModelResolutionCS.hlsl
+@@ -12,6 +12,8 @@ cbuffer ModelResolutionParams : register(b0)
+ 	float gPadding0;
+ 	float gPadding1;
+ 	float gPadding2;
++	float2 gSampleScale;
++	float2 gSampleOffset;
+ };
+ 
+ Texture2D<float4> gProxy : register(t0);
+@@ -77,35 +79,33 @@ float3 PreserveModelHue(float3 scaledModel, float3 model)
+ // full-resolution source before Feature 18 sees it.
+ float4 SampleExactArea(uint2 targetPixel)
+ {
+-	const float2 sourceSize = float2(max(gSourceWidth, 1u), max(gSourceHeight, 1u));
+-	const float2 targetSize = float2(max(gWidth, 1u), max(gHeight, 1u));
+-	const float2 begin = float2(targetPixel) * sourceSize / targetSize;
+-	const float2 end = float2(targetPixel + 1u) * sourceSize / targetSize;
+-	const uint2 sourceLast = uint2(max(gSourceWidth, 1u) - 1u, max(gSourceHeight, 1u) - 1u);
+-	const uint2 first = min(uint2(floor(begin)), sourceLast);
+-	const uint2 last = min(uint2(max(ceil(end) - 1.0, 0.0)), sourceLast);
++	const float2 begin = float2(targetPixel) * gSampleScale + gSampleOffset;
++	const float2 end = float2(targetPixel + 1u) * gSampleScale + gSampleOffset;
++	const int2 sourceLast = int2(max(gSourceWidth, 1u), max(gSourceHeight, 1u)) - 1;
++	const int2 first = int2(floor(begin));
++	const int2 last = int2(ceil(end)) - 1;
+ 
+ 	float4 sum = 0.0;
+ 	[loop]
+-	for (uint y = first.y; y <= last.y; ++y) {
+-		const float yWeight = max(0.0, min(end.y, float(y + 1u)) - max(begin.y, float(y)));
++	for (int y = first.y; y <= last.y; ++y) {
++		const float yWeight = max(0.0, min(end.y, float(y + 1)) - max(begin.y, float(y)));
+ 		[loop]
+-		for (uint x = first.x; x <= last.x; ++x) {
+-			const float xWeight = max(0.0, min(end.x, float(x + 1u)) - max(begin.x, float(x)));
+-			sum += gProxy.Load(int3(x, y, 0)) * (xWeight * yWeight);
++		for (int x = first.x; x <= last.x; ++x) {
++			const float xWeight = max(0.0, min(end.x, float(x + 1)) - max(begin.x, float(x)));
++			sum += gProxy.Load(int3(clamp(int2(x, y), int2(0, 0), sourceLast), 0)) * (xWeight * yWeight);
+ 		}
+ 	}
+ 
+ 	return sum / max((end.x - begin.x) * (end.y - begin.y), 1e-6);
+ }
+ 
+-float4 SampleValidSource(Texture2D<float4> source, float2 uv)
++float4 SampleValidSource(Texture2D<float4> source, float2 position)
+ {
+ 	uint width, height;
+ 	source.GetDimensions(width, height);
+ 	const float2 validSize = float2(gSourceWidth, gSourceHeight);
+ 	// Clamp to valid texel centers; sampler clamping alone includes unused envelope pixels.
+-	const float2 pixel = clamp(uv * validSize, 0.5, validSize - 0.5);
++	const float2 pixel = clamp(position, 0.5, validSize - 0.5);
+ 	return source.SampleLevel(gLinear, pixel / float2(width, height), 0);
+ }
+ 
+@@ -115,10 +115,10 @@ void main(uint3 id : SV_DispatchThreadID)
+ 	if (id.x >= gWidth || id.y >= gHeight)
+ 		return;
+ 
+-	const float2 uv = (float2(id.xy) + 0.5) / float2(gWidth, gHeight);
++	const float2 position = (float2(id.xy) + 0.5) * gSampleScale + gSampleOffset;
+ 	if (gMode == 0)
+ 	{
+-		gTarget[id.xy] = SampleValidSource(gProxy, uv);
++		gTarget[id.xy] = SampleValidSource(gProxy, position);
+ 		return;
+ 	}
+ 	if (gMode == 2)
+@@ -127,8 +127,8 @@ void main(uint3 id : SV_DispatchThreadID)
+ 		return;
+ 	}
+ 
+-	const float3 proxy = SampleValidSource(gProxy, uv).rgb;
+-	const float3 model = SampleValidSource(gModel, uv).rgb;
++	const float3 proxy = SampleValidSource(gProxy, position).rgb;
++	const float3 model = SampleValidSource(gModel, position).rgb;
+ 	const float4 originalSample = gOriginal.Load(int3(id.xy, 0));
+ 	const float3 original = max(originalSample.rgb, float3(0.0, 0.0, 0.0));
+ 	if (gMode == 3)
+diff --git a/runtime/open-shaders/src/Features/Upscaling/FoveatedRender/Bridge.h b/runtime/open-shaders/src/Features/Upscaling/FoveatedRender/Bridge.h
+index 3f6d680..02dd0a7 100644
+--- a/runtime/open-shaders/src/Features/Upscaling/FoveatedRender/Bridge.h
++++ b/runtime/open-shaders/src/Features/Upscaling/FoveatedRender/Bridge.h
+@@ -1,6 +1,7 @@
+ #pragma once
+ 
+ #include <array>
++#include "CropGeometry.h"
+ 
+ // FoveatedRenderImpl::Bridge — single point of contact between the FoveatedRender
+ // subsystem and the rest of Community Shaders (Upscaling, Streamline).
+@@ -36,4 +37,24 @@ namespace FoveatedRenderImpl::Bridge
+ 	// (e.g. menus, frames where foveated is skipped).
+ 	inline bool foveatedEvaluating = false;
+ 	inline bool gazeHistoryReset = false;
++	inline CropGeometry::FramePlan currentCrop{}, previousCrop{};
++	inline uint32_t cropFrame = UINT32_MAX, previousCropFrame = UINT32_MAX;
++	inline bool cropHistoryValid = false;
++
++	/** Publish the SR crop without advancing its successfully reconstructed history. */
++	inline void SetCropForFrame(uint32_t frame, const CropGeometry::FramePlan& plan)
++	{
++		currentCrop = plan;
++		cropFrame = frame;
++	}
++
++	/** Advance crop camera history only after both SR eyes have succeeded. */
++	inline void CommitCropFrame(bool succeeded)
++	{
++		cropHistoryValid = succeeded;
++		if (succeeded) {
++			previousCrop = currentCrop;
++			previousCropFrame = cropFrame;
++		}
++	}
+ }
+diff --git a/runtime/open-shaders/src/Features/Upscaling/FoveatedRender/Core.cpp b/runtime/open-shaders/src/Features/Upscaling/FoveatedRender/Core.cpp
+index 0de8107..85827b5 100644
+--- a/runtime/open-shaders/src/Features/Upscaling/FoveatedRender/Core.cpp
++++ b/runtime/open-shaders/src/Features/Upscaling/FoveatedRender/Core.cpp
+@@ -1,4 +1,5 @@
+ #include "Core.h"
++#include "Bridge.h"
+ #include "Ops.h"
+ #include "../CropMotion.h"
+ 
+@@ -1129,8 +1130,10 @@ namespace FoveatedRenderImpl::Ops
+ 		float MaskRadiusX;
+ 		float MaskRadiusY;
+ 		float _pad0;
++		std::array<float, 2> SourceScale;
++		std::array<float, 2> SourceOffset;
+ 	};
+-	static_assert(sizeof(BlendCB) == 64);
++	static_assert(sizeof(BlendCB) == 80);
+ 
+ 	uint64_t ComputeSubrectUVHash(const Util::Subrect::UVRegion& leftUV,
+ 		const Util::Subrect::UVRegion& rightUV, uint32_t mode, bool includeOrigins)
+@@ -1189,11 +1192,14 @@ namespace FoveatedRenderImpl::Ops
+ 	}
+ 
+ 	bool BlendSubrectToOutput(ID3D11Resource* dlssSrc, ID3D11Resource* dst, ID3D11UnorderedAccessView* dstUAV,
+-		uint32_t dstOffsetX, uint32_t dstOffsetY, uint32_t subWidth, uint32_t subHeight, uint32_t srcOffsetX)
++		uint32_t dstOffsetX, uint32_t dstOffsetY, uint32_t subWidth, uint32_t subHeight, uint32_t srcOffsetX,
++		const CropGeometry::Sampling* sampling)
+ 	{
+ 		auto context = globals::d3d::context;
+ 		auto& foveated = globals::features::upscaling.foveatedRender;
+ 		auto blendMode = foveated.GetSubrectBlendMode();
++		const auto map = sampling ? *sampling : CropGeometry::Sampling{};
++		const bool resample = map.scale != std::array<float, 2>{ 1, 1 } || map.offset != std::array<float, 2>{};
+ 		const bool adaptiveMask = foveated.IsAdaptiveCropRuntimeActive();
+ 		if (adaptiveMask)
+ 			blendMode = FoveatedRender::SubrectBlendMode::kFeather;
+@@ -1201,13 +1207,15 @@ namespace FoveatedRenderImpl::Ops
+ 			blendMode = FoveatedRender::SubrectBlendMode::kFeather;
+ 
+ 		// Fast path: hard copy (original behaviour)
+-		if (blendMode == FoveatedRender::SubrectBlendMode::kHardCopy) {
++		if (blendMode == FoveatedRender::SubrectBlendMode::kHardCopy && !resample) {
+ 			D3D11_BOX srcBox = { srcOffsetX, 0, 0, srcOffsetX + subWidth, subHeight, 1 };
+ 			context->CopySubresourceRegion(dst, 0, dstOffsetX, dstOffsetY, 0, dlssSrc, 0, &srcBox);
+ 			return true;
+ 		}
+ 
+ 		if (!dstUAV) {
++			if (resample)
++				return false;
+ 			// No UAV available — fall back to hard copy
+ 			D3D11_BOX srcBox = { srcOffsetX, 0, 0, srcOffsetX + subWidth, subHeight, 1 };
+ 			context->CopySubresourceRegion(dst, 0, dstOffsetX, dstOffsetY, 0, dlssSrc, 0, &srcBox);
+@@ -1281,7 +1289,8 @@ namespace FoveatedRenderImpl::Ops
+ 			cb->DstOffsetY = dstOffsetY;
+ 			cb->SubWidth = subWidth;
+ 			cb->SubHeight = subHeight;
+-			cb->BlendMode = (blendMode == FoveatedRender::SubrectBlendMode::kDither) ? 1 : 0;
++			cb->BlendMode = blendMode == FoveatedRender::SubrectBlendMode::kHardCopy ? 2u :
++				(blendMode == FoveatedRender::SubrectBlendMode::kDither ? 1u : 0u);
+ 			cb->MaskMode = (foveated.GetSubrectMaskMode() == FoveatedRender::SubrectMaskMode::kOval) ? 1 : 0;
+ 			cb->FrameIndex = globals::state->frameCount;
+ 			cb->SrcOffsetX = srcOffsetX;
+@@ -1304,6 +1313,8 @@ namespace FoveatedRenderImpl::Ops
+ 			cb->MaskRadiusX *= maskScale;
+ 			cb->MaskRadiusY *= maskScale;
+ 			cb->_pad0 = maskScale;
++			cb->SourceScale = map.scale;
++			cb->SourceOffset = map.offset;
+ 			if (adaptiveMask)
+ 				cb->FeatherWidth = std::max(cb->FeatherWidth, 32.0f);
+ 			context->Unmap(Core::vrSubrectBlendCB.get(), 0);
+@@ -1732,6 +1743,7 @@ namespace FoveatedRenderImpl
+ 
+ 	void Core::InvalidateTemporalState(bool resetNeuralHistory)
+ 	{
++		Bridge::cropHistoryValid = false;
+ 		CropMotion::Invalidate();
+ 		// A crop can move without changing the intermediate dimensions. In that
+ 		// case resource recreation alone is insufficient: the old guide snapshot,
+diff --git a/runtime/open-shaders/src/Features/Upscaling/FoveatedRender/CropGeometry.h b/runtime/open-shaders/src/Features/Upscaling/FoveatedRender/CropGeometry.h
+index c1ac034..e1e2c80 100644
+--- a/runtime/open-shaders/src/Features/Upscaling/FoveatedRender/CropGeometry.h
++++ b/runtime/open-shaders/src/Features/Upscaling/FoveatedRender/CropGeometry.h
+@@ -21,6 +21,12 @@ namespace FoveatedRenderImpl::CropGeometry
+ 		PixelRect output;
+ 	};
+ 
++	struct Sampling
++	{
++		std::array<float, 2> scale{ 1.0f, 1.0f };
++		std::array<float, 2> offset{};
++	};
++
+ 	struct FramePlan
+ 	{
+ 		std::uint32_t fullInputWidth = 0;
+@@ -53,10 +59,68 @@ namespace FoveatedRenderImpl::CropGeometry
+ 		std::uint32_t fullInputWidth, std::uint32_t fullInputHeight,
+ 		std::uint32_t fullOutputWidth, std::uint32_t fullOutputHeight)
+ 	{
+-		return {
+-			.input = MakePixelRect(x, y, width, height, fullInputWidth, fullInputHeight),
+-			.output = MakePixelRect(x, y, width, height, fullOutputWidth, fullOutputHeight),
++		const auto input = MakePixelRect(x, y, width, height, fullInputWidth, fullInputHeight);
++		if (!input.width || !input.height || !fullOutputWidth || !fullOutputHeight)
++			return {};
++		const auto extent = [](std::uint32_t crop, std::uint32_t source, std::uint32_t target) {
++			return std::clamp(static_cast<std::uint32_t>(std::lround(double(crop) * target / source)), 1u, target);
+ 		};
++		const auto outWidth = extent(input.width, fullInputWidth, fullOutputWidth);
++		const auto outHeight = extent(input.height, fullInputHeight, fullOutputHeight);
++		return { input, {
++			std::min(static_cast<std::uint32_t>(std::uint64_t(input.x) * fullOutputWidth / fullInputWidth), fullOutputWidth - outWidth),
++			std::min(static_cast<std::uint32_t>(std::uint64_t(input.y) * fullOutputHeight / fullInputHeight), fullOutputHeight - outHeight),
++			outWidth, outHeight } };
++	}
++
++	/** Map display-grid centers to the crop-local SR sampling grid. */
++	inline Sampling ColorSampling(const FramePlan& plan, std::uint32_t eye)
++	{
++		Sampling result;
++		const auto& crop = plan.eyes[eye];
++		if (!crop.input.width || !crop.input.height || !plan.fullOutputWidth || !plan.fullOutputHeight)
++			return result;
++		result.scale = {
++			float(double(plan.fullInputWidth) * crop.output.width / (double(plan.fullOutputWidth) * crop.input.width)),
++			float(double(plan.fullInputHeight) * crop.output.height / (double(plan.fullOutputHeight) * crop.input.height)) };
++		result.offset = {
++			float((double(crop.output.x) * plan.fullInputWidth / plan.fullOutputWidth - crop.input.x) * crop.output.width / crop.input.width),
++			float((double(crop.output.y) * plan.fullInputHeight / plan.fullOutputHeight - crop.input.y) * crop.output.height / crop.input.height) };
++		return result;
++	}
++
++	/** Map display-aligned guide centers to the original cropped render guides. */
++	inline Sampling GuideSampling(const FramePlan& plan, std::uint32_t eye)
++	{
++		auto result = ColorSampling(plan, eye);
++		const auto& crop = plan.eyes[eye];
++		if (crop.output.width && crop.output.height) {
++			result.offset[0] *= float(crop.input.width) / crop.output.width;
++			result.offset[1] *= float(crop.input.height) / crop.output.height;
++		}
++		return result;
++	}
++
++	/** Describe a reduced model grid anchored to full-eye color coordinates. */
++	inline std::array<float, 4> ModelSampling(std::uint32_t colorWidth, std::uint32_t colorHeight,
++		std::uint32_t modelWidth, std::uint32_t modelHeight, std::uint32_t percent,
++		std::uint32_t originX, std::uint32_t originY, bool anchored)
++	{
++		const double pitchX = anchored ? 100.0 / std::max(percent, 1u) : double(colorWidth) / std::max(modelWidth, 1u);
++		const double pitchY = anchored ? 100.0 / std::max(percent, 1u) : double(colorHeight) / std::max(modelHeight, 1u);
++		return { float(pitchX), float(pitchY),
++			anchored ? float(std::floor(double(originX) / pitchX) * pitchX - originX) : 0.0f,
++			anchored ? float(std::floor(double(originY) / pitchY) * pitchY - originY) : 0.0f };
++	}
++
++	/** Return scale and translation for full-eye NDC to cropped NDC. */
++	inline std::array<float, 4> ClipTransform(std::uint32_t fullWidth, std::uint32_t fullHeight, const PixelRect& crop)
++	{
++		if (!crop.width || !crop.height)
++			return { 1, 1, 0, 0 };
++		return { float(fullWidth) / crop.width, float(fullHeight) / crop.height,
++			float((double(fullWidth) - 2.0 * crop.x - crop.width) / crop.width),
++			float((2.0 * crop.y + crop.height - fullHeight) / crop.height) };
+ 	}
+ 
+ 	/** Native NR consumes guide-pixel units, independently of shader model-pixel reprojection. */
+diff --git a/runtime/open-shaders/src/Features/Upscaling/FoveatedRender/Modes.cpp b/runtime/open-shaders/src/Features/Upscaling/FoveatedRender/Modes.cpp
+index 5cf72d5..72ae8ad 100644
+--- a/runtime/open-shaders/src/Features/Upscaling/FoveatedRender/Modes.cpp
++++ b/runtime/open-shaders/src/Features/Upscaling/FoveatedRender/Modes.cpp
+@@ -91,6 +91,10 @@ namespace FoveatedRenderImpl
+ 		}
+ 
+ 		Bridge::gazeHistoryReset = p.eyeTrackedGazeReset;
++		if (p.mode == FoveatedRender::DlssMode::kDefault)
++			Bridge::SetCropForFrame(frame, p.cropPlan);
++		else
++			Bridge::cropFrame = UINT32_MAX;
+ 		Bridge::foveatedEvaluating = true;
+ 		Core::neuralGuidesFrame = UINT32_MAX;
+ 		bool result = (p.mode == FoveatedRender::DlssMode::kFaster) ?
+@@ -98,6 +102,7 @@ namespace FoveatedRenderImpl
+ 		                  ExecuteDefaultMode(streamline, p);
+ 		for (uint32_t eye = 0; eye < 2; ++eye)
+ 			CropMotion::Commit(eye, result && Core::neuralGuidesFrame == frame && p.eyeTrackedGazeConfigured && !p.isFullEye);
++		Bridge::CommitCropFrame(result && Core::neuralGuidesFrame == frame && Bridge::cropFrame == frame);
+ 		if (result && Core::neuralGuidesFrame == frame) {
+ 			Core::neuralCropPlan = p.cropPlan;
+ 			Core::neuralCropPlanFrame = frame;
+@@ -172,10 +177,12 @@ namespace FoveatedRenderImpl
+ 		// is already at a reduced tier: restoration must not grow the backing set one
+ 		// tier at a time and recreate resources again.
+ 		const auto selectedCrop = globals::features::upscaling.foveatedRender.subrectController.GetUV();
+-		const uint32_t envelopeSubInW = fixedEnvelopeCandidate ? std::max(allocSubInW, static_cast<uint32_t>(p.eyeWidthIn * selectedCrop.w)) : allocSubInW;
+-		const uint32_t envelopeSubInH = fixedEnvelopeCandidate ? std::max(allocSubInH, static_cast<uint32_t>(p.eyeHeightIn * selectedCrop.h)) : allocSubInH;
+-		const uint32_t envelopeSubOutW = fixedEnvelopeCandidate ? std::max(allocSubOutW, static_cast<uint32_t>(p.eyeWidthOut * selectedCrop.w)) : allocSubOutW;
+-		const uint32_t envelopeSubOutH = fixedEnvelopeCandidate ? std::max(allocSubOutH, static_cast<uint32_t>(p.eyeHeightOut * selectedCrop.h)) : allocSubOutH;
++		const auto envelopePlan = CropGeometry::MakeEyePlan(selectedCrop.x, selectedCrop.y, selectedCrop.w, selectedCrop.h,
++			p.eyeWidthIn, p.eyeHeightIn, p.eyeWidthOut, p.eyeHeightOut);
++		const uint32_t envelopeSubInW = fixedEnvelopeCandidate ? std::max(allocSubInW, envelopePlan.input.width) : allocSubInW;
++		const uint32_t envelopeSubInH = fixedEnvelopeCandidate ? std::max(allocSubInH, envelopePlan.input.height) : allocSubInH;
++		const uint32_t envelopeSubOutW = fixedEnvelopeCandidate ? std::max(allocSubOutW, envelopePlan.output.width) : allocSubOutW;
++		const uint32_t envelopeSubOutH = fixedEnvelopeCandidate ? std::max(allocSubOutH, envelopePlan.output.height) : allocSubOutH;
+ 
+ 
+ 		const auto frame = globals::state ? globals::state->frameCount : 0;
+@@ -278,8 +285,9 @@ namespace FoveatedRenderImpl
+ 			uint32_t dstCropX = crop.output.x;
+ 			uint32_t dstCropY = crop.output.y;
+ 			uint32_t dstX = (i == 1 ? p.eyeWidthOut : 0) + dstCropX;
++			const auto sampling = CropGeometry::ColorSampling(p.cropPlan, i);
+ 			if (!BlendSubrectToOutput(Core::vrSubrectColorOut[i]->resource.get(), p.colorDst, p.colorDstUAV,
+-					dstX, dstCropY, subOutW, subOutH)) {
++					dstX, dstCropY, subOutW, subOutH, 0, &sampling)) {
+ 				logger::error("[FOVEATED] ExecuteDefaultMode subrect blend failed for eye {} — falling back", i);
+ 				return false;
+ 			}
+diff --git a/runtime/open-shaders/src/Features/Upscaling/FoveatedRender/Ops.h b/runtime/open-shaders/src/Features/Upscaling/FoveatedRender/Ops.h
+index ed522b5..782319c 100644
+--- a/runtime/open-shaders/src/Features/Upscaling/FoveatedRender/Ops.h
++++ b/runtime/open-shaders/src/Features/Upscaling/FoveatedRender/Ops.h
+@@ -1,4 +1,5 @@
+ #pragma once
++#include "CropGeometry.h"
+ 
+ #include "Core.h"
+ #include "Utils/Subrect.h"
+@@ -87,7 +88,8 @@ namespace FoveatedRenderImpl::Ops
+ 	// kHardCopy fast-paths to CopySubresourceRegion; Feather/Dither dispatch
+ 	// SubrectBlendCS into dstUAV.
+ 	bool BlendSubrectToOutput(ID3D11Resource* dlssSrc, ID3D11Resource* dst, ID3D11UnorderedAccessView* dstUAV,
+-		uint32_t dstOffsetX, uint32_t dstOffsetY, uint32_t subWidth, uint32_t subHeight, uint32_t srcOffsetX = 0);
++		uint32_t dstOffsetX, uint32_t dstOffsetY, uint32_t subWidth, uint32_t subHeight, uint32_t srcOffsetX = 0,
++		const CropGeometry::Sampling* sampling = nullptr);
+ 
+ 	// Set by the NR-only coverage route while it composites: a hard-copy edge mode
+ 	// is upgraded to feathering so the NR rectangle never shows as a hard seam.
+diff --git a/runtime/open-shaders/src/Features/Upscaling/FoveatedRender/Params.cpp b/runtime/open-shaders/src/Features/Upscaling/FoveatedRender/Params.cpp
+index 5e3ee2d..18c2c96 100644
+--- a/runtime/open-shaders/src/Features/Upscaling/FoveatedRender/Params.cpp
++++ b/runtime/open-shaders/src/Features/Upscaling/FoveatedRender/Params.cpp
+@@ -88,6 +88,10 @@ namespace FoveatedRenderImpl
+ 			p.eyeWidthIn, p.eyeHeightIn, p.eyeWidthOut, p.eyeHeightOut);
+ 		p.cropPlan.eyes[1] = CropGeometry::MakeEyePlan(p.rightUV.x, p.rightUV.y, p.rightUV.w, p.rightUV.h,
+ 			p.eyeWidthIn, p.eyeHeightIn, p.eyeWidthOut, p.eyeHeightOut);
++		if (p.mode == FoveatedRender::DlssMode::kFaster) {
++			p.cropPlan.eyes[0].output = CropGeometry::MakePixelRect(p.leftUV.x, p.leftUV.y, p.leftUV.w, p.leftUV.h, p.eyeWidthOut, p.eyeHeightOut);
++			p.cropPlan.eyes[1].output = CropGeometry::MakePixelRect(p.rightUV.x, p.rightUV.y, p.rightUV.w, p.rightUV.h, p.eyeWidthOut, p.eyeHeightOut);
++		}
+ 		return p;
+ 	}
+ }
+diff --git a/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Integration.cpp b/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Integration.cpp
+index 454f67e..1f0784d 100644
+--- a/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Integration.cpp
++++ b/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Integration.cpp
+@@ -822,6 +822,12 @@ Tuning tuning{
+ 				.guideSourceX = coverageCrop ? coverageRect.guideX : 0u,
+ 				.guideSourceY = coverageCrop ? coverageRect.guideY : 0u,
+ 			};
++			inputs[eye].sceneColorMotionScale = { float(eyeWidth), float(totalDesc.Height) };
++			if (sharedCropPlan && !fullEye && foveated.GetDlssMode() == FoveatedRender::DlssMode::kDefault) {
++				const auto sampling = FoveatedRenderImpl::CropGeometry::GuideSampling(cropPlan, eye);
++				inputs[eye].guideScale = sampling.scale;
++				inputs[eye].guideOffset = sampling.offset;
++			}
+ 		}
+ 		Tuning tuning = GetTuning(foveated, true);
+ 		if (!fullEye && tuning.adaptiveResolution && !tuning.adaptiveHandoff && !adaptiveCropHandoffDisabledLogged) {
+diff --git a/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Renderer.cpp b/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Renderer.cpp
+index 24d3561..8200d5c 100644
+--- a/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Renderer.cpp
++++ b/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Renderer.cpp
+@@ -603,6 +603,11 @@ namespace NeuralRendering
+ 			SharedTexture color;
+ 			SharedTexture depth;
+ 			SharedTexture motionVectors;
++			std::array<float, 4> modelSampling{ 1, 1, 0, 0 };
++			std::array<float, 2> sceneColorMotionScale{};
++			bool movingCrop = false;
++			ComPtr<ID3D11Resource> alignmentMotionSource;
++			ComPtr<ID3D11ShaderResourceView> alignmentMotionSRV;
+ 			std::array<TierResources, kResolutionTierCount> tiers;
+ 			TemporalEyeState temporal;
+ 			ResultShapingEyeState resultShaping;
+@@ -664,6 +669,10 @@ namespace NeuralRendering
+ 
+ 			auto& eye = eyes[eyeIndex];
+ 			auto& tier = eye.tiers[tierIndex];
++			eye.movingCrop = false;
++			eye.sceneColorMotionScale = {};
++			eye.modelSampling = FoveatedRenderImpl::CropGeometry::ModelSampling(colorWidth, colorHeight,
++				modelWidth, modelHeight, modelResolution, 0, 0, false);
+ 			if (!tuning.adaptiveResolution || !tuning.adaptiveHandoff)
+ 				eye.handoff.valid = false;
+ 			context->CopyResource(eye.color.resource11.Get(), color);
+@@ -993,6 +1002,11 @@ namespace NeuralRendering
+ 				};
+ 				auto& eye = eyes[eyeIndex];
+ 				auto& tier = eye.tiers[tierIndex];
++				eye.movingCrop = input.compensateCropMotion;
++				eye.sceneColorMotionScale = input.sceneColorMotionScale;
++				eye.modelSampling = FoveatedRenderImpl::CropGeometry::ModelSampling(colorWidth, colorHeight,
++					modelWidth, modelHeight, modelResolution, input.sourceX, input.sourceY,
++					tuning.singlePassLadder && input.compensateCropMotion);
+ 				if (!tuning.adaptiveResolution || !tuning.adaptiveHandoff)
+ 					eye.handoff.valid = false;
+ 				context->CopySubresourceRegion(eye.color.resource11.Get(), 0, 0, 0, 0, color, 0, &sourceBox);
+@@ -1004,8 +1018,8 @@ namespace NeuralRendering
+ 					bool reset = stereoAtlasActiveLastFrame ? stereoAtlasResetPending : resetPending[eyeIndex][tierIndex];
+ 					ID3D11Resource* nrMotion = FoveatedRenderImpl::CropMotion::Prepare(2 + eyeIndex, input.motionVectors,
+ 						{ input.sourceX, input.sourceY, colorWidth, colorHeight }, guideWidth, guideHeight,
+-						{ input.motionVectorScaleX * float(modelWidth) / colorWidth / guideWidth,
+-						  input.motionVectorScaleY * float(modelHeight) / colorHeight / guideHeight },
++						{ input.sceneColorMotionScale[0] > 0 ? input.sceneColorMotionScale[0] / colorWidth : input.motionVectorScaleX / guideWidth,
++						  input.sceneColorMotionScale[1] > 0 ? input.sceneColorMotionScale[1] / colorHeight : input.motionVectorScaleY / guideHeight },
+ 						globals::state->frameCount, reset);
+ 					if (!nrMotion)
+ 						return LatchFailure("crop motion preparation", E_FAIL);
+@@ -1563,6 +1577,8 @@ namespace NeuralRendering
+ 			failureLatched = false;
+ 			failureOperation.clear();
+ 			copyDepthGuideCS.Reset();
++			alignGuidesCS.Reset();
++			alignGuidesCB.Reset();
+ 			modelResolutionCS.Reset();
+ 			temporalSnapshotCS.Reset();
+ 			temporalAccumulateCS.Reset();
+@@ -1617,6 +1633,8 @@ namespace NeuralRendering
+ 		void ClearShaderCache()
+ 		{
+ 			copyDepthGuideCS.Reset();
++			alignGuidesCS.Reset();
++			alignGuidesCB.Reset();
+ 			modelResolutionCS.Reset();
+ 			temporalSnapshotCS.Reset();
+ 			temporalAccumulateCS.Reset();
+@@ -1986,6 +2004,8 @@ namespace NeuralRendering
+ 			const bool bridgeActive = tuning.singlePassLadder && state.transitionRemainingMs > 0.0f;
+ 			const bool hasDepth = eye.depth.srv11 && eye.depth.resource11;
+ 			std::uint32_t stabilizeMode = stabilizeAllowed && hasDepth ? (bridgeActive ? 2u : tuning.stabilizeMode) : 0u;
++			if (eye.movingCrop && stabilizeMode == 1u)
++				stabilizeMode = 2u;
+ 			if (stabilizeMode == 2u && (!eye.motionVectors.srv11 || !std::isfinite(motionScaleX) || !std::isfinite(motionScaleY)))
+ 				stabilizeMode = 0;
+ 			if (!nrOutput || !nrOutputSRV || !eye.color.srv11 || !context ||
+@@ -2022,8 +2042,8 @@ namespace NeuralRendering
+ 			constants.guideWidth = guideWidth;
+ 			constants.guideHeight = guideHeight;
+ 			// Motion stabilization offsets color-pixel positions; convert from guide pixels.
+-			constants.motionScaleX = GuideToColorMotionScale(motionScaleX, colorWidth, guideWidth);
+-			constants.motionScaleY = GuideToColorMotionScale(motionScaleY, colorHeight, guideHeight);
++			constants.motionScaleX = eye.sceneColorMotionScale[0] > 0 ? eye.sceneColorMotionScale[0] : GuideToColorMotionScale(motionScaleX, colorWidth, guideWidth);
++			constants.motionScaleY = eye.sceneColorMotionScale[1] > 0 ? eye.sceneColorMotionScale[1] : GuideToColorMotionScale(motionScaleY, colorHeight, guideHeight);
+ 			constants.frameDeltaSeconds = frameDeltaSeconds;
+ 			constants.stabilizeTimeMs = bridgeActive ? tuning.ladderHandoffMs : tuning.stabilizeTimeMs;
+ 			constants.editStrength = tuning.resultEditStrength;
+@@ -2474,6 +2494,8 @@ namespace NeuralRendering
+ 			float padding0 = 0.0f;
+ 			float padding1 = 0.0f;
+ 			float padding2 = 0.0f;
++			std::array<float, 2> sampleScale{ 1, 1 };
++			std::array<float, 2> sampleOffset{};
+ 		};
+ 		static_assert(sizeof(ModelResolutionConstants) % 16 == 0);
+ 
+@@ -2526,6 +2548,8 @@ namespace NeuralRendering
+ 				.sourceWidth = sourceWidth,
+ 				.sourceHeight = sourceHeight,
+ 			};
++			constants.sampleScale = { eye.modelSampling[0], eye.modelSampling[1] };
++			constants.sampleOffset = { eye.modelSampling[2], eye.modelSampling[3] };
+ 			context->UpdateSubresource(modelResolutionCB.Get(), 0, nullptr, &constants, 0, 0);
+ 			ID3D11ShaderResourceView* source = eye.color.srv11.Get();
+ 			ID3D11UnorderedAccessView* target = tier.modelInput.uav11.Get();
+@@ -2561,6 +2585,8 @@ namespace NeuralRendering
+ 				.maxRatio = resolveSettings.maxRatio,
+ 				.residualStrength = resolveSettings.residualStrength,
+ 			};
++			constants.sampleScale = { 1.0f / eye.modelSampling[0], 1.0f / eye.modelSampling[1] };
++			constants.sampleOffset = { -eye.modelSampling[2] / eye.modelSampling[0], -eye.modelSampling[3] / eye.modelSampling[1] };
+ 			context->UpdateSubresource(modelResolutionCB.Get(), 0, nullptr, &constants, 0, 0);
+ 			ID3D11ShaderResourceView* sources[3]{
+ 				tier.modelInput.srv11.Get(), tier.output.srv11.Get(), eye.color.srv11.Get()
+@@ -2799,6 +2825,55 @@ namespace NeuralRendering
+ 		// float depth source (the VR per-eye intermediates) is copied directly, which
+ 		// also supports the NR-only coverage offset; other depth formats keep the
+ 		// conversion dispatch and must start at the origin.
++		struct GuideAlignmentConstants
++		{
++			std::array<std::uint32_t, 2> extent{}, sourceOffset{};
++			std::array<float, 2> scale{}, offset{};
++		};
++		static_assert(sizeof(GuideAlignmentConstants) == 32);
++
++		bool AlignStereoGuides(ID3D11DeviceContext* context, const StereoEyeInput& input,
++			EyeResources& eye, std::uint32_t width, std::uint32_t height)
++		{
++			auto* device = globals::d3d::device;
++			auto* shader = alignGuidesCS.Get(L"Data\\Shaders\\Upscaling\\NeuralRendering\\AlignGuidesCS.hlsl", {},
++				"cs_5_0", "main", "NeuralRendering::AlignGuides");
++			if (!device || !shader || !input.depthSRV) return false;
++			if (!alignGuidesCB) {
++				D3D11_BUFFER_DESC desc{};
++				desc.ByteWidth = sizeof(GuideAlignmentConstants);
++				desc.Usage = D3D11_USAGE_DEFAULT;
++				desc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
++				if (FAILED(device->CreateBuffer(&desc, nullptr, alignGuidesCB.GetAddressOf()))) return false;
++				Util::SetResourceName(alignGuidesCB.Get(), "NeuralRendering::GuideAlignmentCB");
++			}
++			if (eye.alignmentMotionSource.Get() != input.motionVectors || !eye.alignmentMotionSRV) {
++				eye.alignmentMotionSRV.Reset();
++				if (FAILED(device->CreateShaderResourceView(input.motionVectors, nullptr, eye.alignmentMotionSRV.GetAddressOf()))) return false;
++				eye.alignmentMotionSource = input.motionVectors;
++				Util::SetResourceName(eye.alignmentMotionSRV.Get(), "NeuralRendering::AlignmentMotion SRV");
++			}
++			CS_GPU_PASS("NeuralRendering::AlignGuides");
++			const GuideAlignmentConstants data{ { width, height }, { input.guideSourceX, input.guideSourceY }, input.guideScale, input.guideOffset };
++			context->UpdateSubresource(alignGuidesCB.Get(), 0, nullptr, &data, 0, 0);
++			ID3D11Buffer* cb = alignGuidesCB.Get();
++			ID3D11ShaderResourceView* sources[]{ input.depthSRV, eye.alignmentMotionSRV.Get() };
++			ID3D11UnorderedAccessView* targets[]{ eye.depth.uav11.Get(), eye.motionVectors.uav11.Get() };
++			context->CSSetShader(shader, nullptr, 0);
++			context->CSSetConstantBuffers(0, 1, &cb);
++			context->CSSetShaderResources(0, 2, sources);
++			context->CSSetUnorderedAccessViews(0, 2, targets, nullptr);
++			context->Dispatch((width + 7) / 8, (height + 7) / 8, 1);
++			ID3D11ShaderResourceView* nullSources[2]{};
++			ID3D11UnorderedAccessView* nullTargets[2]{};
++			context->CSSetShaderResources(0, 2, nullSources);
++			context->CSSetUnorderedAccessViews(0, 2, nullTargets, nullptr);
++			ID3D11Buffer* nullCB = nullptr;
++			context->CSSetConstantBuffers(0, 1, &nullCB);
++			context->CSSetShader(nullptr, nullptr, 0);
++			return true;
++		}
++
+ 		bool CopyStereoGuides(ID3D11DeviceContext* context, const StereoEyeInput& input, EyeResources& eye,
+ 			std::uint32_t guideWidth, std::uint32_t guideHeight)
+ 		{
+@@ -2809,6 +2884,8 @@ namespace NeuralRendering
+ 			const std::uint64_t bottom = static_cast<std::uint64_t>(input.guideSourceY) + guideHeight;
+ 			if (right > depthDesc.Width || bottom > depthDesc.Height || right > motionDesc.Width || bottom > motionDesc.Height)
+ 				return false;
++			if (input.guideScale != std::array<float, 2>{ 1, 1 } || input.guideOffset != std::array<float, 2>{})
++				return AlignStereoGuides(context, input, eye, guideWidth, guideHeight);
+ 			const D3D11_BOX box{ input.guideSourceX, input.guideSourceY, 0,
+ 				static_cast<UINT>(right), static_cast<UINT>(bottom), 1 };
+ 			if (IsR32DepthFormat(depthDesc.Format) && depthDesc.SampleDesc.Count == 1) {
+@@ -3537,6 +3614,7 @@ namespace NeuralRendering
+ 		{
+ 			std::uint32_t modelWidth = 0, modelHeight = 0, colorWidth = 0, colorHeight = 0, guard = 0, frame = UINT32_MAX;
+ 			std::array<std::array<std::uint32_t, 2>, 2> origins{};
++			std::array<std::array<float, 4>, 2> sampling{};
+ 			bool valid = false;
+ 		};
+ 		struct LadderAtlasConstants
+@@ -3544,8 +3622,9 @@ namespace NeuralRendering
+ 			std::array<std::uint32_t, 4> current{}, previous{}, layout{};
+ 			std::array<float, 4> leftOrigin{}, rightOrigin{}, motionScale{};
+ 			std::array<std::uint32_t, 4> flags{};
++			std::array<float, 4> modelPitch{}, leftPhase{}, rightPhase{};
+ 		};
+-		static_assert(sizeof(LadderAtlasConstants) == 112);
++		static_assert(sizeof(LadderAtlasConstants) == 160);
+ 
+ 		bool PackLadderGuides(ID3D11Device* device, ID3D11DeviceContext* context,
+ 			const std::array<StereoEyeInput, 2>& inputs,
+@@ -3575,10 +3654,15 @@ namespace NeuralRendering
+ 				auto& origin = eye ? data.rightOrigin : data.leftOrigin;
+ 				origin = { float(inputs[eye].sourceX), float(inputs[eye].sourceY),
+ 					float(ladderAtlasGeometry.origins[eye][0]), float(ladderAtlasGeometry.origins[eye][1]) };
++				auto& phase = eye ? data.rightPhase : data.leftPhase;
++				phase = { eyes[eye].modelSampling[2], eyes[eye].modelSampling[3],
++					ladderAtlasGeometry.sampling[eye][2], ladderAtlasGeometry.sampling[eye][3] };
+ 			}
++			data.modelPitch = { eyes[0].modelSampling[0], eyes[0].modelSampling[1],
++				ladderAtlasGeometry.sampling[0][0], ladderAtlasGeometry.sampling[0][1] };
+ 			data.motionScale = {
+-				GuideToColorMotionScale(inputs[0].motionVectorScaleX, colorWidth, guideWidth),
+-				GuideToColorMotionScale(inputs[0].motionVectorScaleY, colorHeight, guideHeight),
++				inputs[0].sceneColorMotionScale[0] > 0 ? inputs[0].sceneColorMotionScale[0] : GuideToColorMotionScale(inputs[0].motionVectorScaleX, colorWidth, guideWidth),
++				inputs[0].sceneColorMotionScale[1] > 0 ? inputs[0].sceneColorMotionScale[1] : GuideToColorMotionScale(inputs[0].motionVectorScaleY, colorHeight, guideHeight),
+ 				inputs[0].motionVectorScaleX * float(modelWidth) / guideWidth,
+ 				inputs[0].motionVectorScaleY * float(modelHeight) / guideHeight };
+ 			if (!std::isfinite(data.motionScale[2]) || !std::isfinite(data.motionScale[3]) ||
+@@ -3750,7 +3834,8 @@ namespace NeuralRendering
+ 			if (tuning.singlePassLadder) {
+ 				ladderAtlasGeometry = { modelWidth, modelHeight, colorWidth, colorHeight, colorGuard,
+ 					globals::state->frameCount,
+-					{{ { inputs[0].sourceX, inputs[0].sourceY }, { inputs[1].sourceX, inputs[1].sourceY } }}, true };
++					{{ { inputs[0].sourceX, inputs[0].sourceY }, { inputs[1].sourceX, inputs[1].sourceY } }},
++					{ eyes[0].modelSampling, eyes[1].modelSampling }, true };
+ 			} else ladderAtlasGeometry.valid = false;
+ 			stereoAtlasResetPending = false;
+ 			stereoAtlasActiveLastFrame = true;
+@@ -3776,6 +3861,8 @@ namespace NeuralRendering
+ 
+ 		D3D12Interop interop;
+ 		Util::LazyShader<ID3D11ComputeShader> copyDepthGuideCS;
++		Util::LazyShader<ID3D11ComputeShader> alignGuidesCS;
++		ComPtr<ID3D11Buffer> alignGuidesCB;
+ 		Util::LazyShader<ID3D11ComputeShader> modelResolutionCS;
+ 		Util::LazyShader<ID3D11ComputeShader> temporalSnapshotCS;
+ 		Util::LazyShader<ID3D11ComputeShader> temporalAccumulateCS;
+diff --git a/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Renderer.h b/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Renderer.h
+index 49b1866..504ac08 100644
+--- a/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Renderer.h
++++ b/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Renderer.h
+@@ -30,6 +30,9 @@ namespace NeuralRendering
+ 			// only for NR-only coverage, which crops full-eye guides without a copy pass.
+ 			std::uint32_t guideSourceX = 0;
+ 			std::uint32_t guideSourceY = 0;
++			std::array<float, 2> guideScale{ 1.0f, 1.0f };
++			std::array<float, 2> guideOffset{};
++			std::array<float, 2> sceneColorMotionScale{};
+ 			};
+ 
+ 			// Optional stable resource envelope for the adaptive regular-crop
+diff --git a/runtime/open-shaders/src/Features/Upscaling/Streamline.cpp b/runtime/open-shaders/src/Features/Upscaling/Streamline.cpp
+index 80ddb36..41210a9 100644
+--- a/runtime/open-shaders/src/Features/Upscaling/Streamline.cpp
++++ b/runtime/open-shaders/src/Features/Upscaling/Streamline.cpp
+@@ -460,11 +460,33 @@ bool Streamline::CheckFrameConstants(sl::ViewportHandle p_viewport, uint32_t eye
+ 	const auto& frameBuffer = globals::game::frameBufferCached;
+ 	const auto& cameraPosition = frameBuffer.GetCameraPosAdjust(eyeIndex);
+ 	const auto& previousCameraPosition = frameBuffer.GetCameraPreviousPosAdjust(eyeIndex);
+-	const auto cameraMatrices = UpscalingCamera::BuildReprojection(
++	auto cameraMatrices = UpscalingCamera::BuildReprojection(
+ 		viewMatrix,
+ 		frameBuffer.GetCameraViewProjUnjittered(eyeIndex).Transpose(),
+ 		frameBuffer.GetCameraPreviousViewProjUnjittered(eyeIndex).Transpose(),
+ 		float3(cameraPosition.x - previousCameraPosition.x, cameraPosition.y - previousCameraPosition.y, cameraPosition.z - previousCameraPosition.z));
++	if (FoveatedRenderImpl::Bridge::foveatedEvaluating && FoveatedRenderImpl::Bridge::cropFrame == frame) {
++		const auto& current = FoveatedRenderImpl::Bridge::currentCrop;
++		const bool previousValid = FoveatedRenderImpl::Bridge::cropHistoryValid &&
++			uint32_t(frame - FoveatedRenderImpl::Bridge::previousCropFrame) == 1u;
++		const auto& previous = previousValid ? FoveatedRenderImpl::Bridge::previousCrop : current;
++		const auto cropMatrix = [](const FoveatedRenderImpl::CropGeometry::FramePlan& plan, uint32_t eye) {
++			auto matrix = DirectX::SimpleMath::Matrix::Identity;
++			const auto transform = FoveatedRenderImpl::CropGeometry::ClipTransform(plan.fullInputWidth, plan.fullInputHeight, plan.eyes[eye].input);
++			matrix._11 = transform[0]; matrix._22 = transform[1];
++			matrix._41 = transform[2]; matrix._42 = transform[3];
++			return matrix;
++		};
++		cameraMatrices = UpscalingCamera::BuildReprojection(viewMatrix,
++			frameBuffer.GetCameraViewProjUnjittered(eyeIndex).Transpose() * cropMatrix(current, eyeIndex),
++			frameBuffer.GetCameraPreviousViewProjUnjittered(eyeIndex).Transpose() * cropMatrix(previous, eyeIndex),
++			float3(cameraPosition.x - previousCameraPosition.x, cameraPosition.y - previousCameraPosition.y, cameraPosition.z - previousCameraPosition.z));
++		const auto& crop = current.eyes[eyeIndex].input;
++		if (crop.width && crop.height && current.fullInputHeight) {
++			slConstants.cameraAspectRatio = float(crop.width) / crop.height;
++			slConstants.cameraFOV = 2.0f * std::atan(std::tan(slConstants.cameraFOV * 0.5f) * float(crop.height) / current.fullInputHeight);
++		}
++	}
+ 
+ 	slConstants.cameraMotionIncluded = sl::Boolean::eTrue;
+ 	slConstants.cameraPinholeOffset = { 0.f, 0.f };

@@ -48,16 +48,19 @@ require("NativeGuideMotionScale(inputs[0].motionVectorScaleX, modelWidth, colorW
 ladder_shader = read(shaders / "NeuralRendering/LadderAtlasGuidesCS.hlsl")
 require("unchanged ? raw" in ladder_shader and "!sourceValid ? raw" in ladder_shader,
         "Stationary/invalid atlas motion no longer preserves the source representation")
-require("raw * gMotionScale.zw : previousModel - currentModel" in ladder_shader,
+require("/ gModelPitch.xy : previousModel - currentModel" in ladder_shader,
         "Equal-layout crop motion still subtracts large model coordinates")
 require("if (requested == 0.0f)" in read(src / "GazeCropPolicy.h"),
         "Zero gaze smoothing still adds hidden filtering")
 
-layout_cpp = ["#include <array>\n#include <cstdint>\n"]
+layout_cpp = ["#include <array>\n#include <cstdint>\nusing std::uint32_t;\n"]
 contracts = [
     (src / "CropMotion.cpp", "Constants", shaders / "FoveatedRender/CropMotionCS.hlsl", 32),
     (src / "NeuralRendering/Renderer.cpp", "ResultShapingConstants", shaders / "NeuralRendering/ResultShapingCS.hlsl", 160),
-    (src / "NeuralRendering/Renderer.cpp", "LadderAtlasConstants", shaders / "NeuralRendering/LadderAtlasGuidesCS.hlsl", 112),
+    (src / "NeuralRendering/Renderer.cpp", "LadderAtlasConstants", shaders / "NeuralRendering/LadderAtlasGuidesCS.hlsl", 160),
+    (src / "NeuralRendering/Renderer.cpp", "ModelResolutionConstants", shaders / "NeuralRendering/ModelResolutionCS.hlsl", 64),
+    (src / "NeuralRendering/Renderer.cpp", "GuideAlignmentConstants", shaders / "NeuralRendering/AlignGuidesCS.hlsl", 32),
+    (src / "FoveatedRender/Core.cpp", "BlendCB", shaders / "FoveatedRender/SubrectBlendCS.hlsl", 80),
 ]
 for cpp_path, name, hlsl_path, expected_bytes in contracts:
     cpp = read(cpp_path)
@@ -65,10 +68,10 @@ for cpp_path, name, hlsl_path, expected_bytes in contracts:
     require(match is not None, f"Missing CPU buffer {name}")
     body = match.group(1)
     cpu = []
-    for field in re.finditer(r"(std::array<(float|std::uint32_t),\s*(\d+)>|float|std::uint32_t)\s+([^;]+);", body):
+    for field in re.finditer(r"(std::array<(float|std::uint32_t),\s*(\d+)>|float|std::uint32_t|uint32_t)\s+([^;]+);", body):
         kind = "float" if "float" in field.group(1) else "uint"
         count = int(field.group(3) or 1)
-        declarations = field.group(4).split(",")
+        declarations = re.sub(r"\{[^}]*\}", "", field.group(4)).split(",")
         cpu.extend([kind] * count * len(declarations))
     hlsl = re.sub(r"//[^\n]*", "", read(hlsl_path))
     hlsl_body = re.search(r"cbuffer\s+\w+[^\{]*\{(.*?)\};", hlsl, re.S).group(1)
@@ -103,4 +106,4 @@ layout_cpp.append("""int main() {
 }\n""")
 if args.write_layout_cpp:
     args.write_layout_cpp.write_text("".join(layout_cpp), encoding="utf-8")
-print("v6 integration contracts and three CPU/HLSL buffer layouts passed")
+print("v6 integration contracts and six CPU/HLSL buffer layouts passed")

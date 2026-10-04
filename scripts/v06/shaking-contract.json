@@ -1,0 +1,16 @@
+{
+  "runtime/open-shaders/features/Upscaling/Shaders/Upscaling/FoveatedRender/SubrectBlendCS.hlsl": "16dbf74813aaa9ce09ebcea8c95d9b073d2c6f987e956d2ff02d3f505f3efb3d",
+  "runtime/open-shaders/features/Upscaling/Shaders/Upscaling/NeuralRendering/AlignGuidesCS.hlsl": null,
+  "runtime/open-shaders/features/Upscaling/Shaders/Upscaling/NeuralRendering/LadderAtlasGuidesCS.hlsl": "d0947450a68cf10da6c9f8d5ce1e99d9567e175289554cfea4b4e70d6d0293b7",
+  "runtime/open-shaders/features/Upscaling/Shaders/Upscaling/NeuralRendering/ModelResolutionCS.hlsl": "f65c4fe07b77cb6b4701955f8047185a1dcd5786a8d7f54cdf4842dcf0eb3a91",
+  "runtime/open-shaders/src/Features/Upscaling/FoveatedRender/Bridge.h": "d8e352e35a71abbd0de7063dc29200b195143bcae271620de75348e04b92d7a4",
+  "runtime/open-shaders/src/Features/Upscaling/FoveatedRender/Core.cpp": "21397bd8f781ac1b00e02aad7358dec3faae25d637257b712bc18ee0163a5a0e",
+  "runtime/open-shaders/src/Features/Upscaling/FoveatedRender/CropGeometry.h": "6e7c417b54c3a0f6b3f5643f84182cede6580baeccd981ed2de6ad0a8d149c53",
+  "runtime/open-shaders/src/Features/Upscaling/FoveatedRender/Modes.cpp": "3599af23851de142c82774d4358c5623f89818daf481075adf52055448a47cb6",
+  "runtime/open-shaders/src/Features/Upscaling/FoveatedRender/Ops.h": "2acd0bfe989dae57461fb1c0cf4eeecec1b80d2e8a3273ec883dd32306e01432",
+  "runtime/open-shaders/src/Features/Upscaling/FoveatedRender/Params.cpp": "ff08d64bff0fd173b36b60f18b29c48276bec55822da0c3ae0e9f633a2fcf9aa",
+  "runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Integration.cpp": "ca0bbe5f158dd00eb054ab9c37943f87be894cf9fffc5311502ffb049a948386",
+  "runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Renderer.cpp": "129c808df63cd28129f0ff30e8a9035c505cb735808f1f7b82a5336aebabb8e8",
+  "runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Renderer.h": "b7790cb0fd30a1e218dcc2bc78ffa9540545f24cde8ba5646d4a5924fc499cfc",
+  "runtime/open-shaders/src/Features/Upscaling/Streamline.cpp": "136a27a06d61183b55eb0ecaf2374a391d28120564d0a5eb92620e7587e7ed0f"
+}

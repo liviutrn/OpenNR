@@ -240,3 +240,61 @@ Shader checks guard exact unchanged motion and source-invalid preservation.
 Headset acceptance remains pending: stationary centre and live gaze, all five
 ladder states, head rotations/translations, shrink/growth, and tracking loss.
 Tracker noise and proprietary backend behavior cannot be certified from CPU tests.
+
+
+## v06-r2 crop-grid correction
+
+The user clarified the causal history: original OpenNR flickered/regenerated
+while moving gaze but did not shake; the initial gaze-history fix removed
+flicker/regeneration and introduced trembling. The current r1 version has no
+flicker/regeneration. This revision targets image-coordinate correspondence,
+not an additional gaze filter. Pre-SR is unchanged at the user's request.
+
+The retained port of the initial history fix is compared against r1. Its
+current-to-previous motion sign is correct. The old local SR and NR placement
+independently rounded render and display rectangles. For DLSS Performance,
+an output origin could advance one display pixel without an input-pixel move;
+retained NR history then compensated motion absent from the local SR image.
+This mismatch was present beneath the history change, but keeping history
+exposed its inconsistency. CPU reproduction establishes the mismatch, not
+that it accounts for every headset symptom.
+
+- Default-mode SR derives its output rectangle from the actual input pixels.
+  At Performance's exact 2:1 ratio the mapping is identity and uses no added
+  resampling pass. Other ratios align color in the existing writeback shader
+  and, when necessary, align depth/motion guides to the same display positions.
+- Cropped SR camera transforms describe the current and previous cropped
+  frusta; ordinary gaze changes preserve history. Engine TAA jitter remains
+  separate, and existing motion-vector flags/native scale contracts remain.
+- Legacy NR crop compensation removes the extra model-resolution factor.
+  Physical displacement must remain identical at 100%, 85%, or 70% NR.
+- The moving strict single-pass atlas anchors reduced-model sampling to a
+  fixed full-image lattice. Downsampling, depth/motion packing, history, and
+  resolve use the same pitch/phase. Previous crop/model dimensions and packed
+  right-eye origins remain part of history correspondence and rejection.
+- An optional same-pixel result stabilizer uses motion reprojection while
+  the gaze crop can move. Zero stabilization still adds no continuous filter;
+  the existing configurable ladder-transition bridge is retained.
+
+The FPS decision policy, pass counts, budget/hold/retry settings, neural tuning,
+sequential pass tuning, shaping controls, crop transition masks, resource
+identity rules, and carrier requirement remain. Full-eye/flat model resizing
+keeps its original nominal ratio; Faster mode retains its original placement.
+Real tracking loss, scene cuts, incompatible resource contracts, and gaps
+still invalidate temporal state. Ordinary same-size gaze movement does not
+request DLSS resource recreation or history resets.
+
+Verification includes crop/world-marker and guide alignment across integer
+and noninteger SR ratios, 100/85/70 model correspondence, crop/model changes,
+flat-path resize parity, successful stereo-frame history ownership, existing
+controller/overlap/zero-filter tests, six CPU/HLSL constant-buffer layouts,
+compilation of all six involved shaders, and the full Windows runtime build.
+The CPU sweep reproduces 4,566 mismatches in the old Performance crop geometry.
+Headset acceptance remains required; CPU/CI checks cannot certify zero shakes.
+
+Test with DLSS Performance, deadzone 0, pixel deadzone/quantization 0, fixation
+smoothing 0, and both optional filter modes. Compare NR disabled, legacy NR,
+and forced one-pass atlas; then test all ladder stages, neural fine tuning,
+head rotations/translations, crop growth/shrink, tracking loss, and scene cuts.
+Record whether any motion remains in the SR base or only the NR residual.
+The package excludes nvngx_dlssnr.dll; retain the existing carrier.
