@@ -1,0 +1,51 @@
+name: Audit OpenNR v06-r3 package
+on:
+  push:
+    branches: ["verify/2.20.1-v06-r3-package"]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  audit:
+    runs-on: windows-2025
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Wait for exact corrected r3 build
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $headers = @{ Authorization = "Bearer $env:GH_TOKEN"; Accept = 'application/vnd.github+json' }
+          for ($attempt = 0; $attempt -lt 50; $attempt++) {
+            $run = Invoke-RestMethod -Headers $headers -Uri 'https://api.github.com/repos/liviutrn/OpenNR/actions/runs/37334488430'
+            if ($run.head_sha -ne '4dfcd4d2fdc547d3d8bdc9dff713016506e9299b') { throw 'Wrong build source' }
+            if ($run.status -eq 'completed') {
+              if ($run.conclusion -ne 'success') { throw "Build failed: $($run.conclusion)" }
+              Write-Host 'Exact corrected r3 build completed successfully'
+              exit 0
+            }
+            Write-Host 'Waiting for corrected r3 package'
+            Start-Sleep -Seconds 20
+          }
+          throw 'Package build timed out'
+      - uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: 37241596759
+          name: OpenNR-2.20.1-v06-r2-gaze-grid-carrier-excluded
+          path: artifacts/r2
+      - uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: 37334488430
+          name: OpenNR-2.20.1-v06-r3-outside-tone-carrier-excluded
+          path: artifacts/r3
+      - name: Verify all archive data, retained r2 payloads and new runtime
+        run: python scripts/v06/audit-r3-package.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: OpenNR-v06-r3-package-audit
+          path: audit-results/*
+          retention-days: 14
+          if-no-files-found: error
