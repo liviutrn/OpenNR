@@ -1,5 +1,9 @@
 # OpenNR 2.20.1-v06-r4 — boundary tone matching
 
+**Built and package-audited:** [Download r4](https://github.com/liviutrn/OpenNR/actions/runs/37346929262/artifacts/11361958002) · [Build](https://github.com/liviutrn/OpenNR/actions/runs/37346929262) · [Package audit](https://github.com/liviutrn/OpenNR/actions/runs/37347213177).
+
+Windows shader/DLL compilation and regression checks passed. The package adds one smoothing shader, changes the two existing tone shaders and DLL, removes nothing, and preserves every other r3 payload. Headset quality and GPU cost remain pending.
+
 r4 replaces the inset-dependent outside-tone estimate with local **gain plus offset** matching. It measures the completed NR crop **before the outer crop feather**, so a weak feathered edge does not hide the tone change and a large inset does not borrow tone from a distant surface.
 
 ## Changes from r3
