@@ -1,0 +1,51 @@
+name: Audit OpenNR v06-r4 package
+on:
+  push:
+    branches: ["verify/2.20.1-v06-r4-package"]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  audit:
+    runs-on: windows-2025
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - name: Wait for exact r4 build
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $headers = @{ Authorization = "Bearer $env:GH_TOKEN"; Accept = 'application/vnd.github+json' }
+          for ($attempt = 0; $attempt -lt 65; $attempt++) {
+            $run = Invoke-RestMethod -Headers $headers -Uri 'https://api.github.com/repos/liviutrn/OpenNR/actions/runs/37346929262'
+            if ($run.head_sha -ne '196780498dc3e19cacdc6ed9ac02d18fde677481') { throw 'Wrong build source' }
+            if ($run.status -eq 'completed') {
+              if ($run.conclusion -ne 'success') { throw "Build failed: $($run.conclusion)" }
+              Write-Host 'Exact r4 build completed successfully'
+              exit 0
+            }
+            Write-Host 'Waiting for r4 package'
+            Start-Sleep -Seconds 20
+          }
+          throw 'Package build timed out'
+      - uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: 37334488430
+          name: OpenNR-2.20.1-v06-r3-outside-tone-carrier-excluded
+          path: artifacts/r3
+      - uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: 37346929262
+          name: OpenNR-2.20.1-v06-r4-boundary-tone-carrier-excluded
+          path: artifacts/r4
+      - name: Verify archive data, retained r3 payloads and new runtime
+        run: python scripts/v06/audit-r4-package.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: OpenNR-v06-r4-package-audit
+          path: audit-results/*
+          retention-days: 14
+          if-no-files-found: error
