@@ -1,0 +1,13 @@
+{
+  "cpu_only": true,
+  "image_cases": 210,
+  "max_overlap_error": 7.073366135035286e-07,
+  "unanchored_overlap_error": 0.369539180285234,
+  "constant_field_error": 0.0,
+  "flat_extent_error": 4.661083221435547e-05,
+  "matrix_cases": 2000,
+  "max_matrix_ndc_error": 1.284215640495745e-07,
+  "atlas_cases": 3240,
+  "atlas_rejections": 1620,
+  "max_atlas_world_error": 1.1368683772161603e-13
+}
