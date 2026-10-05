@@ -1,0 +1,14 @@
+{
+  "runtime/open-shaders/features/Upscaling/Shaders/Upscaling/NeuralRendering/OutsideToneApplyCS.hlsl": null,
+  "runtime/open-shaders/features/Upscaling/Shaders/Upscaling/NeuralRendering/OutsideToneMapCS.hlsl": null,
+  "runtime/open-shaders/src/Features/RemoteControl/DevBenchBridge.cpp": "d74c39d670e8a12d27bf910dca0d77cfe8b5d4a63f633bff7327cfc4687fbee3",
+  "runtime/open-shaders/src/Features/Upscaling.cpp": "0d8472263adccf8c8e9a9a69f1219d240db1249e941bdeb9c459d158931af9d8",
+  "runtime/open-shaders/src/Features/Upscaling/FoveatedRender.cpp": "c9e1d52065f8266ff4dd5dc32bb67f81c815fd11162f34829b354f8f748312f9",
+  "runtime/open-shaders/src/Features/Upscaling/FoveatedRender.h": "7af2804d5c42168179bb2cf24c19c58db59cf005eabf947b8d1e412af2d0d392",
+  "runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Integration.cpp": "ee525ff5e7361e011a5eff2c0a6be53f2808798e3dc7bf528c1582fd53ca15bd",
+  "runtime/open-shaders/src/Features/Upscaling/NeuralRendering/OutsideTone.cpp": null,
+  "runtime/open-shaders/src/Features/Upscaling/NeuralRendering/OutsideTone.h": null,
+  "runtime/open-shaders/src/Features/Upscaling/NeuralRendering/OutsideTonePolicy.h": null,
+  "runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Renderer.cpp": "af2c072b3f0d435e751315b39aadacc5b3a5e19cd612d60cef0742509d2a9bb7",
+  "runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Renderer.h": "1bb3073e8edbe2e3bb60fb1ed415e279f226b8a296b396ea39416d27226c86a7"
+}

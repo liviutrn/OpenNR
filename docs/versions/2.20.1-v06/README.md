@@ -1,4 +1,72 @@
-# OpenNR 2.20.1-v06 — gaze stability and recovery controls
+# OpenNR 2.20.1-v06-r3 — optional outside NR tone transfer
+
+## r3 outside-only tone transfer
+
+Built on r2, which the user confirmed removed image shaking/trembling. This
+change retains r2 crop-grid/history alignment and the current inner feather.
+The possible slight residual flicker reported with r2 is not addressed here.
+
+Enable **Outside NR tone transfer** in the foveated Edge Blend controls. It is
+**off by default**; disabling it bypasses all new GPU allocation and dispatch.
+Changes are live and persist with the existing settings save/load path. There
+is no restart, native NR re-creation, gaze filtering or history reset when these
+controls change. Full-eye and pre-SR routes do not run this outside-crop effect.
+
+A coarse, current-frame 16x16 paired map estimates broad brightness/color
+changes between the original crop and its completed NR composite. Gain is
+applied only outside the existing rectangle/oval mask, including oval corners,
+with an outward fade and small, static screen-space dither. It does not copy
+neural detail, add temporal accumulation, or write any inside-mask pixels.
+Sampling farther inward changes the estimated tone only; it does not change the
+crop image. Near-black samples have reduced confidence. Gains are bounded in
+log2 stops, with original alpha preserved. The calculation runs in the existing
+LDR buffer representation; it does not assume that buffer is scene-linear.
+
+| Control | Default | Range | Purpose |
+|---|---:|---:|---|
+| Enable | Off | On/off | Immediate A/B comparison |
+| Brightness | 0.65 | 0–1 | Transfer luminance change |
+| Color | 0.30 | 0–1 | Transfer chromatic change |
+| Fade width | 128 px | 8–512 px | Outside reach; wider bands cost more |
+| Falloff | 1.00 | 0.5–2 | Shape of outward decay |
+| Static dither | 0.15 | 0–1 | Subtle fade breakup without animated noise |
+| Boundary ramp | 8 px | 0.5–64 px | Fade correction in from the untouched edge |
+| Tone limit | 0.50 stops | 0–1 stops | Maximum estimated and applied gain magnitude |
+| Sampling inset | 8% | 0–25% | Measure farther toward the crop center |
+
+Start with the defaults. If the effect is weak, raise the sampling inset toward
+15–25% to get beyond the existing inner feather. If a halo appears, lower
+brightness/color or broaden the outside fade. Dither is deliberately subtle.
+Some scene-dependent tonal changes cannot be perfectly extrapolated into unseen
+periphery; this is an opt-in visual adjustment, not a seamlessness guarantee.
+
+**Measure outside tone GPU cost** requests the existing nonblocking GPU profiler
+while this section is open. Runtime profiling must be enabled. It displays the
+latest and rolling-average sum of map/application timings for **both eyes**;
+these are steady-state pass timings, excluding first-use shader compilation and
+resource creation. Turn measurement off after tuning to remove capture-query
+overhead. New passes are also visible under `NeuralRendering::OutsideTone*` in
+Profiling/Tracy/RenderDoc. No GPU timing or VR quality has been measured in the
+build environment. The requested **0.1–0.2 ms** is a target, not a verified
+maximum; use your GPU's readout and narrow the band if needed.
+
+Resource/shader failures skip only the tone effect and appear in the controls;
+they do not latch an NR failure. Shader-cache clearing retries initialization.
+No new full-frame copies or CPU pixel readbacks are introduced. Existing staged
+NR writeback remains unchanged. A target without a usable SRV/UAV skips the new
+effect rather than forcing an additional copy path.
+
+Devbench: `configureOutsideTone` changes enabled/brightness/color/width/curve/
+dither/boundaryRamp/limitStops/sampleInset after validating every argument;
+`outsideToneStatus` reports configuration and last application frame/eye count.
+Use the existing settings save action to make a Devbench A/B change durable.
+
+Verification includes r2 policy/integration checks, independent outside-mask
+protection and eye-isolation tests, eight CPU/HLSL buffer layouts, and Windows
+FXC/full runtime compilation. CPU image oracles verify exact interior/alpha
+protection, identity transfer, near-black/nonfinite protection and gain limits.
+Actual VR visual stability, coexistence under all runtime modes, and the GPU
+budget still require the in-game A/B test.
 
 Base: successful v05 source `2963e93f6242696755cac829b7fd59b6590b4ac7`.
 The entire v00-v05 transformation chain runs unchanged, followed by a
@@ -298,3 +366,4 @@ and forced one-pass atlas; then test all ladder stages, neural fine tuning,
 head rotations/translations, crop growth/shrink, tracking loss, and scene cuts.
 Record whether any motion remains in the SR base or only the NR residual.
 The package excludes nvngx_dlssnr.dll; retain the existing carrier.
+

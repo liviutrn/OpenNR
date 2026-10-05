@@ -53,8 +53,30 @@ require("/ gModelPitch.xy : previousModel - currentModel" in ladder_shader,
 require("if (requested == 0.0f)" in read(src / "GazeCropPolicy.h"),
         "Zero gaze smoothing still adds hidden filtering")
 
+tone = read(src / "NeuralRendering/OutsideTone.cpp")
+tone_apply = read(shaders / "NeuralRendering/OutsideToneApplyCS.hlsl")
+require('settings.outsideToneEnabled && (!fullEye || coverageCrop)' in integration,
+        'Outside effect does not bypass full-eye/off routes')
+require(integration.index('Renderer::Instance().ApplyOutsideTone(') < integration.index('context->CopyResource(Util::AsReal(total.texture), destination);'),
+        'Outside effect runs after staged output was already committed')
+require('CS_GPU_PASS("NeuralRendering::OutsideToneMap")' in tone and
+        'CS_GPU_PASS("NeuralRendering::OutsideToneApply")' in tone,
+        'New rendering pass lacks profiling')
+require('CopyResource(' not in tone and 'ResetHistory' not in tone and 'LatchFailure' not in tone,
+        'Outside effect adds a copy or changes native history/failure state')
+require('if (radius <= 1.0) return;' in tone_apply and
+        'if (all(local >= gInset) && all(local <= last)) return;' in tone_apply,
+        'Outside shader can write the existing inside mask')
+require('FrameIndex' not in tone_apply and 'source.a' in tone_apply,
+        'Outside effect adds animated noise or changes alpha')
+for name in ('Enabled', 'Brightness', 'Color', 'Width', 'Curve', 'Dither', 'BoundaryRamp', 'LimitStops', 'SampleInset'):
+    require(f'X(outsideTone{name})' in foveated and f'outsideTone{name}' in header,
+            f'Outside configuration does not serialize {name}')
+
 layout_cpp = ["#include <array>\n#include <cstdint>\nusing std::uint32_t;\n"]
 contracts = [
+    (src / "NeuralRendering/OutsideTone.cpp", "MapConstants", shaders / "NeuralRendering/OutsideToneMapCS.hlsl", 32),
+    (src / "NeuralRendering/OutsideTone.cpp", "ApplyConstants", shaders / "NeuralRendering/OutsideToneApplyCS.hlsl", 96),
     (src / "CropMotion.cpp", "Constants", shaders / "FoveatedRender/CropMotionCS.hlsl", 32),
     (src / "NeuralRendering/Renderer.cpp", "ResultShapingConstants", shaders / "NeuralRendering/ResultShapingCS.hlsl", 160),
     (src / "NeuralRendering/Renderer.cpp", "LadderAtlasConstants", shaders / "NeuralRendering/LadderAtlasGuidesCS.hlsl", 160),
@@ -106,4 +128,4 @@ layout_cpp.append("""int main() {
 }\n""")
 if args.write_layout_cpp:
     args.write_layout_cpp.write_text("".join(layout_cpp), encoding="utf-8")
-print("v6 integration contracts and six CPU/HLSL buffer layouts passed")
+print("v6 integration contracts and eight CPU/HLSL buffer layouts passed")

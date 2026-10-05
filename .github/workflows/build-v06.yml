@@ -1,4 +1,4 @@
-name: Build OpenNR 2.20.1-v06-r2
+name: Build OpenNR 2.20.1-v06-r3
 
 on:
   push:
@@ -168,6 +168,8 @@ jobs:
           if ($LASTEXITCODE) { throw 'v06 head-motion contract or patch failed' }
           python scripts/v06/apply-shaking-fix.py
           if ($LASTEXITCODE) { throw 'v06 crop-grid contract or patch failed' }
+          python scripts/v06/apply-outside-tone.py
+          if ($LASTEXITCODE) { throw 'v06 outside-tone contract or patch failed' }
 
       - name: Permit carrier-excluded package
         shell: pwsh
@@ -200,6 +202,8 @@ jobs:
             'runtime/open-shaders/features/Upscaling/Shaders/Upscaling/NeuralRendering/LadderAtlasGuidesCS.hlsl',
             'runtime/open-shaders/features/Upscaling/Shaders/Upscaling/NeuralRendering/ModelResolutionCS.hlsl',
             'runtime/open-shaders/features/Upscaling/Shaders/Upscaling/NeuralRendering/AlignGuidesCS.hlsl',
+            'runtime/open-shaders/features/Upscaling/Shaders/Upscaling/NeuralRendering/OutsideToneMapCS.hlsl',
+            'runtime/open-shaders/features/Upscaling/Shaders/Upscaling/NeuralRendering/OutsideToneApplyCS.hlsl',
             'runtime/open-shaders/features/Upscaling/Shaders/Upscaling/FoveatedRender/SubrectBlendCS.hlsl'
           ) | ForEach-Object {
             & $fxc.FullName /nologo /WX /T cs_5_0 /E main /Fo "$env:RUNNER_TEMP/overlap-check.cso" $_
@@ -221,6 +225,10 @@ jobs:
           if ($LASTEXITCODE) { throw 'v06 gaze-grid test compilation failed' }
           & ./v06-gaze-grid-tests.exe
           if ($LASTEXITCODE) { throw 'v06 gaze-grid tests failed' }
+          cl /nologo /std:c++20 /EHsc /W4 /WX scripts/v06/test-outside-tone.cpp /Fe:v06-outside-tone-tests.exe
+          if ($LASTEXITCODE) { throw 'v06 outside-tone test compilation failed' }
+          & ./v06-outside-tone-tests.exe
+          if ($LASTEXITCODE) { throw 'v06 outside-tone tests failed' }
 
       - name: Install CMake
         uses: lukka/get-cmake@v4.3.3
@@ -266,7 +274,8 @@ jobs:
       - name: Upload v06 checkpoint package
         uses: actions/upload-artifact@v4
         with:
-          name: OpenNR-2.20.1-v06-r2-gaze-grid-carrier-excluded
+          name: OpenNR-2.20.1-v06-r3-outside-tone-carrier-excluded
           path: dist/*
           if-no-files-found: error
           retention-days: 14
+

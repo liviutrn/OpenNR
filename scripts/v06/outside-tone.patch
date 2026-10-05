@@ -1,0 +1,705 @@
+diff --git a/runtime/open-shaders/features/Upscaling/Shaders/Upscaling/NeuralRendering/OutsideToneApplyCS.hlsl b/runtime/open-shaders/features/Upscaling/Shaders/Upscaling/NeuralRendering/OutsideToneApplyCS.hlsl
+new file mode 100644
+index 0000000..c033b11
+--- /dev/null
++++ b/runtime/open-shaders/features/Upscaling/Shaders/Upscaling/NeuralRendering/OutsideToneApplyCS.hlsl
+@@ -0,0 +1,58 @@
++cbuffer OutsideToneApply : register(b0)
++{
++	uint2 gOrigin;
++	uint2 gExtent;
++	uint2 gCropOrigin;
++	uint2 gCropSize;
++	float2 gRadii;
++	float2 gInset;
++	float gWidth;
++	float gBrightness;
++	float gColor;
++	float gCurve;
++	float gDither;
++	float gBoundaryRamp;
++	float gSampleInset;
++	uint gOval;
++	float gLimitStops;
++	float3 gPadding;
++};
++Texture2D<float4> gTone : register(t0);
++RWTexture2D<float4> gDestination : register(u0);
++SamplerState gLinearClamp : register(s0);
++
++[numthreads(8,8,1)]
++void main(uint3 id : SV_DispatchThreadID)
++{
++	if (any(id.xy >= gExtent)) return;
++	const uint2 pixel = id.xy + gOrigin;
++	const float2 local = float2(pixel) - float2(gCropOrigin);
++	float distance;
++	float2 boundary;
++	if (gOval != 0u) {
++		const float2 offset = local + 0.5 - float2(gCropSize) * 0.5;
++		const float radius = length(offset / gRadii);
++		if (radius <= 1.0) return;
++		distance = length(offset) * (1.0 - 1.0 / radius);
++		boundary = offset / radius + float2(gCropSize) * 0.5;
++	} else {
++		const float2 last = float2(gCropSize) - 1.0 - gInset;
++		if (all(local >= gInset) && all(local <= last)) return;
++		const float2 nearest = clamp(local,gInset,last);
++		distance = length(local - nearest);
++		boundary = nearest + 0.5;
++	}
++	if (distance >= gWidth || distance <= 0.0) return;
++	float t = pow(saturate(distance / gWidth),gCurve);
++	const float fade = 1.0 - t*t*(3.0-2.0*t);
++	t = saturate(distance / max(gBoundaryRamp,0.5));
++	float weight = fade * t*t*(3.0-2.0*t);
++	const float noise = frac(52.9829189 * frac(dot(float2(pixel),float2(0.06711056,0.00583715))));
++	weight = saturate(weight + (noise-0.5)*gDither*0.02*weight*(1.0-weight));
++	const float2 uv = lerp(boundary / float2(gCropSize),0.5.xx,gSampleInset * 0.01);
++	const float4 tone = gTone.SampleLevel(gLinearClamp,uv,0);
++	const float3 stops = clamp(tone.w * gBrightness + (tone.rgb - tone.w) * gColor,-gLimitStops,gLimitStops);
++	const float4 source = gDestination[pixel];
++	const float3 result = source.rgb * exp2(stops * weight);
++	if (all(isfinite(result))) gDestination[pixel] = float4(result,source.a);
++}
+diff --git a/runtime/open-shaders/features/Upscaling/Shaders/Upscaling/NeuralRendering/OutsideToneMapCS.hlsl b/runtime/open-shaders/features/Upscaling/Shaders/Upscaling/NeuralRendering/OutsideToneMapCS.hlsl
+new file mode 100644
+index 0000000..c2a021c
+--- /dev/null
++++ b/runtime/open-shaders/features/Upscaling/Shaders/Upscaling/NeuralRendering/OutsideToneMapCS.hlsl
+@@ -0,0 +1,33 @@
++cbuffer OutsideToneMap : register(b0)
++{
++	uint2 gCropSize;
++	uint2 gSourceOffset;
++	float gLimitStops;
++	float3 gPadding;
++};
++Texture2D<float4> gOriginal : register(t0);
++Texture2D<float4> gComposite : register(t1);
++RWTexture2D<float4> gTone : register(u0);
++
++[numthreads(8,8,1)]
++void main(uint3 id : SV_DispatchThreadID)
++{
++	if (any(id.xy >= uint2(16,16))) return;
++	float3 base = 0.0, result = 0.0;
++	[loop] for (uint y = 0; y < 8; ++y) {
++		[loop] for (uint x = 0; x < 8; ++x) {
++			const uint2 p = min(uint2((float2(id.xy) + (float2(x,y) + 0.5) / 8.0) * float2(gCropSize) / 16.0), gCropSize - 1u);
++			float3 b = gOriginal.Load(int3(p,0)).rgb;
++			const float3 r = gComposite.Load(int3(p + gSourceOffset,0)).rgb;
++			b = all(isfinite(b)) ? max(b,0.0) : 0.0;
++			base += b;
++			result += all(isfinite(r)) ? max(r,0.0) : max(b,0.0);
++		}
++	}
++	base /= 64.0; result /= 64.0;
++	const float3 luma = float3(0.2126,0.7152,0.0722);
++	const float brightness = clamp(log2((dot(result,luma) + 0.01) / (dot(base,luma) + 0.01)), -gLimitStops, gLimitStops);
++	const float3 rgb = clamp(log2((result + 0.01) / (base + 0.01)), -gLimitStops, gLimitStops);
++	const float confidence = smoothstep(0.002,0.03,dot(base,luma));
++	gTone[id.xy] = float4(rgb,brightness) * confidence;
++}
+diff --git a/runtime/open-shaders/src/Features/RemoteControl/DevBenchBridge.cpp b/runtime/open-shaders/src/Features/RemoteControl/DevBenchBridge.cpp
+index 0cf5fbe..3d20314 100644
+--- a/runtime/open-shaders/src/Features/RemoteControl/DevBenchBridge.cpp
++++ b/runtime/open-shaders/src/Features/RemoteControl/DevBenchBridge.cpp
+@@ -1288,7 +1288,7 @@ namespace DevBenchBridge
+ 		RegisterDevBenchUx();
+ 
+ 		static constexpr const char* actionsDesc =
+-			R"({"description":"Devbench-registered one-shot commands and read-only queries -- the imperative/derived-state counterpart to openshaders.feature's settings get/set. A feature exposes these via FEATURE_COMMAND/FEATURE_QUERY in its Feature::RegisterUxActions() override (see Utils/DevBenchUx.h); every feature also gets two built-in queries for free: matchesPerformanceProfile and profilePreviewText (params: profile=performance|balanced|quality), mirroring Feature::MatchesPerformanceProfile/GetProfilePreviewText so a profile button's highlighted/tooltip state is readable without re-deriving it from raw settings. Upscaling also exposes resetNeuralRendering (queued render-thread NR/DLSS/crop recovery reset, no arguments), neuralRenderingStatus (read-only failure, recovery and evaluation counters, no arguments), neuralRenderingOutputStatus (read-only optional result-shaping/stabilization settings and temporal-reuse suppression state, configuration eligibility only), setNeuralRenderingResultShaping (params enabled: boolean), and eyeTrackingStatus (read-only native gaze validity, query cost, last-valid-query age rather than sensor age, raw/filtered gaze, crop coordinates and reset counters, no arguments). Action-dispatched. listCommands/listQueries: params shortName, returns [{name,description}]. invokeCommand: params shortName, name, args (object, optional) -- queued onto the main thread, fire-and-forget, same as openshaders.feature toggle/set. invokeQuery: params shortName, name, args (object, optional) -- runs synchronously on the main thread and returns the result (queries read live feature state, so they marshal the same way a settings get does). Unknown shortName/name returns a plain error, never a crash.","inputSchema":{"type":"object","properties":{"action":{"type":"string","enum":["listCommands","listQueries","invokeCommand","invokeQuery"]},"shortName":{"type":"string"},"name":{"type":"string"},"args":{"type":"object"}}}})";
++			R"({"description":"Devbench-registered one-shot commands and read-only queries -- the imperative/derived-state counterpart to openshaders.feature's settings get/set. A feature exposes these via FEATURE_COMMAND/FEATURE_QUERY in its Feature::RegisterUxActions() override (see Utils/DevBenchUx.h); every feature also gets two built-in queries for free: matchesPerformanceProfile and profilePreviewText (params: profile=performance|balanced|quality), mirroring Feature::MatchesPerformanceProfile/GetProfilePreviewText so a profile button's highlighted/tooltip state is readable without re-deriving it from raw settings. Upscaling also exposes resetNeuralRendering (queued render-thread NR/DLSS/crop recovery reset, no arguments), neuralRenderingStatus (read-only failure, recovery and evaluation counters, no arguments), neuralRenderingOutputStatus (read-only optional result-shaping/stabilization settings and temporal-reuse suppression state, configuration eligibility only), setNeuralRenderingResultShaping (params enabled: boolean), and eyeTrackingStatus (read-only native gaze validity, query cost, last-valid-query age rather than sensor age, raw/filtered gaze, crop coordinates and reset counters, no arguments). Action-dispatched. listCommands/listQueries: params shortName, returns [{name,description}]. invokeCommand: params shortName, name, args (object, optional) -- queued onto the main thread, fire-and-forget, same as openshaders.feature toggle/set. invokeQuery: params shortName, name, args (object, optional) -- runs synchronously on the main thread and returns the result (queries read live feature state, so they marshal the same way a settings get does). Unknown shortName/name returns a plain error, never a crash. Upscaling outside-tone controls: configureOutsideTone accepts optional enabled, brightness, color, width, curve, dither, boundaryRamp, limitStops and sampleInset; outsideToneStatus returns configuration and last application frame/eye count. These controls do not reset NR histories.","inputSchema":{"type":"object","properties":{"action":{"type":"string","enum":["listCommands","listQueries","invokeCommand","invokeQuery"]},"shortName":{"type":"string"},"name":{"type":"string"},"args":{"type":"object","description":"Command-specific parameters. configureOutsideTone: optional enabled boolean, brightness/color/dither/limitStops [0,1], width [8,512] px, curve [0.5,2], boundaryRamp [0.5,64] px, sampleInset [0,25] percent. Other commands retain their listed parameters."}}}})";
+ 		dvb->RegisterTool("openshaders.actions", actionsDesc, &ActionsToolHandler, nullptr);
+ 
+ 		static constexpr const char* shadercacheDesc =
+diff --git a/runtime/open-shaders/src/Features/Upscaling.cpp b/runtime/open-shaders/src/Features/Upscaling.cpp
+index 4ca14df..4131281 100644
+--- a/runtime/open-shaders/src/Features/Upscaling.cpp
++++ b/runtime/open-shaders/src/Features/Upscaling.cpp
+@@ -15,6 +15,7 @@
+ #include "Upscaling/FoveatedRender/Preprocess.h"
+ #include "Upscaling/NeuralRendering/Integration.h"
+ #include "Upscaling/NeuralRendering/Renderer.h"
++#include "Upscaling/NeuralRendering/OutsideTone.h"
+ #include "Upscaling/NativeOpenVRGaze.h"
+ #include "Upscaling/PerfMode.h"
+ #include "Upscaling/Streamline.h"
+@@ -680,6 +681,43 @@ std::string Upscaling::GetProfilePreviewText(PerfProfile profile) const
+ 
+ void Upscaling::RegisterUxActions()
+ {
++	FEATURE_COMMAND("configureOutsideTone",
++		"Live outside-only tone controls. Optional enabled boolean; brightness/color [0,1], width [8,512] px, curve [0.5,2], dither [0,1], boundaryRamp [0.5,64] px, limitStops [0,1], sampleInset [0,25] percent. All arguments are validated before settings change. No history reset.",
++		[](Feature*, const json& args) {
++			auto next = foveatedRender.settings;
++			if (args.contains("enabled")) {
++				if (!args["enabled"].is_boolean()) throw std::invalid_argument("enabled must be a boolean");
++				next.outsideToneEnabled = args["enabled"].get<bool>();
++			}
++			const auto read = [&args](const char* key, float current, float low, float high) {
++				if (!args.contains(key)) return current;
++				if (!args[key].is_number()) throw std::invalid_argument(std::string(key) + " must be numeric");
++				const float value = args[key].get<float>();
++				if (!std::isfinite(value) || value < low || value > high)
++					throw std::invalid_argument(std::string(key) + " is outside its finite range");
++				return value;
++			};
++			next.outsideToneBrightness = read("brightness", next.outsideToneBrightness, 0, 1);
++			next.outsideToneColor = read("color", next.outsideToneColor, 0, 1);
++			next.outsideToneWidth = read("width", next.outsideToneWidth, 8, 512);
++			next.outsideToneCurve = read("curve", next.outsideToneCurve, 0.5f, 2);
++			next.outsideToneDither = read("dither", next.outsideToneDither, 0, 1);
++			next.outsideToneBoundaryRamp = read("boundaryRamp", next.outsideToneBoundaryRamp, 0.5f, 64);
++			next.outsideToneLimitStops = read("limitStops", next.outsideToneLimitStops, 0, 1);
++			next.outsideToneSampleInset = read("sampleInset", next.outsideToneSampleInset, 0, 25);
++			foveatedRender.settings = next;
++		});
++	FEATURE_QUERY("outsideToneStatus",
++		"Read outside-only tone configuration and last application frame/eye count. GPU map/apply timings are in Profiling, prefix NeuralRendering::OutsideTone. Params: none.",
++		[](const Feature*, const json&) -> json {
++			const auto& s = foveatedRender.settings;
++			const auto status = NeuralRendering::OutsideTone::GetStatus();
++			return json({ { "enabled", s.outsideToneEnabled }, { "brightness", s.outsideToneBrightness },
++				{ "color", s.outsideToneColor }, { "width", s.outsideToneWidth }, { "curve", s.outsideToneCurve },
++				{ "dither", s.outsideToneDither }, { "boundaryRamp", s.outsideToneBoundaryRamp },
++				{ "limitStops", s.outsideToneLimitStops }, { "sampleInset", s.outsideToneSampleInset },
++				{ "lastFrame", status.frame }, { "eyes", status.eyes }, { "status", status.message } });
++		});
+ 	FEATURE_QUERY("eyeTrackingStatus",
+ 		"Read native OpenVR query validity/cost, last-valid-query age (not sensor age), raw/filtered gaze, resolved crops and history-reset counters. Params: none.",
+ 		[](const Feature*, const json&) -> json {
+diff --git a/runtime/open-shaders/src/Features/Upscaling/FoveatedRender.cpp b/runtime/open-shaders/src/Features/Upscaling/FoveatedRender.cpp
+index 3ec2d9c..350e295 100644
+--- a/runtime/open-shaders/src/Features/Upscaling/FoveatedRender.cpp
++++ b/runtime/open-shaders/src/Features/Upscaling/FoveatedRender.cpp
+@@ -16,6 +16,9 @@
+ #include "NeuralRendering/Integration.h"
+ #include "NeuralRendering/FuturePipeline.h"
+ #include "NeuralRendering/Renderer.h"
++#include "NeuralRendering/OutsideTone.h"
++#include "../../Profiler.h"
++#include "../../State.h"
+ #include "NeuralRendering/RuntimePolicy.h"
+ 
+ #include <algorithm>
+@@ -151,6 +154,15 @@ void from_json(const BasicJsonType& json, FoveatedRender::SequentialPassSettings
+ 	X(subrectFeatherWidth) \
+ 	X(subrectFalloffCurve) \
+ 	X(subrectDitherStrength) \
++	X(outsideToneEnabled) \
++	X(outsideToneBrightness) \
++	X(outsideToneColor) \
++	X(outsideToneWidth) \
++	X(outsideToneCurve) \
++	X(outsideToneDither) \
++	X(outsideToneBoundaryRamp) \
++	X(outsideToneLimitStops) \
++	X(outsideToneSampleInset) \
+ 	X(neuralRenderingEnabled) \
+ 	X(neuralRenderingModelResolution) \
+ 	X(neuralRenderingCoverage) \
+@@ -427,6 +439,14 @@ void FoveatedRender::ClampSettings()
+ 	settings.subrectFeatherWidth = std::clamp(settings.subrectFeatherWidth, 2.0f, 128.0f);
+ 	settings.subrectFalloffCurve = std::clamp(settings.subrectFalloffCurve, 0.5f, 2.0f);
+ 	settings.subrectDitherStrength = std::clamp(settings.subrectDitherStrength, 0.0f, 2.0f);
++	settings.outsideToneBrightness = clampFinite(settings.outsideToneBrightness, 0.65f, 0.0f, 1.0f);
++	settings.outsideToneColor = clampFinite(settings.outsideToneColor, 0.30f, 0.0f, 1.0f);
++	settings.outsideToneWidth = clampFinite(settings.outsideToneWidth, 128.0f, 8.0f, 512.0f);
++	settings.outsideToneCurve = clampFinite(settings.outsideToneCurve, 1.0f, 0.5f, 2.0f);
++	settings.outsideToneDither = clampFinite(settings.outsideToneDither, 0.15f, 0.0f, 1.0f);
++	settings.outsideToneBoundaryRamp = clampFinite(settings.outsideToneBoundaryRamp, 8.0f, 0.5f, 64.0f);
++	settings.outsideToneLimitStops = clampFinite(settings.outsideToneLimitStops, 0.5f, 0.0f, 1.0f);
++	settings.outsideToneSampleInset = clampFinite(settings.outsideToneSampleInset, 8.0f, 0.0f, 25.0f);
+ 	if (settings.neuralRenderingModelResolution != 33 &&
+ 		settings.neuralRenderingModelResolution != 50 &&
+ 		settings.neuralRenderingModelResolution != 70 &&
+@@ -1434,6 +1454,47 @@ const char* FoveatedRender::SubrectMaskModeName(SubrectMaskMode mode)
+ 			ImGui::TextWrapped(T(TKEY("foveated_mask_rectangle_desc"),
+ 				"Rectangle: keep the original rectangular feather/dither mask. Use this fallback if the oval edge is not preferred."));
+ 
++		ImGui::Separator();
++		if (ImGui::CollapsingHeader("Outside NR tone transfer")) {
++			ImGui::Checkbox("Enable outside tone transfer", &settings.outsideToneEnabled);
++			ImGui::TextWrapped("Transfers broad brightness and color into the periphery. The crop and its inner feather stay untouched. Changes apply live; use the toggle for A/B comparison.");
++			ImGui::SliderFloat("Outside brightness", &settings.outsideToneBrightness, 0.0f, 1.0f, "%.2f");
++			ImGui::SliderFloat("Outside color", &settings.outsideToneColor, 0.0f, 1.0f, "%.2f");
++			ImGui::SliderFloat("Outside fade width", &settings.outsideToneWidth, 8.0f, 512.0f, "%.0f px");
++			ImGui::SliderFloat("Outside falloff", &settings.outsideToneCurve, 0.5f, 2.0f, "%.2f");
++			ImGui::SliderFloat("Outside static dither", &settings.outsideToneDither, 0.0f, 1.0f, "%.2f");
++			ImGui::SliderFloat("Boundary ramp", &settings.outsideToneBoundaryRamp, 0.5f, 64.0f, "%.1f px");
++			ImGui::SliderFloat("Tone limit", &settings.outsideToneLimitStops, 0.0f, 1.0f, "%.2f stops");
++			ImGui::SliderFloat("Tone sampling inset", &settings.outsideToneSampleInset, 0.0f, 25.0f, "%.1f %%");
++			ImGui::TextWrapped("If the correction is weak, increase the sampling inset to measure farther inside NR. Reduce brightness/color or widen the fade if a halo appears. Static dither breaks up the fade without animated noise.");
++			ImGui::Checkbox("Measure outside tone GPU cost", &measureOutsideTone);
++			auto* profiler = globals::profiler;
++			if (measureOutsideTone && settings.outsideToneEnabled && profiler && profiler->IsUserEnabled())
++				profiler->RequestCapture(Profiler::CaptureMode::GPU, "NeuralRendering::OutsideTone");
++			const auto status = NeuralRendering::OutsideTone::GetStatus();
++			const auto frame = globals::state->frameCount;
++			if (!settings.outsideToneEnabled)
++				ImGui::TextUnformatted("Disabled: no outside tone GPU work");
++			else if (frame - status.frame > 3)
++				ImGui::TextUnformatted("Waiting for cropped NR output");
++			else
++				ImGui::Text("%s (%u/2 eyes)", status.message, status.eyes);
++			if (measureOutsideTone && (!profiler || !profiler->IsUserEnabled()))
++				ImGui::TextWrapped("Enable runtime profiling in the Profiling menu to measure GPU cost.");
++			else if (measureOutsideTone && settings.outsideToneEnabled && profiler) {
++				float latest = 0, average = 0;
++				std::uint32_t passes = 0;
++				for (const auto& timer : profiler->GetResults())
++					if (timer.name.starts_with("NeuralRendering::OutsideTone") && timer.hasGpu && timer.activeGpu) {
++						latest += timer.gpuTimeMs; average += timer.avgMs; ++passes;
++					}
++				if (passes == 2 && frame - profiler->GetCapturedGpuFrameCount() <= 10 && frame - status.frame <= 3 && status.eyes == 2)
++					ImGui::Text("Both eyes GPU: %.3f ms latest, %.3f ms rolling average", latest, average);
++				else
++					ImGui::TextUnformatted("GPU timing: waiting for fresh samples");
++				ImGui::TextWrapped("Measures map + outside application for both eyes. Profiling adds query overhead; turn measurement off after tuning. The 0.1-0.2 ms target requires measurement on your GPU.");
++			}
++		}
+ 		ImGui::Separator();
+ 		ImGui::Text("%s", T(TKEY("foveated_subrect_region_header"), "Subrect Region"));
+ 		ImGui::TextWrapped(T(TKEY("foveated_subrect_region_desc"),
+diff --git a/runtime/open-shaders/src/Features/Upscaling/FoveatedRender.h b/runtime/open-shaders/src/Features/Upscaling/FoveatedRender.h
+index bea5463..1a14d5c 100644
+--- a/runtime/open-shaders/src/Features/Upscaling/FoveatedRender.h
++++ b/runtime/open-shaders/src/Features/Upscaling/FoveatedRender.h
+@@ -151,6 +151,16 @@ struct FoveatedRender
+ 		// higher values keep the stretched periphery longer before the handoff.
+ 		float subrectFalloffCurve = 1.0f;
+ 		float subrectDitherStrength = 1.0f;
++		// Optional post-NR effect; no new GPU work when disabled.
++		bool outsideToneEnabled = false;
++		float outsideToneBrightness = 0.65f;
++		float outsideToneColor = 0.30f;
++		float outsideToneWidth = 128.0f;
++		float outsideToneCurve = 1.0f;
++		float outsideToneDither = 0.15f;
++		float outsideToneBoundaryRamp = 8.0f;
++		float outsideToneLimitStops = 0.5f;
++		float outsideToneSampleInset = 8.0f;
+ 		// First-run NR defaults mirror the validated internal DLSSNR tuning target.
+ 		// FoveatedRender itself remains opt-in, so this does not activate NR outside
+ 		// an explicitly enabled foveated-DLSS session.
+@@ -314,6 +324,7 @@ struct FoveatedRender
+ 	static constexpr const char* kPresetNasalConvergence70 = "Nasal Convergence 70%";  ///< 70% crop biased toward nasal convergence.
+ 
+ 	Settings settings;
++	bool measureOutsideTone = false;  ///< Session-only GPU timing request while the controls are drawn.
+ 	NeuralRendering::AdaptiveCropController adaptiveCropController;
+ 	Util::Subrect::Controller subrectController;
+ 	std::uint32_t adaptiveActivePasses = 1;
+diff --git a/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Integration.cpp b/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Integration.cpp
+index 1f0784d..bd68d8e 100644
+--- a/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Integration.cpp
++++ b/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Integration.cpp
+@@ -1,6 +1,7 @@
+ #include "Integration.h"
+ 
+ #include "Renderer.h"
++#include "OutsideTone.h"
+ #include "RuntimePolicy.h"
+ #include "Features/HDRDisplay.h"
+ #include "Features/Upscaling.h"
+@@ -869,6 +870,22 @@ Tuning tuning{
+ 			}
+ 		FoveatedRenderImpl::Ops::forceFeatherBlend = false;
+ 		if (succeeded) {
++			OutsideTone::BeginFrame(frame, settings.outsideToneEnabled && (!fullEye || coverageCrop));
++			if (settings.outsideToneEnabled && (!fullEye || coverageCrop)) {
++				const bool adaptiveMask = foveated.IsAdaptiveCropRuntimeActive();
++				const bool masked = adaptiveMask || coverageCrop || blendMode != FoveatedRender::SubrectBlendMode::kHardCopy;
++				const float maskScale = adaptiveMask ? std::clamp(foveated.adaptiveCropController.VisibleCoverage() /
++					std::max(foveated.adaptiveCropController.RenderCoverage(), 1u), 0.0f, 1.0f) : 1.0f;
++				std::array<OutsideTone::Geometry, 2> geometry{};
++				for (std::uint32_t eye = 0; eye < 2; ++eye)
++					geometry[eye] = { inputs[eye].sourceX, inputs[eye].sourceY, outWidth, outHeight,
++						eye * eyeWidth, eyeWidth, totalDesc.Height,
++						masked && foveated.GetSubrectMaskMode() == FoveatedRender::SubrectMaskMode::kOval, maskScale };
++				const OutsideTone::Config config{ settings.outsideToneBrightness, settings.outsideToneColor,
++					settings.outsideToneWidth, settings.outsideToneCurve, settings.outsideToneDither,
++					settings.outsideToneBoundaryRamp, settings.outsideToneLimitStops, settings.outsideToneSampleInset };
++				Renderer::Instance().ApplyOutsideTone(globals::d3d::device, context, destination, destinationUAV, geometry, config);
++			}
+ 			if (stagedBlendTarget)
+ 				context->CopyResource(Util::AsReal(total.texture), destination);
+ 			// Crop handoffs move the current-frame compositing mask; no prior SBS image is reused.
+diff --git a/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/OutsideTone.cpp b/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/OutsideTone.cpp
+new file mode 100644
+index 0000000..b54d0bc
+--- /dev/null
++++ b/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/OutsideTone.cpp
+@@ -0,0 +1,169 @@
++#include "OutsideTone.h"
++#include "GpuPass.h"
++#include "Utils/D3D.h"
++#include "Utils/LazyShader.h"
++#include <wrl/client.h>
++
++namespace NeuralRendering::OutsideTone
++{
++	using Microsoft::WRL::ComPtr;
++	namespace
++	{
++		struct MapConstants
++		{
++			std::array<std::uint32_t, 2> cropSize{}, sourceOffset{};
++			float limitStops = 0.5f;
++			std::array<float, 3> padding{};
++		};
++		struct ApplyConstants
++		{
++			std::array<std::uint32_t, 2> origin{}, extent{}, cropOrigin{}, cropSize{};
++			std::array<float, 2> radii{}, inset{};
++			float width = 0, brightness = 0, color = 0, curve = 1;
++			float dither = 0, boundaryRamp = 8, sampleInset = 8;
++			std::uint32_t oval = 0;
++			float limitStops = 0.5f;
++			std::array<float, 3> padding{};
++		};
++		static_assert(sizeof(MapConstants) == 32);
++		static_assert(sizeof(ApplyConstants) == 96);
++		Util::LazyShader<ID3D11ComputeShader> mapCS, applyCS;
++		ComPtr<ID3D11Texture2D> tone;
++		ComPtr<ID3D11ShaderResourceView> toneSRV, compositeSRV;
++		ComPtr<ID3D11UnorderedAccessView> toneUAV;
++		ComPtr<ID3D11Resource> cachedComposite;
++		ComPtr<ID3D11Device> cachedDevice;
++		ComPtr<ID3D11Buffer> mapCB, applyCB;
++		ComPtr<ID3D11SamplerState> sampler;
++		Status status;
++		bool failed = false;
++
++		bool Ensure(ID3D11Device* device, ID3D11Resource* composite, ID3D11UnorderedAccessView* destination)
++		{
++			if (cachedDevice.Get() != device) { Reset(); cachedDevice = device; }
++			if (failed) return false;
++			if (!mapCS.Get(L"Data\\Shaders\\Upscaling\\NeuralRendering\\OutsideToneMapCS.hlsl", {}, "cs_5_0", "main", "NeuralRendering::OutsideToneMapCS") ||
++				!applyCS.Get(L"Data\\Shaders\\Upscaling\\NeuralRendering\\OutsideToneApplyCS.hlsl", {}, "cs_5_0", "main", "NeuralRendering::OutsideToneApplyCS")) return false;
++			if (!tone) {
++				D3D11_TEXTURE2D_DESC td{};
++				td.Width = td.Height = 16; td.MipLevels = td.ArraySize = 1;
++				td.Format = DXGI_FORMAT_R32G32B32A32_FLOAT; td.SampleDesc.Count = 1;
++				td.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
++				if (FAILED(device->CreateTexture2D(&td, nullptr, tone.GetAddressOf())) ||
++					FAILED(device->CreateShaderResourceView(tone.Get(), nullptr, toneSRV.GetAddressOf())) ||
++					FAILED(device->CreateUnorderedAccessView(tone.Get(), nullptr, toneUAV.GetAddressOf()))) return false;
++				Util::SetResourceName(tone.Get(), "NeuralRendering::OutsideToneMap");
++				Util::SetResourceName(toneSRV.Get(), "NeuralRendering::OutsideToneMap SRV");
++				Util::SetResourceName(toneUAV.Get(), "NeuralRendering::OutsideToneMap UAV");
++				D3D11_BUFFER_DESC bd{}; bd.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
++				bd.ByteWidth = sizeof(MapConstants);
++				if (FAILED(device->CreateBuffer(&bd, nullptr, mapCB.GetAddressOf()))) return false;
++				bd.ByteWidth = sizeof(ApplyConstants);
++				if (FAILED(device->CreateBuffer(&bd, nullptr, applyCB.GetAddressOf()))) return false;
++				Util::SetResourceName(mapCB.Get(), "NeuralRendering::OutsideToneMapCB");
++				Util::SetResourceName(applyCB.Get(), "NeuralRendering::OutsideToneApplyCB");
++				D3D11_SAMPLER_DESC sd{};
++				sd.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
++				sd.AddressU = sd.AddressV = sd.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
++				sd.MaxLOD = D3D11_FLOAT32_MAX;
++				if (FAILED(device->CreateSamplerState(&sd, sampler.GetAddressOf()))) return false;
++				Util::SetResourceName(sampler.Get(), "NeuralRendering::OutsideToneSampler");
++			}
++			if (cachedComposite.Get() != composite) {
++				D3D11_UNORDERED_ACCESS_VIEW_DESC ud{}; destination->GetDesc(&ud);
++				D3D11_FEATURE_DATA_FORMAT_SUPPORT2 support{ ud.Format, 0 };
++				if (FAILED(device->CheckFeatureSupport(D3D11_FEATURE_FORMAT_SUPPORT2, &support, sizeof(support))) ||
++					!(support.OutFormatSupport2 & D3D11_FORMAT_SUPPORT2_UAV_TYPED_LOAD)) return false;
++				D3D11_SHADER_RESOURCE_VIEW_DESC sd{};
++				sd.Format = ud.Format; sd.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D; sd.Texture2D.MipLevels = 1;
++				compositeSRV.Reset();
++				if (FAILED(device->CreateShaderResourceView(composite, &sd, compositeSRV.GetAddressOf()))) return false;
++				Util::SetResourceName(compositeSRV.Get(), "NeuralRendering::OutsideToneComposite SRV");
++				cachedComposite = composite;
++			}
++			return true;
++		}
++	}
++
++	void BeginFrame(std::uint32_t frame, bool enabled)
++	{
++		status = { frame, 0, "No cropped NR output" };
++		if (!enabled) {
++			// Retain the tiny map/shaders for live A/B, but do not pin an old full-frame target.
++			compositeSRV.Reset(); cachedComposite.Reset(); status.message = "Disabled";
++		}
++	}
++	Status GetStatus() { return status; }
++	void Reset()
++	{
++		mapCS.Reset(); applyCS.Reset(); tone.Reset(); toneSRV.Reset(); toneUAV.Reset();
++		compositeSRV.Reset(); cachedComposite.Reset(); cachedDevice.Reset();
++		mapCB.Reset(); applyCB.Reset(); sampler.Reset(); failed = false;
++	}
++
++	bool Apply(ID3D11Device* device, ID3D11DeviceContext* context, ID3D11ShaderResourceView* original,
++		ID3D11Resource* composite, ID3D11UnorderedAccessView* destination, const Geometry& g, const Config& requested)
++	{
++		const auto c = Sanitize(requested);
++		const auto roi = MakeRegion(g, c.width);
++		if (!device || !context || !original || !composite || !destination || !roi.width || !roi.height) {
++			status.message = "Skipped: crop or UAV unavailable"; return false;
++		}
++		if ((c.brightness == 0 && c.color == 0) || c.limitStops == 0) { status.message = "Zero strength/limit: no GPU work"; return true; }
++		if (!Ensure(device, composite, destination)) {
++			failed = true; status.message = "Skipped: unsupported resource or shader; clear shader cache to retry"; return false;
++		}
++		// Save every CS slot this isolated pass touches. Unbind write/read aliases before each transition.
++		ComPtr<ID3D11ComputeShader> savedCS;
++		ComPtr<ID3D11Buffer> savedCB;
++		ComPtr<ID3D11SamplerState> savedSampler;
++		ComPtr<ID3D11UnorderedAccessView> savedUAV;
++		ID3D11ShaderResourceView* savedSRVs[2]{};
++		context->CSGetShader(savedCS.GetAddressOf(), nullptr, nullptr);
++		context->CSGetConstantBuffers(0, 1, savedCB.GetAddressOf());
++		context->CSGetSamplers(0, 1, savedSampler.GetAddressOf());
++		context->CSGetUnorderedAccessViews(0, 1, savedUAV.GetAddressOf());
++		context->CSGetShaderResources(0, 2, savedSRVs);
++		ID3D11UnorderedAccessView* nullUAV = nullptr;
++		ID3D11ShaderResourceView* nullSRVs[2]{};
++		context->CSSetUnorderedAccessViews(0, 1, &nullUAV, nullptr);
++		context->CSSetShaderResources(0, 2, nullSRVs);
++		{
++			CS_GPU_PASS("NeuralRendering::OutsideToneMap");
++			MapConstants mc{ { g.width, g.height }, { g.x, g.y }, c.limitStops, {} };
++			context->UpdateSubresource(mapCB.Get(), 0, nullptr, &mc, 0, 0);
++			context->CSSetShader(mapCS.get(), nullptr, 0);
++			ID3D11Buffer* cb = mapCB.Get(); context->CSSetConstantBuffers(0, 1, &cb);
++			ID3D11ShaderResourceView* sources[]{ original, compositeSRV.Get() };
++			context->CSSetShaderResources(0, 2, sources);
++			ID3D11UnorderedAccessView* uav = toneUAV.Get(); context->CSSetUnorderedAccessViews(0, 1, &uav, nullptr);
++			context->Dispatch(2, 2, 1);
++		}
++		context->CSSetUnorderedAccessViews(0, 1, &nullUAV, nullptr);
++		context->CSSetShaderResources(0, 2, nullSRVs);
++		{
++			CS_GPU_PASS("NeuralRendering::OutsideToneApply");
++			ApplyConstants ac{ { roi.x, roi.y }, { roi.width, roi.height }, { g.x, g.y }, { g.width, g.height },
++				{ std::max(0.5f, float(g.width) * 0.5f * g.maskScale), std::max(0.5f, float(g.height) * 0.5f * g.maskScale) },
++				{ float(g.width) * (1 - g.maskScale) * 0.5f, float(g.height) * (1 - g.maskScale) * 0.5f },
++				c.width, c.brightness, c.color, c.curve, c.dither, c.boundaryRamp, c.sampleInset, g.oval ? 1u : 0u, c.limitStops, {} };
++			context->UpdateSubresource(applyCB.Get(), 0, nullptr, &ac, 0, 0);
++			context->CSSetShader(applyCS.get(), nullptr, 0);
++			ID3D11Buffer* cb = applyCB.Get(); context->CSSetConstantBuffers(0, 1, &cb);
++			ID3D11ShaderResourceView* source = toneSRV.Get(); context->CSSetShaderResources(0, 1, &source);
++			ID3D11SamplerState* smp = sampler.Get(); context->CSSetSamplers(0, 1, &smp);
++			context->CSSetUnorderedAccessViews(0, 1, &destination, nullptr);
++			context->Dispatch((roi.width + 7) / 8, (roi.height + 7) / 8, 1);
++		}
++		context->CSSetUnorderedAccessViews(0, 1, &nullUAV, nullptr);
++		context->CSSetShaderResources(0, 2, nullSRVs);
++		context->CSSetShader(savedCS.Get(), nullptr, 0);
++		ID3D11Buffer* cb = savedCB.Get(); context->CSSetConstantBuffers(0, 1, &cb);
++		ID3D11SamplerState* smp = savedSampler.Get(); context->CSSetSamplers(0, 1, &smp);
++		context->CSSetShaderResources(0, 2, savedSRVs);
++		ID3D11UnorderedAccessView* uav = savedUAV.Get(); context->CSSetUnorderedAccessViews(0, 1, &uav, nullptr);
++		for (auto* srv : savedSRVs) if (srv) srv->Release();
++		++status.eyes; status.message = "Active";
++		return true;
++	}
++}
+diff --git a/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/OutsideTone.h b/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/OutsideTone.h
+new file mode 100644
+index 0000000..0947ac9
+--- /dev/null
++++ b/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/OutsideTone.h
+@@ -0,0 +1,23 @@
++#pragma once
++#include "OutsideTonePolicy.h"
++#include <d3d11.h>
++
++namespace NeuralRendering::OutsideTone
++{
++	struct Status
++	{
++		std::uint32_t frame = UINT32_MAX, eyes = 0;
++		const char* message = "Idle";
++	};
++
++	/** @brief Transfers only broad tone into the periphery without touching native histories. */
++	bool Apply(ID3D11Device* device, ID3D11DeviceContext* context,
++		ID3D11ShaderResourceView* original, ID3D11Resource* composite,
++		ID3D11UnorderedAccessView* destination, const Geometry& geometry, const Config& config);
++	/** @brief Starts diagnostics for the current post-NR frame. */
++	void BeginFrame(std::uint32_t frame, bool enabled);
++	/** @brief Gets current-frame application status without issuing GPU queries. */
++	Status GetStatus();
++	/** @brief Releases only this effect's resources and shader cache. */
++	void Reset();
++}
+diff --git a/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/OutsideTonePolicy.h b/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/OutsideTonePolicy.h
+new file mode 100644
+index 0000000..1eb8bbd
+--- /dev/null
++++ b/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/OutsideTonePolicy.h
+@@ -0,0 +1,88 @@
++#pragma once
++
++#include <algorithm>
++#include <array>
++#include <cmath>
++#include <cstdint>
++
++namespace NeuralRendering::OutsideTone
++{
++	struct Config
++	{
++		float brightness = 0.65f, color = 0.30f, width = 128.0f, curve = 1.0f;
++		float dither = 0.15f, boundaryRamp = 8.0f, limitStops = 0.5f, sampleInset = 8.0f;
++	};
++
++	struct Geometry
++	{
++		std::uint32_t x = 0, y = 0, width = 0, height = 0;
++		std::uint32_t eyeX = 0, eyeWidth = 0, eyeHeight = 0;
++		bool oval = false;
++		float maskScale = 1.0f;
++	};
++
++	/** @brief Bounds direct settings writes as well as UI/JSON configuration. */
++	inline Config Sanitize(Config c)
++	{
++		const auto clamp = [](float x, float fallback, float lo, float hi) {
++			return std::clamp(std::isfinite(x) ? x : fallback, lo, hi);
++		};
++		c.brightness = clamp(c.brightness, 0.65f, 0, 1);
++		c.color = clamp(c.color, 0.30f, 0, 1);
++		c.width = clamp(c.width, 128, 8, 512);
++		c.curve = clamp(c.curve, 1, 0.5f, 2);
++		c.dither = clamp(c.dither, 0.15f, 0, 1);
++		c.boundaryRamp = clamp(c.boundaryRamp, 8, 0.5f, 64);
++		c.limitStops = clamp(c.limitStops, 0.5f, 0, 1);
++		c.sampleInset = clamp(c.sampleInset, 8, 0, 25);
++		return c;
++	}
++
++	struct Region
++	{
++		std::uint32_t x = 0, y = 0, width = 0, height = 0;
++	};
++
++	/** @brief Restricts outward writes to one eye and the finite fade envelope. */
++	inline Region MakeRegion(const Geometry& g, float width)
++	{
++		if (!g.width || !g.height || !g.eyeWidth || !g.eyeHeight ||
++			!std::isfinite(g.maskScale) || g.maskScale <= 0 || g.maskScale > 1 ||
++			g.x < g.eyeX || std::uint64_t(g.x) + g.width > std::uint64_t(g.eyeX) + g.eyeWidth ||
++			std::uint64_t(g.y) + g.height > g.eyeHeight || !std::isfinite(width) || width <= 0)
++			return {};
++		const auto pad = static_cast<std::uint32_t>(std::ceil(std::min(width, 512.0f)));
++		const auto left = std::max(g.eyeX, g.x > pad ? g.x - pad : 0u);
++		const auto top = g.y > pad ? g.y - pad : 0u;
++		const auto right = static_cast<std::uint32_t>(std::min(std::uint64_t(g.x) + g.width + pad, std::uint64_t(g.eyeX) + g.eyeWidth));
++		const auto bottom = static_cast<std::uint32_t>(std::min(std::uint64_t(g.y) + g.height + pad, std::uint64_t(g.eyeHeight)));
++		return { left, top, right - left, bottom - top };
++	}
++
++	/** @brief Positive outside distance; mask membership matches the existing compositor. */
++	inline float Distance(float x, float y, const Geometry& g)
++	{
++		const float w = float(g.width), h = float(g.height);
++		if (g.oval) {
++			const float dx = x + 0.5f - w * 0.5f, dy = y + 0.5f - h * 0.5f;
++			const float rx = std::max(0.5f, w * 0.5f * g.maskScale), ry = std::max(0.5f, h * 0.5f * g.maskScale);
++			const float radius = std::sqrt(dx * dx / (rx * rx) + dy * dy / (ry * ry));
++			return radius <= 1.0f ? -1.0f : std::sqrt(dx * dx + dy * dy) * (1.0f - 1.0f / radius);
++		}
++		const float ix = w * (1.0f - g.maskScale) * 0.5f, iy = h * (1.0f - g.maskScale) * 0.5f;
++		const float dx = std::max({ ix - x, x - (w - 1.0f - ix), 0.0f });
++		const float dy = std::max({ iy - y, y - (h - 1.0f - iy), 0.0f });
++		return std::sqrt(dx * dx + dy * dy);
++	}
++
++	/** @brief A continuous outside-only envelope with static dither bounded by the fade. */
++	inline float Weight(float distance, const Config& config, float noise)
++	{
++		if (distance <= 0 || distance >= config.width || config.width <= 0) return 0;
++		const auto smooth = [](float t) { t = std::clamp(t, 0.0f, 1.0f); return t * t * (3.0f - 2.0f * t); };
++		const float fade = 1.0f - smooth(std::pow(distance / config.width, config.curve));
++		const float ramp = smooth(distance / std::max(0.5f, config.boundaryRamp));
++		const float weight = fade * ramp;
++		return std::clamp(weight + (noise - 0.5f) * config.dither * 0.02f * weight * (1.0f - weight), 0.0f, 1.0f);
++	}
++}
+diff --git a/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Renderer.cpp b/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Renderer.cpp
+index 7bcb5a7..cd04197 100644
+--- a/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Renderer.cpp
++++ b/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Renderer.cpp
+@@ -1,5 +1,6 @@
+ #include "../CropMotion.h"
+ #include "Renderer.h"
++#include "OutsideTone.h"
+ 
+ #include "D3D12Interop.h"
+ #include "RuntimePolicy.h"
+@@ -1556,6 +1557,14 @@ namespace NeuralRendering
+ 			return StaggerResult::Applied;
+ 		}
+ 
++		void ApplyOutsideTone(ID3D11Device* device, ID3D11DeviceContext* context,
++			ID3D11Resource* composite, ID3D11UnorderedAccessView* destination,
++			const std::array<OutsideTone::Geometry, 2>& geometry, const OutsideTone::Config& config)
++		{
++			for (std::uint32_t eye = 0; eye < kEyeCount; ++eye)
++				OutsideTone::Apply(device, context, eyes[eye].color.srv11.Get(), composite, destination, geometry[eye], config);
++		}
++
+ 		bool Reset(bool manual = true)
+ 		{
+ 			if (!interop.WaitForIdle()) {
+@@ -1571,6 +1580,7 @@ namespace NeuralRendering
+ 			Runtime::Instance().Shutdown();
+ 			interop.Shutdown();
+ 			eyes = {};
++			OutsideTone::Reset();
+ 			for (auto& eyeReset : resetPending)
+ 				eyeReset.fill(true);
+ 			ResetAdaptivePrewarmState();
+@@ -1632,6 +1642,7 @@ namespace NeuralRendering
+ 
+ 		void ClearShaderCache()
+ 		{
++			OutsideTone::Reset();
+ 			copyDepthGuideCS.Reset();
+ 			alignGuidesCS.Reset();
+ 			alignGuidesCB.Reset();
+@@ -3958,6 +3969,12 @@ namespace NeuralRendering
+ 	}
+ 
+ 	bool Renderer::Reset() { FoveatedRenderImpl::CropMotion::Invalidate(2, 2); return state_->Reset(); }
++	void Renderer::ApplyOutsideTone(ID3D11Device* device, ID3D11DeviceContext* context,
++		ID3D11Resource* composite, ID3D11UnorderedAccessView* destination,
++		const std::array<OutsideTone::Geometry, 2>& geometry, const OutsideTone::Config& config)
++	{
++		state_->ApplyOutsideTone(device, context, composite, destination, geometry, config);
++	}
+ 	void Renderer::ClearShaderCache() { state_->ClearShaderCache(); }
+ 	void Renderer::ResetHistory() { FoveatedRenderImpl::CropMotion::Invalidate(2, 2); state_->ResetHistory(); }
+ 	bool Renderer::IsStereoAtlasActive() const { return state_->IsStereoAtlasActive(); }
+diff --git a/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Renderer.h b/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Renderer.h
+index 504ac08..9fb5223 100644
+--- a/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Renderer.h
++++ b/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Renderer.h
+@@ -1,6 +1,7 @@
+ #pragma once
+ 
+ #include "Runtime.h"
++#include "OutsideTonePolicy.h"
+ 
+ #include <array>
+ #include <cstdint>
+@@ -76,6 +77,10 @@ namespace NeuralRendering
+ 				ID3D11UnorderedAccessView* destinationUAV = nullptr,
+ 				bool blendSubrect = false,
+ 				const StereoResourceEnvelope& resourceEnvelope = {});
++		/** @brief Runs outside-only tone transfer on the completed SBS composite using current input crops. */
++		void ApplyOutsideTone(ID3D11Device* device, ID3D11DeviceContext* context,
++			ID3D11Resource* composite, ID3D11UnorderedAccessView* destination,
++			const std::array<OutsideTone::Geometry, 2>& geometry, const OutsideTone::Config& config);
+ 		/** @brief Drops cached standalone neural-rendering shaders so they recompile on the next frame. */
+ 		void ClearShaderCache();
+ 		/** @brief Resets the native renderer; false means the GPU fence could not be drained safely. */
