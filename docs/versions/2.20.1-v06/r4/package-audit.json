@@ -1,0 +1,38 @@
+{
+  "build_commit": "196780498dc3e19cacdc6ed9ac02d18fde677481",
+  "build_run": 37346929262,
+  "r3_build_commit": "4dfcd4d2fdc547d3d8bdc9dff713016506e9299b",
+  "archives": {
+    "r3": {
+      "name": "OpenNR 2.20.1.7z",
+      "size": 111437808,
+      "sha256": "0821cd14ab4592f61e54a0153d9bdcd2d6c4fc366a721dd11266f7e11240fdbe"
+    },
+    "r4": {
+      "name": "OpenNR 2.20.1.7z",
+      "size": 111439274,
+      "sha256": "c8c80bde77580563878bf2b3a2d104208acc177b9f3aa37d8deab96d77396512"
+    }
+  },
+  "r3_entries": 636,
+  "r4_entries": 637,
+  "added": [
+    "Shaders/Upscaling/NeuralRendering/OutsideToneSmoothCS.hlsl"
+  ],
+  "removed": [],
+  "changed": [
+    "SKSE/Plugins/CommunityShaders.dll",
+    "Shaders/Upscaling/NeuralRendering/OutsideToneApplyCS.hlsl",
+    "Shaders/Upscaling/NeuralRendering/OutsideToneMapCS.hlsl"
+  ],
+  "shader_hashes_match_reviewed_source": true,
+  "every_other_r3_payload_identical": true,
+  "x64_dll_and_new_runtime_controls_verified": true,
+  "all_archive_crc_and_data_checks_passed": true,
+  "nr_carrier_excluded": true,
+  "dll": {
+    "size": 26661376,
+    "sha256": "0782bbdaa65e2e38d2604a5c885e96384f7a7d3c417dd37cd87d2ba8221b9a8e"
+  },
+  "gpu_ms_and_vr_quality_measured": false
+}
