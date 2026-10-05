@@ -293,7 +293,7 @@ index bea5463..1a14d5c 100644
  	Util::Subrect::Controller subrectController;
  	std::uint32_t adaptiveActivePasses = 1;
 diff --git a/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Integration.cpp b/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Integration.cpp
-index 1f0784d..bd68d8e 100644
+index 1f0784d..b741b0c 100644
 --- a/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Integration.cpp
 +++ b/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Integration.cpp
 @@ -1,6 +1,7 @@
@@ -304,10 +304,11 @@ index 1f0784d..bd68d8e 100644
  #include "RuntimePolicy.h"
  #include "Features/HDRDisplay.h"
  #include "Features/Upscaling.h"
-@@ -869,6 +870,22 @@ Tuning tuning{
+@@ -869,6 +870,23 @@ Tuning tuning{
  			}
  		FoveatedRenderImpl::Ops::forceFeatherBlend = false;
  		if (succeeded) {
++			const auto& settings = foveated.settings;
 +			OutsideTone::BeginFrame(frame, settings.outsideToneEnabled && (!fullEye || coverageCrop));
 +			if (settings.outsideToneEnabled && (!fullEye || coverageCrop)) {
 +				const bool adaptiveMask = foveated.IsAdaptiveCropRuntimeActive();
