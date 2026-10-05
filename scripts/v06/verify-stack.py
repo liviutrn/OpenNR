@@ -69,14 +69,27 @@ require('if (radius <= 1.0) return;' in tone_apply and
         'Outside shader can write the existing inside mask')
 require('FrameIndex' not in tone_apply and 'source.a' in tone_apply,
         'Outside effect adds animated noise or changes alpha')
-for name in ('Enabled', 'Brightness', 'Color', 'Width', 'Curve', 'Dither', 'BoundaryRamp', 'LimitStops', 'SampleInset'):
+for name in ('Enabled', 'Brightness', 'Color', 'Width', 'Curve', 'Dither', 'BoundaryRamp', 'LimitStops', 'SampleInset', 'Mode', 'OffsetLimit', 'SampleWidth', 'Smoothing', 'EdgeProtection'):
     require(f'X(outsideTone{name})' in foveated and f'outsideTone{name}' in header,
             f'Outside configuration does not serialize {name}')
 
+require(renderer.count('outsideToneInputs[eyeIndex] =') == 3 and
+        'outsideToneInputs = {};' in renderer,
+        'Pre-feather tone source is stale or missing on a stereo output route')
+require('writebackOutput == shapedOutput ? shapedOutputSRV : eye.handoff.color[eye.handoff.historyIndex].srv.Get()' in renderer,
+        'Outside tone bypasses the actual adaptive handoff output')
+require('gMode == 0u ?' in tone_apply and 'float3(uv,1)' in tone_apply,
+        'Boundary estimator lost offset or legacy A/B behavior')
+require('CS_GPU_PASS("NeuralRendering::OutsideToneSmooth")' in tone,
+        'Correction-map smoothing lacks GPU profiling')
+require('FrameIndex' not in read(shaders / 'NeuralRendering/OutsideToneMapCS.hlsl'),
+        'Boundary fit adds animated sampling')
+
 layout_cpp = ["#include <array>\n#include <cstdint>\nusing std::uint32_t;\n"]
 contracts = [
-    (src / "NeuralRendering/OutsideTone.cpp", "MapConstants", shaders / "NeuralRendering/OutsideToneMapCS.hlsl", 32),
+    (src / "NeuralRendering/OutsideTone.cpp", "MapConstants", shaders / "NeuralRendering/OutsideToneMapCS.hlsl", 64),
     (src / "NeuralRendering/OutsideTone.cpp", "ApplyConstants", shaders / "NeuralRendering/OutsideToneApplyCS.hlsl", 96),
+    (src / "NeuralRendering/OutsideTone.cpp", "MapConstants", shaders / "NeuralRendering/OutsideToneSmoothCS.hlsl", 64),
     (src / "CropMotion.cpp", "Constants", shaders / "FoveatedRender/CropMotionCS.hlsl", 32),
     (src / "NeuralRendering/Renderer.cpp", "ResultShapingConstants", shaders / "NeuralRendering/ResultShapingCS.hlsl", 160),
     (src / "NeuralRendering/Renderer.cpp", "LadderAtlasConstants", shaders / "NeuralRendering/LadderAtlasGuidesCS.hlsl", 160),
@@ -105,7 +118,7 @@ for cpp_path, name, hlsl_path, expected_bytes in contracts:
         gpu.extend([field.group(1)] * count)
     require(cpu == gpu and len(cpu) * 4 == expected_bytes,
             f"CPU/HLSL component layout mismatch: {name}")
-    layout_cpp.append(f"struct {name} {{ {body} }};\nstatic_assert(sizeof({name}) == {expected_bytes});\n")
+    layout_cpp.append(f"struct {name}_{len(layout_cpp)} {{ {body} }};\nstatic_assert(sizeof({name}_{len(layout_cpp)}) == {expected_bytes});\n")
 rcas_header = read(src / "RCAS/RCAS.h")
 map_function = re.search(r"static float MapSliderStrength\(float strength\)\s*\{(.*?)\n\t\}", rcas_header, re.S)
 require(map_function is not None, "RCAS has no shared slider conversion")
@@ -128,4 +141,4 @@ layout_cpp.append("""int main() {
 }\n""")
 if args.write_layout_cpp:
     args.write_layout_cpp.write_text("".join(layout_cpp), encoding="utf-8")
-print("v6 integration contracts and eight CPU/HLSL buffer layouts passed")
+print("v6 integration contracts and nine CPU/HLSL buffer layouts passed")

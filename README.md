@@ -1,96 +1,65 @@
-# OpenNR 2.20.1-v06-r3 — outside crop brightness and color transfer
+# OpenNR 2.20.1-v06-r4 — boundary tone matching
 
-[r1 branch](https://github.com/liviutrn/OpenNR/tree/build/2.20.1-v06-r1) · [r2 branch](https://github.com/liviutrn/OpenNR/tree/build/2.20.1-v06-r2) · [r3 branch](https://github.com/liviutrn/OpenNR/tree/build/2.20.1-v06-r3)
+r4 replaces the inset-dependent outside-tone estimate with local **gain plus offset** matching. It measures the completed NR crop **before the outer crop feather**, so a weak feathered edge does not hide the tone change and a large inset does not borrow tone from a distant surface.
 
-r3 adds an optional way to make the DLSS5/NR crop less obvious when its brightness or color differs from the surrounding image. It transfers broad tonal changes into a feathered band **outside** the crop, with configurable static dither.
+## Changes from r3
 
-It builds on r2's user-confirmed shaking/trembling fix. The inner feather and pixels inside the crop remain unchanged. **The effect defaults to off.**
+- Fit local RGB gain and offset from paired original/NR samples in a narrow strip along the actual rectangle or oval boundary.
+- Carry additive shadow lifting, darkening, contrast compression, and broad color changes into the outside band. Black samples are no longer automatically assigned zero confidence.
+- Sample the actual shaped/resolved/transition-handoff result used for writeback. Compact sequential passes and temporal-reuse routes retain their own completed output.
+- Smooth only the small correction map. The existing scene image, inner feather, and pixels inside the crop are unchanged.
+- Retain **Legacy inset gain** as an immediate A/B estimator.
+- Add optional outside edge protection, **off by default**. It reduces transfer when an outside pixel differs strongly from the local original reference.
+- Include coefficient smoothing in the GPU-cost readout.
+- Preserve the r2 gaze geometry/history fix, FPS policy, neural tuning, and native resource contracts.
 
-Revision: [4dfcd4d](https://github.com/liviutrn/OpenNR/commit/4dfcd4d2fdc547d3d8bdc9dff713016506e9299b).
+## Controls
 
-## Changes from r2
+Outside NR tone transfer remains **off by default**. Existing brightness, color, outside width/falloff, boundary ramp, static dither, and gain-limit controls remain live and saved.
 
-### Estimate the crop's tonal change
-
-A coarse current-frame 16 × 16 map compares paired samples from the original crop and the completed NR composite. Each map cell uses 8 × 8 paired samples to estimate broad brightness and channel-color changes.
-
-The estimate uses bounded log2 gains, reduces confidence near black, and guards invalid/nonfinite values. Sampling can be moved farther toward the crop center to avoid measuring mostly the existing inner feather.
-
-The calculation uses the existing LDR buffer representation; it does not assume a scene-linear buffer or copy NR detail into the periphery.
-
-### Apply correction only outside the crop
-
-A second compute shader applies the estimated brightness/color correction outside the actual rectangle or oval mask. For oval crops, this includes the exterior corner regions.
-
-Correction ramps in beyond the untouched boundary, fades outward over a configurable width, and preserves original alpha. Pixels inside the mask are protected. A bounded application region and eye-local coordinates prevent correction from leaking into the other eye.
-
-Sampling farther inward changes only the tone estimate; it does not modify the crop interior or its existing feather.
-
-### Add static dither to the outward feather
-
-Small screen-space dither breaks up the fade. It does not change with a frame index, so the effect introduces no animated-noise sequence. Width, falloff, dither strength, and boundary ramp can be tuned independently.
-
-No new temporal accumulation or history is added.
-
-## New live controls
-
-The foveated Edge Blend controls contain **Outside NR tone transfer**. Changes are live and use the existing settings save/load path.
-
-| Control | Default | Range | Effect |
+| New control | Default | Range | Purpose |
 |---|---:|---:|---|
-| Enable | Off | On/off | Toggle the outside correction |
-| Brightness | 0.65 | 0–1 | Strength of luminance transfer |
-| Color | 0.30 | 0–1 | Strength of chromatic transfer |
-| Fade width | 128 px | 8–512 px | Reach into the surrounding image |
-| Falloff | 1.00 | 0.5–2 | Shape of the outward fade |
-| Static dither | 0.15 | 0–1 | Subtle breakup of the feather |
-| Boundary ramp | 8 px | 0.5–64 px | Fade correction in from the protected edge |
-| Tone limit | 0.50 stops | 0–1 stops | Bound estimated/applied gain magnitude |
-| Sampling inset | 8% | 0–25% | Sample farther toward crop center |
+| Tone estimator | Boundary gain + offset | Legacy / Boundary | Compare r3-style gain with local affine matching |
+| Brightness offset limit | 0.08 | 0–0.25 | Cap positive/negative per-channel additive correction in the existing LDR representation |
+| Boundary sample width | 32 px | 4–128 px | Local inward depth and tangential sampling width |
+| Correction map smoothing | 0.50 | 0–1 | Spatial smoothing of coefficients; zero skips this pass |
+| Outside edge protection | 0.00 | 0–1 | Optional attenuation across dissimilar outside colors |
 
-Widths are output-image pixels. If correction is too weak, a 15–25% sampling inset can measure beyond more of the inner feather. If a halo appears, reduce brightness/color or widen the outside fade. The correction extrapolates tone; scene-dependent differences can still leave a visible boundary.
+The legacy sampling inset affects only the legacy estimator. The new mode samples near the boundary automatically; sample width controls how local the estimate is.
 
-## Performance measurement
+For visual comparison, select **Boundary gain + offset** and try brightness/color at **1.0** first, then reduce them if the transfer is too strong. Keep edge protection at zero initially. If an offset hits its limit, increase the offset limit cautiously; widening the fade spreads the correction farther.
 
-**Measure outside tone GPU cost** uses the existing nonblocking GPU profiler. With runtime profiling enabled, the section open, and the effect active, it shows the latest and rolling-average sum of map and application timings for **both eyes**.
+This estimates broad local tone transformations. It cannot reproduce arbitrary neural detail, spatial relighting outside the available crop, or every nonlinear color operation exactly. Scene-dependent differences can still leave a seam or halo.
 
-These are steady-state pass timings. First-use shader compilation and resource creation are excluded. The measurement checkbox is session-only; turn it off after tuning to remove capture-query overhead. The passes also appear as `NeuralRendering::OutsideTone*` profiler events.
+## Performance and integration
 
-The requested **0.1–0.2 ms** is a target, not a measured or guaranteed maximum. Wider application bands cover more pixels and can cost more.
+The default boundary mode runs map fitting, optional tiny-map smoothing, and outside application. There is **no new full-image copy, pixel readback, temporal history, or full-image guided filter**.
 
-The implementation adds no full-frame copy or CPU pixel readback. One small map is reused sequentially for the eyes. When disabled, it adds no new GPU allocation or dispatch; zero transfer strengths or a zero tone limit also skip the new dispatches.
+The coefficient textures occupy 24 KiB of texel payload in total and are reused sequentially for the eyes. Smoothing covers only 16×16 cells. Edge protection is optional; disabling it avoids its extra reference-map sample. Disabling tone transfer adds no new GPU dispatches or allocation. Full-eye and pre-SR routes still skip the effect.
 
-## Integration and failure handling
+**Measure outside tone GPU cost** reports the sum of active tone passes for both eyes using the existing nonblocking profiler. Initial allocation/shader compilation and query overhead are separate from the steady-state pass measurement. The requested **0.1–0.2 ms** remains a target until measured on the actual GPU.
 
-- The effect runs after successful NR compositing.
-- Full-eye and pre-SR routes skip it.
-- Controls do not trigger native NR recreation, gaze filtering, or history resets.
-- r2 crop placement, sampling phase, guide alignment, and temporal correspondence are retained.
-- FPS controller policy, neural fine tuning, sequential-pass tuning, and the existing inner feather are retained.
-- Shader/resource failure or an unsupported target skips the tone effect and reports status, without latching a native NR failure.
-- Shader-cache clearing allows failed initialization to be retried.
+Changing these controls does not recreate native NR, reset gaze history, or alter FPS-controller decisions. Failure skips the tone effect and retains NR rendering.
 
-Devbench adds `configureOutsideTone` for validated live changes and `outsideToneStatus` for settings and last application frame/eye count. Configuration changes persist through the existing save action.
+Devbench `configureOutsideTone` adds `mode` (0 legacy / 1 boundary), `offsetLimit`, `sampleWidth`, `smoothing`, and `edgeProtection`, with validation before assignment. `outsideToneStatus` returns the new fields. Existing save/load persists them.
 
-## Verification and remaining limits
+## Verification scope
 
-Source replay matched all 12 changed runtime files. Eighteen critical r2 gaze/history/grid/controller/compositor files remained byte-identical. Existing r2 policy, geometry, and image-oracle checks were rerun.
+An independent r3-to-r4 replay checks the exact generated-source contract. CPU oracles cover identity, black shadow lifting, gain darkening, negative offsets, contrast compression, tint, invalid/extreme samples, valid rectangle/oval sample positions, outside-only writes, and alpha preservation.
 
-New checks covered 1.2 million outside-policy points and 18 synthetic image cases: interior/alpha preservation, identity transfer, eye isolation, rectangle/oval bounds, fade continuity, static-noise bounds, black/nonfinite protection, and gain limits. Eight CPU/HLSL buffer-layout checks, eight FXC shader checks, full Windows compilation, and package manifest checks passed.
+The existing controller, zero-filter gaze, crop-grid, head-motion, and outside-mask suites are retained. CI checks nine CPU/HLSL buffer layouts, compiles the nine involved shaders, and builds/packages the full Windows runtime.
 
-The independent [r3 package audit](https://github.com/liviutrn/OpenNR/actions/runs/37335672597) compared both archives: r3 adds exactly two tone-transfer shaders, changes the DLL, removes no files, and leaves all existing shader/other payloads unchanged.
+CPU/source checks do not execute native NR or prove headset quality. VR acceptance and GPU cost remain pending.
 
-Actual VR seam quality, GPU cost, and coexistence across all runtime combinations remain unmeasured in this environment. No claim of a universal 0.2 ms ceiling or complete visual acceptance is made. Possible slight residual flickering reported with r2 is not addressed by this tonal correction.
+## Lineage
+
+These are custom OpenNR 2.20.1 checkpoints. OpenNR inherits [Open Shaders](https://github.com/alandtse/open-shaders) and [Community Shaders](https://github.com/community-shaders/skyrim-community-shaders) ([Nexus](https://www.nexusmods.com/skyrimspecialedition/mods/86492)).
 
 ---
 
-## Project lineage
-
-OpenNR inherits [Open Shaders](https://github.com/alandtse/open-shaders) and [Community Shaders](https://github.com/community-shaders/skyrim-community-shaders) ([Nexus](https://www.nexusmods.com/skyrimspecialedition/mods/86492)). These are custom fork revisions.
-
 ## Earlier project documentation
 
-The following v01 and base-project notes are preserved historical documentation. Their acceptance statements apply to those versions.
+The following notes describe earlier versions.
 
 # OpenNR 2.20.1-v01 — Sequential Gaze + Stereo Atlas Experimental Build
 

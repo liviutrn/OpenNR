@@ -1,4 +1,4 @@
-name: Build OpenNR 2.20.1-v06-r3
+name: Build OpenNR 2.20.1-v06-r4
 
 on:
   push:
@@ -170,6 +170,10 @@ jobs:
           if ($LASTEXITCODE) { throw 'v06 crop-grid contract or patch failed' }
           python scripts/v06/apply-outside-tone.py
           if ($LASTEXITCODE) { throw 'v06 outside-tone contract or patch failed' }
+          python scripts/v06/apply-boundary-tone.py
+          if ($LASTEXITCODE) { throw 'v06 boundary-tone contract or patch failed' }
+          python scripts/v06/audit-boundary-tone.py
+          if ($LASTEXITCODE) { throw 'v06 boundary-tone numerical oracle failed' }
 
       - name: Permit carrier-excluded package
         shell: pwsh
@@ -203,6 +207,7 @@ jobs:
             'runtime/open-shaders/features/Upscaling/Shaders/Upscaling/NeuralRendering/ModelResolutionCS.hlsl',
             'runtime/open-shaders/features/Upscaling/Shaders/Upscaling/NeuralRendering/AlignGuidesCS.hlsl',
             'runtime/open-shaders/features/Upscaling/Shaders/Upscaling/NeuralRendering/OutsideToneMapCS.hlsl',
+            'runtime/open-shaders/features/Upscaling/Shaders/Upscaling/NeuralRendering/OutsideToneSmoothCS.hlsl',
             'runtime/open-shaders/features/Upscaling/Shaders/Upscaling/NeuralRendering/OutsideToneApplyCS.hlsl',
             'runtime/open-shaders/features/Upscaling/Shaders/Upscaling/FoveatedRender/SubrectBlendCS.hlsl'
           ) | ForEach-Object {
@@ -265,7 +270,7 @@ jobs:
       - name: Add v06 package notes and hashes
         shell: pwsh
         run: |
-          Copy-Item docs/versions/2.20.1-v06/README.md dist/README-2.20.1-v06.txt
+          Copy-Item docs/versions/2.20.1-v06/r4/README.md dist/README-2.20.1-v06.txt
           Get-ChildItem -Recurse dist -File | ForEach-Object {
             $h = Get-FileHash $_.FullName -Algorithm SHA256
             "$($h.Hash)  $($_.FullName)"
@@ -274,7 +279,7 @@ jobs:
       - name: Upload v06 checkpoint package
         uses: actions/upload-artifact@v4
         with:
-          name: OpenNR-2.20.1-v06-r3-outside-tone-carrier-excluded
+          name: OpenNR-2.20.1-v06-r4-boundary-tone-carrier-excluded
           path: dist/*
           if-no-files-found: error
           retention-days: 14
