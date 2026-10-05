@@ -1,3 +1,19 @@
+# OpenNR — latest v06 revisions
+
+| Revision | Changes and modifications |
+|---|---|
+| [v06-r3](docs/versions/2.20.1-v06/r3/README.md) | Optional outside-crop brightness/color transfer, outward feather, static dither, and configurable GPU measurement |
+| [v06-r2](docs/versions/2.20.1-v06/r2/README.md) | Crop coordinate and sampling corrections; tester confirmed no image shaking/trembling |
+| [v06-r1](docs/versions/2.20.1-v06/r1/README.md) | Atlas motion-vector corrections and direct response at zero gaze filtering |
+
+[Revision comparison and cumulative v06 notes](docs/versions/2.20.1-v06/README.md).
+
+r3 keeps r2's gaze stability work and defaults its new tone-transfer effect to off. Possible slight residual flickering and unmeasured GPU cost are described in the revision notes.
+
+The v01 and base-project documentation below is preserved as historical context; its acceptance statements apply to those versions.
+
+---
+
 # OpenNR 2.20.1-v01 — Sequential Gaze + Stereo Atlas Experimental Build
 
 This branch is a substantially modified experimental build of **OpenNR 2.20.1**, based on the upstream OpenNR project by **olekspa**. The upstream project and attribution remain intact; the changes below describe the custom `liviutrn/OpenNR` v01 line.

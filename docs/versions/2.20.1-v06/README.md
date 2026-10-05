@@ -1,5 +1,23 @@
 # OpenNR 2.20.1-v06-r3 — optional outside NR tone transfer
 
+## Latest three revisions: changes and modifications
+
+These are successive custom checkpoints of OpenNR 2.20.1-v06. Each README describes its changes from the preceding revision.
+
+| Revision | Main modifications | Current evidence |
+|---|---|---|
+| [v06-r1](r1/README.md) | Correct native atlas motion units; preserve small guide motion; make zero gaze filtering direct | Compiled and checked; shaking/trembling still reported |
+| [v06-r2](r2/README.md) | Align SR/NR crop coordinates, cropped cameras, motion compensation, and reduced atlas sampling phase | Tester confirmed no shaking/trembling; possible slight flicker remained |
+| [v06-r3](r3/README.md) | Optional outside-only brightness/color transfer, outward feather, static dither, and live GPU timing | Source/build/package checks passed; headset seam quality and GPU cost pending |
+
+The FPS controller, neural fine tuning, earlier gaze-history work, and existing inner feather are retained across these revisions. r3 defaults to the r2 behavior until its new outside-tone option is enabled.
+
+The detailed cumulative notes below preserve the implementation and verification record. Earlier “headset acceptance pending” statements describe the evidence available when those notes were written; the per-revision READMEs above record subsequent r2 user feedback.
+
+OpenNR inherits [Open Shaders](https://github.com/alandtse/open-shaders) and [Community Shaders](https://github.com/community-shaders/skyrim-community-shaders) ([Nexus](https://www.nexusmods.com/skyrimspecialedition/mods/86492)). This custom fork is not an official upstream release.
+
+---
+
 ## r3 outside-only tone transfer
 
 Built on r2, which the user confirmed removed image shaking/trembling. This
