@@ -1,8 +1,8 @@
-name: Build OpenNR 2.20.1-v06-r5
+name: Build OpenNR 2.20.1-v06-r6
 
 on:
   push:
-    branches: ["build/2.20.1-v06-adaptive-single-pass", "build/2.20.1-v06-r5"]
+    branches: ["build/2.20.1-v06-adaptive-single-pass", "build/2.20.1-v06-r6"]
   workflow_dispatch:
 
 concurrency:
@@ -179,6 +179,11 @@ jobs:
           if ($LASTEXITCODE) { throw 'v06 targeted-seam contract or patch failed' }
           python scripts/v06/audit-seam-tone.py
           if ($LASTEXITCODE) { throw 'v06 targeted-seam numerical oracle failed' }
+          python scripts/v06/apply-nr-black.py
+          if ($LASTEXITCODE) { throw 'v06 inside-NR protection source contract failed' }
+          python scripts/v06/audit-nr-black.py
+          if ($LASTEXITCODE) { throw 'v06 inside-NR protection or range oracle failed' }
+
 
       - name: Permit carrier-excluded package
         shell: pwsh
@@ -222,6 +227,18 @@ jobs:
             & $fxc.FullName /nologo /WX /T cs_5_0 /E main /Fo "$env:RUNNER_TEMP/overlap-check.cso" $_
             if ($LASTEXITCODE) { throw "Overlap shader compilation failed: $_" }
           }
+
+      - name: Execute NR protection and seam shaders on software D3D11
+        shell: pwsh
+        run: |
+          cl /nologo /std:c++20 /EHsc /W4 /WX scripts/v06/test-nr-black-warp.cpp d3d11.lib d3dcompiler.lib /Fe:nr-black-warp.exe
+          if ($LASTEXITCODE) { throw 'NR protection WARP test compilation failed' }
+          & ./nr-black-warp.exe
+          if ($LASTEXITCODE) { throw 'NR protection shader execution failed' }
+          cl /nologo /std:c++20 /EHsc /W4 /WX scripts/v06/test-r6-seam-warp.cpp d3d11.lib d3dcompiler.lib /Fe:r6-seam-warp.exe
+          if ($LASTEXITCODE) { throw 'r6 seam WARP test compilation failed' }
+          & ./r6-seam-warp.exe
+          if ($LASTEXITCODE) { throw 'r6 seam shader execution failed' }
 
       - name: Verify v06 gaze and controller policies
         shell: pwsh
@@ -282,32 +299,32 @@ jobs:
       - name: Add v06 package notes and hashes
         shell: pwsh
         run: |
-          Copy-Item docs/versions/2.20.1-v06/r5/README.md dist/README-2.20.1-v06.txt
+          Copy-Item docs/versions/2.20.1-v06/r6/README.md dist/README-2.20.1-v06.txt
           Get-ChildItem -Recurse dist -File | ForEach-Object {
             $h = Get-FileHash $_.FullName -Algorithm SHA256
             "$($h.Hash)  $($_.FullName)"
           } | Tee-Object -FilePath dist/SHA256SUMS.txt
 
-      - name: Download compiled r4 baseline for audit
+      - name: Download compiled r5 baseline for audit
         uses: actions/download-artifact@v4
         with:
-          name: OpenNR-2.20.1-v06-r4-boundary-tone-carrier-excluded
-          run-id: 37346929262
+          name: OpenNR-2.20.1-v06-r5-targeted-seam-carrier-excluded
+          run-id: 37392639119
           github-token: ${{ secrets.GITHUB_TOKEN }}
-          path: artifacts/r4
+          path: artifacts/r5
 
-      - name: Audit compiled r5 package
+      - name: Audit compiled r6 package
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force artifacts/r5 | Out-Null
-          Copy-Item dist/*.7z artifacts/r5/
-          python scripts/v06/audit-r5-package.py
-          if ($LASTEXITCODE) { throw 'r5 package regression audit failed' }
+          New-Item -ItemType Directory -Force artifacts/r6 | Out-Null
+          Copy-Item dist/*.7z artifacts/r6/
+          python scripts/v06/audit-r6-package.py
+          if ($LASTEXITCODE) { throw 'r6 package regression audit failed' }
 
-      - name: Upload r5 package audit
+      - name: Upload r6 package audit
         uses: actions/upload-artifact@v4
         with:
-          name: OpenNR-v06-r5-package-audit
+          name: OpenNR-v06-r6-package-audit
           path: audit-results/*
           if-no-files-found: error
           retention-days: 14
@@ -315,7 +332,7 @@ jobs:
       - name: Upload v06 checkpoint package
         uses: actions/upload-artifact@v4
         with:
-          name: OpenNR-2.20.1-v06-r5-targeted-seam-carrier-excluded
+          name: OpenNR-2.20.1-v06-r6-inside-black-protection-carrier-excluded
           path: dist/*
           if-no-files-found: error
           retention-days: 14

@@ -1,0 +1,14 @@
+{
+  "runtime/open-shaders/features/Upscaling/Shaders/Upscaling/NeuralRendering/OutsideSeamApplyCS.hlsl": "029f827216a78a6f128a22059c08f0d8736e838dad9a0cf0c62e16062952894c",
+  "runtime/open-shaders/features/Upscaling/Shaders/Upscaling/NeuralRendering/OutsideToneApplyCS.hlsl": "643825fe14dbccf0a580b0462ba5c3a68d71ea0e6ea5e6aa268234cb3054a064",
+  "runtime/open-shaders/features/Upscaling/Shaders/Upscaling/NeuralRendering/ResultShapingCS.hlsl": "a34c8f3ed9d2f02127b6e39828e62e603f04e1ebdd606d73d504cab7b7386d0e",
+  "runtime/open-shaders/src/Features/RemoteControl/DevBenchBridge.cpp": "be6fe599e8d46fe10459f07b448cc3b93b3190a007196d72768d95fbc380992a",
+  "runtime/open-shaders/src/Features/Upscaling.cpp": "ba9082840dcb7c77b4e155a1baa2adb8301fd8861b1a60a50e6d83139a62ce85",
+  "runtime/open-shaders/src/Features/Upscaling/FoveatedRender.cpp": "0093dd8753a8edf3fa238455ccc0facf937e99d8464f7a39307e72b07331487e",
+  "runtime/open-shaders/src/Features/Upscaling/FoveatedRender.h": "64946f71f43028bf78a63ef12d9fc7dc62e8420de9757015360c3c60e5c582b0",
+  "runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Integration.cpp": "b80caf5ad6a017d2bbb35dd0c0a4f657030451d8d032b4b24fa4b46da137bb10",
+  "runtime/open-shaders/src/Features/Upscaling/NeuralRendering/OutsideTone.cpp": "82ae254f1bd49fc81c17c2e85c8562c8006ef1061549cf7240a1addf4a851e75",
+  "runtime/open-shaders/src/Features/Upscaling/NeuralRendering/OutsideTonePolicy.h": "44af62a82ef189b5a9ed306026c4e931418c415e755c770f430557902aa49ba1",
+  "runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Renderer.cpp": "4825b2d737613ab73f3ad6799cb4885e3587bf96b8058e73c402a6f8e196b445",
+  "runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Runtime.h": "73b7711e85784899d61b51a27fd3e0d5374bdf2a68dcfb300992cdfced07e255"
+}

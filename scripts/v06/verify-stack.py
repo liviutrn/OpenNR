@@ -69,7 +69,7 @@ require('if (radius <= 1.0) return;' in tone_apply and
         'Outside shader can write the existing inside mask')
 require('FrameIndex' not in tone_apply and 'source.a' in tone_apply,
         'Outside effect adds animated noise or changes alpha')
-for name in ('Enabled', 'Brightness', 'Color', 'Width', 'Curve', 'Dither', 'BoundaryRamp', 'LimitStops', 'SampleInset', 'Mode', 'OffsetLimit', 'SampleWidth', 'Smoothing', 'EdgeProtection', 'Contrast', 'Nonlinear', 'Plateau', 'BlackProtection', 'SampleFocus', 'ContrastReach'):
+for name in ('Enabled', 'Brightness', 'Color', 'Width', 'Curve', 'Dither', 'BoundaryRamp', 'LimitStops', 'SampleInset', 'Mode', 'OffsetLimit', 'SampleWidth', 'Smoothing', 'EdgeProtection', 'Contrast', 'Nonlinear', 'Plateau', 'SampleFocus', 'ContrastReach'):
     require(f'X(outsideTone{name})' in foveated and f'outsideTone{name}' in header,
             f'Outside configuration does not serialize {name}')
 
@@ -96,10 +96,26 @@ require('MakeRing(g, roi)' in tone and 'std::min(ring.totalPixels,16384u)' in to
         'Targeted outside dispatch is not compact')
 require('td.ArraySize = 4' in tone and 'sizeof(SeamApplyConstants) == 160' in tone,
         'Targeted seam allocation contract missing')
-for name in ('contrast', 'nonlinear', 'plateau', 'blackProtection', 'sampleFocus', 'contrastReach'):
+for name in ('contrast', 'nonlinear', 'plateau', 'sampleFocus', 'contrastReach'):
     require(f'read("{name}"' in read(src.parent / 'Upscaling.cpp') and
             name in read(src.parent / 'RemoteControl/DevBenchBridge.cpp'),
             f'Targeted control lacks validated command/schema: {name}')
+
+require('tuning.nearBlackProtection > 0.0f' in renderer,
+        'Near-black protection depends on the ordinary shaping toggle')
+for name in ('Protection', 'Threshold', 'LiftSoftness'):
+    require(f'X(neuralRenderingNearBlack{name})' in foveated and f'neuralRenderingNearBlack{name}' in header,
+            f'NR protection configuration not serialized: {name}')
+result = read(shaders / 'NeuralRendering/ResultShapingCS.hlsl')
+require(result.index('gHistoryOutput[pixel]') < result.index('gNearBlackProtection > 0.0'),
+        'Black protection contaminates raw stabilization history')
+require(result.index('delta = ShapeDelta') < result.index('gNearBlackProtection > 0.0'),
+        'Black protection runs before user result shaping')
+require('gBlackProtection' not in seam_apply and 'outsideToneBlackProtection' not in foveated + header + integration,
+        'Retired outside black protection still active')
+require('configureNeuralBlackProtection' in read(src.parent/'Upscaling.cpp') and
+        'configureNeuralBlackProtection' in read(src.parent/'RemoteControl/DevBenchBridge.cpp'),
+        'Inside protection lacks developer command/schema')
 
 layout_cpp = ["#include <array>\n#include <cstdint>\nusing std::uint32_t;\n"]
 contracts = [

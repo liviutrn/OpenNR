@@ -55,6 +55,6 @@ int main()
     assert(MakeRegion(invalid, std::numeric_limits<float>::infinity()).width == 0);
     c.width = std::numeric_limits<float>::quiet_NaN(); c.curve = -100; c.color = 100;
     c = Sanitize(c);
-    assert(c.width == 128 && c.curve == 0.5f && c.color == 1);
+    assert(c.width == 128 && c.curve == 0.25f && c.color == 2);
     std::cout << "Outside mask protection, eye isolation, adaptive geometry, fade continuity, bounded static dither and invalid settings passed; protected=" << protectedPixels << ", outer=" << outerPixels << '\n';
 }

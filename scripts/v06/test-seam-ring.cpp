@@ -15,7 +15,7 @@ int main()
                 const unsigned eyeWidth = 233, eyeHeight = 197, eyeX = (iteration & 1u) * eyeWidth;
                 const unsigned width = 1 + random() % 230, height = 1 + random() % 194;
                 Geometry g{ eyeX + std::uint32_t(random() % (eyeWidth-width+1)), std::uint32_t(random() % (eyeHeight-height+1)), width, height, eyeX, eyeWidth, eyeHeight, oval, scale };
-                const auto roi = MakeRegion(g, float(8 + random() % 120));
+                const auto roi = MakeRegion(g, float(iteration%3==0?1024:8 + random() % 512));
                 const auto ring = MakeRing(g, roi);
                 std::vector<bool> visited(roi.width*roi.height,false);
                 assert(ring.totalPixels <= visited.size());
@@ -52,8 +52,8 @@ int main()
     const auto ring = MakeRing(large,roi);
     assert(ring.totalPixels < roi.width*roi.height / 2);
     assert(!MakeRing(large,{}).totalPixels);
-    Config c; c.contrast = -3; c.nonlinear = 8; c.plateau = 1; c.blackProtection = -1;
+    Config c; c.contrast = -3; c.nonlinear = 8; c.plateau = 1;
     c = Sanitize(c);
-    assert(c.contrast == 0 && c.nonlinear == 1 && c.plateau == .8f && c.blackProtection == 0);
+    assert(c.contrast == 0 && c.nonlinear == 2 && c.plateau == .95f);
     std::cout << "Compact ring has complete outside coverage, no duplicates, eye isolation and only protected omissions; checked=" << checked << ", skipped=" << skipped << '\n';
 }
