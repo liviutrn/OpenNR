@@ -1,0 +1,13 @@
+cmake_minimum_required(VERSION 3.21)
+project(VRSnellen LANGUAGES CXX)
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+if(NOT DEFINED OPENVR_ROOT)
+  message(FATAL_ERROR "Pass -DOPENVR_ROOT=<path to Valve openvr checkout>")
+endif()
+add_executable(VR_Snellen WIN32 main.cpp)
+target_include_directories(VR_Snellen PRIVATE "${OPENVR_ROOT}/headers")
+target_link_libraries(VR_Snellen PRIVATE d3d11 dxgi d3dcompiler "${OPENVR_ROOT}/lib/win64/openvr_api.lib")
+add_custom_command(TARGET VR_Snellen POST_BUILD
+  COMMAND ${CMAKE_COMMAND} -E copy_if_different "${OPENVR_ROOT}/bin/win64/openvr_api.dll" "$<TARGET_FILE_DIR:VR_Snellen>/openvr_api.dll")
