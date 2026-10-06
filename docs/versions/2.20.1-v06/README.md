@@ -1,6 +1,6 @@
 # OpenNR 2.20.1-v06-r5 — targeted outside seam correction
 
-Build and package audit pending. GPU timing and headset quality require an in-game comparison.
+**Built and package-audited successfully.** [Download r5](https://github.com/liviutrn/OpenNR/actions/runs/37392639119/artifacts/11382089894) · [Build](https://github.com/liviutrn/OpenNR/actions/runs/37392639119) · [Package audit](https://github.com/liviutrn/OpenNR/actions/runs/37392639119/artifacts/11383085799). GPU timing and headset quality require an in-game comparison.
 
 ## Changes from r4
 
@@ -94,8 +94,11 @@ file hashes; legacy estimator/renderer identity; twelve CPU/HLSL buffer
 layouts; affine and curved tone fixtures; bounded finite corrections; compact
 dispatch coverage; existing gaze/grid/controller/outside-mask suites.
 
-Windows compilation, complete source contracts and package comparison are
-required build gates. Native NR/headset runtime is unavailable here. No
+Windows x64 compilation and complete source contracts passed. All twelve selected shaders passed FXC with warnings treated as errors. Twelve actual map/smooth/apply cases passed on D3D11 WARP, covering both crop masks, identity, RGB offsets, mixed-channel contrast, nonlinear curves, black lift/protection, alpha and interior protection; this software test does not measure GPU milliseconds or native NR quality.
+
+The [r4-to-r5 package audit](https://github.com/liviutrn/OpenNR/actions/runs/37392639119/artifacts/11383085799) checked all archive data and hashes. Only the runtime DLL changed; exactly three new seam shaders were added. No files were removed, every other r4 payload is byte-identical, and the packaged shader bytes match the reviewed source. The NR carrier remains excluded. The 7z archive SHA-256 is `c138a4ab1e1af7d75a5b500c6ca5c9feb5e3818552b44bc4ad1c70d1378f13d9`.
+
+Native NR/headset runtime is unavailable here. No
 universal invisible-seam claim: unseen peripheral objects can need different
 neural lighting, and this method estimates their appearance from nearby crop
 samples. It operates in the existing LDR buffer representation.

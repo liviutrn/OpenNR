@@ -16,5 +16,29 @@
   "renderer_and_legacy_shaders_identical": true,
   "cpu_shader_layouts": 12,
   "gpu_ms_measured": false,
-  "headset_quality_measured": false
+  "headset_quality_measured": false,
+  "build_commit": "99e580549564b8b1d5e4531e86b3d218250cf2aa",
+  "build_run": 37392639119,
+  "software_shader_execution": {
+    "backend": "D3D11 WARP",
+    "cases": 12,
+    "run": 37394306756,
+    "source_commit": "99e580549564b8b1d5e4531e86b3d218250cf2aa",
+    "test_commit": "a80f0744b052aeffac0419db168201aa9a90e26f",
+    "passed": true,
+    "mixed_rgb_and_nonlinear_curves": true
+  },
+  "numerical_cases": {
+    "gray_curves": 6,
+    "mixed_rgb": 2,
+    "random_bounds": 10000,
+    "basis_interpolation": 1000,
+    "ring_pixels_checked": 18291996,
+    "protected_pixels_omitted": 2490499
+  },
+  "windows_build_passed": true,
+  "package_audit_passed": true,
+  "package_artifact": "https://github.com/liviutrn/OpenNR/actions/runs/37392639119/artifacts/11382089894",
+  "package_audit_artifact": "https://github.com/liviutrn/OpenNR/actions/runs/37392639119/artifacts/11383085799",
+  "fxc_shaders_warnings_as_errors": 12
 }

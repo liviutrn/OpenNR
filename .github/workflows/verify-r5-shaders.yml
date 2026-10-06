@@ -1,0 +1,45 @@
+name: Verify r5 seam shaders on D3D11 WARP
+
+on:
+  push:
+    branches: ["verify/2.20.1-v06-r5-shaders"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  shaders:
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@v4
+      - name: Extract exact reviewed shaders
+        shell: pwsh
+        run: |
+          @'
+          from pathlib import Path
+          import hashlib,json
+          patch=Path('scripts/v06/seam-tone.patch').read_text()
+          expected=json.loads(Path('docs/versions/2.20.1-v06/r5/source-verification.json').read_text())['runtime_sha256']
+          target=Path('scratch-shaders');target.mkdir()
+          count=0
+          for section in patch.split('diff --git ')[1:]:
+              name=section.splitlines()[0].split(' b/')[1]
+              if not Path(name).name.startswith('OutsideSeam'):continue
+              content='\n'.join(line[1:] for line in section.splitlines() if line.startswith('+') and not line.startswith('+++'))+'\n'
+              assert hashlib.sha256(content.encode()).hexdigest()==expected[name],name
+              (target/Path(name).name).write_text(content,encoding='utf-8',newline='\n')
+              count+=1
+          assert count==3,count
+          '@ | python -
+          if ($LASTEXITCODE) { throw 'Shader extraction/hash mismatch' }
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+      - name: Execute actual map, smooth and compact apply shaders
+        shell: pwsh
+        run: |
+          cl /nologo /std:c++20 /EHsc /W4 /WX scripts/v06/test-seam-warp.cpp /Fe:seam-warp.exe /link d3d11.lib d3dcompiler.lib
+          if ($LASTEXITCODE) { throw 'WARP host compilation failed' }
+          & ./seam-warp.exe
+          if ($LASTEXITCODE) { throw 'Actual HLSL execution regression' }
