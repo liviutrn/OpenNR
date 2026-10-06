@@ -1,0 +1,12 @@
+{
+  "runtime/open-shaders/features/Upscaling/Shaders/Upscaling/NeuralRendering/OutsideSeamApplyCS.hlsl": null,
+  "runtime/open-shaders/features/Upscaling/Shaders/Upscaling/NeuralRendering/OutsideSeamMapCS.hlsl": null,
+  "runtime/open-shaders/features/Upscaling/Shaders/Upscaling/NeuralRendering/OutsideSeamSmoothCS.hlsl": null,
+  "runtime/open-shaders/src/Features/RemoteControl/DevBenchBridge.cpp": "a5892f59545337b6618f84809c5af0aab057500a5768fa3804181fde5a269600",
+  "runtime/open-shaders/src/Features/Upscaling/FoveatedRender.cpp": "cb162906797c11f1e85e7181a3549d50a198c80fcdcf3d2e2592b7f73cf31d35",
+  "runtime/open-shaders/src/Features/Upscaling/FoveatedRender.h": "ec78ce482cf4f89f6485f5361995187ab79899743e6672bb770da728f3e4e5bc",
+  "runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Integration.cpp": "8a95ee0b799c1661f07fb63d8336e908e7c53a6a5d359ea25ea0518cafa2b289",
+  "runtime/open-shaders/src/Features/Upscaling/NeuralRendering/OutsideTone.cpp": "e39f6079b1f9b63dd4c96e91c52728546bda2be6afffdfdfa2be0c9d7f89a484",
+  "runtime/open-shaders/src/Features/Upscaling/NeuralRendering/OutsideTonePolicy.h": "e4b14874bbc13f62a5dc4e26677d53a9f2379addd6020983388a718ee6448667",
+  "runtime/open-shaders/src/Features/Upscaling.cpp": "a4bb7917526525f003fa7da481c1d8fc26e4aac4f9d450e10effb9acb18018ee"
+}

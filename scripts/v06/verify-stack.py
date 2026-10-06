@@ -69,7 +69,7 @@ require('if (radius <= 1.0) return;' in tone_apply and
         'Outside shader can write the existing inside mask')
 require('FrameIndex' not in tone_apply and 'source.a' in tone_apply,
         'Outside effect adds animated noise or changes alpha')
-for name in ('Enabled', 'Brightness', 'Color', 'Width', 'Curve', 'Dither', 'BoundaryRamp', 'LimitStops', 'SampleInset', 'Mode', 'OffsetLimit', 'SampleWidth', 'Smoothing', 'EdgeProtection'):
+for name in ('Enabled', 'Brightness', 'Color', 'Width', 'Curve', 'Dither', 'BoundaryRamp', 'LimitStops', 'SampleInset', 'Mode', 'OffsetLimit', 'SampleWidth', 'Smoothing', 'EdgeProtection', 'Contrast', 'Nonlinear', 'Plateau', 'BlackProtection', 'SampleFocus', 'ContrastReach'):
     require(f'X(outsideTone{name})' in foveated and f'outsideTone{name}' in header,
             f'Outside configuration does not serialize {name}')
 
@@ -85,11 +85,30 @@ require('CS_GPU_PASS("NeuralRendering::OutsideToneSmooth")' in tone,
 require('FrameIndex' not in read(shaders / 'NeuralRendering/OutsideToneMapCS.hlsl'),
         'Boundary fit adds animated sampling')
 
+seam_apply = read(shaders / 'NeuralRendering/OutsideSeamApplyCS.hlsl')
+require('if (radius <= 1.0) return;' in seam_apply and
+        'if (all(local >= gInset) && all(local <= last)) return;' in seam_apply,
+        'Targeted seam can modify the inside mask')
+require('FrameIndex' not in seam_apply and 'source.a' in seam_apply and
+        'gDestination[pixel]' in seam_apply and 'gDestination[' not in seam_apply.replace('gDestination[pixel]', ''),
+        'Targeted seam changes alpha, animates noise or reads neighboring UAV pixels')
+require('MakeRing(g, roi)' in tone and 'std::min(ring.totalPixels,16384u)' in tone,
+        'Targeted outside dispatch is not compact')
+require('td.ArraySize = 4' in tone and 'sizeof(SeamApplyConstants) == 160' in tone,
+        'Targeted seam allocation contract missing')
+for name in ('contrast', 'nonlinear', 'plateau', 'blackProtection', 'sampleFocus', 'contrastReach'):
+    require(f'read("{name}"' in read(src.parent / 'Upscaling.cpp') and
+            name in read(src.parent / 'RemoteControl/DevBenchBridge.cpp'),
+            f'Targeted control lacks validated command/schema: {name}')
+
 layout_cpp = ["#include <array>\n#include <cstdint>\nusing std::uint32_t;\n"]
 contracts = [
     (src / "NeuralRendering/OutsideTone.cpp", "MapConstants", shaders / "NeuralRendering/OutsideToneMapCS.hlsl", 64),
     (src / "NeuralRendering/OutsideTone.cpp", "ApplyConstants", shaders / "NeuralRendering/OutsideToneApplyCS.hlsl", 96),
     (src / "NeuralRendering/OutsideTone.cpp", "MapConstants", shaders / "NeuralRendering/OutsideToneSmoothCS.hlsl", 64),
+    (src / "NeuralRendering/OutsideTone.cpp", "MapConstants", shaders / "NeuralRendering/OutsideSeamMapCS.hlsl", 64),
+    (src / "NeuralRendering/OutsideTone.cpp", "MapConstants", shaders / "NeuralRendering/OutsideSeamSmoothCS.hlsl", 64),
+    (src / "NeuralRendering/OutsideTone.cpp", "SeamApplyConstants", shaders / "NeuralRendering/OutsideSeamApplyCS.hlsl", 160),
     (src / "CropMotion.cpp", "Constants", shaders / "FoveatedRender/CropMotionCS.hlsl", 32),
     (src / "NeuralRendering/Renderer.cpp", "ResultShapingConstants", shaders / "NeuralRendering/ResultShapingCS.hlsl", 160),
     (src / "NeuralRendering/Renderer.cpp", "LadderAtlasConstants", shaders / "NeuralRendering/LadderAtlasGuidesCS.hlsl", 160),
@@ -141,4 +160,4 @@ layout_cpp.append("""int main() {
 }\n""")
 if args.write_layout_cpp:
     args.write_layout_cpp.write_text("".join(layout_cpp), encoding="utf-8")
-print("v6 integration contracts and nine CPU/HLSL buffer layouts passed")
+print("v6 integration contracts and twelve CPU/HLSL buffer layouts passed")

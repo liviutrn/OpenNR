@@ -1,8 +1,8 @@
-name: Build OpenNR 2.20.1-v06-r4
+name: Build OpenNR 2.20.1-v06-r5
 
 on:
   push:
-    branches: ["build/2.20.1-v06-adaptive-single-pass"]
+    branches: ["build/2.20.1-v06-adaptive-single-pass", "build/2.20.1-v06-r5"]
   workflow_dispatch:
 
 concurrency:
@@ -11,6 +11,7 @@ concurrency:
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
   build:
@@ -174,6 +175,10 @@ jobs:
           if ($LASTEXITCODE) { throw 'v06 boundary-tone contract or patch failed' }
           python scripts/v06/audit-boundary-tone.py
           if ($LASTEXITCODE) { throw 'v06 boundary-tone numerical oracle failed' }
+          python scripts/v06/apply-seam-tone.py
+          if ($LASTEXITCODE) { throw 'v06 targeted-seam contract or patch failed' }
+          python scripts/v06/audit-seam-tone.py
+          if ($LASTEXITCODE) { throw 'v06 targeted-seam numerical oracle failed' }
 
       - name: Permit carrier-excluded package
         shell: pwsh
@@ -209,6 +214,9 @@ jobs:
             'runtime/open-shaders/features/Upscaling/Shaders/Upscaling/NeuralRendering/OutsideToneMapCS.hlsl',
             'runtime/open-shaders/features/Upscaling/Shaders/Upscaling/NeuralRendering/OutsideToneSmoothCS.hlsl',
             'runtime/open-shaders/features/Upscaling/Shaders/Upscaling/NeuralRendering/OutsideToneApplyCS.hlsl',
+            'runtime/open-shaders/features/Upscaling/Shaders/Upscaling/NeuralRendering/OutsideSeamMapCS.hlsl',
+            'runtime/open-shaders/features/Upscaling/Shaders/Upscaling/NeuralRendering/OutsideSeamSmoothCS.hlsl',
+            'runtime/open-shaders/features/Upscaling/Shaders/Upscaling/NeuralRendering/OutsideSeamApplyCS.hlsl',
             'runtime/open-shaders/features/Upscaling/Shaders/Upscaling/FoveatedRender/SubrectBlendCS.hlsl'
           ) | ForEach-Object {
             & $fxc.FullName /nologo /WX /T cs_5_0 /E main /Fo "$env:RUNNER_TEMP/overlap-check.cso" $_
@@ -234,6 +242,10 @@ jobs:
           if ($LASTEXITCODE) { throw 'v06 outside-tone test compilation failed' }
           & ./v06-outside-tone-tests.exe
           if ($LASTEXITCODE) { throw 'v06 outside-tone tests failed' }
+          cl /nologo /std:c++20 /EHsc /W4 /WX scripts/v06/test-seam-ring.cpp /Fe:v06-seam-ring-tests.exe
+          if ($LASTEXITCODE) { throw 'v06 seam-ring test compilation failed' }
+          & ./v06-seam-ring-tests.exe
+          if ($LASTEXITCODE) { throw 'v06 seam-ring coverage tests failed' }
 
       - name: Install CMake
         uses: lukka/get-cmake@v4.3.3
@@ -270,17 +282,42 @@ jobs:
       - name: Add v06 package notes and hashes
         shell: pwsh
         run: |
-          Copy-Item docs/versions/2.20.1-v06/r4/README.md dist/README-2.20.1-v06.txt
+          Copy-Item docs/versions/2.20.1-v06/r5/README.md dist/README-2.20.1-v06.txt
           Get-ChildItem -Recurse dist -File | ForEach-Object {
             $h = Get-FileHash $_.FullName -Algorithm SHA256
             "$($h.Hash)  $($_.FullName)"
           } | Tee-Object -FilePath dist/SHA256SUMS.txt
 
+      - name: Download compiled r4 baseline for audit
+        uses: actions/download-artifact@v4
+        with:
+          name: OpenNR-2.20.1-v06-r4-boundary-tone-carrier-excluded
+          run-id: 37346929262
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: artifacts/r4
+
+      - name: Audit compiled r5 package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force artifacts/r5 | Out-Null
+          Copy-Item dist/*.7z artifacts/r5/
+          python scripts/v06/audit-r5-package.py
+          if ($LASTEXITCODE) { throw 'r5 package regression audit failed' }
+
+      - name: Upload r5 package audit
+        uses: actions/upload-artifact@v4
+        with:
+          name: OpenNR-v06-r5-package-audit
+          path: audit-results/*
+          if-no-files-found: error
+          retention-days: 14
+
       - name: Upload v06 checkpoint package
         uses: actions/upload-artifact@v4
         with:
-          name: OpenNR-2.20.1-v06-r4-boundary-tone-carrier-excluded
+          name: OpenNR-2.20.1-v06-r5-targeted-seam-carrier-excluded
           path: dist/*
           if-no-files-found: error
           retention-days: 14
+
 
