@@ -1,0 +1,37 @@
+{
+  "build_commit": "5a935092af3d224cf22c3ee916c63f40f1459cba",
+  "build_run": "37420891871",
+  "r5_build_commit": "99e580549564b8b1d5e4531e86b3d218250cf2aa",
+  "archives": {
+    "r5": {
+      "name": "OpenNR 2.20.1.7z",
+      "size": 111445669,
+      "sha256": "c138a4ab1e1af7d75a5b500c6ca5c9feb5e3818552b44bc4ad1c70d1378f13d9"
+    },
+    "r6": {
+      "name": "OpenNR 2.20.1.7z",
+      "size": 111454021,
+      "sha256": "cb19dd939387c7b5ab57a2d4bc4164693fa4a5c3ddb635bd64b7c63eaf416369"
+    }
+  },
+  "r5_entries": 640,
+  "r6_entries": 640,
+  "added": [],
+  "removed": [],
+  "changed": [
+    "SKSE/Plugins/CommunityShaders.dll",
+    "Shaders/Upscaling/NeuralRendering/OutsideSeamApplyCS.hlsl",
+    "Shaders/Upscaling/NeuralRendering/OutsideToneApplyCS.hlsl",
+    "Shaders/Upscaling/NeuralRendering/ResultShapingCS.hlsl"
+  ],
+  "shader_hashes_match_reviewed_source": true,
+  "every_other_r5_payload_identical": true,
+  "x64_dll_and_new_runtime_controls_verified": true,
+  "all_archive_crc_and_data_checks_passed": true,
+  "nr_carrier_excluded": true,
+  "dll": {
+    "size": 26674176,
+    "sha256": "5925a5975c0daf4cd0745397754e4b07e98ac13e0d1f10862a58e66ebdf031ff"
+  },
+  "gpu_ms_and_vr_quality_measured": false
+}

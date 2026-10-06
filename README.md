@@ -1,6 +1,6 @@
 # OpenNR 2.20.1-v06-r6 — inside NR black protection and wider controls
 
-Build and package audit pending. GPU timing and headset quality require an in-game comparison.
+**Windows build and package audit passed.** [Download r6](https://github.com/liviutrn/OpenNR/actions/runs/37420891871/artifacts/11393785953) · [Build](https://github.com/liviutrn/OpenNR/actions/runs/37420891871) · [Package audit](https://github.com/liviutrn/OpenNR/actions/runs/37420891871/artifacts/11393541443). GPU timing and headset quality require an in-game comparison.
 
 ## Changes from r5
 
@@ -55,6 +55,10 @@ When result shaping/stabilization already runs, protection adds arithmetic to th
 The requested 0.3–0.4 ms budget is an in-game measurement target, not a verified cap. Large fade widths can exceed it. This build has no hardware GPU timing or headset acceptance evidence yet.
 
 ## Verification
+
+Windows x64 build passed, with all twelve selected shaders compiled under warnings-as-errors. [Actual software D3D11 tests](https://github.com/liviutrn/OpenNR/actions/runs/37421657084) passed **32 inside-protection cases and 16 seam cases**, including the 2× overdrive extremes. These are shader execution checks, not hardware timing or native DLSS5 quality tests.
+
+The archive audit passed all data/CRC checks. Only the runtime DLL and the three expected shaders changed; there are no added or removed payloads. Every other r5 payload is byte-identical. The NR carrier remains excluded. The 7z archive SHA-256 is `cb19dd939387c7b5ab57a2d4bc4164693fa4a5c3ddb635bd64b7c63eaf416369`.
 
 Build gates include exact r5 patch replay, twelve CPU/HLSL layouts, retained gaze/grid/controller policies, 16 matching UI/load/runtime/command range contracts, 10,000 bounded protection cases, expanded-width compact-ring coverage, actual ResultShaping and seam shader execution on software D3D11, full Windows compilation and r5-to-r6 archive comparison.
 

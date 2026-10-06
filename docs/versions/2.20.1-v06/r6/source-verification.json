@@ -15,5 +15,29 @@
     "runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Runtime.h": "284946bff0ed92362bd21e09feacaa79bc9ea974fa9d1903231eb2a82ad787bb"
   },
   "gpu_ms_measured": false,
-  "headset_quality_measured": false
+  "headset_quality_measured": false,
+  "source_replay_matches": true,
+  "r2_critical_files_unchanged": 18,
+  "cpu_shader_layouts": 12,
+  "range_contracts": 16,
+  "random_protection_cases": 10000,
+  "ring_pixels_checked": 25546898,
+  "protected_pixels_omitted": 2583705,
+  "build_commit": "5a935092af3d224cf22c3ee916c63f40f1459cba",
+  "build_run": 37420891871,
+  "windows_build_passed": true,
+  "package_audit_passed": true,
+  "fxc_shaders_warnings_as_errors": 12,
+  "package_artifact": "https://github.com/liviutrn/OpenNR/actions/runs/37420891871/artifacts/11393785953",
+  "package_audit_artifact": "https://github.com/liviutrn/OpenNR/actions/runs/37420891871/artifacts/11393541443",
+  "software_shader_execution": {
+    "backend": "D3D11 WARP",
+    "source_commit": "5a935092af3d224cf22c3ee916c63f40f1459cba",
+    "test_commit": "d2c2577df4e924002ea6b92e144a9f239d7d5133",
+    "run": 37421657084,
+    "inside_cases": 32,
+    "seam_cases": 16,
+    "expanded_2x_controls_passed": true,
+    "passed": true
+  }
 }

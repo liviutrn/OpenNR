@@ -97,11 +97,11 @@ int main()
     ComPtr<ID3D11Texture2D> staging;Check(device->CreateTexture2D(&stagingDesc,nullptr,staging.GetAddressOf()));
     unsigned cases=0;
     for (bool oval : {false,true}) {
-        for (unsigned fixture=0;fixture<6;++fixture) {
+        for (unsigned fixture=0;fixture<8;++fixture) {
             const std::array<float,4> base=fixture==1||fixture==2 ? std::array<float,4>{0,0,0,.37f} : std::array<float,4>{.1f,.2f,.3f,.37f};
-            const std::array<float,3> delta=fixture==3 ? std::array<float,3>{0,0,0} : fixture==0 ? std::array<float,3>{.04f,.02f,-.01f} : std::array<float,3>{.04f,.04f,.04f};
+            const std::array<float,3> delta=fixture==3 ? std::array<float,3>{0,0,0} : fixture==0||fixture==6 ? std::array<float,3>{.04f,.02f,-.01f} : std::array<float,3>{.04f,.04f,.04f};
             std::vector<std::array<float,4>> crop(128*96,base),nr=crop,frame(256*192,base);
-            if(fixture>=4) {
+            if(fixture>=4&&fixture!=6) {
                 for(unsigned y=0;y<192;++y)for(unsigned x=0;x<256;++x)
                     frame[y*256+x]={.08f+.5f*float(x%4)/3,.08f+.5f*float(y%4)/3,.1f+.4f*float((x+y)%4)/3,.37f};
                 for(unsigned y=0;y<96;++y)for(unsigned x=0;x<128;++x)crop[y*128+x]=frame[(y+48)*256+x+64];
@@ -113,6 +113,7 @@ int main()
                     pixel[2]=1.1f*pixel[2]+.005f+(fixture==5?.02f*luma*luma:0);
                 }
             } else for(auto& pixel:nr)for(unsigned c=0;c<3;++c)pixel[c]+=delta[c];
+            if(fixture==6) for(auto& pixel:frame)pixel={.55f,.1f,.45f,.37f};
             context->UpdateSubresource(original.texture.Get(),0,nullptr,crop.data(),128*16,0);
             context->UpdateSubresource(neural.texture.Get(),0,nullptr,nr.data(),128*16,0);
             context->UpdateSubresource(destination.texture.Get(),0,nullptr,frame.data(),256*16,0);
@@ -125,7 +126,14 @@ int main()
             sources[0]=coefficients.srv.Get();context->CSSetShaderResources(0,1,sources);
             target=filtered.uav.Get();context->CSSetUnorderedAccessViews(0,1,&target,nullptr);
             context->CSSetShader(smooth.Get(),nullptr,0);context->Dispatch(2,2,1);Unbind(context.Get());
-            ApplyConstants ac;ac.oval=mc.oval;ac.black=fixture==2?1.0f:0.0f; if(fixture==0) { ac.brightness=2; ac.color=2; }
+            if(fixture==7) {
+                const std::array<std::array<float,4>,4> values{{{.01f,.015f,-.005f,1},{.2f,-.1f,.15f,.25f},{.06f,-.04f,.05f,.02f},{.25f,.25f,.25f,0}}};
+                for(unsigned layer=0;layer<4;++layer) {
+                    std::vector<std::array<float,4>> data(256,values[layer]);
+                    context->UpdateSubresource(filtered.texture.Get(),layer,nullptr,data.data(),16*16,0);
+                }
+            }
+            ApplyConstants ac;ac.oval=mc.oval;ac.black=fixture==2?1.0f:0.0f; if(fixture==0) { ac.brightness=2; ac.color=2; } if(fixture==6) ac.edge=2; if(fixture==7) {ac.edge=2;ac.brightness=2;ac.color=2;ac.contrast=2;ac.nonlinear=2;ac.dither=2;ac.plateau=.95f;ac.curve=4;ac.stops=2;ac.offset=.5f;}
             context->UpdateSubresource(applyCB.Get(),0,nullptr,&ac,0,0);
             cb=applyCB.Get();context->CSSetConstantBuffers(0,1,&cb);
             sources[0]=filtered.srv.Get();context->CSSetShaderResources(0,1,sources);
@@ -155,19 +163,36 @@ int main()
                         const float radial=std::sqrt(dx*dx+dy*dy);
                         const float distance=oval ? std::sqrt((float(x)+.5f-128)*(float(x)+.5f-128)+(float(y)+.5f-96)*(float(y)+.5f-96))*(1-1/radial) : std::sqrt(outsideX*outsideX+outsideY*outsideY);
                         const auto saturate=[](float v){return std::max(0.0f,std::min(1.0f,v));};
-                        float t=saturate((distance/32-.35f)/.65f);const float fade=1-t*t*(3-2*t);
-                        t=saturate(distance/4);const float weight=distance>=32?0:fade*t*t*(3-2*t);
+                        float t=std::pow(saturate((distance/ac.width-ac.plateau)/(1-ac.plateau)),ac.curve);const float fade=1-t*t*(3-2*t);
+                        t=saturate(distance/4);float weight=distance>=ac.width?0:fade*t*t*(3-2*t);
+                        const auto frac=[](float v){return v-std::floor(v);};
+                        const float noise=frac(52.9829189f*frac(float(x)*.06711056f+float(y)*.00583715f));
+                        weight=saturate(weight+(noise-.5f)*ac.dither*.02f*weight*(1-weight));
                         const float luma=before[0]*.2126f+before[1]*.7152f+before[2]*.0722f;
-                        const std::array<float,3> change{.2f*before[0]+.015f+(fixture==5?.04f*luma*luma:0),-.1f*before[1]-.01f-(fixture==5?.03f*luma*luma:0),.1f*before[2]+.005f+(fixture==5?.02f*luma*luma:0)};
-                        for(unsigned c=0;c<3;++c)
-                            if(std::abs(row[x][c]-(before[c]+change[c]*weight))>.003f)throw std::runtime_error("Mixed RGB curve prediction regression");
+                        std::array<float,3> change{.2f*before[0]+.015f+(fixture==5?.04f*luma*luma:0),-.1f*before[1]-.01f-(fixture==5?.03f*luma*luma:0),.1f*before[2]+.005f+(fixture==5?.02f*luma*luma:0)};
+                        if(fixture==6) change={.04f,.02f,-.01f};
+                        if(fixture==7) {
+                            const std::array<float,3> value{.01f,.015f,-.005f},slope{.2f,-.1f,.15f},curve{.06f,-.04f,.05f};
+                            for(unsigned c=0;c<3;++c) change[c]=value[c]+curve[c]*.0825f+2*slope[c]*(before[c]-.25f)+2*curve[c]*(luma*luma-.0825f);
+                        }
+                        float confidence=1;
+                        if(fixture>=6) {
+                            const std::array<float,3> ref=fixture==6?std::array<float,3>{.1f,.2f,.3f}:std::array<float,3>{.25f,.25f,.25f};
+                            float difference=0;for(unsigned c=0;c<3;++c) difference+=(before[c]-ref[c])*(before[c]-ref[c]);
+                            confidence=1/(1+32*difference);confidence*=confidence;
+                        }
+                        for(unsigned c=0;c<3;++c) {
+                            const float bound=before[c]*(std::exp2(ac.stops)-1)+ac.offset;
+                            const float expected=std::max(0.0f,before[c]+std::clamp(change[c]*(fixture==7?2.0f:1.0f),-bound,bound)*weight*confidence);
+                            if(std::abs(row[x][c]-expected)>(fixture>=6?.0003f:.003f))throw std::runtime_error("Mixed RGB curve or overdrive prediction regression");
+                        }
                     }
                 }
             }
             context->Unmap(staging.Get(),0);
-            if((fixture<3||fixture>=4) && changed<100)throw std::runtime_error("Outside tone or black lift missing");
+            if((fixture<3||(fixture>=4&&fixture!=6)) && changed<100)throw std::runtime_error("Outside tone or black lift missing");
             ++cases;
         }
     }
-    std::cout << "Actual HLSL map, smoothing and compact apply executed on D3D11 WARP; cases=" << cases << "; protected masks, alpha, identity, color offsets, black lift and retired outside-protection checks passed. No hardware GPU timing.\n";
+    std::cout << "Actual HLSL map, smoothing and compact apply executed on D3D11 WARP; cases=" << cases << "; protected masks, alpha, identity, color offsets, black lift, retired outside-protection and 2x overdrive checks passed. No hardware GPU timing.\n";
 }
