@@ -1,6 +1,8 @@
+#define NOMINMAX
 #include <d3d11.h>
 #include <d3dcompiler.h>
 #include <wrl/client.h>
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstdint>
@@ -95,11 +97,22 @@ int main()
     ComPtr<ID3D11Texture2D> staging;Check(device->CreateTexture2D(&stagingDesc,nullptr,staging.GetAddressOf()));
     unsigned cases=0;
     for (bool oval : {false,true}) {
-        for (unsigned fixture=0;fixture<4;++fixture) {
+        for (unsigned fixture=0;fixture<6;++fixture) {
             const std::array<float,4> base=fixture==1||fixture==2 ? std::array<float,4>{0,0,0,.37f} : std::array<float,4>{.1f,.2f,.3f,.37f};
             const std::array<float,3> delta=fixture==3 ? std::array<float,3>{0,0,0} : fixture==0 ? std::array<float,3>{.04f,.02f,-.01f} : std::array<float,3>{.04f,.04f,.04f};
             std::vector<std::array<float,4>> crop(128*96,base),nr=crop,frame(256*192,base);
-            for(auto& pixel:nr)for(unsigned c=0;c<3;++c)pixel[c]+=delta[c];
+            if(fixture>=4) {
+                for(unsigned y=0;y<192;++y)for(unsigned x=0;x<256;++x)
+                    frame[y*256+x]={.08f+.5f*float(x%4)/3,.08f+.5f*float(y%4)/3,.1f+.4f*float((x+y)%4)/3,.37f};
+                for(unsigned y=0;y<96;++y)for(unsigned x=0;x<128;++x)crop[y*128+x]=frame[(y+48)*256+x+64];
+                nr=crop;
+                for(auto& pixel:nr) {
+                    const float luma=pixel[0]*.2126f+pixel[1]*.7152f+pixel[2]*.0722f;
+                    pixel[0]=1.2f*pixel[0]+.015f+(fixture==5?.04f*luma*luma:0);
+                    pixel[1]=.9f*pixel[1]-.01f-(fixture==5?.03f*luma*luma:0);
+                    pixel[2]=1.1f*pixel[2]+.005f+(fixture==5?.02f*luma*luma:0);
+                }
+            } else for(auto& pixel:nr)for(unsigned c=0;c<3;++c)pixel[c]+=delta[c];
             context->UpdateSubresource(original.texture.Get(),0,nullptr,crop.data(),128*16,0);
             context->UpdateSubresource(neural.texture.Get(),0,nullptr,nr.data(),128*16,0);
             context->UpdateSubresource(destination.texture.Get(),0,nullptr,frame.data(),256*16,0);
@@ -125,6 +138,7 @@ int main()
             for(unsigned y=0;y<192;++y) {
                 const auto* row=reinterpret_cast<const std::array<float,4>*>(static_cast<const unsigned char*>(mapped.pData)+y*mapped.RowPitch);
                 for(unsigned x=0;x<256;++x) {
+                    const auto& before=frame[y*256+x];
                     const float dx=(float(x)+.5f-128)/64,dy=(float(y)+.5f-96)/48;
                     const bool inside=oval ? dx*dx+dy*dy<=1 : x>=64&&x<192&&y>=48&&y<144;
                     const bool distant=x<32||x>223||y<16||y>175;
@@ -132,13 +146,26 @@ int main()
                         const float v=row[x][c];
                         if(!std::isfinite(v)||v<0)throw std::runtime_error("Invalid shader output");
                         if(c==3||inside||distant||fixture==2||fixture==3)
-                            if(std::abs(v-base[c])>1e-5f)throw std::runtime_error("Protected/identity/black/alpha regression");
+                            if(std::abs(v-before[c])>1e-5f)throw std::runtime_error("Protected/identity/black/alpha regression");
                     }
-                    if(std::abs(row[x][0]-base[0])>.001f)++changed;
+                    if(std::abs(row[x][0]-before[0])>.001f)++changed;
+                    if(fixture>=4&&!inside) {
+                        const float localX=float(x)-64,localY=float(y)-48;
+                        const float outsideX=std::max(std::max(-localX,localX-127),0.0f),outsideY=std::max(std::max(-localY,localY-95),0.0f);
+                        const float radial=std::sqrt(dx*dx+dy*dy);
+                        const float distance=oval ? std::sqrt((float(x)+.5f-128)*(float(x)+.5f-128)+(float(y)+.5f-96)*(float(y)+.5f-96))*(1-1/radial) : std::sqrt(outsideX*outsideX+outsideY*outsideY);
+                        const auto saturate=[](float v){return std::max(0.0f,std::min(1.0f,v));};
+                        float t=saturate((distance/32-.35f)/.65f);const float fade=1-t*t*(3-2*t);
+                        t=saturate(distance/4);const float weight=distance>=32?0:fade*t*t*(3-2*t);
+                        const float luma=before[0]*.2126f+before[1]*.7152f+before[2]*.0722f;
+                        const std::array<float,3> change{.2f*before[0]+.015f+(fixture==5?.04f*luma*luma:0),-.1f*before[1]-.01f-(fixture==5?.03f*luma*luma:0),.1f*before[2]+.005f+(fixture==5?.02f*luma*luma:0)};
+                        for(unsigned c=0;c<3;++c)
+                            if(std::abs(row[x][c]-(before[c]+change[c]*weight))>.003f)throw std::runtime_error("Mixed RGB curve prediction regression");
+                    }
                 }
             }
             context->Unmap(staging.Get(),0);
-            if(fixture<2 && changed<100)throw std::runtime_error("Outside tone or black lift missing");
+            if((fixture<2||fixture>=4) && changed<100)throw std::runtime_error("Outside tone or black lift missing");
             ++cases;
         }
     }
