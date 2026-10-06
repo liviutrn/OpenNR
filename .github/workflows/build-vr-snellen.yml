@@ -32,8 +32,10 @@ jobs:
           1. Start SteamVR.
           2. Run VR_Snellen.exe.
           3. Put on the headset and look straight ahead.
-          4. Press R at any time to place the chart exactly 6.0 m straight ahead from the current cyclopean-eye position.
-          5. Press Esc to quit.
+          4. The chart is head-locked and remains exactly 6.0 m from the cyclopean eye.
+          5. Change SteamVR resolution while it is running; the app polls the recommended per-eye target every frame and rebuilds its buffers automatically.
+          6. The desktop window title shows the current per-eye render size and MSAA level.
+          7. Press Esc to quit.
 
           Rows, top to bottom:
           20/200, 20/100, 20/70, 20/50, 20/40, 20/30, 20/25, 20/20.
@@ -41,8 +43,11 @@ jobs:
           Geometry:
           - 20/20 optotype height subtends exactly 5 arc-minutes at 6.0 m.
           - One 5x5 vector cell/stroke subtends 1 arc-minute for 20/20.
+          - Every row contains 20 fixed optotypes for repeatable comparisons.
+          - Each row is labeled 20/xxx in-vector on the board.
           - Optotypes are procedural vector geometry, not a raster chart texture.
-          - SteamVR's per-eye projection and eye-to-head transforms are used for stereo rendering.
+          - The app uses the highest supported MSAA level up to 8x, then resolves before OpenVR submission.
+          - SteamVR's per-eye projection and eye-to-head transforms are used for correct stereo disparity at 6 m.
           "@
       - uses: actions/upload-artifact@v4
         with:
