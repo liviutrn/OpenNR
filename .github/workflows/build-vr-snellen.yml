@@ -1,0 +1,50 @@
+name: Build VR Snellen
+on:
+  push:
+    branches: ["tool/vr-snellen"]
+    paths:
+      - "tools/vr-snellen/**"
+      - ".github/workflows/build-vr-snellen.yml"
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Get OpenVR SDK
+        shell: pwsh
+        run: git clone --depth 1 https://github.com/ValveSoftware/openvr.git "$env:RUNNER_TEMP/openvr"
+      - name: Configure
+        shell: pwsh
+        run: cmake -S tools/vr-snellen -B build-vr-snellen -A x64 -DOPENVR_ROOT="$env:RUNNER_TEMP/openvr"
+      - name: Build
+        shell: pwsh
+        run: cmake --build build-vr-snellen --config Release --parallel
+      - name: Package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Copy-Item build-vr-snellen/Release/VR_Snellen.exe dist/
+          Copy-Item build-vr-snellen/Release/openvr_api.dll dist/
+          Set-Content -Path dist/README.txt -Value @"
+          VR Snellen 6 m
+          ----------------
+          1. Start SteamVR.
+          2. Run VR_Snellen.exe.
+          3. Put on the headset and look straight ahead.
+          4. Press R at any time to place the chart exactly 6.0 m straight ahead from the current cyclopean-eye position.
+          5. Press Esc to quit.
+
+          Rows, top to bottom:
+          20/200, 20/100, 20/70, 20/50, 20/40, 20/30, 20/25, 20/20.
+
+          Geometry:
+          - 20/20 optotype height subtends exactly 5 arc-minutes at 6.0 m.
+          - One 5x5 vector cell/stroke subtends 1 arc-minute for 20/20.
+          - Optotypes are procedural vector geometry, not a raster chart texture.
+          - SteamVR's per-eye projection and eye-to-head transforms are used for stereo rendering.
+          "@
+      - uses: actions/upload-artifact@v4
+        with:
+          name: VR-Snellen-6m-Windows-x64
+          path: dist/*
