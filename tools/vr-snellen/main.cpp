@@ -1,4 +1,5 @@
 #define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
 #include <windows.h>
 #include <d3d11.h>
 #include <d3dcompiler.h>
@@ -38,6 +39,7 @@ static ID3D11DeviceContext* g_ctx = nullptr;
 static ID3D11VertexShader* g_vs = nullptr;
 static ID3D11PixelShader* g_ps = nullptr;
 static ID3D11InputLayout* g_layout = nullptr;
+static ID3D11RasterizerState* g_rs = nullptr;
 static ID3D11Buffer* g_vb = nullptr;
 static ID3D11Buffer* g_cb = nullptr;
 static EyeTarget g_eye[2];
@@ -181,6 +183,8 @@ float4 main(PSIn i):SV_TARGET { return i.color; }
     };
     hr=g_dev->CreateInputLayout(il,2,vsb->GetBufferPointer(),vsb->GetBufferSize(),&g_layout);
     vsb->Release(); psb->Release(); if(FAILED(hr)) return false;
+    D3D11_RASTERIZER_DESC rd{}; rd.FillMode=D3D11_FILL_SOLID; rd.CullMode=D3D11_CULL_NONE; rd.DepthClipEnable=TRUE;
+    if(FAILED(g_dev->CreateRasterizerState(&rd,&g_rs))) return false;
 
     auto verts=BuildChart(); g_vertexCount=(UINT)verts.size();
     D3D11_BUFFER_DESC bd{}; bd.ByteWidth=(UINT)(verts.size()*sizeof(Vertex)); bd.Usage=D3D11_USAGE_IMMUTABLE; bd.BindFlags=D3D11_BIND_VERTEX_BUFFER;
@@ -212,8 +216,8 @@ static void SetChartPose(const vr::TrackedDevicePose_t& pose){
     // Head local -Z is forward in OpenVR. Transform as a direction into world space.
     XMVECTOR forward=XMVector3Normalize(XMVector3TransformNormal(XMVectorSet(0,0,-1,0),headToWorld));
     XMVECTOR up=XMVector3Normalize(XMVector3TransformNormal(XMVectorSet(0,1,0,0),headToWorld));
-    XMVECTOR right=XMVector3Normalize(XMVector3Cross(up,forward));
-    up=XMVector3Normalize(XMVector3Cross(forward,right));
+    XMVECTOR right=XMVector3Normalize(XMVector3Cross(forward,up));
+    up=XMVector3Normalize(XMVector3Cross(right,forward));
     XMVECTOR center=cycl + forward*kChartDistanceM;
 
     XMFLOAT3 rr,uu,cc; XMStoreFloat3(&rr,right); XMStoreFloat3(&uu,up); XMStoreFloat3(&cc,center);
@@ -231,7 +235,7 @@ static void RenderEye(int idx, vr::Hmd_Eye eye, const vr::TrackedDevicePose_t& h
     float clear[4]={0,0,0,1};
     g_ctx->OMSetRenderTargets(1,&g_eye[idx].rtv,nullptr);
     g_ctx->ClearRenderTargetView(g_eye[idx].rtv,clear);
-    D3D11_VIEWPORT vp{0,0,(float)g_w,(float)g_h,0,1}; g_ctx->RSSetViewports(1,&vp);
+    D3D11_VIEWPORT vp{0,0,(float)g_w,(float)g_h,0,1}; g_ctx->RSSetViewports(1,&vp); g_ctx->RSSetState(g_rs);
     UINT stride=sizeof(Vertex), offset=0; g_ctx->IASetInputLayout(g_layout); g_ctx->IASetVertexBuffers(0,1,&g_vb,&stride,&offset); g_ctx->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
     g_ctx->VSSetShader(g_vs,nullptr,0); g_ctx->PSSetShader(g_ps,nullptr,0); g_ctx->VSSetConstantBuffers(0,1,&g_cb);
 
@@ -256,7 +260,7 @@ static LRESULT CALLBACK WndProc(HWND h,UINT m,WPARAM w,LPARAM l){
 
 static void Cleanup(){
     for(auto& e:g_eye){ if(e.rtv)e.rtv->Release(); if(e.tex)e.tex->Release(); }
-    if(g_cb)g_cb->Release(); if(g_vb)g_vb->Release(); if(g_layout)g_layout->Release(); if(g_ps)g_ps->Release(); if(g_vs)g_vs->Release();
+    if(g_cb)g_cb->Release(); if(g_vb)g_vb->Release(); if(g_rs)g_rs->Release(); if(g_layout)g_layout->Release(); if(g_ps)g_ps->Release(); if(g_vs)g_vs->Release();
     if(g_ctx)g_ctx->Release(); if(g_dev)g_dev->Release();
     if(g_vr) vr::VR_Shutdown();
 }
@@ -281,7 +285,7 @@ int WINAPI WinMain(HINSTANCE hi,HINSTANCE,LPSTR,int){
         RenderEye(0,vr::Eye_Left,hp); RenderEye(1,vr::Eye_Right,hp);
         vr::Texture_t lt={(void*)g_eye[0].tex,vr::TextureType_DirectX,vr::ColorSpace_Gamma};
         vr::Texture_t rt={(void*)g_eye[1].tex,vr::TextureType_DirectX,vr::ColorSpace_Gamma};
-        g_comp->Submit(vr::Eye_Left,&lt); g_comp->Submit(vr::Eye_Right,&rt);
+        g_comp->Submit(vr::Eye_Left,&lt); g_comp->Submit(vr::Eye_Right,&rt); g_comp->PostPresentHandoff();
     }
     Cleanup(); return 0;
 }
