@@ -13,7 +13,8 @@ def fit(pairs, float32=False, focus=.5):
     def add(a,b): return round_value(a+round_value(b))
     total = square = 0.
     moments = [0.]*4
-    base = [0.]*3; delta = [0.]*3; delta2 = [0.]*3; yd = [0.]*3; y2d = [0.]*3
+    base = [0.]*3; base2 = [0.]*3; delta = [0.]*3; delta2 = [0.]*3
+    bd = [0.]*3; y2d = [0.]*3; by2 = [0.]*3
     for i,(b,r) in enumerate(pairs):
         if not all(math.isfinite(v) and abs(v)<=16 for v in (*b,*r)): continue
         b = [max(v,0) for v in b]; r = [max(v,0) for v in r]
@@ -21,40 +22,36 @@ def fit(pairs, float32=False, focus=.5):
         value = min(dot(b,LUMA),1)
         for c in range(3):
             d = r[c]-b[c]
-            base[c] = add(base[c],b[c]*weight)
-            delta[c] = add(delta[c],d*weight)
-            delta2[c] = add(delta2[c],d*d*weight)
-            yd[c] = add(yd[c],value*d*weight)
-            y2d[c] = add(y2d[c],value*value*d*weight)
+            base[c] = add(base[c],b[c]*weight);base2[c] = add(base2[c],b[c]*b[c]*weight)
+            delta[c] = add(delta[c],d*weight);delta2[c] = add(delta2[c],d*d*weight)
+            bd[c] = add(bd[c],b[c]*d*weight)
+            y2d[c] = add(y2d[c],value*value*d*weight);by2[c] = add(by2[c],b[c]*value*value*weight)
         for c in range(4): moments[c] = add(moments[c],value**(c+1)*weight)
-        total = add(total,weight); square = add(square,weight*weight)
-    if not total: return ((0.,)*3,(0.,)*3,(0.,)*3,0.,0.,0.)
-    arrays = (moments,base,delta,delta2,yd,y2d)
-    for array in arrays:
+        total = add(total,weight);square = add(square,weight*weight)
+    if not total: return ((0.,)*3,(0.,)*3,(0.,)*3,(0.,)*3,0.,0.,0.)
+    for array in (moments,base,base2,delta,delta2,bd,y2d,by2):
         for i in range(len(array)): array[i] = round_value(array[i]/total)
     mean = moments[0]; variance = max(moments[1]-mean*mean,0)
-    third = moments[2]-3*mean*moments[1]+2*mean**3
-    fourth = max(moments[3]-4*mean*moments[2]+6*mean*mean*moments[1]-3*mean**4,0)
-    qvariance = max(fourth-variance*variance,0)
-    cov = [yd[c]-mean*delta[c] for c in range(3)]
-    qcov = [y2d[c]-2*mean*yd[c]+(mean*mean-variance)*delta[c] for c in range(3)]
-    a,c = variance+1e-5,qvariance+1e-6
-    determinant = max(a*c-third*third,1e-11)
-    slope = [clamp((c*cov[i]-third*qcov[i])/determinant,-2,2) for i in range(3)]
-    curve = [clamp((a*qcov[i]-third*cov[i])/determinant,-4,4) for i in range(3)]
-    error = [max(delta2[i]-delta[i]**2+slope[i]**2*variance+curve[i]**2*qvariance+2*slope[i]*curve[i]*third-2*slope[i]*cov[i]-2*curve[i]*qcov[i],0) for i in range(3)]
+    rgb_variance = [max(base2[i]-base[i]**2,0) for i in range(3)]
+    qvariance = max(moments[3]-moments[1]**2,0)
+    cov = [bd[i]-base[i]*delta[i] for i in range(3)]
+    qcov = [y2d[i]-moments[1]*delta[i] for i in range(3)]
+    cross = [by2[i]-base[i]*moments[1] for i in range(3)]
+    a = [v+1e-5 for v in rgb_variance];c = qvariance+1e-6
+    determinant = [max(a[i]*c-cross[i]**2,1e-11) for i in range(3)]
+    slope = [clamp((c*cov[i]-cross[i]*qcov[i])/determinant[i],-2,2) for i in range(3)]
+    curve = [clamp((a[i]*qcov[i]-cross[i]*cov[i])/determinant[i],-4,4) for i in range(3)]
+    error = [max(delta2[i]-delta[i]**2+slope[i]**2*rgb_variance[i]+curve[i]**2*qvariance+2*slope[i]*curve[i]*cross[i]-2*slope[i]*cov[i]-2*curve[i]*qcov[i],0) for i in range(3)]
     confidence = min(total*total/max(square,1e-5)/32,1)/(1+dot(error,LUMA)*100)
-    shift = .25-mean
-    intercept = [delta[i]+slope[i]*shift+curve[i]*(shift*shift-variance) for i in range(3)]
-    slope = [slope[i]+2*curve[i]*shift for i in range(3)]
-    return intercept,slope,curve,mean,variance,confidence
+    intercept = [delta[i]+slope[i]*(.25-base[i])-curve[i]*moments[1] for i in range(3)]
+    return intercept,slope,curve,base,mean,variance,confidence
 
 def prediction(model,source,contrast=1,nonlinear=1):
-    value,slope,curve,mean,variance,_ = model
+    value,slope,curve,reference,mean,variance,_ = model
     support = max(.04,3*math.sqrt(max(variance,0)))
     position = clamp(min(dot(source,LUMA),1)-mean,-support,support)
-    center = mean-.25
-    return tuple(value[c]+slope[c]*center+curve[c]*(center*center+variance)+(slope[c]+2*curve[c]*center)*position*contrast+curve[c]*(position*position-variance)*nonlinear for c in range(3))
+    mean_square = mean*mean+variance
+    return tuple(value[c]+slope[c]*(reference[c]-.25)+curve[c]*mean_square+slope[c]*(source[c]-reference[c])*contrast+curve[c]*((mean+position)**2-mean_square)*nonlinear for c in range(3))
 
 def apply(model,source,weight=1,brightness=1,color=1,stops=.5,offset=.08,black=0):
     delta = prediction(model,source)
@@ -94,15 +91,25 @@ def oracle():
     assert max(apply(model,(0,)*3,black=1))==0
     assert min(apply(model,(0,)*3,black=0))>.0599
     assert fit([((float('nan'),)*3,(0,)*3)]*64)[-1]==0
-    # A common polynomial basis must remain invariant across differently lit patches.
+    colored = [tuple(rng.uniform(.08,.65) for _ in range(3)) for i in range(64)]
+    rgb_max = 0
+    for nonlinear in (False,True):
+        pairs=[]
+        for b in colored:
+            y=dot(b,LUMA)
+            pairs.append((b,tuple((1.2,.9,1.1)[c]*b[c]+(.015,-.01,.005)[c]+((.04,-.03,.02)[c]*y*y if nonlinear else 0) for c in range(3))))
+        for float32 in (False,True):
+            model=fit(pairs,float32)
+            for b,target in pairs:
+                error=max(abs(v-t) for v,t in zip(apply(model,b),target));rgb_max=max(rgb_max,error)
+                assert error<.0015,(nonlinear,float32,error)
+    # Global RGB and squared-luminance coefficients interpolate independently of patch origins.
     coeff = ((.03,.02,.01),(-.12,-.08,-.05),(.1,.08,.04))
     for _ in range(1000):
-        y = rng.random(); mu = rng.random(); variance = rng.random()*.04
-        model = (*coeff,mu,variance,1)
-        # Disable support extrapolation for this algebraic interpolation invariant.
-        center = mu-.25; position = y-mu
-        out = [coeff[0][c]+coeff[1][c]*center+coeff[2][c]*(center*center+variance)+(coeff[1][c]+2*coeff[2][c]*center)*position+coeff[2][c]*(position*position-variance) for c in range(3)]
-        expected = [coeff[0][c]+coeff[1][c]*(y-.25)+coeff[2][c]*(y-.25)**2 for c in range(3)]
+        source=tuple(rng.random() for c in range(3));reference=tuple(rng.random() for c in range(3))
+        mean=dot(reference,LUMA);variance=rng.random()*.04;y=dot(source,LUMA)
+        out=[coeff[0][c]+coeff[1][c]*(reference[c]-.25)+coeff[2][c]*(mean*mean+variance)+coeff[1][c]*(source[c]-reference[c])+coeff[2][c]*(y*y-mean*mean-variance) for c in range(3)]
+        expected=[coeff[0][c]+coeff[1][c]*(source[c]-.25)+coeff[2][c]*y*y for c in range(3)]
         assert max(abs(a-b) for a,b in zip(out,expected))<1e-12
     for _ in range(10000):
         pairs = [(tuple(rng.random() for _ in range(3)),tuple(rng.random() for _ in range(3))) for _ in range(16)]
@@ -111,6 +118,6 @@ def oracle():
         out = apply(model,source,black=rng.random())
         assert all(math.isfinite(v) and v>=0 for v in out)
         assert all(abs(out[c]-source[c]) <= source[c]*(2**.5-1)+.080001 for c in range(3))
-    return {'fixtures':len(fixtures),'max_fixture_error':maximum,'random_bounded_cases':10000,'common_basis_cases':1000,'gpu_executed':False}
+    return {'fixtures':len(fixtures),'max_fixture_error':maximum,'max_mixed_color_error':rgb_max,'mixed_color_fixtures':2,'random_bounded_cases':10000,'common_basis_cases':1000,'gpu_executed':False}
 
 if __name__ == '__main__': print(json.dumps(oracle(),indent=2))

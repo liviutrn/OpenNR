@@ -8,7 +8,7 @@ r5 adds a **Targeted seam curve** mode to the existing outside NR tone transfer.
 It uses the completed NR output already available; it adds no neural
 evaluation, second NR instance, or enlarged NR crop.
 
-- Fit a local curved RGB correction as a function of original brightness.
+- Fit independent RGB contrast responses plus a curved luminance correction.
   Separate the average tone shift, contrast response, and shadow/highlight
   curvature instead of applying one gain/offset response across every tone.
 - Estimate from paired original and completed pre-feather NR samples close
@@ -228,4 +228,3 @@ No learned model, recovered teacher, or generated target set is promoted. Native
 ## Attribution
 
 The runtime inherits Open Shaders and Community Shaders; see its [license](runtime/open-shaders/COPYING) and [branding and attributions](runtime/open-shaders/BRANDING_AND_ATTRIBUTIONS.md). Third-party source and private local artifacts retain their own ownership and terms. See [dependency boundaries](third_party/README.md).
-

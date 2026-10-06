@@ -87,21 +87,21 @@ new file mode 100644
 +	const float4 value = gTone.SampleLevel(gLinearClamp,float3(uv,0),0);
 +	const float4 slope = gTone.SampleLevel(gLinearClamp,float3(uv,1),0);
 +	const float4 curve = gTone.SampleLevel(gLinearClamp,float3(uv,2),0);
++	const float3 reference = gTone.SampleLevel(gLinearClamp,float3(uv,3),0).rgb;
 +	const float4 source = gDestination[pixel];
 +	if (!all(isfinite(source.rgb))) return;
 +	const float3 base = max(source.rgb,0.0);
 +	const float baseLuma = dot(base,kLuma);
 +	const float support = max(0.04,3.0 * sqrt(max(curve.a,0.0)));
 +	const float position = clamp(min(baseLuma,1.0) - slope.a,-support,support);
-+	const float center = slope.a - 0.25;
-+	const float3 meanChange = value.rgb + slope.rgb*center + curve.rgb*(center*center + curve.a);
-+	const float3 localSlope = slope.rgb + 2.0*curve.rgb*center;
++	const float meanSquare = slope.a*slope.a + curve.a;
++	const float3 meanChange = value.rgb + slope.rgb*(reference - 0.25) + curve.rgb*meanSquare;
++	const float targetLuma = slope.a + position;
 +	const float contrastFade = gContrastReach >= 1.0 ? 1.0 : 1.0 - smoothstep(gContrastReach,1.0,normalized);
-+	const float3 delta = meanChange + contrastFade * (localSlope * (position * gContrast) + curve.rgb * ((position*position - curve.a) * gNonlinear));
++	const float3 delta = meanChange + contrastFade * (slope.rgb * ((base-reference) * gContrast) + curve.rgb * ((targetLuma*targetLuma - meanSquare) * gNonlinear));
 +	const float brightness = dot(delta,kLuma);
 +	float confidence = saturate(value.a);
 +	if (gEdgeProtection > 0.0) {
-+		const float3 reference = gTone.SampleLevel(gLinearClamp,float3(uv,3),0).rgb;
 +		const float3 difference = reference - base;
 +		confidence *= lerp(1.0,1.0 / (1.0 + 32.0 * dot(difference,difference)),gEdgeProtection);
 +	}
@@ -117,7 +117,7 @@ diff --git a/runtime/open-shaders/features/Upscaling/Shaders/Upscaling/NeuralRen
 new file mode 100644
 --- /dev/null
 +++ b/runtime/open-shaders/features/Upscaling/Shaders/Upscaling/NeuralRendering/OutsideSeamMapCS.hlsl
-@@ -0,0 +1,96 @@
+@@ -0,0 +1,95 @@
 +cbuffer OutsideToneMap : register(b0)
 +{
 +	uint2 gCropSize;
@@ -162,10 +162,10 @@ new file mode 100644
 +	}
 +	const float2 tangent = float2(-normal.y,normal.x);
 +	float total = 0.0, squareWeight = 0.0;
-+	float4 moments = 0.0;
-+	float3 base = 0.0, delta = 0.0, delta2 = 0.0, lumaDelta = 0.0, luma2Delta = 0.0;
-+	[loop] for (uint y = 0; y < 8; ++y) {
-+		[loop] for (uint x = 0; x < 8; ++x) {
++	float3 moments = 0.0;
++	float3 base = 0.0, base2 = 0.0, delta = 0.0, delta2 = 0.0, baseDelta = 0.0, luma2Delta = 0.0, baseLuma2 = 0.0;
++	[loop] for (uint sample = 0; sample < 64; ++sample) {
++			const uint x = sample % 8u, y = sample / 8u;
 +			const float depth = (float(y) + 0.5) / 8.0;
 +			const float2 location = boundary - normal * (1.5 + depth * gSampleWidth) + tangent * ((float(x) + 0.5) / 8.0 - 0.5) * gSampleWidth;
 +			if (any(location < 0.0) || any(location >= float2(gCropSize))) continue;
@@ -183,34 +183,33 @@ new file mode 100644
 +			const float3 change = r - b;
 +			const float value = min(dot(b,kLuma),1.0);
 +			const float value2 = value * value;
-+			base += b * weight; delta += change * weight; delta2 += change * change * weight;
-+			lumaDelta += value * change * weight; luma2Delta += value2 * change * weight;
-+			moments += float4(value,value2,value2*value,value2*value2) * weight;
++			base += b * weight; base2 += b*b * weight; delta += change * weight; delta2 += change * change * weight;
++			baseDelta += b * change * weight; luma2Delta += value2 * change * weight; baseLuma2 += b * value2 * weight;
++			moments += float3(value,value2,value2*value2) * weight;
 +			total += weight; squareWeight += weight * weight;
-+		}
 +	}
 +	const float inverse = 1.0 / max(total,0.00001);
-+	base *= inverse; delta *= inverse; delta2 *= inverse;
-+	lumaDelta *= inverse; luma2Delta *= inverse; moments *= inverse;
++	base *= inverse; base2 *= inverse; delta *= inverse; delta2 *= inverse;
++	baseDelta *= inverse; luma2Delta *= inverse; baseLuma2 *= inverse; moments *= inverse;
 +	const float mean = moments.x;
 +	const float variance = max(moments.y - mean*mean,0.0);
-+	const float third = moments.z - 3.0*mean*moments.y + 2.0*mean*mean*mean;
-+	const float fourth = max(moments.w - 4.0*mean*moments.z + 6.0*mean*mean*moments.y - 3.0*mean*mean*mean*mean,0.0);
-+	const float quadraticVariance = max(fourth - variance*variance,0.0);
-+	const float3 covariance = lumaDelta - mean*delta;
-+	const float3 quadraticCovariance = luma2Delta - 2.0*mean*lumaDelta + (mean*mean - variance)*delta;
-+	const float a = variance + 0.00001, c = quadraticVariance + 0.000001;
-+	const float determinant = max(a*c - third*third,0.00000000001);
-+	float3 slope = clamp((c*covariance - third*quadraticCovariance) / determinant,-2.0,2.0);
-+	float3 curve = clamp((a*quadraticCovariance - third*covariance) / determinant,-4.0,4.0);
-+	const float3 error = max(delta2 - delta*delta + slope*slope*variance + curve*curve*quadraticVariance + 2.0*slope*curve*third - 2.0*slope*covariance - 2.0*curve*quadraticCovariance,0.0);
++	const float3 rgbVariance = max(base2 - base*base,0.0);
++	const float quadraticVariance = max(moments.z - moments.y*moments.y,0.0);
++	const float3 covariance = baseDelta - base*delta;
++	const float3 quadraticCovariance = luma2Delta - moments.y*delta;
++	const float3 crossCovariance = baseLuma2 - base*moments.y;
++	const float3 a = rgbVariance + 0.00001;
++	const float c = quadraticVariance + 0.000001;
++	const float3 determinant = max(a*c - crossCovariance*crossCovariance,0.00000000001);
++	float3 slope = clamp((c*covariance - crossCovariance*quadraticCovariance) / determinant,-2.0,2.0);
++	float3 curve = clamp((a*quadraticCovariance - crossCovariance*covariance) / determinant,-4.0,4.0);
++	const float3 error = max(delta2 - delta*delta + slope*slope*rgbVariance + curve*curve*quadraticVariance + 2.0*slope*curve*crossCovariance - 2.0*slope*covariance - 2.0*curve*quadraticCovariance,0.0);
 +	const float effectiveSamples = total*total / max(squareWeight,0.00001);
 +	const float confidence = saturate(effectiveSamples / 32.0) / (1.0 + dot(error,kLuma) * 100.0);
 +	if (total == 0.0) { delta = 0.0; slope = 0.0; curve = 0.0; }
-+	const float shift = 0.25 - mean;
 +	// A fixed basis preserves the tone curve when neighboring coefficients are interpolated.
-+	gTone[uint3(id.xy,0)] = float4(delta + slope*shift + curve*(shift*shift - variance),confidence);
-+	gTone[uint3(id.xy,1)] = float4(slope + 2.0*curve*shift,mean);
++	gTone[uint3(id.xy,0)] = float4(delta + slope*(0.25 - base) - curve*moments.y,confidence);
++	gTone[uint3(id.xy,1)] = float4(slope,mean);
 +	gTone[uint3(id.xy,2)] = float4(curve,variance);
 +	gTone[uint3(id.xy,3)] = float4(base,1.0);
 +}

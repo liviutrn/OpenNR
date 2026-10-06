@@ -8,7 +8,7 @@ r5 adds a **Targeted seam curve** mode to the existing outside NR tone transfer.
 It uses the completed NR output already available; it adds no neural
 evaluation, second NR instance, or enlarged NR crop.
 
-- Fit a local curved RGB correction as a function of original brightness.
+- Fit independent RGB contrast responses plus a curved luminance correction.
   Separate the average tone shift, contrast response, and shadow/highlight
   curvature instead of applying one gain/offset response across every tone.
 - Estimate from paired original and completed pre-feather NR samples close
@@ -109,4 +109,3 @@ samples. It operates in the existing LDR buffer representation.
 OpenNR is a fork with upstream lineage from
 [Open Shaders](https://github.com/alandtse/open-shaders) and
 [Community Shaders](https://github.com/community-shaders/skyrim-community-shaders).
-
