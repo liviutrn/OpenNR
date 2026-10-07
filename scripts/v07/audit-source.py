@@ -32,6 +32,8 @@ for token in ('tuning.style = 0;', 'tuning.modelResolveMode = 1;', 'tuning.multi
               'tuning.stereoAtlas = true;', 'tuning.temporalReuseCadence = 0;', 'tuning.stabilizeMode = 0;'):
     assert token in integration, ('Runtime invariant missing',token)
 assert 'SimpleFramePolicy::Select' not in fov
+assert 'bool IsOutputTransitioning() const;' in read(src/'NeuralRendering/Renderer.h')
+assert 'return state_->IsOutputTransitioning();' in read(src/'NeuralRendering/Renderer.cpp')
 assert 'cropPolicyAvailable && !envelopeRejected && !decisionsSuspended' in fov
 assert 'committedRenderCrop == adaptiveCropTargetCoverage' in fov
 assert 'adaptiveActivePasses > 0 && nrRenderer.IsOutputTransitioning()' in fov

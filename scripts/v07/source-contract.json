@@ -73,11 +73,11 @@
   },
   "runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Renderer.cpp": {
     "before": "f677f1c5bcda7b41aa491aba2799416ad79d2d764c2d1dce434bd245ee380260",
-    "after": "633250d087b8d3d5ba18017d16c211a7908efc8fc36c1f2cc64b72eb7a178b6c"
+    "after": "c7d34330ad4722f53752dfe99cd98e17d3101c7bd9e7377a156d2aca9e4092ca"
   },
   "runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Renderer.h": {
     "before": "f31e140cc1d426f7fcee7b5be82f9c3bf886299d06df7beb4fc20d804373e932",
-    "after": "1bb3073e8edbe2e3bb60fb1ed415e279f226b8a296b396ea39416d27226c86a7"
+    "after": "2c0451aab39657946249122e9e297d8cbdb8a9dddac574a41cce6e0f21e90789"
   },
   "runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Runtime.h": {
     "before": "284946bff0ed92362bd21e09feacaa79bc9ea974fa9d1903231eb2a82ad787bb",
@@ -93,7 +93,7 @@
   },
   "runtime/open-shaders/src/Features/Upscaling/NeuralRendering/SinglePassLadder.h": {
     "before": "4827fa4ed09894d04cbac0685549d773e0c2ba342ba3c4c181644e923a02a1c0",
-    "after": "aefbdba185b538eee81663e8b9e90cd0fee3c395e56482cc5699fc128b9ad57c"
+    "after": "382a35dc408c19a4c8bbe0c2bdb579420626b4e8d84aa7a5bf023eb3edfdca20"
   },
   "runtime/open-shaders/tests/cpp/CMakeLists.txt": {
     "before": "34bf8013ba1007fe9fb4100e8f8c478faabea3f35889848ab78d89f8a69af603",

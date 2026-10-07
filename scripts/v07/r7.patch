@@ -3178,7 +3178,7 @@ index 7a1ffce..0000000
 -	}
 -}
 diff --git a/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Renderer.cpp b/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Renderer.cpp
-index e128120..7f7f0f6 100644
+index e128120..14a1e38 100644
 --- a/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Renderer.cpp
 +++ b/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Renderer.cpp
 @@ -1,6 +1,5 @@
@@ -3271,7 +3271,18 @@ index e128120..7f7f0f6 100644
  			copyDepthGuideCS.Reset();
  			alignGuidesCS.Reset();
  			alignGuidesCB.Reset();
-@@ -2081,6 +2067,7 @@ namespace NeuralRendering
+@@ -1671,6 +1657,10 @@ namespace NeuralRendering
+ 
+ 		[[nodiscard]] const char* StatusText() const { return failureLatched ? failureOperation.c_str() : ToString(Runtime::Instance().Status()); }
+ 		[[nodiscard]] bool IsStereoAtlasActive() const { return stereoAtlasActiveLastFrame && !failureLatched; }
++		[[nodiscard]] bool IsOutputTransitioning() const
++		{
++			return std::any_of(eyes.begin(), eyes.end(), [](const auto& eye) { return eye.resultShaping.transitionRemainingMs > 0.0f; });
++		}
+ 		[[nodiscard]] bool IsFailureLatched() const { return failureLatched; }
+ 		[[nodiscard]] bool IsFailureRecoverable() const { return failureLatched && recoverableFailure; }
+ 		[[nodiscard]] bool IsRecoveryLimited() const { return recoveryAttempted; }
+@@ -2081,6 +2071,7 @@ namespace NeuralRendering
  			constants.maxColorChangeStops = tuning.resultMaxColorChangeStops;
  			constants.depthThreshold = tuning.stabilizeDepthThreshold;
  			constants.colorTolerance = tuning.stabilizeColorTolerance;
@@ -3279,7 +3290,7 @@ index e128120..7f7f0f6 100644
  			constants.nearBlackProtection = std::clamp(std::isfinite(tuning.nearBlackProtection) ? tuning.nearBlackProtection : 0.0f, 0.0f, 2.0f);
  			constants.nearBlackThreshold = std::clamp(std::isfinite(tuning.nearBlackThreshold) ? tuning.nearBlackThreshold : 0.035f, 0.001f, 0.25f);
  			constants.nearBlackLiftSoftness = std::clamp(std::isfinite(tuning.nearBlackLiftSoftness) ? tuning.nearBlackLiftSoftness : 0.001f, 0.00001f, 0.05f);
-@@ -3905,7 +3892,6 @@ namespace NeuralRendering
+@@ -3905,7 +3896,6 @@ namespace NeuralRendering
  		Microsoft::WRL::ComPtr<ID3D11Buffer> resultShapingCB;
  		Microsoft::WRL::ComPtr<ID3D11SamplerState> resultShapingSampler;
  		std::array<EyeResources, 2> eyes;
@@ -3287,7 +3298,7 @@ index e128120..7f7f0f6 100644
  		LadderAtlasGeometry ladderAtlasGeometry;
  		bool stereoAtlasModeObserved = false;
  		bool stereoAtlasSinglePassMode = false;
-@@ -3980,15 +3966,11 @@ namespace NeuralRendering
+@@ -3980,15 +3970,11 @@ namespace NeuralRendering
  	}
  
  	bool Renderer::Reset() { FoveatedRenderImpl::CropMotion::Invalidate(2, 2); return state_->Reset(); }
@@ -3301,12 +3312,12 @@ index e128120..7f7f0f6 100644
  	void Renderer::ClearShaderCache() { state_->ClearShaderCache(); }
  	void Renderer::ResetHistory() { FoveatedRenderImpl::CropMotion::Invalidate(2, 2); state_->ResetHistory(); }
  	bool Renderer::IsStereoAtlasActive() const { return state_->IsStereoAtlasActive(); }
-+	bool Renderer::IsOutputTransitioning() const { return std::any_of(state_->eyes.begin(), state_->eyes.end(), [](const auto& eye) { return eye.resultShaping.transitionRemainingMs > 0.0f; }); }
++	bool Renderer::IsOutputTransitioning() const { return state_->IsOutputTransitioning(); }
  	bool Renderer::IsFailureLatched() const { return state_->IsFailureLatched(); }
  	bool Renderer::IsFailureRecoverable() const { return state_->IsFailureRecoverable(); }
  	bool Renderer::IsRecoveryLimited() const { return state_->IsRecoveryLimited(); }
 diff --git a/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Renderer.h b/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Renderer.h
-index 9fb5223..504ac08 100644
+index 9fb5223..22cbdd0 100644
 --- a/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Renderer.h
 +++ b/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Renderer.h
 @@ -1,7 +1,6 @@
@@ -3328,6 +3339,15 @@ index 9fb5223..504ac08 100644
  		/** @brief Drops cached standalone neural-rendering shaders so they recompile on the next frame. */
  		void ClearShaderCache();
  		/** @brief Resets the native renderer; false means the GPU fence could not be drained safely. */
+@@ -88,6 +83,8 @@ namespace NeuralRendering
+ 		void ResetHistory();
+ 
+ 		[[nodiscard]] bool IsStereoAtlasActive() const;
++		/** @brief Whether either eye is still blending an adaptive layout transition. */
++		[[nodiscard]] bool IsOutputTransitioning() const;
+ 		[[nodiscard]] bool IsFailureLatched() const;
+ 		[[nodiscard]] bool IsFailureRecoverable() const;
+ 		/** @brief Holds adaptive upshifts after the session's bounded recovery attempt. */
 diff --git a/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Runtime.h b/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Runtime.h
 index 56131e4..fbad787 100644
 --- a/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Runtime.h
@@ -4236,7 +4256,7 @@ index e669646..0000000
 -	void DrawPanel();
 -}
 diff --git a/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/SinglePassLadder.h b/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/SinglePassLadder.h
-index 6dcdf79..d4358c1 100644
+index 6dcdf79..db220c9 100644
 --- a/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/SinglePassLadder.h
 +++ b/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/SinglePassLadder.h
 @@ -6,16 +6,39 @@
@@ -4280,7 +4300,7 @@ index 6dcdf79..d4358c1 100644
 +			config.enableBelow > 0.0f && config.disableAbove > config.enableBelow;
 +		// Only the adjacent NR-on/off endpoint stages may cross this boundary.
 +		if (stage == suspendedStage)
-+			return validBoundary && !growthBlocked && ms < config.enableBelow ? 2u : 0u;
++			return validBoundary && ms < config.enableBelow ? 2u : 0u;
 +		if (stage == minimumActiveStage && validBoundary && ms > config.disableAbove) return 1;
 +		if (stage < minimumActiveStage && ms > config.budget) return 1;
 +		if (stage > 0 && !growthBlocked && ms < config.budget - config.reserve) return 2;

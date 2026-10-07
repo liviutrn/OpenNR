@@ -32,7 +32,8 @@ int main() {
     assert(Ladder::Select(4,25,config,false,false)==1);
     assert(Ladder::Select(5,15,config,false,false)==0);
     assert(Ladder::Select(5,13,config,false,false)==2);
-    assert(Ladder::Select(5,13,config,false,true)==0);
+    assert(Ladder::Select(5,13,config,false,true)==2);
+    assert(Ladder::Select(4,13,config,false,true)==0);
     for(unsigned stage=0;stage<6;++stage) {
         for(float ms:{1.f,13.f,19.f,20.f,24.f,60.f,1000.f}) {
             assert(Ladder::Select(stage,ms,config,true,false)==0);
