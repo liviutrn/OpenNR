@@ -1,8 +1,8 @@
-name: Build OpenNR 2.20.1-v06-r6
+name: Build OpenNR 2.20.1-v06-r7
 
 on:
   push:
-    branches: ["build/2.20.1-v06-adaptive-single-pass", "build/2.20.1-v06-r6"]
+    branches: ["build/2.20.1-v06-adaptive-single-pass", "build/2.20.1-v06-r6", "build/2.20.1-v06-r7"]
   workflow_dispatch:
 
 concurrency:
@@ -264,6 +264,30 @@ jobs:
           & ./v06-seam-ring-tests.exe
           if ($LASTEXITCODE) { throw 'v06 seam-ring coverage tests failed' }
 
+      - name: Apply and audit r7 cleanup and controller
+        shell: pwsh
+        run: |
+          python scripts/v07/apply-r7.py
+          if ($LASTEXITCODE) { throw 'r7 exact source patch failed' }
+          python scripts/v07/audit-source.py
+          if ($LASTEXITCODE) { throw 'r7 integration audit failed' }
+          python scripts/v07/verify-stack.py --write-layout-cpp r7-buffer-layout.cpp
+          if ($LASTEXITCODE) { throw 'r7 buffer contract failed' }
+          cl /nologo /std:c++20 /EHsc /W4 /WX r7-buffer-layout.cpp /Fe:r7-buffer-layout.exe
+          if ($LASTEXITCODE) { throw 'r7 layout compilation failed' }
+          & ./r7-buffer-layout.exe
+          if ($LASTEXITCODE) { throw 'r7 layout execution failed' }
+          cl /nologo /std:c++20 /EHsc /W4 /WX scripts/v07/test-controller.cpp runtime/open-shaders/src/Features/Upscaling/NeuralRendering/AdaptiveCropController.cpp /Fe:r7-controller.exe
+          if ($LASTEXITCODE) { throw 'r7 controller compilation failed' }
+          & ./r7-controller.exe
+          if ($LASTEXITCODE) { throw 'r7 controller transitions failed' }
+          cl /nologo /std:c++20 /EHsc /W4 /WX scripts/v07/test-nr-black-warp.cpp d3d11.lib d3dcompiler.lib /Fe:r7-nr-black-warp.exe
+          if ($LASTEXITCODE) { throw 'r7 protection/resume test compilation failed' }
+          & ./r7-nr-black-warp.exe
+          if ($LASTEXITCODE) { throw 'r7 protection/resume HLSL execution failed' }
+          git diff --check
+          if ($LASTEXITCODE) { throw 'r7 source whitespace check failed' }
+
       - name: Install CMake
         uses: lukka/get-cmake@v4.3.3
         with:
@@ -299,32 +323,32 @@ jobs:
       - name: Add v06 package notes and hashes
         shell: pwsh
         run: |
-          Copy-Item docs/versions/2.20.1-v06/r6/README.md dist/README-2.20.1-v06.txt
+          Copy-Item docs/versions/2.20.1-v06/r7/README.md dist/README-2.20.1-v06.txt
           Get-ChildItem -Recurse dist -File | ForEach-Object {
             $h = Get-FileHash $_.FullName -Algorithm SHA256
             "$($h.Hash)  $($_.FullName)"
           } | Tee-Object -FilePath dist/SHA256SUMS.txt
 
-      - name: Download compiled r5 baseline for audit
+      - name: Download compiled r6 baseline for audit
         uses: actions/download-artifact@v4
         with:
-          name: OpenNR-2.20.1-v06-r5-targeted-seam-carrier-excluded
-          run-id: 37392639119
+          name: OpenNR-2.20.1-v06-r6-inside-black-protection-carrier-excluded
+          run-id: 37420891871
           github-token: ${{ secrets.GITHUB_TOKEN }}
-          path: artifacts/r5
+          path: artifacts/r6
 
-      - name: Audit compiled r6 package
+      - name: Audit compiled r7 package
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force artifacts/r6 | Out-Null
-          Copy-Item dist/*.7z artifacts/r6/
-          python scripts/v06/audit-r6-package.py
-          if ($LASTEXITCODE) { throw 'r6 package regression audit failed' }
+          New-Item -ItemType Directory -Force artifacts/r7 | Out-Null
+          Copy-Item dist/*.7z artifacts/r7/
+          python scripts/v07/audit-package.py
+          if ($LASTEXITCODE) { throw 'r7 package regression audit failed' }
 
-      - name: Upload r6 package audit
+      - name: Upload r7 package audit
         uses: actions/upload-artifact@v4
         with:
-          name: OpenNR-v06-r6-package-audit
+          name: OpenNR-v06-r7-package-audit
           path: audit-results/*
           if-no-files-found: error
           retention-days: 14
@@ -332,7 +356,7 @@ jobs:
       - name: Upload v06 checkpoint package
         uses: actions/upload-artifact@v4
         with:
-          name: OpenNR-2.20.1-v06-r6-inside-black-protection-carrier-excluded
+          name: OpenNR-2.20.1-v06-r7-adaptive-controls-carrier-excluded
           path: dist/*
           if-no-files-found: error
           retention-days: 14
