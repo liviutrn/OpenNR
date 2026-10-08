@@ -780,6 +780,29 @@ index eec3c7c..0000000
 -    }
 -  ]
 -}
+diff --git a/runtime/open-shaders/src/Deferred.cpp b/runtime/open-shaders/src/Deferred.cpp
+index 0726a5f..ed7c6e7 100644
+--- a/runtime/open-shaders/src/Deferred.cpp
++++ b/runtime/open-shaders/src/Deferred.cpp
+@@ -17,7 +17,6 @@
+ #include "Features/SubsurfaceScattering.h"
+ #include "Features/TerrainBlending.h"
+ #include "Features/Upscaling.h"
+-#include "Features/Upscaling/NeuralRendering/SettingsBenchmark.h"
+ #include "Features/VRS.h"
+ #include "Features/VR.h"
+ #include "Features/Wind/Wind.h"
+@@ -258,10 +257,6 @@ void Deferred::EarlyPrepasses()
+ 	// Shadow maps have just been rendered — upload BSShadowDirectionalLight data to t98.
+ 	CopyShadowLightData();
+ 
+-	// In-headset settings benchmark: samples compositor timing once per world frame
+-	// and schedules its (main-thread task) settings switches. No-op unless running.
+-	NeuralRendering::SettingsBenchmark::Tick();
+-
+ 	Feature::ForEachLoadedFeature("EarlyPrepass", [](Feature* feature) { feature->EarlyPrepass(); }, true);
+ }
+ 
 diff --git a/runtime/open-shaders/src/Features/RemoteControl/DevBenchBridge.cpp b/runtime/open-shaders/src/Features/RemoteControl/DevBenchBridge.cpp
 index 3394549..56bb3cf 100644
 --- a/runtime/open-shaders/src/Features/RemoteControl/DevBenchBridge.cpp

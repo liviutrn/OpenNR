@@ -31,6 +31,10 @@
     "before": "3575a42c9df46827205b5aa74ea3acc39b434edcb68232bd93cde1e063f7163d",
     "after": null
   },
+  "runtime/open-shaders/src/Deferred.cpp": {
+    "before": "cfbaffeeddc3ba7ff35b43e4b6737693c80309a30513688154f98ec9aab926d2",
+    "after": "47edaae02ce23befe0b643f6f733593cfdb1ac6c7d06b440dfb5267a7f4bd13e"
+  },
   "runtime/open-shaders/src/Features/RemoteControl/DevBenchBridge.cpp": {
     "before": "f1b47980e2bd9767944cbf2953be7c9de4cb350d649289bbb69cc1f7bab91776",
     "after": "27c7ef00a5522750c2f93fd63b6e5a19b27e6500a34f6bc74965c100aa4126d6"
