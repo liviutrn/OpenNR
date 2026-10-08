@@ -6,8 +6,8 @@
   "verified_source_archive_sha256": "274ae5e34f13d3772625e28507ee17853ae30abeaff2aa7ba26845ea08c8f472",
   "release_archive": {
     "name": "OpenNR-2.20.1-v06-r7.7z",
-    "size": 76827692,
-    "sha256": "07bca2f5b4ce60eccfb0be9c7cc6b65403469b9bb342c45ff90496bc6af4d427"
+    "size": 76826865,
+    "sha256": "8ac68532fa494d942a090c2b6a0af9902dd628d169176ba77cad4fcf840ad25f"
   },
   "archive_entries": 634,
   "documentation_added": [
@@ -79,5 +79,6 @@
     "Shaders/Features/WetnessEffects.ini",
     "Shaders/Features/Wind.ini"
   ],
-  "hardware_gpu_timing_and_headset_acceptance": false
+  "hardware_gpu_timing_and_headset_acceptance": false,
+  "documentation_commit": "833c0a9b5261ae719785b0316e2f4909f7a81853"
 }
