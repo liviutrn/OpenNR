@@ -1,0 +1,57 @@
+name: Publish OpenNR 2.20.1-v06-r7
+
+on:
+  push:
+    branches: ['release/2.20.1-v06-r7']
+    paths:
+      - '.github/workflows/release-r7.yml'
+      - 'scripts/v07/release-package.py'
+  workflow_dispatch:
+
+concurrency:
+  group: opennr-public-release-r7
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  release:
+    if: github.repository == 'liviutrn/OpenNR' && github.ref == 'refs/heads/release/2.20.1-v06-r7'
+    runs-on: windows-2025
+    timeout-minutes: 20
+    steps:
+      - name: Check out current release documentation
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - name: Download verified compiled runtime
+        uses: actions/download-artifact@v4
+        with:
+          name: OpenNR-2.20.1-v06-r7-adaptive-controls-carrier-excluded
+          run-id: 37738693746
+          github-token: ${{ github.token }}
+          path: release-input/runtime
+      - name: Download matching build audit and manifests
+        uses: actions/download-artifact@v4
+        with:
+          name: OpenNR-v06-r7-package-audit
+          run-id: 37738693746
+          github-token: ${{ github.token }}
+          path: release-input/audit
+      - name: Verify, package, upload and publish r7
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python scripts/v07/release-package.py --artifact release-input/runtime --audit release-input/audit --output release --publish
+          if ($LASTEXITCODE) { throw 'Release verification or publication failed' }
+      - name: Retain release verification
+        uses: actions/upload-artifact@v4
+        with:
+          name: OpenNR-r7-release-verification
+          path: |
+            release/release-package-audit.json
+            release/release-manifest.json
+            release/SHA256SUMS.txt
