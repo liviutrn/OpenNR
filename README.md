@@ -1,6 +1,10 @@
 # OpenNR 2.20.1-v06-r7 — one adaptive controller
 
-Build and package verification are pending. In-game headset quality and GPU timing remain unmeasured.
+Windows build, tests and package audit **passed** on October 8, 2026.
+
+[Download r7](https://github.com/liviutrn/OpenNR/actions/runs/37738693746/artifacts/11533527314) · [Build and test results](https://github.com/liviutrn/OpenNR/actions/runs/37738693746)
+
+In-game headset quality and hardware GPU timing remain unmeasured.
 
 ## Changes from r6
 
@@ -16,7 +20,7 @@ Build and package verification are pending. In-game headset quality and GPU timi
 | 5 | 60% | 70% | 80% | 70% |
 | 6 | 100% | 100% | 100% | NR off |
 
-- **Controller mode: Auto / Force stage 1–6** holds a selected stage for FPS comparisons. Forced stages ignore automatic thresholds and retain the normal crop/history handoffs. Wait for the **Settling** message to disappear. Returning to Auto keeps the current stage and clears decision holds.
+- **Controller mode: Auto / Force stage 1–6** holds a selected stage for FPS comparisons. Forced stages ignore automatic thresholds and retain the normal crop/history handoffs. Close the menu after choosing a stage so the crop transition can finish, then wait for the **Settling** message to disappear before measuring. Returning to Auto keeps the current stage and clears decision holds.
 - **Disable NR above** only acts in stage 5; **Re-enable NR below** only acts in stage 6. Earlier stages move one step at a time. Thresholds must be ordered. GPU budget, recovery headroom, smoothing, holds, cooldown and NR transition smoothing remain configurable.
 - Stage 6 restores the selected crop size with NR bypassed. Resuming waits for the requested crop geometry to commit, clears stale NR history once, then fades its residual in using the existing output pass. Invalid geometry and menu holds prevent premature restoration.
 - Changing crop drop while running retains the stereo handoff instead of committing a newly clamped crop immediately.
@@ -31,6 +35,8 @@ Build and package verification are pending. In-game headset quality and GPU timi
 
 ## Verification
 
-Portable tests execute the actual ladder policy and crop actuator, including all stage pairs at every crop drop, live floor edits, holds, duplicate frames, endpoint thresholds and geometry loss. Source audits protect the retained gaze/motion/grid files and six CPU/HLSL buffer layouts. Windows CI additionally compiles the full package and executes near-black/resume-blend HLSL on software D3D11. The package audit compares every payload against the successful r6 build.
+The successful Windows build used commit `3a005b981acb178e624c782c571c422f6daeeddd`. The actual ladder policy and crop actuator passed 198 forced-stage/live-step paths, endpoint gates, stale-frame, hold and geometry-loss checks. Software D3D11 executed 128 actual near-black/resume-blend HLSL cases, including shaped/unshaped output, raw history, alpha and dispatch bounds. The 16 protected gaze/motion/grid files match r6; all six CPU/HLSL buffer-layout checks passed.
+
+The archive audit verified CRC, the x64 plugin and runtime controls, and shader/source identity. r7 has 633 archive entries versus r6's 640: seven intended removals, no additions, and only the plugin and ResultShaping shader changed. Every other r6 payload is identical. The NR carrier remains excluded. [Package audit report](https://github.com/liviutrn/OpenNR/blob/build/2.20.1-v06-r7/docs/versions/2.20.1-v06/r7/package-audit.json).
 
 These checks cannot establish headset visual quality or hardware GPU cost. This revision adds no NR evaluation or outside correction dispatch; the resume fade uses the existing output shader.

@@ -1,0 +1,38 @@
+{
+  "build_commit": "3a005b981acb178e624c782c571c422f6daeeddd",
+  "build_run": "37738693746",
+  "archives": {
+    "r6": {
+      "name": "OpenNR 2.20.1.7z",
+      "size": 111454021,
+      "sha256": "cb19dd939387c7b5ab57a2d4bc4164693fa4a5c3ddb635bd64b7c63eaf416369"
+    },
+    "r7": {
+      "name": "OpenNR 2.20.1.7z",
+      "size": 111406062,
+      "sha256": "274ae5e34f13d3772625e28507ee17853ae30abeaff2aa7ba26845ea08c8f472"
+    }
+  },
+  "r6_entries": 640,
+  "r7_entries": 633,
+  "added": [],
+  "removed": [
+    "SKSE/Plugins/CommunityShaders/OpenNR-SettingsBenchmark.json",
+    "Shaders/Upscaling/NeuralRendering/OutsideSeamApplyCS.hlsl",
+    "Shaders/Upscaling/NeuralRendering/OutsideSeamMapCS.hlsl",
+    "Shaders/Upscaling/NeuralRendering/OutsideSeamSmoothCS.hlsl",
+    "Shaders/Upscaling/NeuralRendering/OutsideToneApplyCS.hlsl",
+    "Shaders/Upscaling/NeuralRendering/OutsideToneMapCS.hlsl",
+    "Shaders/Upscaling/NeuralRendering/OutsideToneSmoothCS.hlsl"
+  ],
+  "changed": [
+    "SKSE/Plugins/CommunityShaders.dll",
+    "Shaders/Upscaling/NeuralRendering/ResultShapingCS.hlsl"
+  ],
+  "all_other_r6_payloads_identical": true,
+  "shader_matches_reviewed_source": true,
+  "x64_dll_and_controls_verified": true,
+  "archive_crc_verified": true,
+  "nr_carrier_excluded": true,
+  "hardware_gpu_timing_and_headset_acceptance": false
+}
