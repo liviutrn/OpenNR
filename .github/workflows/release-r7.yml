@@ -40,12 +40,12 @@ jobs:
           run-id: 37738693746
           github-token: ${{ github.token }}
           path: release-input/audit
-      - name: Verify, package, upload and publish r7
+      - name: Verify and refresh published r7 documentation
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          python scripts/v07/release-package.py --artifact release-input/runtime --audit release-input/audit --output release --publish
+          python scripts/v07/release-package.py --artifact release-input/runtime --audit release-input/audit --output release --publish --refresh-docs
           if ($LASTEXITCODE) { throw 'Release verification or publication failed' }
       - name: Retain release verification
         if: always()

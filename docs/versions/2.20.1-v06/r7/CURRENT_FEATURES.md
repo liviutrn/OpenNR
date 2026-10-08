@@ -8,6 +8,6 @@ Native NR tuning exposes intensity, local tone, local structure, skin structure,
 
 Shared Upscaling controls provide SR quality/model presets, VR engine render scale, sharpening and supported backend controls. The archive also includes the Open Shaders rendering modules, helper plugin, menu assets, translations and Terrain Helper asset. Feature activation is governed by the installed configuration and runtime support.
 
-See **README.md** for the complete current feature inventory, settings ranges, installation, recommended PSVR2/RTX 5070 setup and short usage guide. See **OpenNR-EyeTracking.md** for gaze-provider behavior and diagnostics.
+See **README.md** for the complete current feature inventory, settings ranges, installation and short usage guide. See **OpenNR-EyeTracking.md** for gaze-provider behavior and diagnostics.
 
 The NVIDIA NR carrier **nvngx_dlssnr.dll** is intentionally excluded. Supply your compatible copy at **Data/Shaders/Upscaling/Streamline/nvngx_dlssnr.dll**. Skyrim, SKSE and the Address Library appropriate to the game remain external prerequisites.

@@ -16,6 +16,8 @@ ARCHIVE_SHA = '274ae5e34f13d3772625e28507ee17853ae30abeaff2aa7ba26845ea08c8f472'
 MANIFEST_SHA = '3ae8b0222d7dd6bd0b7e1d02a8af4bcacfb3e0ff07e5fa390b99ee4a462aa658'
 AUDIT_SHA = 'f0f84fcc6af58f12c262da56c1e9bca0ac8149ffbbdbcf1b49c937452365f816'
 TAG = 'opennr-2.20.1-v06-r7'
+RELEASE_SHA = 'cc1208f51f09b396eef9bba95eea950a3000f928'
+PUBLISHED_MANIFEST_SHA = 'dcbd105f67f1351d9fd266643d9d92060796a8d7f77d4204f43d74f2392a0850'
 DOCS = {'README.md', 'OpenNR-EyeTracking.md', 'OPENNR-2.20.1-CHANGELOG.md'}
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -67,7 +69,7 @@ def verify_provenance(commit):
     assert (ROOT/'VERSION').read_text().strip() == '2.20.1'
 
 
-def publish(output, commit):
+def publish(output, commit, refresh_docs=False):
     repo = os.environ['GITHUB_REPOSITORY']
     assets = sorted(p for p in output.iterdir() if p.is_file())
     releases = json.loads(run(['gh', 'api', f'repos/{repo}/releases?per_page=100'],
@@ -77,18 +79,41 @@ def publish(output, commit):
     if matches:
         existing = matches[0]
         if not existing['draft']:
-            assert existing['target_commitish'] == commit, 'Release tag belongs to another commit'
+            target = RELEASE_SHA if refresh_docs else commit
+            assert existing['target_commitish'] == target, 'Release tag belongs to another commit'
             tag = json.loads(run(['gh', 'api', f'repos/{repo}/git/ref/tags/{TAG}'],
                                  capture_output=True, text=True).stdout)
-            assert tag['object']['sha'] == commit and tag['object']['type'] == 'commit'
+            assert tag['object']['sha'] == target and tag['object']['type'] == 'commit'
             remote = {a['name']: a for a in existing['assets']}
             assert set(remote) == {p.name for p in assets}, 'Published asset list differs'
+            if refresh_docs:
+                with tempfile.TemporaryDirectory(prefix='r7-published-') as work:
+                    run(['gh', 'release', 'download', TAG, '--repo', repo,
+                         '--pattern', 'release-manifest.json', '--dir', work])
+                    previous_path = Path(work)/'release-manifest.json'
+                    assert sha(previous_path) in (PUBLISHED_MANIFEST_SHA, sha(output/'release-manifest.json')), 'Published package changed unexpectedly'
+                    previous = json.loads(previous_path.read_text())
+                    revised = json.loads((output/'release-manifest.json').read_text())
+                    assert set(previous) == set(revised)
+                    assert all(previous[n] == v for n,v in revised.items() if n not in DOCS), 'Runtime payload changed'
+                run(['gh', 'release', 'upload', TAG, '--repo', repo, '--clobber', *map(str, assets)])
+                run(['gh', 'release', 'edit', TAG, '--repo', repo,
+                     '--notes-file', str(ROOT/'docs/versions/2.20.1-v06/r7/RELEASE_NOTES.md')])
+                current = json.loads(run(['gh', 'api', f'repos/{repo}/releases/{existing["id"]}'],
+                                         capture_output=True, text=True).stdout)
+                assert not current['draft'] and current['target_commitish'] == RELEASE_SHA
+                assert not re.search(r'\bliviu\b|RTX 5070|Recommended PSVR2', current['body'], re.I)
+                remote = {a['name']: a for a in current['assets']}
+                assert set(remote) == {p.name for p in assets}
             for p in assets:
                 assert remote[p.name]['state'] == 'uploaded'
                 assert remote[p.name]['size'] == p.stat().st_size
                 assert remote[p.name]['digest'] == 'sha256:' + sha(p), p.name
-            print('Published release already matches; no assets changed')
+            print('Release documentation refreshed; compiled runtime and release tag preserved' if refresh_docs
+                  else 'Published release already matches; no assets changed')
+            print(f'RELEASE_URL=https://github.com/{repo}/releases/tag/{TAG}')
             return
+        assert not refresh_docs, 'Documentation refresh requires the existing published release'
         assert existing['author']['login'] == 'github-actions[bot]'
         assert existing['target_commitish'] in (commit, '61f78c213679e070064dfe65636cefc520870491')
         tag = subprocess.run(['gh', 'api', f'repos/{repo}/git/ref/tags/{TAG}'], capture_output=True, text=True)
@@ -99,6 +124,7 @@ def publish(output, commit):
         run(['gh', 'release', 'edit', TAG, '--repo', repo, '--target', commit,
              '--notes-file', str(ROOT/'docs/versions/2.20.1-v06/r7/RELEASE_NOTES.md')])
     else:
+        assert not refresh_docs, 'Documentation refresh cannot create a release'
         run(['gh', 'release', 'create', TAG, '--repo', repo, '--target', commit,
              '--draft', '--title', 'OpenNR 2.20.1-v06-r7 — Stereo Atlas and Adaptive Performance',
              '--notes-file', str(ROOT/'docs/versions/2.20.1-v06/r7/RELEASE_NOTES.md')])
@@ -127,7 +153,9 @@ def main():
     parser.add_argument('--output', type=Path, default=ROOT/'release')
     parser.add_argument('--verify-only', type=Path, metavar='EXTRACTED_PAYLOAD')
     parser.add_argument('--publish', action='store_true')
+    parser.add_argument('--refresh-docs', action='store_true')
     args = parser.parse_args()
+    assert not args.refresh_docs or args.publish
     manifest_path = args.audit/'r7-manifest.json'
     audit_path = args.audit/'r7-package-audit.json'
     assert sha(manifest_path) == MANIFEST_SHA and sha(audit_path) == AUDIT_SHA
@@ -158,6 +186,10 @@ def main():
         write_document(ROOT/'README.md', payload/'README.md')
         write_document(docs/'EYE_TRACKING.md', payload/'OpenNR-EyeTracking.md')
         write_document(docs/'CURRENT_FEATURES.md', payload/'OPENNR-2.20.1-CHANGELOG.md')
+        if args.refresh_docs:
+            for name in DOCS:
+                assert not re.search(r'\bliviu\b|RTX 5070|Recommended PSVR2',
+                                     (payload/name).read_text(encoding='utf-8'), re.I), name
         revised = inventory(payload)
         added = sorted(set(revised)-set(manifest))
         removed = sorted(set(manifest)-set(revised))
@@ -175,7 +207,7 @@ def main():
         run([seven, 't', str(archive), '-bd'])
         run([seven, 'x', str(archive), '-o'+str(roundtrip), '-y', '-bd'])
         verify_payload(roundtrip, revised)
-        report = {'version': '2.20.1-v06-r7', 'release_commit': commit,
+        report = {'version': '2.20.1-v06-r7', 'release_commit': RELEASE_SHA if args.refresh_docs else commit,
                   'runtime_build_commit': BUILD_SHA, 'runtime_build_run': BUILD_RUN,
                   'verified_source_archive_sha256': ARCHIVE_SHA,
                   'release_archive': {'name': archive.name, 'size': archive.stat().st_size, 'sha256': sha(archive)},
@@ -187,6 +219,8 @@ def main():
                   'nr_carrier_install_path': 'Data/Shaders/Upscaling/Streamline/nvngx_dlssnr.dll',
                   'included_feature_inis': feature_inis,
                   'hardware_gpu_timing_and_headset_acceptance': False}
+        if args.refresh_docs:
+            report['documentation_commit'] = commit
         (args.output/'release-package-audit.json').write_text(json.dumps(report, indent=2)+'\n', encoding='utf-8', newline='\n')
         (args.output/'release-manifest.json').write_text(json.dumps(revised, indent=2)+'\n', encoding='utf-8', newline='\n')
         shutil.copyfile(payload/'README.md', args.output/'README.md')
@@ -194,7 +228,7 @@ def main():
     (args.output/'SHA256SUMS.txt').write_text(sums, encoding='ascii', newline='\n')
     print('RELEASE_PACKAGE_AUDIT='+json.dumps(report, separators=(',', ':')))
     if args.publish:
-        publish(args.output.resolve(), commit)
+        publish(args.output.resolve(), commit, args.refresh_docs)
 
 
 if __name__ == '__main__':

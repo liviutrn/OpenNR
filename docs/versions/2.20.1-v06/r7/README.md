@@ -14,7 +14,7 @@ The main Skyrim VR route is **game rendering → DLSS SR → one stereo-atlas NR
 
 Moving gaze uses matched crop sampling, depth/motion guides and motion compensation. Compatible crop/model transitions use resident resources and residual handoffs. This preserves the underlying gaze alignment and transition handling independently of optional image shaping. Genuine layout/route changes, lost validity and failures can still reset history.
 
-The custom controller and the recommended configuration below target **Skyrim VR through SteamVR/OpenVR**. A compatible native gaze provider is required for gaze following; the selected static crop remains usable without it. For PSVR2 on PC, use your working PSVR2 Toolkit eye-tracking setup. NR requires a compatible GPU/driver/carrier and the DLSS route. Disable Frame Generation and restart before using NR. The VR route also requires the active engine-resolution/PerfMode hook.
+The custom controller targets **Skyrim VR through SteamVR/OpenVR**. A compatible native gaze provider is required for gaze following; the selected static crop remains usable without it. For PSVR2 on PC, use your working PSVR2 Toolkit eye-tracking setup. NR requires a compatible GPU/driver/carrier and the DLSS route. Disable Frame Generation and restart before using NR. The VR route also requires the active engine-resolution/PerfMode hook.
 
 ## Crop, periphery and edge
 
@@ -120,36 +120,12 @@ SR backend, quality, DLSS model preset, sharpening and supported latency/backend
 
 The settings page retains load/save/reset behavior. Save Settings persists your changes; live tuning alone is not a substitute for saving. The runtime validates values and fixed rendering choices at the settings boundary. Native-gaze, adaptive-performance and near-black developer commands expose corresponding status/configuration through the optional Remote Control/DevBench interface. Status and failure-reset controls help recover the NR route after a runtime error.
 
-## Recommended PSVR2 / RTX 5070 starting setup
-
-This recipe follows Liviu's usual DLSS Performance, gaze-crop and single-atlas usage. Preserve the native NR and protection values you already like; the optional values below are starting points rather than a record of your saved profile.
-
-| Setting | Recommended starting point |
-|---|---|
-| VR runtime / tracking | SteamVR/OpenVR; PSVR2 Toolkit eye tracking active |
-| Upscaling | NVIDIA DLSS, Performance, 0.5 × 0.5; VR Render Scale Auto |
-| Engine-resolution/PerfMode | On; restart after changing boot-latched settings |
-| Selected crop | Center 50%; choose Oval or Rectangle visually |
-| NR / controller | NR On, adaptive controller On, Auto |
-| Crop drop | 20 points initially; 15 or 10 for gentler crop-size reductions |
-| GPU budget / recovery headroom | 20 ms / 1 ms as a starting budget |
-| NR endpoint thresholds | Start at 24 ms disable / 14 ms re-enable; tune from forced stages 5 and 6 |
-| Controller timing | 250 ms smoothing, 350 ms decrease hold, 1200 ms increase hold, 1000 ms cooldown, 150 ms NR transition smoothing |
-| Gaze smoothing / optional quantization | 0 ms / 0 input pixels |
-| Freeze crop / region visualization | Off for normal use |
-| Periphery smoothing | Temporal Smooth, 0.16 initially; raise for responsiveness if it ghosts |
-| Near-black protection | Keep your preferred strength; try 1.0 if starting fresh, threshold 0.035, onset 0.001 |
-| Native NR tuning / Auto Mask / UI Correction | Keep your preferred saved choices; use the native defaults above for a clean comparison |
-| Result shaping / sharpening | Off initially; tune separately if needed |
-
-The 20 ms GPU budget is an application-GPU target, not a guaranteed FPS or compositor budget. Select a budget appropriate to your actual SteamVR frame pacing. To tune NR suspension, compare forced stage 5 with stage 6 in the same scene, then leave enough recovery margin for the cost of re-enabling NR. Do not infer the added NR cost from a different crop, camera or scene.
-
 ## Short installation and usage guide
 
 1. Install the **OpenNR-2.20.1-v06-r7.7z** release asset as a mod in your manager. Its `SKSE`, `Shaders` and `Interface` folders belong under the game's `Data` directory. Use one active OpenNR/CommunityShaders plugin deployment and let this build win conflicts with an older build. Keep your existing working SKSE/Address Library and mod-list prerequisites.
 2. Put your compatible **`nvngx_dlssnr.dll`** at **`Data/Shaders/Upscaling/Streamline/nvngx_dlssnr.dll`**, or at that relative path inside the OpenNR mod folder. Keep the bundled SR/helper libraries. Without the NR carrier, NR cannot initialize; the release still supplies its normal non-NR rendering components.
-3. Start SteamVR with PSVR2 Toolkit tracking active, then launch Skyrim through your normal SKSE/mod-manager entry point. Open the OpenNR menu with your configured menu key.
-4. On Upscaling, select DLSS Performance and Auto render scale. Enable the engine-resolution hook and foveated region source as needed; save and restart when the menu requests it. In the DLSS 5/Neural Rendering controls, enable NR, choose Center 50%, set gaze smoothing/quantization to zero and select Auto controller mode.
+3. Start SteamVR with your compatible eye-tracking provider active, then launch Skyrim through your normal SKSE/mod-manager entry point. Open the OpenNR menu with your configured menu key.
+4. On Upscaling, select NVIDIA DLSS and your preferred quality/render scale. Enable the engine-resolution hook and foveated region source as needed; save and restart when the menu requests it. In the DLSS 5/Neural Rendering controls, enable NR, choose your crop preset and gaze controls, and select Auto controller mode.
 5. Close the menu and let the image settle. Check that diagnostics report valid dynamic gaze and that the NR status is active or intentionally suspended. Tune near-black protection in a dark scene. For stage comparisons select Force stage 1–6, close the menu, wait for settling and measure the same scene. Return to Auto and Save Settings when finished.
 
 ## Included rendering and utility modules

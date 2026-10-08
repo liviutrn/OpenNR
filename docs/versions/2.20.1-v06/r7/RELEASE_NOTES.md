@@ -18,8 +18,6 @@ Download **OpenNR-2.20.1-v06-r7.7z**, not the automatically generated source-cod
 
 **Only the NVIDIA NR carrier `nvngx_dlssnr.dll` is excluded.** Supply your compatible copy at **`Data/Shaders/Upscaling/Streamline/nvngx_dlssnr.dll`**. Skyrim, SKSE and the appropriate Address Library remain prerequisites.
 
-For the usual PSVR2/RTX 5070 setup: use SteamVR/OpenVR with working PSVR2 Toolkit eye tracking; DLSS Performance (0.5 per axis), Auto VR render scale, Center 50% crop, NR On, adaptive Auto mode, gaze smoothing 0 and optional quantization 0. Start at a 20 ms GPU budget, 1 ms recovery headroom and 20-point crop drops. Keep the near-black settings you already like; strength 1, threshold 0.035 and onset 0.001 are a fresh-profile starting point. Save and restart when the menu requests it.
-
 For FPS comparisons, select a forced stage, close the menu and let the transition settle before measuring. Return to Auto afterward.
 
 **[Complete current-version README and settings guide](https://github.com/liviutrn/OpenNR/blob/build/2.20.1-v06-r7/README.md)**
