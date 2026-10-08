@@ -48,6 +48,7 @@ jobs:
           python scripts/v07/release-package.py --artifact release-input/runtime --audit release-input/audit --output release --publish
           if ($LASTEXITCODE) { throw 'Release verification or publication failed' }
       - name: Retain release verification
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: OpenNR-r7-release-verification

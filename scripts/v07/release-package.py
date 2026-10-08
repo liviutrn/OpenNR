@@ -70,15 +70,17 @@ def verify_provenance(commit):
 def publish(output, commit):
     repo = os.environ['GITHUB_REPOSITORY']
     assets = sorted(p for p in output.iterdir() if p.is_file())
-    view = subprocess.run(['gh', 'api', f'repos/{repo}/releases/tags/{TAG}'],
-                          capture_output=True, text=True)
-    if view.returncode == 0:
-        existing = json.loads(view.stdout)
-        assert existing['target_commitish'] == commit, 'Release tag belongs to another commit'
-        tag = json.loads(run(['gh', 'api', f'repos/{repo}/git/ref/tags/{TAG}'],
-                             capture_output=True, text=True).stdout)
-        assert tag['object']['sha'] == commit and tag['object']['type'] == 'commit'
+    releases = json.loads(run(['gh', 'api', f'repos/{repo}/releases?per_page=100'],
+                              capture_output=True, text=True).stdout)
+    matches = [r for r in releases if r['tag_name'] == TAG]
+    assert len(matches) <= 1, 'Duplicate release records'
+    if matches:
+        existing = matches[0]
         if not existing['draft']:
+            assert existing['target_commitish'] == commit, 'Release tag belongs to another commit'
+            tag = json.loads(run(['gh', 'api', f'repos/{repo}/git/ref/tags/{TAG}'],
+                                 capture_output=True, text=True).stdout)
+            assert tag['object']['sha'] == commit and tag['object']['type'] == 'commit'
             remote = {a['name']: a for a in existing['assets']}
             assert set(remote) == {p.name for p in assets}, 'Published asset list differs'
             for p in assets:
@@ -87,14 +89,27 @@ def publish(output, commit):
                 assert remote[p.name]['digest'] == 'sha256:' + sha(p), p.name
             print('Published release already matches; no assets changed')
             return
+        assert existing['author']['login'] == 'github-actions[bot]'
+        assert existing['target_commitish'] in (commit, '61f78c213679e070064dfe65636cefc520870491')
+        tag = subprocess.run(['gh', 'api', f'repos/{repo}/git/ref/tags/{TAG}'], capture_output=True, text=True)
+        if tag.returncode == 0:
+            assert json.loads(tag.stdout)['object']['sha'] == commit, 'Existing tag cannot be retargeted'
+        else:
+            assert '404' in tag.stderr or 'Not Found' in tag.stdout, tag.stderr
+        run(['gh', 'release', 'edit', TAG, '--repo', repo, '--target', commit,
+             '--notes-file', str(ROOT/'docs/versions/2.20.1-v06/r7/RELEASE_NOTES.md')])
     else:
-        assert '404' in view.stderr or 'Not Found' in view.stdout, view.stderr
         run(['gh', 'release', 'create', TAG, '--repo', repo, '--target', commit,
              '--draft', '--title', 'OpenNR 2.20.1-v06-r7 — Stereo Atlas and Adaptive Performance',
              '--notes-file', str(ROOT/'docs/versions/2.20.1-v06/r7/RELEASE_NOTES.md')])
     run(['gh', 'release', 'upload', TAG, '--repo', repo, '--clobber', *map(str, assets)])
-    current = json.loads(run(['gh', 'api', f'repos/{repo}/releases/tags/{TAG}'],
-                             capture_output=True, text=True).stdout)
+    releases = json.loads(run(['gh', 'api', f'repos/{repo}/releases?per_page=100'],
+                              capture_output=True, text=True).stdout)
+    matches = [r for r in releases if r['tag_name'] == TAG]
+    assert len(matches) == 1
+    current = json.loads(run(['gh', 'api', f'repos/{repo}/releases/{matches[0]["id"]}'],
+                            capture_output=True, text=True).stdout)
+    assert current['draft'] and current['target_commitish'] == commit
     remote = {a['name']: a for a in current['assets']}
     assert set(remote) == {p.name for p in assets}
     for p in assets:
