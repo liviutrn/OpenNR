@@ -20,6 +20,10 @@ p=root/'runtime/open-shaders/cmake/ValidateOpenNRSourceContracts.cmake'
 if p.exists():
     s=p.read_text(encoding='utf-8-sig')
     for old,new in [('Native OpenVR gaze provider','Native OpenVR gaze'),('Temporal Stability','Adaptive Performance'),
+                    ('    "neuralRenderingTemporalReuseCadence"\n','    "neuralRenderingForcedStage"\n'),
+                    ('    "neuralRenderingTemporalReuseResetAfterSkip"\n','    "neuralRenderingCropDrop"\n'),
+                    ('The temporal-reuse controls or dedicated page would regress.',
+                     'The adaptive controller controls or dedicated page would regress.'),
                     ('The experimental provider must stay opt-in and fail closed through the existing foveated/NR path.',
                      'The native provider must fail closed through the existing foveated/NR path.')]:
         assert old in s or new in s, ('Missing inherited source contract',old)
