@@ -60,7 +60,9 @@ def main():
             for p in assets:assert remote[p.name]['digest']=='sha256:'+sha(p)
             print('Existing prerelease verified; no assets changed');return
     run(['gh','release','upload',TAG,'--repo',repo,'--clobber',*map(str,assets)])
-    release=json.loads(run(['gh','api',f'repos/{repo}/releases/tags/{TAG}'],capture_output=True,text=True).stdout)
+    releases=json.loads(run(['gh','api',f'repos/{repo}/releases?per_page=100'],capture_output=True,text=True).stdout)
+    matches=[r for r in releases if r['tag_name']==TAG];assert len(matches)==1
+    release=matches[0]
     assert release['draft'] and release['prerelease'] and release['target_commitish']==evidence['build_commit']
     remote={a['name']:a for a in release['assets']};assert set(remote)=={p.name for p in assets}
     for p in assets:assert remote[p.name]['state']=='uploaded' and remote[p.name]['size']==p.stat().st_size and remote[p.name]['digest']=='sha256:'+sha(p)
