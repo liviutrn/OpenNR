@@ -1,5 +1,5 @@
 """Verify r10 integration and unchanged r7 gaze/history contracts."""
-import hashlib,json,re
+import hashlib,json,re,subprocess,tempfile,os
 from pathlib import Path
 root=Path(__file__).resolve().parents[2]
 def read(name):return (root/name).read_text(encoding='utf-8-sig')
@@ -15,6 +15,13 @@ fov=read(prefix+'FoveatedRender.cpp');header=read(prefix+'FoveatedRender.h')
 integration=read(prefix+'NeuralRendering/Integration.cpp');renderer=read(prefix+'NeuralRendering/Renderer.cpp')
 page=read('runtime/open-shaders/src/Features/Upscaling.cpp')
 schema=read('runtime/open-shaders/src/Features/RemoteControl/DevBenchBridge.cpp')
+commands=page[page.index('void Upscaling::RegisterUxActions()'):page.index('void Upscaling::DrawSettings()')]
+with tempfile.TemporaryDirectory() as temp:
+    source=Path(temp)/'commands.cpp'
+    source.write_text('#define FEATURE_COMMAND(name, description, handler)\n#define FEATURE_QUERY(name, description, handler)\n'+commands)
+    compiler=['cl','/nologo','/EP','/WX',str(source)] if os.name=='nt' else ['g++','-E','-Werror',str(source)]
+    subprocess.run(compiler,check=True,stdout=subprocess.DEVNULL)
+
 ladder=read(prefix+'NeuralRendering/SinglePassLadder.h')
 for name in ('neuralRenderingCropDrop','cropDrop'):
     assert name not in fov+header+page+schema,('retired control remains',name)
