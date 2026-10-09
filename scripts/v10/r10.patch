@@ -1,0 +1,446 @@
+diff --git a/runtime/open-shaders/cmake/ValidateOpenNRSourceContracts.cmake b/runtime/open-shaders/cmake/ValidateOpenNRSourceContracts.cmake
+--- a/runtime/open-shaders/cmake/ValidateOpenNRSourceContracts.cmake
++++ b/runtime/open-shaders/cmake/ValidateOpenNRSourceContracts.cmake
+@@ -489,7 +489,10 @@
+     "void Upscaling::DrawDLSSNRPage()"
+     "Adaptive Performance"
+     "neuralRenderingForcedStage"
+-    "neuralRenderingCropDrop"
++    "neuralRenderingStage2Crop"
++    "neuralRenderingStage3Crop"
++    "neuralRenderingStage4Crop"
++    "neuralRenderingStage5Crop"
+ )
+     string(FIND "${_upscaling_page}${_foveated_render}" "${_contract}" _contract_index)
+     if(_contract_index EQUAL -1)
+diff --git a/runtime/open-shaders/features/Upscaling/Shaders/Upscaling/NeuralRendering/LadderAtlasGuidesCS.hlsl b/runtime/open-shaders/features/Upscaling/Shaders/Upscaling/NeuralRendering/LadderAtlasGuidesCS.hlsl
+--- a/runtime/open-shaders/features/Upscaling/Shaders/Upscaling/NeuralRendering/LadderAtlasGuidesCS.hlsl
++++ b/runtime/open-shaders/features/Upscaling/Shaders/Upscaling/NeuralRendering/LadderAtlasGuidesCS.hlsl
+@@ -15,12 +15,25 @@
+ Texture2D<float2> gRightMotion : register(t1);
+ Texture2D<float> gLeftDepth : register(t2);
+ Texture2D<float> gRightDepth : register(t3);
++Texture2D<float4> gLeftColor : register(t4);
++Texture2D<float4> gRightColor : register(t5);
++RWTexture2D<float4> gColor : register(u2);
+ RWTexture2D<float2> gMotion : register(u0);
+ RWTexture2D<float> gDepth : register(u1);
+ 
+ [numthreads(8,8,1)]
+ void main(uint3 id : SV_DispatchThreadID)
+ {
++	const uint colorRightStart = gCurrent.x + gLayout.z;
++	if (id.x < colorRightStart + gCurrent.x && id.y < gCurrent.y) {
++		if (id.x < gCurrent.x)
++			gColor[id.xy] = gLeftColor.Load(int3(id.xy, 0));
++		else if (id.x >= colorRightStart)
++			gColor[id.xy] = gRightColor.Load(int3(id.x - colorRightStart, id.y, 0));
++		else
++			gColor[id.xy] = id.x - gCurrent.x < gLayout.z / 2 ?
++				gLeftColor.Load(int3(gCurrent.x - 1, id.y, 0)) : gRightColor.Load(int3(0, id.y, 0));
++	}
+ 	const uint rightStart = gCurrent.z + gFlags.y;
+ 	if (id.x >= rightStart + gCurrent.z || id.y >= gCurrent.w) return;
+ 	const bool right = id.x >= rightStart;
+diff --git a/runtime/open-shaders/src/Features/RemoteControl/DevBenchBridge.cpp b/runtime/open-shaders/src/Features/RemoteControl/DevBenchBridge.cpp
+--- a/runtime/open-shaders/src/Features/RemoteControl/DevBenchBridge.cpp
++++ b/runtime/open-shaders/src/Features/RemoteControl/DevBenchBridge.cpp
+@@ -1288,7 +1288,7 @@
+ 		RegisterDevBenchUx();
+ 
+ 		static constexpr const char* actionsDesc =
+-			R"({"description":"Devbench-registered one-shot commands and read-only queries -- the imperative/derived-state counterpart to openshaders.feature's settings get/set. A feature exposes these via FEATURE_COMMAND/FEATURE_QUERY in its Feature::RegisterUxActions() override (see Utils/DevBenchUx.h); every feature also gets two built-in queries for free: matchesPerformanceProfile and profilePreviewText (params: profile=performance|balanced|quality), mirroring Feature::MatchesPerformanceProfile/GetProfilePreviewText so a profile button's highlighted/tooltip state is readable without re-deriving it from raw settings. Upscaling also exposes resetNeuralRendering (queued render-thread NR/DLSS/crop recovery reset, no arguments), neuralRenderingStatus (read-only failure, recovery and evaluation counters, no arguments), neuralRenderingOutputStatus (read-only optional result-shaping/stabilization settings and temporal-reuse suppression state, configuration eligibility only), setNeuralRenderingResultShaping (params enabled: boolean), and eyeTrackingStatus (read-only native gaze validity, query cost, last-valid-query age rather than sensor age, raw/filtered gaze, crop coordinates and reset counters, no arguments). Action-dispatched. listCommands/listQueries: params shortName, returns [{name,description}]. invokeCommand: params shortName, name, args (object, optional) -- queued onto the main thread, fire-and-forget, same as openshaders.feature toggle/set. invokeQuery: params shortName, name, args (object, optional) -- runs synchronously on the main thread and returns the result (queries read live feature state, so they marshal the same way a settings get does). Unknown shortName/name returns a plain error, never a crash. Inside-NR configureNeuralBlackProtection accepts optional strength [0,2] and threshold [0.001,0.25], liftSoftness [0.00001,0.05]; neuralRenderingOutputStatus reports both. configureAdaptivePerformance changes the sole six-stage controller; adaptiveFrameStatus reports its live state. Endpoint thresholds act only at stages 5 and 6. Protection controls do not reset NR histories.","inputSchema":{"type":"object","properties":{"action":{"type":"string","enum":["listCommands","listQueries","invokeCommand","invokeQuery"]},"shortName":{"type":"string"},"name":{"type":"string"},"args":{"type":"object","description":"Command-specific parameters. configureAdaptivePerformance: optional budgetMs [10,30], recoveryHeadroomMs [0.5,5], handoffMs [0,500], disableAboveMs [10,50], enableBelowMs [1,50], ordered enableBelowMs less than disableAboveMs; cropDrop integer 10,15,20; forcedStage integer 0 Auto or 1..6 forced; endpoint thresholds apply only at stages 5 and 6. configureNeuralBlackProtection: optional strength [0,2], threshold [0.001,0.25], liftSoftness [0.00001,0.05]; positive NR edits only, after shaping, inside the NR crop. Other commands retain their listed parameters."}}}})";
++			R"({"description":"Devbench-registered one-shot commands and read-only queries -- the imperative/derived-state counterpart to openshaders.feature's settings get/set. A feature exposes these via FEATURE_COMMAND/FEATURE_QUERY in its Feature::RegisterUxActions() override (see Utils/DevBenchUx.h); every feature also gets two built-in queries for free: matchesPerformanceProfile and profilePreviewText (params: profile=performance|balanced|quality), mirroring Feature::MatchesPerformanceProfile/GetProfilePreviewText so a profile button's highlighted/tooltip state is readable without re-deriving it from raw settings. Upscaling also exposes resetNeuralRendering (queued render-thread NR/DLSS/crop recovery reset, no arguments), neuralRenderingStatus (read-only failure, recovery and evaluation counters, no arguments), neuralRenderingOutputStatus (read-only optional result-shaping/stabilization settings and temporal-reuse suppression state, configuration eligibility only), setNeuralRenderingResultShaping (params enabled: boolean), and eyeTrackingStatus (read-only native gaze validity, query cost, last-valid-query age rather than sensor age, raw/filtered gaze, crop coordinates and reset counters, no arguments). Action-dispatched. listCommands/listQueries: params shortName, returns [{name,description}]. invokeCommand: params shortName, name, args (object, optional) -- queued onto the main thread, fire-and-forget, same as openshaders.feature toggle/set. invokeQuery: params shortName, name, args (object, optional) -- runs synchronously on the main thread and returns the result (queries read live feature state, so they marshal the same way a settings get does). Unknown shortName/name returns a plain error, never a crash. Inside-NR configureNeuralBlackProtection accepts optional strength [0,2] and threshold [0.001,0.25], liftSoftness [0.00001,0.05]; neuralRenderingOutputStatus reports both. configureAdaptivePerformance changes the sole six-stage controller; adaptiveFrameStatus reports its live state. Endpoint thresholds act only at stages 5 and 6. Protection controls do not reset NR histories.","inputSchema":{"type":"object","properties":{"action":{"type":"string","enum":["listCommands","listQueries","invokeCommand","invokeQuery"]},"shortName":{"type":"string"},"name":{"type":"string"},"args":{"type":"object","description":"Command-specific parameters. configureAdaptivePerformance: optional budgetMs [10,30], recoveryHeadroomMs [0.5,5], handoffMs [0,500], disableAboveMs [10,50], enableBelowMs [1,50], ordered enableBelowMs less than disableAboveMs; stage2Crop, stage3Crop, stage4Crop, stage5Crop integers 60..100 in 5-point increments, in descending order; NR resolution fixed at 100%; forcedStage integer 0 Auto or 1..6 forced; endpoint thresholds apply only at stages 5 and 6. configureNeuralBlackProtection: optional strength [0,2], threshold [0.001,0.25], liftSoftness [0.00001,0.05]; positive NR edits only, after shaping, inside the NR crop. Other commands retain their listed parameters."}}}})";
+ 		dvb->RegisterTool("openshaders.actions", actionsDesc, &ActionsToolHandler, nullptr);
+ 
+ 		static constexpr const char* shadercacheDesc =
+diff --git a/runtime/open-shaders/src/Features/Upscaling/FoveatedRender.cpp b/runtime/open-shaders/src/Features/Upscaling/FoveatedRender.cpp
+--- a/runtime/open-shaders/src/Features/Upscaling/FoveatedRender.cpp
++++ b/runtime/open-shaders/src/Features/Upscaling/FoveatedRender.cpp
+@@ -133,7 +133,10 @@
+ 	X(neuralRenderingLadderHandoffMs) \
+ 	X(neuralRenderingDisableAboveMs) \
+ 	X(neuralRenderingEnableBelowMs) \
+-	X(neuralRenderingCropDrop) \
++	X(neuralRenderingStage2Crop) \
++	X(neuralRenderingStage3Crop) \
++	X(neuralRenderingStage4Crop) \
++	X(neuralRenderingStage5Crop) \
+ 	X(neuralRenderingForcedStage) \
+ 	X(neuralRenderingEyeTrackedQuantizationPixels)
+ 
+@@ -544,7 +547,13 @@
+ 	settings.neuralRenderingEyeTrackedDeadZonePercent = 0.0f;
+ 	settings.neuralRenderingForcedStage = std::min(settings.neuralRenderingForcedStage, 6u);
+ 	if (settings.neuralRenderingForcedStage != 0) settings.neuralRenderingAdaptiveEnabled = true;
+-	settings.neuralRenderingCropDrop = NeuralRendering::SinglePassLadder::NormalizeCropStep(settings.neuralRenderingCropDrop);
++	const auto crops = NeuralRendering::SinglePassLadder::NormalizeCrops({
++		settings.neuralRenderingStage2Crop, settings.neuralRenderingStage3Crop,
++		settings.neuralRenderingStage4Crop, settings.neuralRenderingStage5Crop });
++	settings.neuralRenderingStage2Crop = crops[0];
++	settings.neuralRenderingStage3Crop = crops[1];
++	settings.neuralRenderingStage4Crop = crops[2];
++	settings.neuralRenderingStage5Crop = crops[3];
+ 	settings.neuralRenderingDisableAboveMs = clampFinite(settings.neuralRenderingDisableAboveMs, 24.0f, 10.0f, 50.0f);
+ 	settings.neuralRenderingEnableBelowMs = clampFinite(settings.neuralRenderingEnableBelowMs, 14.0f, 1.0f, 50.0f);
+ 
+@@ -714,8 +723,9 @@
+ 		.increaseHold = settings.neuralRenderingAdaptiveIncreaseHoldMs,
+ 		.cooldown = settings.neuralRenderingAdaptiveCooldownMs,
+ 		.smoothing = settings.neuralRenderingAdaptiveSmoothingMs,
+-		.cropFloor = 100u - 2u * NeuralRendering::SinglePassLadder::NormalizeCropStep(settings.neuralRenderingCropDrop),
+-		.cropStep = NeuralRendering::SinglePassLadder::NormalizeCropStep(settings.neuralRenderingCropDrop),
++		.crops = NeuralRendering::SinglePassLadder::NormalizeCrops({
++			settings.neuralRenderingStage2Crop, settings.neuralRenderingStage3Crop,
++			settings.neuralRenderingStage4Crop, settings.neuralRenderingStage5Crop }),
+ 		.transitionFrames = settings.neuralRenderingAdaptiveCropTransitionFrames,
+ 		.forcedStage = std::min(settings.neuralRenderingForcedStage, 6u),
+ 	};
+@@ -725,14 +735,14 @@
+ 		adaptiveBlockedGrowthStage = UINT32_MAX;
+ 		adaptiveDecreaseHoldMs = adaptiveIncreaseHoldMs = 0.0f;
+ 		adaptivePendingAction = 0;
+-		const auto quality = NeuralRendering::SinglePassLadder::Level(adaptiveLadderStage, policyConfig.cropStep);
++		const auto quality = NeuralRendering::SinglePassLadder::Level(adaptiveLadderStage, policyConfig.crops);
+ 		adaptiveCropTargetCoverage = quality.crop;
+ 		adaptiveModelResolution = quality.model;
+ 	}
+ 	if (policyConfig.forcedStage != 0 && adaptiveLadderStage != policyConfig.forcedStage - 1) {
+ 		const auto previousStage = adaptiveLadderStage;
+ 		adaptiveLadderStage = policyConfig.forcedStage - 1;
+-		const auto quality = NeuralRendering::SinglePassLadder::Level(adaptiveLadderStage, policyConfig.cropStep);
++		const auto quality = NeuralRendering::SinglePassLadder::Level(adaptiveLadderStage, policyConfig.crops);
+ 		adaptiveCropTargetCoverage = quality.crop;
+ 		adaptiveModelResolution = quality.model;
+ 		if (!quality.nrEnabled || previousStage == NeuralRendering::SinglePassLadder::suspendedStage) adaptiveActivePasses = 0;
+@@ -740,7 +750,7 @@
+ 		adaptivePendingAction = 0;
+ 		adaptiveCooldownRemainingMs = settings.neuralRenderingAdaptiveCooldownMs;
+ 	}
+-	const auto selectedQuality = NeuralRendering::SinglePassLadder::Level(adaptiveLadderStage, policyConfig.cropStep);
++	const auto selectedQuality = NeuralRendering::SinglePassLadder::Level(adaptiveLadderStage, policyConfig.crops);
+ 	adaptiveCropTargetCoverage = cropPolicyAvailable ? selectedQuality.crop : 100u;
+ 	adaptiveModelResolution = cropPolicyAvailable ? selectedQuality.model : 100u;
+ 
+@@ -834,7 +844,7 @@
+ 				}
+ 				adaptiveLastActionFrom = oldStage;
+ 				adaptiveLastActionTo = adaptiveLadderStage;
+-				const auto quality = NeuralRendering::SinglePassLadder::Level(adaptiveLadderStage, policyConfig.cropStep);
++				const auto quality = NeuralRendering::SinglePassLadder::Level(adaptiveLadderStage, policyConfig.crops);
+ 				adaptiveCropTargetCoverage = quality.crop;
+ 				adaptiveModelResolution = quality.model;
+ 				if (!quality.nrEnabled || oldStage == NeuralRendering::SinglePassLadder::suspendedStage) adaptiveActivePasses = 0;
+@@ -859,8 +869,9 @@
+ 	cropConfig.enabled = cropPolicyAvailable;
+ 	cropConfig.hold = envelopeRejected || decisionsSuspended;
+ 	cropConfig.maximumCoverage = 100;
+-	cropConfig.minimumCoverage = policyConfig.cropFloor;
+-	cropConfig.stepCoverage = policyConfig.cropStep;
++	cropConfig.minimumCoverage = policyConfig.crops.back();
++	cropConfig.stepCoverage = 5;
++	cropConfig.targetCoverage = adaptiveCropTargetCoverage;
+ 	// v05 owns smoothing, hysteresis, holds and cooldown. The crop controller is
+ 	// only a stereo-safe actuator/handoff mechanism, so its own decision delays
+ 	// are one frame and cannot create a hidden second policy.
+@@ -1288,7 +1299,7 @@
+ 		if (settings.neuralRenderingEnabled) {
+ 			drawDisabledWrapped("Tune NR quality, output shaping, and optional frame-time controls.");
+ 
+-			ImGui::TextDisabled("Visual style: Natural | NR resolution and coverage: controller managed");
++			ImGui::TextDisabled("Visual style: Natural | NR resolution: fixed 100%");
+ 			bool custom = false;
+ 			custom |= ImGui::SliderFloat(T(TKEY("neural_rendering_intensity"), "Intensity"), &settings.neuralRenderingIntensity, 0.0f, 2.0f, "%.2f");
+ 			custom |= ImGui::SliderFloat(T(TKEY("neural_rendering_local_tone"), "Local Tone"), &settings.neuralRenderingLocalTone, 0.0f, 2.0f, "%.2f");
+@@ -1301,17 +1312,31 @@
+ 
+ 			if (ImGui::CollapsingHeader("Adaptive Performance")) {
+ 				if (ImGui::Checkbox("Enable adaptive performance controller", &settings.neuralRenderingAdaptiveEnabled) && !settings.neuralRenderingAdaptiveEnabled) settings.neuralRenderingForcedStage = 0;
+-				ImGui::TextWrapped("Two crop reductions, then NR resolution 85% and 70%, then NR off at 100% of your selected crop. Recovery reverses the order. Stereo atlas is permanent.");
++				ImGui::TextWrapped("Four configurable crop reductions at full NR resolution, then NR off with your selected crop restored. Percentages apply to each axis of your selected crop. Recovery reverses the order. Stereo atlas is permanent.");
+ 				const char* stageModes[] = { "Auto", "Force stage 1", "Force stage 2", "Force stage 3", "Force stage 4", "Force stage 5", "Force stage 6 (NR off)" };
+ 				int forcedStage = static_cast<int>(settings.neuralRenderingForcedStage);
+ 				if (ImGui::Combo("Controller mode", &forcedStage, stageModes, 7)) {
+ 					settings.neuralRenderingForcedStage = static_cast<uint>(forcedStage);
+ 					if (forcedStage != 0) settings.neuralRenderingAdaptiveEnabled = true;
+ 				}
+-				const char* cropDrops[] = { "20 points: 100 / 80 / 60", "15 points: 100 / 85 / 70", "10 points: 100 / 90 / 80" };
+-				int cropDrop = settings.neuralRenderingCropDrop == 10 ? 2 : settings.neuralRenderingCropDrop == 15 ? 1 : 0;
+-				if (ImGui::Combo("Crop reduction per step", &cropDrop, cropDrops, 3))
+-					settings.neuralRenderingCropDrop = cropDrop == 2 ? 10u : cropDrop == 1 ? 15u : 20u;
++				uint* cropSettings[]{ &settings.neuralRenderingStage2Crop, &settings.neuralRenderingStage3Crop,
++					&settings.neuralRenderingStage4Crop, &settings.neuralRenderingStage5Crop };
++				for (int index = 0; index < 4; ++index) {
++					const auto label = std::format("Stage {} crop", index + 2);
++					const auto preview = std::format("{}% of selected crop", *cropSettings[index]);
++					if (ImGui::BeginCombo(label.c_str(), preview.c_str())) {
++						const uint upper = index == 0 ? 100u : *cropSettings[index - 1];
++						const uint lower = index == 3 ? 60u : *cropSettings[index + 1];
++						for (uint crop = 100; crop >= 60; crop -= 5) {
++							ImGui::BeginDisabled(crop > upper || crop < lower);
++							if (ImGui::Selectable(std::format("{}%", crop).c_str(), crop == *cropSettings[index]))
++								*cropSettings[index] = crop;
++							ImGui::EndDisabled();
++						}
++						ImGui::EndCombo();
++					}
++				}
++				ImGui::TextDisabled("Crop stages must stay in descending order (60-100%, 5-point choices).");
+ 				ImGui::SliderFloat("GPU budget", &settings.neuralRenderingLadderBudgetMs, 10.0f, 30.0f, "%.1f ms");
+ 				ImGui::SliderFloat("Recovery headroom", &settings.neuralRenderingLadderReserveMs, 0.5f, 5.0f, "%.1f ms");
+ 				ImGui::SliderFloat("Disable NR above (stage 5 only)", &settings.neuralRenderingDisableAboveMs, 10.0f, 50.0f, "%.1f ms");
+diff --git a/runtime/open-shaders/src/Features/Upscaling/FoveatedRender.h b/runtime/open-shaders/src/Features/Upscaling/FoveatedRender.h
+--- a/runtime/open-shaders/src/Features/Upscaling/FoveatedRender.h
++++ b/runtime/open-shaders/src/Features/Upscaling/FoveatedRender.h
+@@ -161,7 +161,10 @@
+ 		float neuralRenderingLadderHandoffMs = 150.0f;
+ 		float neuralRenderingDisableAboveMs = 24.0f;
+ 		float neuralRenderingEnableBelowMs = 14.0f;
+-		uint neuralRenderingCropDrop = 20;
++		uint neuralRenderingStage2Crop = 90;
++		uint neuralRenderingStage3Crop = 80;
++		uint neuralRenderingStage4Crop = 70;
++		uint neuralRenderingStage5Crop = 60;
+ 		uint neuralRenderingForcedStage = 0;
+ 		// NR-only centered coverage (linear %, per axis). DLSS stays full eye; Feature 18
+ 		// runs at 100% model resolution on the center and is edge-blended onto DLSS.
+diff --git a/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/AdaptiveCropController.cpp b/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/AdaptiveCropController.cpp
+--- a/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/AdaptiveCropController.cpp
++++ b/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/AdaptiveCropController.cpp
+@@ -56,6 +56,8 @@
+ 		normalized.minimumDwellFrames = std::clamp(normalized.minimumDwellFrames, 1u, 600u);
+ 		normalized.transitionFrames = std::clamp(normalized.transitionFrames, 2u, 24u);
+ 		normalized.stepCoverage = std::clamp(normalized.stepCoverage, 5u, 20u) / 5u * 5u;
++		if (normalized.targetCoverage != 0)
++			normalized.targetCoverage = FindBucketAtOrBelow(std::clamp(normalized.targetCoverage, normalized.minimumCoverage, normalized.maximumCoverage));
+ 		return normalized;
+ 	}
+ 
+@@ -211,11 +213,15 @@
+ 		if (dwellFrames_ >= config.minimumDwellFrames && transitionFrameCount_ == 0 &&
+ 			!nrTransitioning && allowDownshift &&
+ 				overrunFrames_ >= config.downshiftFrames && activeBucket_ < minimumBucket_)
+-			StartTransition(std::min(minimumBucket_, activeBucket_ + config.stepCoverage / 5u), config.transitionFrames);
++			StartTransition(config.targetCoverage != 0 ?
++				FindBucketIndexAtOrBelow(config.targetCoverage) :
++				std::min(minimumBucket_, activeBucket_ + config.stepCoverage / 5u), config.transitionFrames);
+ 		else if (dwellFrames_ >= config.minimumDwellFrames && transitionFrameCount_ == 0 &&
+ 			!nrTransitioning && nrAtMaximum &&
+ 				headroomFrames_ >= config.upshiftFrames && activeBucket_ > maximumBucket_)
+-			StartTransition(activeBucket_ - std::min(activeBucket_ - maximumBucket_, config.stepCoverage / 5u), config.transitionFrames);
++			StartTransition(config.targetCoverage != 0 ?
++				FindBucketIndexAtOrBelow(config.targetCoverage) :
++				activeBucket_ - std::min(activeBucket_ - maximumBucket_, config.stepCoverage / 5u), config.transitionFrames);
+ 	}
+ 
+ 	std::uint32_t AdaptiveCropController::ActiveCoverage() const
+diff --git a/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/AdaptiveCropController.h b/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/AdaptiveCropController.h
+--- a/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/AdaptiveCropController.h
++++ b/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/AdaptiveCropController.h
+@@ -42,6 +42,7 @@
+ 			std::uint32_t minimumDwellFrames = 60;
+ 			std::uint32_t transitionFrames = 8;
+ 			std::uint32_t stepCoverage = 20;
++			std::uint32_t targetCoverage = 0;
+ 		};
+ 
+ 		void Reset();
+diff --git a/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Integration.cpp b/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Integration.cpp
+--- a/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Integration.cpp
++++ b/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Integration.cpp
+@@ -208,7 +208,7 @@
+ 				tuning.multiPass = foveated.adaptiveActivePasses > 0 ? std::min(foveated.adaptiveActivePasses - 1u, 2u) : 0u;
+ 			if (adaptive || tuning.singlePassLadder) {
+ 				// The atlas ladder owns its model tier; the old independent-eye tier controller stays inactive.
+-				tuning.modelResolutionPercent = tuning.singlePassLadder ? foveated.adaptiveModelResolution : settings.neuralRenderingModelResolution;
++				tuning.modelResolutionPercent = 100;
+ 				tuning.adaptiveResolution = false;
+ 				// Stereo atlas requires temporal reuse and staggered-eye reuse to be inactive.
+ 				// Keep stale experimental settings from forcing independent-eye fallback.
+@@ -227,7 +227,7 @@
+ 			tuning.stabilizeMode = 0;
+ 			tuning.resultDarkening = tuning.resultHueShiftStrength = tuning.resultShadows = tuning.resultMidtones = 1.0f;
+ 			tuning.resultHaloSuppression = 0.0f;
+-			tuning.modelResolutionPercent = adaptive ? foveated.adaptiveModelResolution : 100u;
++			tuning.modelResolutionPercent = 100;
+ 			tuning.resumeBlendAlpha = adaptive && settings.neuralRenderingLadderHandoffMs > 0.0f ?
+ 				std::clamp(1.0f - foveated.adaptiveResumeRemainingMs / settings.neuralRenderingLadderHandoffMs, 0.0f, 1.0f) : 1.0f;
+ 			if constexpr (kFullResolutionNeuralRenderingOnly) {
+diff --git a/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Renderer.cpp b/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Renderer.cpp
+--- a/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Renderer.cpp
++++ b/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Renderer.cpp
+@@ -253,18 +253,8 @@
+ 				actual.MipLevels == desc.MipLevels && actual.SampleDesc.Count == desc.SampleDesc.Count;
+ 		}
+ 
+-		std::uint32_t NormalizeModelResolution(std::uint32_t percent)
+-		{
+-			if (std::find(kResolutionTiers.begin(), kResolutionTiers.end(), percent) != kResolutionTiers.end())
+-				return percent;
+-			// Keep the renderer-side safety net aligned with FoveatedRender::ClampSettings.
+-			// Values below the experimental 33% floor use 33%; legacy/intermediate
+-			// values in the old 70%-floor range remain conservative at 70% rather
+-			// than silently re-enabling full-cost NR.
+-			if (percent < 33)
+-				return 33;
+-			if (percent < 70)
+-				return 70;
++		std::uint32_t NormalizeModelResolution(std::uint32_t)
++		{
+ 			return 100;
+ 		}
+ 
+@@ -3640,6 +3630,7 @@
+ 
+ 		bool PackLadderGuides(ID3D11Device* device, ID3D11DeviceContext* context,
+ 			const std::array<StereoEyeInput, 2>& inputs,
++			ID3D11ShaderResourceView* leftColor, ID3D11ShaderResourceView* rightColor,
+ 			std::uint32_t colorWidth, std::uint32_t colorHeight,
+ 			std::uint32_t modelWidth, std::uint32_t modelHeight,
+ 			std::uint32_t guideWidth, std::uint32_t guideHeight, std::uint32_t colorGuard, std::uint32_t guideGuard)
+@@ -3685,19 +3676,20 @@
+ 			CS_GPU_PASS("NeuralRendering::LadderAtlasGuides");
+ 			context->UpdateSubresource(ladderAtlasCB.Get(), 0, nullptr, &data, 0, 0);
+ 			ID3D11ShaderResourceView* sources[]{ eyes[0].motionVectors.srv11.Get(), eyes[1].motionVectors.srv11.Get(),
+-				eyes[0].depth.srv11.Get(), eyes[1].depth.srv11.Get() };
+-			ID3D11UnorderedAccessView* targets[]{ stereoAtlas.motionVectors.uav11.Get(), stereoAtlas.depth.uav11.Get() };
++				eyes[0].depth.srv11.Get(), eyes[1].depth.srv11.Get(), leftColor, rightColor };
++			ID3D11UnorderedAccessView* targets[]{ stereoAtlas.motionVectors.uav11.Get(), stereoAtlas.depth.uav11.Get(), stereoAtlas.color.uav11.Get() };
+ 			ID3D11Buffer* cb = ladderAtlasCB.Get();
+ 			context->CSSetShader(ladderAtlasGuidesCS.get(), nullptr, 0);
+ 			context->CSSetConstantBuffers(0, 1, &cb);
+-			context->CSSetShaderResources(0, 4, sources);
+-			context->CSSetUnorderedAccessViews(0, 2, targets, nullptr);
+-			context->Dispatch((guideWidth * 2 + guideGuard + 7) / 8, (guideHeight + 7) / 8, 1);
+-			ID3D11ShaderResourceView* nullSources[4]{};
+-			ID3D11UnorderedAccessView* nullTargets[2]{};
++			context->CSSetShaderResources(0, 6, sources);
++			context->CSSetUnorderedAccessViews(0, 3, targets, nullptr);
++			context->Dispatch((std::max(modelWidth * 2 + colorGuard, guideWidth * 2 + guideGuard) + 7) / 8,
++				(std::max(modelHeight, guideHeight) + 7) / 8, 1);
++			ID3D11ShaderResourceView* nullSources[6]{};
++			ID3D11UnorderedAccessView* nullTargets[3]{};
+ 			ID3D11Buffer* nullCB = nullptr;
+-			context->CSSetShaderResources(0, 4, nullSources);
+-			context->CSSetUnorderedAccessViews(0, 2, nullTargets, nullptr);
++			context->CSSetShaderResources(0, 6, nullSources);
++			context->CSSetUnorderedAccessViews(0, 3, nullTargets, nullptr);
+ 			context->CSSetConstantBuffers(0, 1, &nullCB);
+ 			context->CSSetShader(nullptr, nullptr, 0);
+ 			return true;
+@@ -3767,11 +3759,8 @@
+ 				return StereoAtlasResult::Failed;
+ 			bool packed = false;
+ 			if (tuning.singlePassLadder) {
+-				if (!EnsureStereoAtlasPackResources(device)) return StereoAtlasResult::FallBack;
+-				packed = DispatchStereoAtlasPack(context, stereoAtlasColorPackCS.get(), leftInput, rightInput,
+-					stereoAtlas.color.uav11.Get(), modelWidth, modelHeight, colorGuard, 0, 0) &&
+-					PackLadderGuides(device, context, inputs, colorWidth, colorHeight,
+-						modelWidth, modelHeight, guideWidth, guideHeight, colorGuard, guideGuard);
++				packed = PackLadderGuides(device, context, inputs, leftInput, rightInput, colorWidth, colorHeight,
++					modelWidth, modelHeight, guideWidth, guideHeight, colorGuard, guideGuard);
+ 			} else {
+ 				packed = PackStereoAtlas(device, context, leftInput, rightInput,
+ 					eyes[0].depth.srv11.Get(), eyes[1].depth.srv11.Get(),
+diff --git a/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/SinglePassLadder.h b/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/SinglePassLadder.h
+--- a/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/SinglePassLadder.h
++++ b/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/SinglePassLadder.h
+@@ -7,7 +7,7 @@
+ namespace NeuralRendering::SinglePassLadder
+ {
+ 	struct Quality { std::uint32_t crop, model; bool nrEnabled = true; };
+-	inline constexpr std::array<Quality, 6> levels{ Quality{100,100}, {80,100}, {60,100}, {60,85}, {60,70}, {100,100,false} };
++	inline constexpr std::array<Quality, 6> levels{ Quality{100,100}, {90,100}, {80,100}, {70,100}, {60,100}, {100,100,false} };
+ 	inline constexpr std::uint32_t minimumActiveStage = 4, suspendedStage = 5;
+ 	struct Config
+ 	{
+@@ -15,14 +15,24 @@
+ 		float disableAbove = 24.0f, enableBelow = 14.0f;
+ 		float decreaseHold = 350.0f, increaseHold = 1200.0f;
+ 		float cooldown = 1000.0f, smoothing = 250.0f;
+-		std::uint32_t cropFloor = 60, cropStep = 20, transitionFrames = 8, forcedStage = 0;
++		std::array<std::uint32_t, 4> crops{90, 80, 70, 60};
++		std::uint32_t transitionFrames = 8, forcedStage = 0;
+ 		bool operator==(const Config&) const = default;
+ 	};
+-	inline std::uint32_t NormalizeCropStep(std::uint32_t step) { return step == 10 || step == 15 ? step : 20; }
+-	inline Quality Level(std::uint32_t stage, std::uint32_t step = 20) {
++	/** @brief Normalize ordered per-axis percentages relative to the selected crop. */
++	inline std::array<std::uint32_t, 4> NormalizeCrops(std::array<std::uint32_t, 4> crops) {
++		std::uint32_t previous = 100;
++		for (auto& crop : crops) {
++			crop = std::min(previous, std::clamp(crop, 60u, 100u) / 5u * 5u);
++			previous = crop;
++		}
++		return crops;
++	}
++	/** @brief Select a full-resolution NR crop, or restore the selected crop with NR off. */
++	inline Quality Level(std::uint32_t stage, const std::array<std::uint32_t, 4>& crops = {90,80,70,60}) {
+ 		auto quality = levels[std::min(stage, suspendedStage)];
+ 		if (stage > 0 && stage < suspendedStage)
+-			quality.crop = 100 - NormalizeCropStep(step) * std::min(stage, 2u);
++			quality.crop = NormalizeCrops(crops)[stage - 1];
+ 		return quality;
+ 	}
+ 	inline std::uint32_t Select(std::uint32_t stage, float ms, const Config& config,
+diff --git a/runtime/open-shaders/src/Features/Upscaling.cpp b/runtime/open-shaders/src/Features/Upscaling.cpp
+--- a/runtime/open-shaders/src/Features/Upscaling.cpp
++++ b/runtime/open-shaders/src/Features/Upscaling.cpp
+@@ -723,7 +723,10 @@
+ 					foveatedRender.adaptiveResumeRemainingMs > 0.0f ||
+ 					(foveatedRender.adaptiveActivePasses > 0 && NeuralRendering::Renderer::Instance().IsOutputTransitioning()) ||
+ 					(foveatedRender.adaptiveLadderStage != 5 && foveatedRender.adaptiveActivePasses == 0) },
+-				{ "cropDrop", foveatedRender.settings.neuralRenderingCropDrop },
++				{ "stage2Crop", foveatedRender.settings.neuralRenderingStage2Crop },
++				{ "stage3Crop", foveatedRender.settings.neuralRenderingStage3Crop },
++				{ "stage4Crop", foveatedRender.settings.neuralRenderingStage4Crop },
++				{ "stage5Crop", foveatedRender.settings.neuralRenderingStage5Crop },
+ 				{ "disableAboveMs", foveatedRender.settings.neuralRenderingDisableAboveMs },
+ 				{ "enableBelowMs", foveatedRender.settings.neuralRenderingEnableBelowMs },
+ 				{ "resumeRemainingMs", foveatedRender.adaptiveResumeRemainingMs },
+@@ -745,7 +748,7 @@
+ 				{ "cooldownMs", foveatedRender.adaptiveCooldownRemainingMs } });
+ 		});
+ 	FEATURE_COMMAND("configureAdaptivePerformance",
+-		"Set six-stage controller budget/headroom/handoff and NR endpoint thresholds. Optional budgetMs [10,30], recoveryHeadroomMs [0.5,5], handoffMs [0,500], disableAboveMs [10,50], enableBelowMs [1,50]; enableBelowMs must be less than disableAboveMs. Optional forcedStage integer 0 Auto or 1-6 forced (forcing enables controller); cropDrop integer 10,15,20; two relative crop reductions. NR disable applies only at stage 5, restore only at stage 6. Rejects invalid values atomically. Only forcing a stage enables the controller; settings are not saved to disk.",
++		"Set six-stage controller budget/headroom/handoff and NR endpoint thresholds. Optional budgetMs [10,30], recoveryHeadroomMs [0.5,5], handoffMs [0,500], disableAboveMs [10,50], enableBelowMs [1,50]; enableBelowMs must be less than disableAboveMs. Optional forcedStage integer 0 Auto or 1-6 forced (forcing enables controller); stage2Crop, stage3Crop, stage4Crop, stage5Crop integers 60..100 in 5-point increments, in descending order; four relative crop reductions at fixed 100% NR resolution. NR disable applies only at stage 5, restore only at stage 6. Rejects invalid values atomically. Only forcing a stage enables the controller; settings are not saved to disk.",
+ 		[](Feature*, const json& args) {
+ 			const auto read = [&](const char* name, float current, float minimum, float maximum) {
+ 				if (!args.contains(name)) return current;
+@@ -765,19 +768,29 @@
+ 				if (requestedStage < 0 || requestedStage > 6) throw std::invalid_argument("forcedStage must be 0..6");
+ 				forcedStage = static_cast<std::uint32_t>(requestedStage);
+ 			}
+-			std::uint32_t cropDrop = foveatedRender.settings.neuralRenderingCropDrop;
+-			if (args.contains("cropDrop")) {
+-				if (!args["cropDrop"].is_number_integer()) throw std::invalid_argument("cropDrop must be integer 10,15,20");
+-				const int requestedDrop = args["cropDrop"].get<int>();
+-				if (requestedDrop != 10 && requestedDrop != 15 && requestedDrop != 20) throw std::invalid_argument("cropDrop must be 10,15,20");
+-				cropDrop = static_cast<std::uint32_t>(requestedDrop);
++			std::array<std::uint32_t, 4> crops{ foveatedRender.settings.neuralRenderingStage2Crop,
++				foveatedRender.settings.neuralRenderingStage3Crop, foveatedRender.settings.neuralRenderingStage4Crop,
++				foveatedRender.settings.neuralRenderingStage5Crop };
++			for (unsigned index = 0; index < crops.size(); ++index) {
++				const auto key = std::format("stage{}Crop", index + 2);
++				if (!args.contains(key)) continue;
++				if (!args[key].is_number_integer()) throw std::invalid_argument(key + " must be an integer");
++				const int value = args[key].get<int>();
++				if (value < 60 || value > 100 || value % 5 != 0)
++					throw std::invalid_argument(key + " must be 60..100 in 5-point increments");
++				crops[index] = static_cast<std::uint32_t>(value);
+ 			}
++			for (unsigned index = 1; index < crops.size(); ++index)
++				if (crops[index] > crops[index - 1]) throw std::invalid_argument("Crop stages must be descending");
+ 			const float disable = read("disableAboveMs", foveatedRender.settings.neuralRenderingDisableAboveMs, 10.0f, 50.0f);
+ 			const float enable = read("enableBelowMs", foveatedRender.settings.neuralRenderingEnableBelowMs, 1.0f, 50.0f);
+ 			if (enable >= disable) throw std::invalid_argument("enableBelowMs must be below disableAboveMs");
+ 			foveatedRender.settings.neuralRenderingForcedStage = forcedStage;
+ 			if (forcedStage != 0) foveatedRender.settings.neuralRenderingAdaptiveEnabled = true;
+-			foveatedRender.settings.neuralRenderingCropDrop = cropDrop;
++			foveatedRender.settings.neuralRenderingStage2Crop = crops[0];
++			foveatedRender.settings.neuralRenderingStage3Crop = crops[1];
++			foveatedRender.settings.neuralRenderingStage4Crop = crops[2];
++			foveatedRender.settings.neuralRenderingStage5Crop = crops[3];
+ 			foveatedRender.settings.neuralRenderingDisableAboveMs = disable;
+ 			foveatedRender.settings.neuralRenderingEnableBelowMs = enable;
+ 			foveatedRender.settings.neuralRenderingLadderBudgetMs = budget;

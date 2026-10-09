@@ -26,4 +26,4 @@ Changes to rendering and performance:
 
 The NVIDIA NR carrier remains excluded, as in r7.
 
-Validation records are in the build artifacts and [the technical review](docs/versions/2.20.1-v06/r10/REVIEW.md). Automated source checks, controller tests, shader execution and DLL compilation do not establish headset visual acceptance or measured hardware GPU savings. “Stable” is the requested revision name; on-headset testing remains necessary.
+Validation records are in the build artifacts and [the technical review](REVIEW.md). Automated source checks, controller tests, shader execution and DLL compilation do not establish headset visual acceptance or measured hardware GPU savings. “Stable” is the requested revision name; on-headset testing remains necessary.

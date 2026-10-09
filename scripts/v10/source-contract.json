@@ -1,0 +1,46 @@
+{
+  "runtime/open-shaders/cmake/ValidateOpenNRSourceContracts.cmake": {
+    "before": "8947067738a2b566d4d9953296e9e6d161659d770600e832d810d9d5a800afe5",
+    "after": "7cd1c620eff384b4c86b439148144c1832948f027570dfc8cc3bf712de755f9e"
+  },
+  "runtime/open-shaders/features/Upscaling/Shaders/Upscaling/NeuralRendering/LadderAtlasGuidesCS.hlsl": {
+    "before": "6c433874e76ce2c8dd560152d5f79c62d58003ed6e4002e926441819727663fa",
+    "after": "512336d39f784dde3b6cd3a22d9468e06d65474bc99cc536b6d7cf1dfa647bc7"
+  },
+  "runtime/open-shaders/src/Features/RemoteControl/DevBenchBridge.cpp": {
+    "before": "27c7ef00a5522750c2f93fd63b6e5a19b27e6500a34f6bc74965c100aa4126d6",
+    "after": "153bf7c6742f053011a240e242d322dfe580302b477339c3e65e5a96bd6203d0"
+  },
+  "runtime/open-shaders/src/Features/Upscaling/FoveatedRender.cpp": {
+    "before": "0368064706c35a9daee6edb096ec1d8bb0497ea00d0a0a67c2beda27af629f54",
+    "after": "6461a1356ca36b23ecf4b8127ef5df42ea36d9e13f4ff9b983709b09f1932a8a"
+  },
+  "runtime/open-shaders/src/Features/Upscaling/FoveatedRender.h": {
+    "before": "abe8f4d1d72b2e6885756ccb9132aa80f4de9f6c28a75a69c41d006a97d99b70",
+    "after": "06f8ed7ecd457269cc5c459cc61b5242c36b20fc17d04c97d12a389737b720d6"
+  },
+  "runtime/open-shaders/src/Features/Upscaling/NeuralRendering/AdaptiveCropController.cpp": {
+    "before": "731a3c2b74421678e34d1c3c218a3934e907a8f23fbeb85ee6da281d69a2a0b1",
+    "after": "f861b494cbe055c1339fb871a07957a23e4c9f9c1a49168e2ad2abe589cdb852"
+  },
+  "runtime/open-shaders/src/Features/Upscaling/NeuralRendering/AdaptiveCropController.h": {
+    "before": "a7ea509c9a762b75c6e586e5e97b653f205099137be514eac3994c273a360b1e",
+    "after": "9ced943362b2d1ff18da66217269405cd66ed98a53402e033af1c74490e2983a"
+  },
+  "runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Integration.cpp": {
+    "before": "4d49fbfd7717ff68a5a0aa1157fb8aa817901f340ce76092a79cf056f8548b27",
+    "after": "0aa476d78babe920e5c0d0011f2032c40ee54b70a25519d1cdede709ed5f08ab"
+  },
+  "runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Renderer.cpp": {
+    "before": "c7d34330ad4722f53752dfe99cd98e17d3101c7bd9e7377a156d2aca9e4092ca",
+    "after": "e2c713a97572c8e00dd90e84d4cd0632616f49174b09fe7de51978c6bfcf9d20"
+  },
+  "runtime/open-shaders/src/Features/Upscaling/NeuralRendering/SinglePassLadder.h": {
+    "before": "382a35dc408c19a4c8bbe0c2bdb579420626b4e8d84aa7a5bf023eb3edfdca20",
+    "after": "d01f2643303e349c5e2ef5c6a976fe3486b7c52e78c0120a756e173307c41dac"
+  },
+  "runtime/open-shaders/src/Features/Upscaling.cpp": {
+    "before": "1e0852ba5222fbd08563bd33d3ccb3a4be74a940f745e4fc5ca8f2ccff627b7f",
+    "after": "4114a5ae072c954d8f1e77863d73acf821eef7a6bcba6d20fe0e09e87b044a65"
+  }
+}
