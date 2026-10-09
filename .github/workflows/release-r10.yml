@@ -1,0 +1,49 @@
+name: Publish OpenNR 2.20.1-v06-r10 stable
+on:
+  push:
+    branches: ["release/2.20.1-v06-r10-stable"]
+    paths: [".github/workflows/release-r10.yml", "scripts/v10/publish-release.py"]
+permissions:
+  contents: write
+  actions: read
+concurrency:
+  group: opennr-public-release-r10
+  cancel-in-progress: false
+jobs:
+  release:
+    if: github.repository == 'liviutrn/OpenNR' && github.ref == 'refs/heads/release/2.20.1-v06-r10-stable'
+    runs-on: windows-2025
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - name: Download audited r10 runtime
+        uses: actions/download-artifact@v4
+        with:
+          name: OpenNR-2.20.1-v06-r10-stable-carrier-excluded
+          run-id: 37971899655
+          github-token: ${{ github.token }}
+          path: release-input/runtime
+      - name: Download matching source and package audits
+        uses: actions/download-artifact@v4
+        with:
+          name: OpenNR-v06-r10-stable-package-audit
+          run-id: 37971899655
+          github-token: ${{ github.token }}
+          path: release-input/audit
+      - name: Verify exact archive and publish
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python scripts/v10/publish-release.py --run 37971899655 --commit 3a403d6fea9cc73818b1cdd7473bd6fd9cb5cb98
+          if ($LASTEXITCODE) { throw 'Release archive verification or publication failed' }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: OpenNR-r10-release-verification
+          path: |
+            release-input/release-verification.json
+            release-input/SHA256SUMS.txt
+
