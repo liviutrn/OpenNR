@@ -106,7 +106,7 @@ index 0000000..74b45b3
 +}
 diff --git a/runtime/open-shaders/features/Upscaling/Shaders/Upscaling/NeuralRendering/FeatherModelCS.hlsl b/runtime/open-shaders/features/Upscaling/Shaders/Upscaling/NeuralRendering/FeatherModelCS.hlsl
 new file mode 100644
-index 0000000..2533834
+index 0000000..d5f1947
 --- /dev/null
 +++ b/runtime/open-shaders/features/Upscaling/Shaders/Upscaling/NeuralRendering/FeatherModelCS.hlsl
 @@ -0,0 +1,63 @@
@@ -115,7 +115,7 @@ index 0000000..2533834
 +{
 +	uint4 gSize;
 +	FeatherMapping gMap;
-+	float4 gOptions; // mode, strength, outer fade fraction, residual luma limit
++	float4 gOptions; // zero=pack, positive=resolve strength; exterior strength, outer fade, luma limit
 +};
 +Texture2D<float4> gProxy : register(t0);
 +Texture2D<float4> gModel : register(t1);
@@ -171,7 +171,7 @@ index 0000000..2533834
 +		float maxDelta = max(originalLuma * max(gOptions.w-1.0, 0.05), 0.01);
 +		if (abs(residualLuma) > maxDelta) residual *= maxDelta / max(abs(residualLuma),1e-6);
 +	}
-+	gTarget[id.xy] = float4(max(original.rgb + residual * weight, 0.0), original.a);
++	gTarget[id.xy] = float4(max(original.rgb + residual * weight * gOptions.x, 0.0), original.a);
 +}
 diff --git a/runtime/open-shaders/src/Features/RemoteControl/DevBenchBridge.cpp b/runtime/open-shaders/src/Features/RemoteControl/DevBenchBridge.cpp
 index 56bb3cf..59b444f 100644
@@ -564,7 +564,7 @@ index f6ea69b..d444f27 100644
  			logger::info("[DLSSNR] adaptive NR history handoff disabled while adaptive crop is active; using current-frame crop feathering");
  			adaptiveCropHandoffDisabledLogged = true;
 diff --git a/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Renderer.cpp b/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Renderer.cpp
-index 14a1e38..84355fe 100644
+index 14a1e38..f811e70 100644
 --- a/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Renderer.cpp
 +++ b/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Renderer.cpp
 @@ -605,6 +605,9 @@ namespace NeuralRendering
@@ -706,7 +706,7 @@ index 14a1e38..84355fe 100644
 +
 +		bool DispatchFeatherModel(ID3D11Device* device, ID3D11DeviceContext* context, const EyeResources& eye,
 +			const TierResources& tier, std::uint32_t width, std::uint32_t height,
-+			std::uint32_t sourceWidth, std::uint32_t sourceHeight, bool resolve, float maxRatio)
++			std::uint32_t sourceWidth, std::uint32_t sourceHeight, bool resolve, float maxRatio, float residualStrength)
 +		{
 +			if (!context || !EnsureModelResolutionResources(device) || !EnsureFeatherCurve(device, eye.feather) ||
 +				!featherModelCS.Get(L"Data\\Shaders\\Upscaling\\NeuralRendering\\FeatherModelCS.hlsl", {}, "cs_5_0", "main", "NeuralRendering::FeatherModel") ||
@@ -714,7 +714,7 @@ index 14a1e38..84355fe 100644
 +			const auto* target = resolve ? tier.resolvedUAV.Get() : tier.modelInput.uav11.Get();
 +			if (!target || !eye.color.srv11 || (resolve && (!tier.modelInput.srv11 || !tier.output.srv11))) return false;
 +			FeatherModelConstants data{ { width, height, sourceWidth, sourceHeight }, eye.feather,
-+				{ resolve ? 1.0f : 0.0f, eye.featherStrength, eye.featherFade, maxRatio } };
++				{ resolve ? residualStrength : 0.0f, eye.featherStrength, eye.featherFade, maxRatio } };
 +			context->UpdateSubresource(featherModelCB.Get(), 0, nullptr, &data, 0, 0);
 +			ID3D11ShaderResourceView* sources[]{ resolve ? tier.modelInput.srv11.Get() : eye.color.srv11.Get(),
 +				resolve ? tier.output.srv11.Get() : nullptr, resolve ? eye.color.srv11.Get() : nullptr, featherInverseSRV.Get() };
@@ -737,22 +737,23 @@ index 14a1e38..84355fe 100644
  			std::uint32_t sourceWidth, std::uint32_t sourceHeight,
  			std::uint32_t modelWidth, std::uint32_t modelHeight, bool exactArea)
  		{
-+			if (eye.featherEnabled) return DispatchFeatherModel(device, context, eye, tier, modelWidth, modelHeight, sourceWidth, sourceHeight, false, 0.0f);
++			if (eye.featherEnabled) return DispatchFeatherModel(device, context, eye, tier, modelWidth, modelHeight, sourceWidth, sourceHeight, false, 0.0f, 1.0f);
  			if (!EnsureModelResolutionResources(device) || !context || !eye.color.srv11 || !tier.modelInput.uav11)
  				return false;
  			CS_GPU_PASS("NeuralRendering::ModelDownsample");
-@@ -2582,6 +2671,10 @@ namespace NeuralRendering
+@@ -2582,6 +2671,11 @@ namespace NeuralRendering
  			std::uint32_t width, std::uint32_t height, const ModelResolveSettings& resolveSettings,
  			bool matchedResidual)
  		{
 +			if (eye.featherEnabled) return DispatchFeatherModel(device, context, eye, tier, width, height,
 +				static_cast<std::uint32_t>(std::max(eyes[0].feather.x.packedExtent, eyes[1].feather.x.packedExtent)),
 +				static_cast<std::uint32_t>(std::max(eyes[0].feather.y.packedExtent, eyes[1].feather.y.packedExtent)), true,
-+				tier.modelResolution == 100 ? 0.0f : resolveSettings.maxRatio);
++				tier.modelResolution == 100 ? 0.0f : resolveSettings.maxRatio,
++				tier.modelResolution == 100 ? 1.0f : resolveSettings.residualStrength);
  			if (!EnsureModelResolutionResources(device) || !context || !eye.color.srv11 || !tier.modelInput.srv11 ||
  				!tier.output.srv11 || !tier.resolvedUAV)
  				return false;
-@@ -3103,7 +3196,7 @@ namespace NeuralRendering
+@@ -3103,7 +3197,7 @@ namespace NeuralRendering
  		bool EnsureTierResources(ID3D11Device* device, std::uint32_t eyeIndex, EyeResources& eye,
  			std::uint32_t tierIndex, std::uint32_t modelWidth, std::uint32_t modelHeight,
  			std::uint32_t passCount, std::uint32_t modelResolution, std::uint32_t secondPassCoverage,
@@ -761,7 +762,7 @@ index 14a1e38..84355fe 100644
  		{
  			if (!device || eyeIndex >= eyes.size() || tierIndex >= kResolutionTierCount ||
  				modelWidth == 0 || modelHeight == 0 || passCount == 0 || passCount > kCascadePassCount ||
-@@ -3113,13 +3206,13 @@ namespace NeuralRendering
+@@ -3113,13 +3207,13 @@ namespace NeuralRendering
  			// The valid crop can be smaller than the stable backing resource even
  			// at the native NR tier. Tier identity, not the transient crop extent,
  			// decides whether a model-input resolve is required.
@@ -778,7 +779,7 @@ index 14a1e38..84355fe 100644
  			const auto modelInputDesc = MakeSharedDesc(eye.color.desc, resourceModelWidth, resourceModelHeight, sharedFlags);
  			const auto outputDesc = MakeSharedDesc(eye.color.desc, resourceModelWidth, resourceModelHeight, sharedFlags);
  			const auto pass2OutputDesc = outputDesc;
-@@ -3197,7 +3290,7 @@ namespace NeuralRendering
+@@ -3197,7 +3291,7 @@ namespace NeuralRendering
  			std::uint32_t colorWidth, std::uint32_t colorHeight,
  			std::uint32_t modelWidth, std::uint32_t modelHeight, std::uint32_t passCount,
  			std::uint32_t modelResolution, std::uint32_t secondPassCoverage, bool prewarmAdaptive,
@@ -787,7 +788,7 @@ index 14a1e38..84355fe 100644
  		{
  			if (!device || eyeIndex >= eyes.size() || guideWidth == 0 || guideHeight == 0 ||
  				colorWidth == 0 || colorHeight == 0 || modelWidth == 0 || modelHeight == 0 ||
-@@ -3286,16 +3379,16 @@ namespace NeuralRendering
+@@ -3286,16 +3380,16 @@ namespace NeuralRendering
  				resetPending[eyeIndex][resident] = true;
  			}
  			if (!EnsureTierResources(device, eyeIndex, eye, tierIndex, modelWidth, modelHeight, passCount, modelResolution,
@@ -809,7 +810,7 @@ index 14a1e38..84355fe 100644
  			const std::uint32_t pass2Coverage = passCount > 1 ? std::clamp(secondPassCoverage, 50u, 100u) : 100u;
  			for (std::uint32_t pass = 0; pass < passCount; ++pass) {
  				const bool croppedPass2 = pass == 1 && pass2Coverage < 100;
-@@ -3627,6 +3720,7 @@ namespace NeuralRendering
+@@ -3627,6 +3721,7 @@ namespace NeuralRendering
  			std::uint32_t modelWidth = 0, modelHeight = 0, colorWidth = 0, colorHeight = 0, guard = 0, frame = UINT32_MAX;
  			std::array<std::array<std::uint32_t, 2>, 2> origins{};
  			std::array<std::array<float, 4>, 2> sampling{};
@@ -817,7 +818,7 @@ index 14a1e38..84355fe 100644
  			bool valid = false;
  		};
  		struct LadderAtlasConstants
-@@ -3638,6 +3732,48 @@ namespace NeuralRendering
+@@ -3638,6 +3733,48 @@ namespace NeuralRendering
  		};
  		static_assert(sizeof(LadderAtlasConstants) == 160);
  
@@ -866,7 +867,7 @@ index 14a1e38..84355fe 100644
  		bool PackLadderGuides(ID3D11Device* device, ID3D11DeviceContext* context,
  			const std::array<StereoEyeInput, 2>& inputs,
  			std::uint32_t colorWidth, std::uint32_t colorHeight,
-@@ -3682,6 +3818,7 @@ namespace NeuralRendering
+@@ -3682,6 +3819,7 @@ namespace NeuralRendering
  				std::abs(2.0f * stereoAtlas.colorEyeHeight / data.motionScale[3]) > 65504.0f)
  				return false;
  			data.flags = { previousValid ? 1u : 0u, guideGuard, stereoAtlas.colorEyeHeight, 0u };
@@ -874,7 +875,7 @@ index 14a1e38..84355fe 100644
  			CS_GPU_PASS("NeuralRendering::LadderAtlasGuides");
  			context->UpdateSubresource(ladderAtlasCB.Get(), 0, nullptr, &data, 0, 0);
  			ID3D11ShaderResourceView* sources[]{ eyes[0].motionVectors.srv11.Get(), eyes[1].motionVectors.srv11.Get(),
-@@ -3722,6 +3859,14 @@ namespace NeuralRendering
+@@ -3722,6 +3860,14 @@ namespace NeuralRendering
  				ResetStereoAtlasFeatures();
  				stereoAtlasActiveLastFrame = false;
  			}
@@ -889,7 +890,7 @@ index 14a1e38..84355fe 100644
  			stereoAtlasModeObserved = true;
  			stereoAtlasSinglePassMode = tuning.singlePassLadder;
  			const bool scalesMatch = std::abs(inputs[0].motionVectorScaleX - inputs[1].motionVectorScaleX) < 1e-4f &&
-@@ -3744,9 +3889,9 @@ namespace NeuralRendering
+@@ -3744,9 +3890,9 @@ namespace NeuralRendering
  			const auto colorGuard = std::clamp(ScaleDimension(requestedGuard, modelResolution), 1u, modelWidth);
  			const auto guideGuard = std::clamp(static_cast<std::uint32_t>(std::lround(
  				static_cast<double>(colorGuard) * guideWidth / std::max(modelWidth, 1u))), 1u, guideWidth);
@@ -901,7 +902,7 @@ index 14a1e38..84355fe 100644
  				eyes[0].tiers[tierIndex].modelInput.desc.Height : eyes[0].color.desc.Height;
  			if (!EnsureStereoAtlasResources(device, residentModelWidth, residentModelHeight,
  				eyes[0].depth.desc.Width, eyes[0].depth.desc.Height,
-@@ -3847,7 +3992,7 @@ namespace NeuralRendering
+@@ -3847,7 +3993,7 @@ namespace NeuralRendering
  				ladderAtlasGeometry = { modelWidth, modelHeight, colorWidth, colorHeight, colorGuard,
  					globals::state->frameCount,
  					{{ { inputs[0].sourceX, inputs[0].sourceY }, { inputs[1].sourceX, inputs[1].sourceY } }},
@@ -910,7 +911,7 @@ index 14a1e38..84355fe 100644
  			} else ladderAtlasGeometry.valid = false;
  			stereoAtlasResetPending = false;
  			stereoAtlasActiveLastFrame = true;
-@@ -3887,6 +4032,10 @@ namespace NeuralRendering
+@@ -3887,6 +4033,10 @@ namespace NeuralRendering
  		Util::LazyShader<ID3D11ComputeShader> stereoAtlasMotionPackCS;
  		Microsoft::WRL::ComPtr<ID3D11Buffer> sequentialCompositeCB;
  		Microsoft::WRL::ComPtr<ID3D11Buffer> stereoAtlasPackCB;
@@ -921,7 +922,7 @@ index 14a1e38..84355fe 100644
  		Microsoft::WRL::ComPtr<ID3D11Buffer> modelResolutionCB;
  		Microsoft::WRL::ComPtr<ID3D11SamplerState> modelResolutionSampler;
  		Microsoft::WRL::ComPtr<ID3D11Buffer> temporalReuseCB;
-@@ -3898,6 +4047,7 @@ namespace NeuralRendering
+@@ -3898,6 +4048,7 @@ namespace NeuralRendering
  		std::array<EyeResources, 2> eyes;
  		LadderAtlasGeometry ladderAtlasGeometry;
  		bool stereoAtlasModeObserved = false;

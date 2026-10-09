@@ -82,13 +82,13 @@ int main() {
         }
         for(float delta:{0.f,.03f,-.03f}) for(float strength:{0.f,1.f,2.f}) {
             auto rendered=packed;for(UINT i=0;i<rendered.size();++i) if(i%4!=3) rendered[i]+=delta;Upload(c.Get(),nr,rendered);
-            mc.size={64,48,mw,mh};mc.options={1,strength,.25f,0};c->UpdateSubresource(mb.Get(),0,nullptr,&mc,0,0);
+            mc.size={64,48,mw,mh};const float calibration=resolution==85?.84f:resolution==70?.72f:1.f;mc.options={calibration,strength,.25f,0};c->UpdateSubresource(mb.Get(),0,nullptr,&mc,0,0);
             ID3D11ShaderResourceView* s[]{proxy.srv.Get(),nr.srv.Get(),original.srv.Get(),lut.Get()};c->CSSetShaderResources(0,4,s);target=out.uav.Get();c->CSSetUnorderedAccessViews(0,1,&target,nullptr);c->Dispatch(8,6,1);Unbind(c.Get());auto result=Read(d.Get(),c.Get(),out);
             for(UINT y=0;y<48;++y) for(UINT x=0;x<64;++x) {
                 const float px=float(x)+.5f,py=float(y)+.5f;
                 const float exterior=std::clamp(std::max({(map.x.begin-px)/std::max(map.x.begin,1e-6f),(px-map.x.end)/std::max(64-map.x.end,1e-6f),(map.y.begin-py)/std::max(map.y.begin,1e-6f),(py-map.y.end)/std::max(48-map.y.end,1e-6f)}),0.f,1.f);
                 const float weight=(1+(strength-1)*Smooth(0,.05f,exterior))*(1-Smooth(.75f,1,exterior));const UINT i=(y*64+x)*4;
-                for(UINT ch=0;ch<3;++ch) Require(std::abs(result[i+ch]-source[i+ch]-delta*weight)<2e-5f,"Residual, darkening or exterior fade wrong");
+                for(UINT ch=0;ch<3;++ch) Require(std::abs(result[i+ch]-source[i+ch]-delta*weight*calibration)<2e-5f,"Residual, darkening or exterior fade wrong");
                 Require(result[i+3]==source[i+3],"Alpha changed");
             }++cases;
         }
