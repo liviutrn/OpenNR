@@ -53,7 +53,7 @@
   },
   "runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Integration.cpp": {
     "before": "4d49fbfd7717ff68a5a0aa1157fb8aa817901f340ce76092a79cf056f8548b27",
-    "after": "3ef45150ec5bb90466c890ccb1c01db1cc5e03c54ad3590a872f64e164c75965"
+    "after": "cff332a849ca18f1c76b58b591e318706ebd67d001751d7d04451e52b2109067"
   },
   "runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Renderer.cpp": {
     "before": "c7d34330ad4722f53752dfe99cd98e17d3101c7bd9e7377a156d2aca9e4092ca",

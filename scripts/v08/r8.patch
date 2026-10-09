@@ -504,10 +504,15 @@ index 0000000..7bc3727
 +	}
 +}
 diff --git a/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Integration.cpp b/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Integration.cpp
-index f6ea69b..d444f27 100644
+index f6ea69b..205a69d 100644
 --- a/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Integration.cpp
 +++ b/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Integration.cpp
-@@ -661,7 +661,13 @@ Tuning tuning{
+@@ -657,11 +657,17 @@ Tuning tuning{
+ 		// would make the previous frame's guides address the wrong source region.
+ 		// Keep the established one-frame static tolerance, but fail closed for the
+ 		// dynamic experiment until the current guides are available.
+-		if ((gaze.dynamic || foveated.IsAdaptiveCropRuntimeActive()) && guideFrame != frame)
++		if ((gaze.dynamic || foveated.IsAdaptiveCropRuntimeActive() || foveated.settings.neuralFeatherEnabled) && guideFrame != frame)
  			return false;
  		const auto& leftUV = gaze.leftUV;
  		const auto& rightUV = gaze.rightUV;
