@@ -1,8 +1,9 @@
 # OpenNR 2.20.1 — R9 combined rebuild
 
 This branch rebuilds expanded SR/compressed neural feathering and the CSX
-shader-detail mask on retained R7 behavior. Windows package validation is
-in progress; headset behavior and GPU savings remain unverified.
+shader-detail mask on retained R7 behavior. The Windows build, package audit
+and extracted-package execution passed. Headset behavior and GPU savings
+remain unverified.
 
 Changes:
 
@@ -22,3 +23,9 @@ speedup is asserted. One-atlas NR, gaze policy, controller stages and
 near-black protection are retained. No new smoothing or deadzone is added.
 
 [Technical handoff and validation](docs/versions/2.20.1-v06/r9-rebuild/README.md).
+
+Build commit: `b91425220cfa3b755933042b85242c8dde1badf5`.
+[Successful build](https://github.com/liviutrn/OpenNR/actions/runs/37936962593),
+[carrier-excluded R9 package](https://github.com/liviutrn/OpenNR/actions/runs/37936962593/artifacts/11621710921),
+[validation audit](https://github.com/liviutrn/OpenNR/actions/runs/37936962593/artifacts/11621515952).
+The package retains the existing compatible neural carrier requirement.

@@ -57,6 +57,32 @@ stay coherent. Existing SSR/screen-space controls remain separate. This
 does not clip every shader. Enlarging SR leaves less maskable area, and
 the screen-area estimate is not GPU timing or a promised speedup.
 
+For a centered core spanning 65% of each eye's width and height, 50% SR
+expansion produces near-full protected SR and bypasses this mask. A 75%
+core bypasses it at 25% expansion. With a 50% core and 50% expansion, the
+64-by-64 estimate leaves about 7.6% fully skipped area with feathering, or
+25.0% with hard cutoff (1201-by-1122 render eye). These are geometry
+examples, not GPU measurements or recommended settings.
+
+CSX coverage was checked against ParticleTroned/skyrim-community-shaders
+commit `45a59395bccec9df019cb11f1271c23d476e5f54`:
+
+| Work | R9 coverage |
+| --- | --- |
+| Hair self-shadow, contact rays, extra wetness lighting | Selective detail mask |
+| Water parallax | Selective detail mask |
+| SSR and screen-space shadows | Existing OpenNR foveation controls |
+| GI/AO center-resolution mask | Not ported |
+| Dynamic cubemap cadence and visibility throttling | Not ported |
+| Raster shading rate | Existing NVIDIA VRS feature; separate controls and GPU requirements |
+
+CSX has effect-specific budgets, not a universal mask that skips all
+shaders. Its GI center pass relies on a cheaper peripheral pass and
+separate history/resources; copying only its early-out into OpenNR's
+single GI pass would remove peripheral AO/GI. Its cubemap cadence changes
+reflection freshness and uses a different task scheduler. This rebuild
+does not represent those omitted paths as implemented or validated.
+
 The `shaderDetailMaskStatus` devbench query includes
 `estimatedSkippedAreaFraction`. `neuralFeatherStatus` exposes
 `rendererFailed`/`rendererStatus`; a failed route no longer reports active.
@@ -83,6 +109,42 @@ Registered query descriptions document the new fields.
   mapped guides, stereo offsets, guard pixels and active/resident splits.
   Known synthetic residuals replace native neural inference in these tests.
 
-Windows build/package results are pending. Native Feature 18, driver/GPU
-timing and Skyrim VR headset acceptance remain unperformed. Do not call
-this revision fully working or faster until hardware checks succeed.
+Windows CI completed successfully on 2026-10-09 for build commit
+`b91425220cfa3b755933042b85242c8dde1badf5`:
+
+- [Run 37936962593](https://github.com/liviutrn/OpenNR/actions/runs/37936962593):
+  full universal DLL build, AIO packaging, source contracts, retained tests,
+  142 final optimized Lighting/Water permutations and package audit passed.
+- Extracted-package production-loader WARP execution: 1,440 cases passed,
+  including zero-calibration resolve and D3D11 debug-layer validation.
+- [R9 package](https://github.com/liviutrn/OpenNR/actions/runs/37936962593/artifacts/11621710921)
+  and [audit](https://github.com/liviutrn/OpenNR/actions/runs/37936962593/artifacts/11621515952)
+  uploaded, expiring 2026-10-23. No payload removals; four expected shader
+  additions and five expected changes against the R7 AIO; all other
+  payloads identical.
+- Inner AIO SHA-256:
+  `7a9a08ce39ec55dc80c061107f82c612cde48dab030ce007ff920fc0d9d0fd89`.
+
+The immutable artifact's README was captured before CI completed; these
+results and the uploaded audit provide the final software validation.
+Native Feature 18, driver/GPU timing and Skyrim VR headset acceptance remain
+unperformed. Do not call this revision fully working or faster until
+hardware checks succeed.
+
+## Hardware acceptance still required
+
+Install the carrier-excluded AIO while retaining the existing compatible
+`nvngx_dlssnr.dll`. Use Reset Neural Rendering to rearm a latched failure.
+
+| Check | Acceptance evidence |
+| --- | --- |
+| Expanded SR on/off, expansion 0/25/50/100 | No downsample/packing failure; live feather status agrees with the route |
+| Gaze movement, crop/model tier changes, pause/resume and reset | Stable left/right placement; no border loss, darkening or stale history |
+| CSX detail mask off/on and hard/feathered cutoff | Protected SR remains full quality; selected peripheral effects change coherently |
+| Near-full SR | Mask reports bypass; no peripheral cutoff inside SR |
+| Same-scene GPU A/B | Hold camera, resolution, SR coverage, NR tier and effects fixed; compare GPU pass times and total frame budget |
+
+Read `shaderDetailMaskStatus` and `neuralFeatherStatus` through devbench
+alongside the log. A screen-area percentage is evidence of mask geometry,
+not a performance measurement. SE and VR in-game checks required by the
+runtime repository's AGENTS.md remain outstanding in this environment.
