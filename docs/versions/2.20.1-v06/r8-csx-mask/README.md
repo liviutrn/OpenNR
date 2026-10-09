@@ -43,4 +43,4 @@ control. Compare GPU frametime and inspect the transition in daylight,
 rain, interiors with clustered lights, water and rapid gaze movement.
 
 Implementation and source attribution:
-[CSX_FOV_MASK_PORT.md](docs/CSX_FOV_MASK_PORT.md).
+[CSX_FOV_MASK_PORT.md](../../../CSX_FOV_MASK_PORT.md).

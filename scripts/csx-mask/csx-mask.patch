@@ -1,0 +1,627 @@
+--- a/runtime/open-shaders/src/State.h
++++ b/runtime/open-shaders/src/State.h
+@@ -539,7 +539,7 @@
+ 		float4 VRFoveationCenterOffsets;  // xy=left eye center offset, zw=right eye center offset
+ 		float4 HDRData;                   // xyz + menu scene encoding in w — see HDRDisplay::GetSharedDataHDR
+ 		float RefractionScale;            // ISRefraction.hlsl heat-shimmer multiplier; 1.0 = unmodified vanilla strength
+-		float3 pad1;
++		float3 VRDetailFoveationModes;
+ 		WindField::WindTuning WindFieldTuning;
+ 		float4 WindFieldAmbient;  // xyz: selected mean weather velocity, w: accumulated gust travel
+ 		float4 WindFieldPreviousAmbient;
+@@ -554,6 +554,8 @@
+ 		std::array<WindField::TransientWindSource, WindField::kTransientImpulseCapacity> WindFieldPreviousTransientImpulses;
+ 	};
+ 	STATIC_ASSERT_ALIGNAS_16(SharedDataCB);
++	static_assert(offsetof(SharedDataCB, VRDetailFoveationModes) == offsetof(SharedDataCB, RefractionScale) + sizeof(float));
++	static_assert(offsetof(SharedDataCB, WindFieldTuning) == offsetof(SharedDataCB, RefractionScale) + 16);
+ 	// Each float4 cbuffer field must start on a 16-byte boundary to match the HLSL SharedData
+ 	// layout — a stray scalar inserted above would silently shift these and corrupt shader reads.
+ 	static_assert(offsetof(SharedDataCB, VRFoveationData0) % 16 == 0);
+--- a/runtime/open-shaders/src/State.cpp
++++ b/runtime/open-shaders/src/State.cpp
+@@ -1513,27 +1513,28 @@
+ 		data.HDRData = globals::features::hdrDisplay.GetSharedDataHDR();
+ 		data.RefractionScale = refractionScale;
+ 
+-		// VR foveated shader detail (consumed by foveated SSR). Default to off; populate from the
+-		// active foveation region only when SSR foveation is enabled and SSR is actually running.
+-		data.VRFoveationData0 = float4{ FoveatedCommon::kCenterScaleMax, FoveatedCommon::kCenterFeather, 1.0f,
+-			FoveatedCommon::GetShaderMode(FoveatedCommon::DetailMode::Off) };
++		data.VRFoveationData0 = float4{ FoveatedCommon::kCenterScaleMax, FoveatedCommon::kCenterFeather, 1.0f, 0.0f };
+ 		data.VRFoveationCenterOffsets = float4{ 0.0f, 0.0f, 0.0f, 0.0f };
++		data.VRDetailFoveationModes = float3{ 0.0f, 0.0f, 0.0f };
+ 		if (globals::game::isVR) {
+ 			const auto& vr = globals::features::vr;
+ 			const auto& dynamicCubemaps = globals::features::dynamicCubemaps;
+-			const bool ssrFoveationEnabled = vr.loaded && vr.settings.EnableSSRFoveation &&
+-			                                 dynamicCubemaps.loaded && dynamicCubemaps.settings.EnabledSSR;
+-			if (ssrFoveationEnabled) {
++			if (vr.loaded && upscaling.loaded) {
+ 				const auto profile = upscaling.foveatedRender.GetFoveationProfile();
+-				if (profile.available) {  // available already implies an active (non-full) coverage scale
++				if (profile.available) {
+ 					const float ssrMode = FoveatedCommon::GetShaderMode(FoveatedCommon::GetDetailMode(
+-						true, vr.settings.EnableSSRFoveationHardCutoff));
++						vr.settings.EnableSSRFoveation && dynamicCubemaps.loaded && dynamicCubemaps.settings.EnabledSSR,
++						vr.settings.EnableSSRFoveationHardCutoff));
+ 					data.VRFoveationData0 = float4{ profile.coverageScale, FoveatedCommon::kCenterFeather,
+ 						profile.centerHorizontalScale, ssrMode };
+ 					data.VRFoveationCenterOffsets = float4{
+ 						profile.centerOffsets[0].x, profile.centerOffsets[0].y,
+-						profile.centerOffsets[1].x, profile.centerOffsets[1].y
+-					};
++						profile.centerOffsets[1].x, profile.centerOffsets[1].y };
++					data.VRDetailFoveationModes = float3{
++						FoveatedCommon::GetShaderMode(FoveatedCommon::GetDetailMode(vr.settings.EnableShaderDetailFoveation,
++							vr.settings.EnableShaderDetailFoveationHardCutoff)),
++						FoveatedCommon::GetShaderMode(FoveatedCommon::GetDetailMode(vr.settings.EnableWaterParallaxFoveation,
++							vr.settings.EnableShaderDetailFoveationHardCutoff)), 0.0f };
+ 				}
+ 			}
+ 		}
+--- a/runtime/open-shaders/package/Shaders/Water.hlsl
++++ b/runtime/open-shaders/package/Shaders/Water.hlsl
+@@ -673,6 +673,8 @@
+ #				undef WETNESS_EFFECTS
+ #			endif
+ 
++#			include "Common/ShaderDetailFoveation.hlsli"
++
+ #			if defined(WATER_EFFECTS) && !defined(VC)
+ #				define WATER_PARALLAX
+ #				include "WaterEffects/WaterParallax.hlsli"
+@@ -693,7 +695,7 @@
+ 	float4 rippleInfo;  // xyz = scaled ripple normal (normalized normal * intensity), w = splash effect intensity
+ };
+ 
+-WaterNormalData GetWaterNormal(PS_INPUT input, float distanceFactor, float normalsDepthFactor, float3 viewDirection, float depth, uint eyeIndex, float wetnessOcclusion)
++WaterNormalData GetWaterNormal(PS_INPUT input, float distanceFactor, float normalsDepthFactor, float3 viewDirection, float depth, uint eyeIndex, float wetnessOcclusion, float parallaxDetailWeight)
+ {
+ 	WaterNormalData result;
+ 	result.rippleInfo = float4(0, 0, 0, 0);
+@@ -701,7 +703,7 @@
+ 	float3 normalScalesRcp = rcp(input.NormalsScale.xyz);
+ 
+ #			if defined(WATER_PARALLAX)
+-	float2 parallaxOffset = WaterEffects::GetParallaxOffset(input, normalScalesRcp);
++	float2 parallaxOffset = WaterEffects::GetParallaxOffset(input, normalScalesRcp, parallaxDetailWeight);
+ #			endif
+ 
+ #			if defined(FLOWMAP)
+@@ -716,10 +718,10 @@
+ 	PS_INPUT flowmapInput = input;
+ 	float2 flowmapParallaxOffset = float2(0, 0);
+ #				if defined(WATER_PARALLAX) && !defined(LOD)
+-	float parallaxAmount = WaterEffects::GetFlowmapParallaxAmount(input, flowmapDimensions, viewDirection);
++	float parallaxAmount = WaterEffects::GetFlowmapParallaxAmount(input, flowmapDimensions, viewDirection, parallaxDetailWeight);
+ 	float2 parallaxDir = WaterEffects::GetFlowmapParallaxDirection(viewDirection);
+ 	flowmapInput.TexCoord3.xy = input.TexCoord3.xy + parallaxAmount * parallaxDir;
+-	flowmapParallaxOffset = WaterEffects::GetFlowmapParallaxOffset(input, flowmapDimensions, viewDirection, normalScalesRcp);
++	flowmapParallaxOffset = WaterEffects::GetFlowmapParallaxOffset(input, flowmapDimensions, viewDirection, normalScalesRcp, parallaxDetailWeight);
+ #				endif
+ 
+ 	// Calculate cell blend weights using parallaxed input
+@@ -1149,6 +1151,10 @@
+ #			endif
+ 	float3 viewPosition = mul(FrameBuffer::CameraView[eyeIndex], float4(input.WPosition.xyz, 1)).xyz;
+ 	float2 screenUV = FrameBuffer::ViewToUV(viewPosition, true, eyeIndex);
++	bool detailMaskAllowed = (Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::InWorld) &&
++		!(Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::InReflection);
++	float parallaxDetailWeight = detailMaskAllowed ? GetShaderDetailFoveationWeight(SharedData::VRDetailFoveationModes.y, screenUV, eyeIndex) : 1.0;
++	float contactDetailWeight = detailMaskAllowed ? GetShaderDetailFoveationWeight(SharedData::VRDetailFoveationModes.x, screenUV, eyeIndex) : 1.0;
+ 	const bool inWorld = (Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::InWorld);
+ 
+ #			if defined(SKYLIGHTING)
+@@ -1169,9 +1175,9 @@
+ #			endif
+ 
+ #			if defined(SKYLIGHTING)
+-	WaterNormalData waterData = GetWaterNormal(input, distanceBlendFactor, depthControl.z, viewDirection, depth, eyeIndex, wetnessOcclusion);
++	WaterNormalData waterData = GetWaterNormal(input, distanceBlendFactor, depthControl.z, viewDirection, depth, eyeIndex, wetnessOcclusion, parallaxDetailWeight);
+ #			else
+-	WaterNormalData waterData = GetWaterNormal(input, distanceBlendFactor, depthControl.z, viewDirection, depth, eyeIndex, inWorld);
++	WaterNormalData waterData = GetWaterNormal(input, distanceBlendFactor, depthControl.z, viewDirection, depth, eyeIndex, inWorld, parallaxDetailWeight);
+ #			endif
+ 
+ 	float3 normal = waterData.normal;
+@@ -1275,7 +1281,7 @@
+ 		// Recovers occlusion for lights with no shadow-map slot; reflection passes render
+ 		// from another camera, so main-view depth can't be raymarched there.
+ 		uint contactShadowSteps = 0;
+-		[branch] if (SharedData::lightLimitFixSettings.EnableContactShadows && inWorld && !inReflection)
++		[branch] if (SharedData::lightLimitFixSettings.EnableContactShadows && inWorld && !inReflection && FoveatedIsShaderDetailActive(contactDetailWeight))
+ 			contactShadowSteps = round(SharedData::lightLimitFixSettings.ContactShadowMaxSteps *
+ 									   (1.0 - saturate(viewPosition.z / SharedData::lightLimitFixSettings.ContactShadowMaxDistance)));
+ 
+@@ -1326,7 +1332,7 @@
+ #					endif
+ 				if (canContactShadow && passesContactIntensityGate) {
+ 					float3 lightPositionVS = mul(FrameBuffer::CameraView[eyeIndex], float4(light.positionWS[eyeIndex].xyz, 1)).xyz;
+-					lightShadow *= LightLimitFix::ContactShadows(viewPosition, screenNoise, normalize(lightPositionVS - viewPosition), contactShadowSteps, eyeIndex);
++					lightShadow *= lerp(1.0, LightLimitFix::ContactShadows(viewPosition, screenNoise, normalize(lightPositionVS - viewPosition), contactShadowSteps, eyeIndex), contactDetailWeight);
+ 				}
+ 			}
+ 
+--- a/runtime/open-shaders/package/Shaders/Lighting.hlsl
++++ b/runtime/open-shaders/package/Shaders/Lighting.hlsl
+@@ -1058,6 +1058,7 @@
+ #	endif
+ 
+ #	include "Common/LightingEval.hlsli"
++#	include "Common/ShaderDetailFoveation.hlsli"
+ #	if defined(CHARACTER_RAIN_SURFACE)
+ #		include "WetnessEffects/CharacterRainLighting.hlsli"
+ #	endif
+@@ -1071,6 +1072,12 @@
+ 	float3 viewDirection = -normalize(input.WorldPosition.xyz);
+ 
+ 	float2 screenUV = FrameBuffer::ViewToUV(viewPosition, true, eyeIndex);
++	bool detailMaskAllowed = !(Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::InReflection);
++#	if !defined(DEFERRED)
++	detailMaskAllowed = detailMaskAllowed && (Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::InWorld);
++#	endif
++	float shaderDetailWeight = detailMaskAllowed ? GetShaderDetailFoveationWeight(SharedData::VRDetailFoveationModes.x, screenUV, eyeIndex) : 1.0;
++	bool shaderDetailActive = FoveatedIsShaderDetailActive(shaderDetailWeight);
+ 	float screenNoise = Random::InterleavedGradientNoise(Stereo::EyeStableNoiseCoord(input.Position.xy, SharedData::BufferDim.xy), SharedData::FrameCount);
+ 
+ #	if defined(DEFERRED)
+@@ -1698,7 +1705,7 @@
+ #	if defined(HAIR) && defined(CS_HAIR)
+ 	float3 hairTint = 0;
+ 
+-	if (SharedData::hairSpecularSettings.Enabled) {
++	if (SharedData::hairSpecularSettings.Enabled && shaderDetailActive) {
+ 		hairTint = lerp(1, Color::AuthoredColor(TintColor.xyz), input.Color.y);
+ 		baseColor.xyz *= hairTint;
+ 		baseColor.xyz = Hair::Saturation(baseColor.xyz, SharedData::hairSpecularSettings.HairSaturation);
+@@ -1709,7 +1716,7 @@
+ 	float3 sampledHairFlow = 0;
+ 	bool useHairFlowMap = false;
+ #		if defined(BACK_LIGHTING)
+-	if (SharedData::hairSpecularSettings.Enabled) {
++	if (SharedData::hairSpecularSettings.Enabled && shaderDetailActive) {
+ 		uint2 hairFlowDimensions = uint2(0, 0);
+ 		sampledHairFlow = float3(TexBackLightSampler.Sample(SampBackLightSampler, uv).xy, 0.5f);
+ 		TexBackLightSampler.GetDimensions(hairFlowDimensions.x, hairFlowDimensions.y);
+@@ -1932,7 +1939,7 @@
+ #		endif
+ 	hairT = Hair::ReorientTangent(hairT, worldNormal);
+ 
+-	if (SharedData::hairSpecularSettings.Enabled) {
++	if (SharedData::hairSpecularSettings.Enabled && shaderDetailActive) {
+ 		if (SharedData::hairSpecularSettings.EnableTangentShift && SharedData::hairSpecularSettings.HairMode != 1) {
+ 			float3 shiftedNormal = Hair::ShiftWorldNormal(hairT, worldNormal, 0, uv);
+ 			screenSpaceNormal = normalize(FrameBuffer::WorldToView(shiftedNormal, false, eyeIndex));
+@@ -2124,7 +2131,7 @@
+ #	endif
+ 
+ #	if defined(CS_HAIR) && defined(HAIR)
+-	if (SharedData::hairSpecularSettings.Enabled) {
++	if (SharedData::hairSpecularSettings.Enabled && shaderDetailActive) {
+ 		material.Shininess = SharedData::hairSpecularSettings.HairGlossiness;
+ 		material.F0 = Hair::HairF0();
+ 		if (SharedData::hairSpecularSettings.HairMode == 1) {
+@@ -2647,7 +2654,7 @@
+ #	endif  // defined(EMAT) && (defined(SKINNED) || !defined(MODELSPACENORMALS))
+ 
+ #	if defined(CS_HAIR) && defined(HAIR)
+-	if (SharedData::hairSpecularSettings.Enabled) {
++	if (SharedData::hairSpecularSettings.Enabled && shaderDetailActive) {
+ 		vertexNormal.xyz = worldNormal.xyz;
+ 		worldNormal.xyz = hairT;
+ 	}
+@@ -2678,9 +2685,9 @@
+ #	else
+ 	dirLightContext = CreateDirectLightingContext(worldNormal.xyz, vertexNormal.xyz, viewDirection, DirLightDirection, dirLightColor, dirDetailedShadow, dirSoftShadow);
+ #		if defined(HAIR) && defined(CS_HAIR)
+-	if (SharedData::hairSpecularSettings.Enabled) {
++	if (SharedData::hairSpecularSettings.Enabled && shaderDetailActive) {
+ 		float hairShadow = Hair::HairSelfShadow(input.WorldPosition.xyz, DirLightDirection, screenNoise, eyeIndex);
+-		dirLightContext.hairShadow = hairShadow;
++		dirLightContext.hairShadow = lerp(1.0, hairShadow, shaderDetailWeight);
+ 	}
+ #		endif
+ #	endif
+@@ -2689,8 +2696,16 @@
+ 	float2 uvOriginal_ddy = ddy(uvOriginal);
+ 	EvaluateLighting(dirLightContext, material, tbnTr, uvOriginal, uvOriginal_ddx, uvOriginal_ddy, dirLightOutput);
+ #	if defined(WETNESS_EFFECTS)
+-	if (waterRoughnessSpecular < 1)
++	[branch] if (waterRoughnessSpecular < 1 && shaderDetailActive) {
++		DirectLightingOutput baseOutput = dirLightOutput;
+ 		EvaluateWetnessLighting(wetnessNormal, dirLightContext, waterRoughnessSpecular, dirLightOutput);
++		dirLightOutput.diffuse = lerp(baseOutput.diffuse, dirLightOutput.diffuse, shaderDetailWeight);
++		dirLightOutput.specular = lerp(baseOutput.specular, dirLightOutput.specular, shaderDetailWeight);
++		dirLightOutput.transmission = lerp(baseOutput.transmission, dirLightOutput.transmission, shaderDetailWeight);
++#	if defined(TRUE_PBR)
++		dirLightOutput.coatDiffuse = lerp(baseOutput.coatDiffuse, dirLightOutput.coatDiffuse, shaderDetailWeight);
++#	endif
++	}
+ #		if defined(CHARACTER_RAIN_SURFACE)
+ 	[branch] if (characterCoatMask > 0.0f)
+ 		characterRainSpecular += CharacterRainSpots::EvaluateLighting(characterSpotSurfaceNormal, dirLightContext,
+@@ -2751,16 +2766,24 @@
+ #			else
+ 		pointLightContext = CreateDirectLightingContext(worldNormal.xyz, vertexNormal.xyz, viewDirection, normalizedLightDirection, lightColor, lightShadow, lightShadow);
+ #				if defined(HAIR) && defined(CS_HAIR)
+-		if (SharedData::hairSpecularSettings.Enabled) {
++		if (SharedData::hairSpecularSettings.Enabled && shaderDetailActive) {
+ 			float hairShadow = Hair::HairSelfShadow(input.WorldPosition.xyz, normalizedLightDirection, screenNoise, eyeIndex);
+-			pointLightContext.hairShadow = hairShadow;
++			pointLightContext.hairShadow = lerp(1.0, hairShadow, shaderDetailWeight);
+ 		}
+ #				endif
+ #			endif
+ 		EvaluateLighting(pointLightContext, material, tbnTr, uvOriginal, uvOriginal_ddx, uvOriginal_ddy, pointLightOutput);
+ #			if defined(WETNESS_EFFECTS)
+-		if (waterRoughnessSpecular < 1)
++		[branch] if (waterRoughnessSpecular < 1 && shaderDetailActive) {
++			DirectLightingOutput baseOutput = pointLightOutput;
+ 			EvaluateWetnessLighting(wetnessNormal, pointLightContext, waterRoughnessSpecular, pointLightOutput);
++			pointLightOutput.diffuse = lerp(baseOutput.diffuse, pointLightOutput.diffuse, shaderDetailWeight);
++			pointLightOutput.specular = lerp(baseOutput.specular, pointLightOutput.specular, shaderDetailWeight);
++			pointLightOutput.transmission = lerp(baseOutput.transmission, pointLightOutput.transmission, shaderDetailWeight);
++#	if defined(TRUE_PBR)
++			pointLightOutput.coatDiffuse = lerp(baseOutput.coatDiffuse, pointLightOutput.coatDiffuse, shaderDetailWeight);
++#	endif
++		}
+ #				if defined(CHARACTER_RAIN_SURFACE)
+ 		[branch] if (characterCoatMask > 0.0f)
+ 			characterRainSpecular += CharacterRainSpots::EvaluateLighting(characterSpotSurfaceNormal, pointLightContext,
+@@ -2800,7 +2823,7 @@
+ 	// clustered light in this pixel so we hoist them out of the per-light loop.
+ 	uint contactShadowSteps = 0;
+ 	float contactShadowNoise = 0.0;
+-	[branch] if (SharedData::lightLimitFixSettings.EnableContactShadows)
++	[branch] if (SharedData::lightLimitFixSettings.EnableContactShadows && shaderDetailActive)
+ 	{
+ 		contactShadowSteps = round(SharedData::lightLimitFixSettings.ContactShadowMaxSteps *
+ 								   (1.0 - saturate(viewPosition.z / SharedData::lightLimitFixSettings.ContactShadowMaxDistance)));
+@@ -2908,7 +2931,7 @@
+ 				// is added to the struct + populated CPU-side.
+ 				float3 lightPositionVS = mul(FrameBuffer::CameraView[eyeIndex], float4(light.positionWS[eyeIndex].xyz, 1)).xyz;
+ 				float3 normalizedLightDirectionVS = normalize(lightPositionVS - viewPosition.xyz);
+-				contactShadow = LightLimitFix::ContactShadows(viewPosition, contactShadowNoise, normalizedLightDirectionVS, contactShadowSteps, eyeIndex);
++				contactShadow = lerp(1.0, LightLimitFix::ContactShadows(viewPosition, contactShadowNoise, normalizedLightDirectionVS, contactShadowSteps, eyeIndex), shaderDetailWeight);
+ 			}
+ 		}
+ #			endif
+@@ -2957,16 +2980,24 @@
+ #			else
+ 		pointLightContext = CreateDirectLightingContext(worldNormal.xyz, vertexNormal.xyz, viewDirection, normalizedLightDirection, lightColor, pointLightShadow, pointLightShadow);
+ #				if defined(HAIR) && defined(CS_HAIR)
+-		if (SharedData::hairSpecularSettings.Enabled) {
++		if (SharedData::hairSpecularSettings.Enabled && shaderDetailActive) {
+ 			float hairShadow = Hair::HairSelfShadow(input.WorldPosition.xyz, normalizedLightDirection, screenNoise, eyeIndex);
+-			pointLightContext.hairShadow = hairShadow;
++			pointLightContext.hairShadow = lerp(1.0, hairShadow, shaderDetailWeight);
+ 		}
+ #				endif
+ #			endif
+ 		EvaluateLighting(pointLightContext, material, tbnTr, uvOriginal, uvOriginal_ddx, uvOriginal_ddy, pointLightOutput);
+ #			if defined(WETNESS_EFFECTS)
+-		if (waterRoughnessSpecular < 1)
++		[branch] if (waterRoughnessSpecular < 1 && shaderDetailActive) {
++			DirectLightingOutput baseOutput = pointLightOutput;
+ 			EvaluateWetnessLighting(wetnessNormal, pointLightContext, waterRoughnessSpecular, pointLightOutput);
++			pointLightOutput.diffuse = lerp(baseOutput.diffuse, pointLightOutput.diffuse, shaderDetailWeight);
++			pointLightOutput.specular = lerp(baseOutput.specular, pointLightOutput.specular, shaderDetailWeight);
++			pointLightOutput.transmission = lerp(baseOutput.transmission, pointLightOutput.transmission, shaderDetailWeight);
++#	if defined(TRUE_PBR)
++			pointLightOutput.coatDiffuse = lerp(baseOutput.coatDiffuse, pointLightOutput.coatDiffuse, shaderDetailWeight);
++#	endif
++		}
+ #				if defined(CHARACTER_RAIN_SURFACE)
+ 		[branch] if (characterCoatMask > 0.0f)
+ 			characterRainSpecular += CharacterRainSpots::EvaluateLighting(characterSpotSurfaceNormal, pointLightContext,
+@@ -3066,7 +3097,7 @@
+ 		ambientNormal *= dot(ambientNormal, viewDirection) < 0 ? -1 : 1;
+ #	endif
+ #	if defined(HAIR) && defined(CS_HAIR)
+-	if (SharedData::hairSpecularSettings.Enabled) {
++	if (SharedData::hairSpecularSettings.Enabled && shaderDetailActive) {
+ 		if (SharedData::hairSpecularSettings.HairMode == 1)
+ 			ambientNormal = normalize(viewDirection - hairT * dot(viewDirection, hairT));
+ 		else
+--- a/runtime/open-shaders/package/Shaders/Common/SharedData.hlsli
++++ b/runtime/open-shaders/package/Shaders/Common/SharedData.hlsli
+@@ -39,7 +39,7 @@
+ 		float4 VRFoveationCenterOffsets;  // xy=left eye center offset, zw=right eye center offset
+ 		float4 HDRData;
+ 		float RefractionScale;
+-		float3 pad1;
++		float3 VRDetailFoveationModes;
+ 		WindField::WindTuning WindFieldTuning;
+ 		float4 WindFieldAmbient;
+ 		float4 WindFieldPreviousAmbient;
+--- a/runtime/open-shaders/src/Features/VR.h
++++ b/runtime/open-shaders/src/Features/VR.h
+@@ -78,6 +78,8 @@
+ 		};
+ 	}
+ 
++	/** @brief Registers the live shader-detail mask query for devbench verification. */
++	void RegisterUxActions() override;
+ 	virtual void Reset() override;
+ 	virtual void SetupResources() override;
+ 	virtual void ClearShaderCache() override;
+@@ -156,7 +158,10 @@
+ 
+ 		// VR foveated shader detail: render expensive screen-space effects at reduced detail in the
+ 		// periphery, driven by the active Foveated DLSS region. Consumed by foveated SSR.
+-		bool EnableSSRFoveation = false;            ///< Foveate screen-space reflection raymarching in the periphery
++		bool EnableSSRFoveation = true;            ///< Foveate screen-space reflection raymarching in the periphery
++		bool EnableShaderDetailFoveation = true;
++		bool EnableWaterParallaxFoveation = true;
++		bool EnableShaderDetailFoveationHardCutoff = false;
+ 		bool EnableSSRFoveationHardCutoff = false;  ///< Hard-skip SSR outside the center (vs feathered falloff)
+ 
+ 		// Thumbstick deadzone for the wand-driven mouse cursor (0.0-1.0).
+--- a/runtime/open-shaders/src/Features/VR.cpp
++++ b/runtime/open-shaders/src/Features/VR.cpp
+@@ -8,6 +8,7 @@
+ 
+ #include "State.h"
+ #include "Utils/D3D.h"
++#include "Utils/DevBenchUx.h"
+ #include "Utils/VRUtils.h"
+ 
+ #include <d3d11.h>
+@@ -34,7 +35,10 @@
+ 	StereoBlendColorThreshold,
+ 	ReprojectDebugMode,
+ 	EnableSSRFoveation,
+-	EnableSSRFoveationHardCutoff)
++	EnableSSRFoveationHardCutoff,
++	EnableShaderDetailFoveation,
++	EnableWaterParallaxFoveation,
++	EnableShaderDetailFoveationHardCutoff)
+ 
+ //=============================================================================
+ // FEATURE BASE CLASS OVERRIDES
+@@ -296,3 +300,21 @@
+ 		&err);
+ 	return (err == vr::TrackedProp_Success && hz > 1.0f) ? hz : 0.0f;
+ }
++
++void VR::RegisterUxActions()
++{
++	FEATURE_QUERY("shaderDetailMaskStatus",
++		"Read VR shader-detail mask settings and protected SR profile. Args: none. Returns available, coverageScale, horizontalScale, left/right offsets, lightingEnabled, waterParallaxEnabled, hardCutoff and ssrEnabled. Lighting includes hair self-shadow, extra direct wetness lighting and LLF contact shadows. Water includes parallax raymarching. Base lighting, geometry and neural inference remain unchanged. Toggle settings via openshaders.feature set for A/B verification.",
++		([](const Feature* feature, const json&) -> json {
++			const auto& settings = static_cast<const VR*>(feature)->settings;
++			const auto profile = globals::features::upscaling.foveatedRender.GetFoveationProfile();
++			return { { "available", globals::game::isVR && profile.available },
++				{ "coverageScale", profile.coverageScale }, { "horizontalScale", profile.centerHorizontalScale },
++				{ "leftOffset", { profile.centerOffsets[0].x, profile.centerOffsets[0].y } },
++				{ "rightOffset", { profile.centerOffsets[1].x, profile.centerOffsets[1].y } },
++				{ "lightingEnabled", settings.EnableShaderDetailFoveation },
++				{ "waterParallaxEnabled", settings.EnableWaterParallaxFoveation },
++				{ "hardCutoff", settings.EnableShaderDetailFoveationHardCutoff },
++				{ "ssrEnabled", settings.EnableSSRFoveation } };
++		}));
++}
+--- a/runtime/open-shaders/src/Features/Upscaling/FoveatedRender.cpp
++++ b/runtime/open-shaders/src/Features/Upscaling/FoveatedRender.cpp
+@@ -13,6 +13,8 @@
+ #include "GazeCropPolicy.h"
+ #include "NativeOpenVRGaze.h"
+ #include "NeuralRendering/Integration.h"
++#include "NeuralRendering/FeatherGeometry.h"
++#include "ShaderDetailMask.h"
+ #include "NeuralRendering/FuturePipeline.h"
+ #include "NeuralRendering/Renderer.h"
+ #include "../../Profiler.h"
+@@ -968,37 +970,23 @@
+ 	return (DlssMode)std::min(settings.dlssMode, 1u);
+ }
+ 
++
+ FoveatedRender::FoveationProfile FoveatedRender::GetFoveationProfile() const
+ {
+ 	FoveationProfile profile;
+ 	if (!IsActive())
+ 		return profile;
+-
+-	const auto leftUV = GetEffectiveLeftUV();
+-	const auto rightUV = GetEffectiveRightUV();
+-
+-	// Map the rectangular subrect onto the centered superellipse the mask helper expects: vertical
+-	// extent drives coverageScale (radiusY = coverageScale/2), the rect aspect drives the horizontal
+-	// stretch (radiusX = coverageScale * hScale/2). The mask carries one scale for both eyes (only
+-	// the center offset is per-eye), so size comes from the less-foveated (larger) extent of the two:
+-	// the center is the superset enclosing both eyes' full-quality regions, so neither eye's sharp
+-	// zone is ever foveated (min would shrink it below an eye's sharp region and foveate it). A
+-	// full eye therefore yields full coverage and disables foveation (the gate below).
+-	const float coverageH = std::max(leftUV.h, rightUV.h);
+-	const float coverageW = std::max(leftUV.w, rightUV.w);
+-	const float coverageScale = FoveatedCommon::ClampCenterScale(coverageH);
+-
+-	// Availability keys off the clamped scale: if the larger eye rounds up to full coverage there is
+-	// nothing to foveate, leave the default (available == false).
+-	if (!FoveatedCommon::IsActiveCoverage(coverageScale))
+-		return profile;
+-
+-	profile.available = true;
+-	profile.coverageScale = coverageScale;
+-	profile.centerHorizontalScale = FoveatedCommon::ClampCenterHorizontalScale(
+-		coverageH > 1e-4f ? coverageW / coverageH : 1.0f);
+-	profile.centerOffsets[0] = float2{ (leftUV.x + leftUV.w * 0.5f) - 0.5f, (leftUV.y + leftUV.h * 0.5f) - 0.5f };
+-	profile.centerOffsets[1] = float2{ (rightUV.x + rightUV.w * 0.5f) - 0.5f, (rightUV.y + rightUV.h * 0.5f) - 0.5f };
++	const auto& upscaling = globals::features::upscaling;
++	auto leftUV = GetEffectiveLeftUV();
++	auto rightUV = GetEffectiveRightUV();
++	const bool expandedSR = settings.neuralFeatherEnabled && settings.neuralRenderingEnabled &&
++		GetDlssMode() == DlssMode::kDefault && upscaling.GetUpscaleMethod() == Upscaling::UpscaleMethod::kDLSS &&
++		(!settings.neuralRenderingAdaptiveEnabled || !adaptivePassInitialized || adaptiveActivePasses > 0);
++	if (expandedSR) {
++		leftUV = NeuralRendering::FeatherGeometry::Expand(leftUV, settings.neuralFeatherExpansion);
++		rightUV = NeuralRendering::FeatherGeometry::Expand(rightUV, settings.neuralFeatherExpansion);
++	}
++	ShaderDetailMask::ProtectRectangles(profile, leftUV, rightUV);
+ 	return profile;
+ }
+ 
+--- a/runtime/open-shaders/src/Features/VR/SettingsUI.cpp
++++ b/runtime/open-shaders/src/Features/VR/SettingsUI.cpp
+@@ -164,6 +164,14 @@
+ 				}
+ 			}
+ 
++			ImGui::BeginDisabled(!foveatedDLSSActive);
++			ImGui::Checkbox("CSX lighting detail mask", &settings.EnableShaderDetailFoveation);
++			ImGui::Checkbox("CSX water parallax mask", &settings.EnableWaterParallaxFoveation);
++			ImGui::Checkbox("Hard cutoff for CSX detail mask", &settings.EnableShaderDetailFoveationHardCutoff);
++			if (auto _tt = Util::HoverTooltipWrapper()) {
++				ImGui::TextUnformatted("Skips hair self-shadow, extra wetness lighting, contact shadows and water parallax outside the protected SR region. Base lighting stays active. Feathered by default.");
++			}
++			ImGui::EndDisabled();
+ 			ImGui::BeginDisabled(!foveatedDLSSActive || !ssrEnabled);
+ 			ImGui::Checkbox(T(TKEY("foveated_ssr_raymarching"), "Foveate SSR (follows DLSS region)"), &settings.EnableSSRFoveation);
+ 			if (auto _tt = Util::HoverTooltipWrapper()) {
+--- a/runtime/open-shaders/features/Water Effects/Shaders/WaterEffects/WaterParallax.hlsli
++++ b/runtime/open-shaders/features/Water Effects/Shaders/WaterEffects/WaterParallax.hlsli
+@@ -60,8 +60,10 @@
+ 		return heights.x + heights.y + heights.z;
+ 	}
+ 
+-	float2 GetParallaxOffset(PS_INPUT input, float3 normalScalesRcp)
+-	{
++	float2 GetParallaxOffset(PS_INPUT input, float3 normalScalesRcp, float detailWeight)
++	{
++		if (!FoveatedIsShaderDetailActive(detailWeight))
++			return 0.0;
+ 		if (SharedData::csUtilitySettings.waterParallaxStrength == 0.0)
+ 			return 0.0.xx;
+ 
+@@ -78,7 +80,7 @@
+ 		mipLevels.y = GetMipLevel(input.TexCoord1.zw, Normals02Tex, screenNoise);
+ 		mipLevels.z = GetMipLevel(input.TexCoord2.xy, Normals03Tex, screenNoise);
+ 
+-		float stepSize = rcp((float)SharedData::csUtilitySettings.waterParallaxQuality);
++		float stepSize = rcp(max(1.0, ceil((float)SharedData::csUtilitySettings.waterParallaxQuality * detailWeight)));
+ 		float currBound = 0.0;
+ 		float currHeight = 1.0;
+ 		float prevHeight = 1.0;
+@@ -97,7 +99,7 @@
+ 		float denominator = delta2 - delta1;
+ 		float parallaxAmount = (currBound * delta2 - prevBound * delta1) / denominator;
+ 
+-		return parallaxOffsetTS.xy * parallaxAmount;
++		return parallaxOffsetTS.xy * parallaxAmount * detailWeight;
+ 	}
+ 
+ #if defined(FLOWMAP)
+@@ -136,8 +138,10 @@
+ 		return parallaxDir * (parallaxScale * SharedData::csUtilitySettings.waterParallaxStrength);
+ 	}
+ 
+-	float GetFlowmapParallaxAmount(PS_INPUT input, float2 flowmapDims, float3 viewDirection)
+-	{
++	float GetFlowmapParallaxAmount(PS_INPUT input, float2 flowmapDims, float3 viewDirection, float detailWeight)
++	{
++		if (!FoveatedIsShaderDetailActive(detailWeight))
++			return 0.0;
+ 		float viewDotUp = -viewDirection.z;
+ 		if (viewDotUp < FlowmapParallaxMinViewDotUp || SharedData::csUtilitySettings.waterParallaxStrength == 0.0)
+ 			return 0.0;
+@@ -147,7 +151,7 @@
+ 		float2 uvShiftPx = 1 / (128 * flowmapDims);
+ 
+ 		float quality = (float)SharedData::csUtilitySettings.waterParallaxQuality;
+-		int numSteps = (int)lerp(quality * FlowmapParallaxGrazingStepsScale, quality * FlowmapParallaxUprightStepsScale, viewDotUp);
++		int numSteps = max(1, (int)ceil(lerp(quality * FlowmapParallaxGrazingStepsScale, quality * FlowmapParallaxUprightStepsScale, viewDotUp) * detailWeight));
+ 		float stepSize = rcp((float)numSteps);
+ 
+ 		float currBound = 0.0;
+@@ -182,8 +186,10 @@
+ 		return height;
+ 	}
+ 
+-	float2 GetFlowmapParallaxUVOffset(PS_INPUT input, float3 viewDirection, float3 normalScalesRcp)
+-	{
++	float2 GetFlowmapParallaxUVOffset(PS_INPUT input, float3 viewDirection, float3 normalScalesRcp, float detailWeight)
++	{
++		if (!FoveatedIsShaderDetailActive(detailWeight))
++			return 0.0;
+ 		if (SharedData::csUtilitySettings.waterParallaxStrength == 0.0)
+ 			return 0.0.xx;
+ 
+@@ -193,7 +199,7 @@
+ 		float screenNoise = Random::InterleavedGradientNoise(Stereo::EyeStableNoiseCoord(input.HPosition.xy, SharedData::BufferDim.xy), SharedData::FrameCount);
+ 		float mipLevel = GetMipLevel(input.TexCoord1.xy, Normals01Tex, screenNoise);
+ 
+-		float stepSize = rcp((float)SharedData::csUtilitySettings.waterParallaxQuality);
++		float stepSize = rcp(max(1.0, ceil((float)SharedData::csUtilitySettings.waterParallaxQuality * detailWeight)));
+ 		float currBound = 0.0;
+ 		float currHeight = 1.0;
+ 		float prevHeight = 1.0;
+@@ -211,12 +217,12 @@
+ 		float denominator = delta2 - delta1;
+ 		float parallaxAmount = (currBound * delta2 - prevBound * delta1) / denominator;
+ 
+-		return parallaxOffsetTS.xy * parallaxAmount;
+-	}
+-
+-	float2 GetFlowmapParallaxOffset(PS_INPUT input, float2 flowmapDimensions, float3 viewDirection, float3 normalScalesRcp)
+-	{
+-		return GetFlowmapParallaxUVOffset(input, viewDirection, normalScalesRcp);
++		return parallaxOffsetTS.xy * parallaxAmount * detailWeight;
++	}
++
++	float2 GetFlowmapParallaxOffset(PS_INPUT input, float2 flowmapDimensions, float3 viewDirection, float3 normalScalesRcp, float detailWeight)
++	{
++		return GetFlowmapParallaxUVOffset(input, viewDirection, normalScalesRcp, detailWeight);
+ 	}
+ #endif
+ }
+--- /dev/null
++++ b/runtime/open-shaders/package/Shaders/Common/ShaderDetailFoveation.hlsli
+@@ -0,0 +1,18 @@
++#ifndef SHADER_DETAIL_FOVEATION_HLSLI
++#define SHADER_DETAIL_FOVEATION_HLSLI
++
++#include "Common/SharedData.hlsli"
++#include "Common/FoveatedShaderDetail.hlsli"
++
++float GetShaderDetailFoveationWeight(float mode, float2 eyeUV, uint eyeIndex)
++{
++#if defined(VR)
++	float2 offset = eyeIndex == 0 ? SharedData::VRFoveationCenterOffsets.xy : SharedData::VRFoveationCenterOffsets.zw;
++	return FoveatedEvaluateShaderDetailWeight(mode, eyeUV, SharedData::VRFoveationData0.x,
++		SharedData::VRFoveationData0.y, SharedData::VRFoveationData0.z, offset);
++#else
++	return 1.0;
++#endif
++}
++
++#endif
+--- /dev/null
++++ b/runtime/open-shaders/src/Features/Upscaling/ShaderDetailMask.h
+@@ -0,0 +1,25 @@
++#pragma once
++#include <cstdint>
++#include "../FoveatedCommon.h"
++
++namespace ShaderDetailMask
++{
++	inline constexpr float kRectangleGuard = 1.189208f;
++
++	/** @brief Encloses both SR rectangles in a power-four mask without reducing their corners. */
++	template<class Profile, class Region>
++	bool ProtectRectangles(Profile& profile, const Region& left, const Region& right)
++	{
++		const float height = std::max(left.h, right.h);
++		const float width = std::max(left.w, right.w);
++		const float scale = FoveatedCommon::ClampCenterScale(std::max(height, width * 0.5f) * kRectangleGuard);
++		if (!FoveatedCommon::IsActiveCoverage(scale))
++			return false;
++		profile.available = true;
++		profile.coverageScale = scale;
++		profile.centerHorizontalScale = FoveatedCommon::ClampCenterHorizontalScale(width * kRectangleGuard / scale);
++		profile.centerOffsets[0] = { left.x + left.w * 0.5f - 0.5f, left.y + left.h * 0.5f - 0.5f };
++		profile.centerOffsets[1] = { right.x + right.w * 0.5f - 0.5f, right.y + right.h * 0.5f - 0.5f };
++		return true;
++	}
++}

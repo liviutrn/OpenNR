@@ -1,8 +1,8 @@
-name: Build OpenNR 2.20.1-v06-r8 experimental
+name: Build OpenNR R8 CSX detail mask
 
 on:
   push:
-    branches: ["build/2.20.1-v06-r8"]
+    branches: ["build/2.20.1-v06-r8-csx-mask"]
   workflow_dispatch:
 
 concurrency:
@@ -316,6 +316,31 @@ jobs:
           git diff --check
           if ($LASTEXITCODE) { throw 'r8 whitespace check failed' }
 
+      - name: Apply and verify CSX shader detail mask
+        shell: pwsh
+        run: |
+          python scripts/csx-mask/apply-mask.py
+          if ($LASTEXITCODE) { throw 'CSX mask exact source replay failed' }
+          python scripts/v07/verify-stack.py
+          if ($LASTEXITCODE) { throw 'CSX mask retained NR contracts failed' }
+          cl /nologo /std:c++20 /EHsc /W4 /WX scripts/csx-mask/test-mask.cpp /Fe:csx-mask-geometry.exe
+          if ($LASTEXITCODE) { throw 'CSX mask geometry compilation failed' }
+          & ./csx-mask-geometry.exe
+          if ($LASTEXITCODE) { throw 'CSX mask protected SR coverage failed' }
+          python -m pip install pyyaml
+          if ($LASTEXITCODE) { throw 'Shader fixture reader unavailable' }
+          $sdkBin = Join-Path ${env:ProgramFiles(x86)} 'Windows Kits/10/bin'
+          $fxc = Get-ChildItem $sdkBin -Filter fxc.exe -Recurse | Where-Object { $_.Directory.Name -eq 'x64' } | Sort-Object FullName -Descending | Select-Object -First 1
+          if (-not $fxc) { throw 'Windows SDK shader compiler unavailable' }
+          python scripts/csx-mask/compile-shaders.py --fxc $fxc.FullName
+          if ($LASTEXITCODE) { throw 'Lighting/Water shader compilation failed' }
+          cl /nologo /std:c++20 /EHsc /W4 /WX scripts/csx-mask/test-mask-warp.cpp d3d11.lib d3dcompiler.lib /Fe:csx-mask-warp.exe
+          if ($LASTEXITCODE) { throw 'CSX mask WARP compilation failed' }
+          & ./csx-mask-warp.exe
+          if ($LASTEXITCODE) { throw 'CSX mask HLSL or shared buffer ABI failed' }
+          git diff --check
+          if ($LASTEXITCODE) { throw 'CSX mask whitespace check failed' }
+
       - name: Install CMake
         uses: lukka/get-cmake@v4.3.3
         with:
@@ -351,7 +376,7 @@ jobs:
       - name: Add v06 package notes and hashes
         shell: pwsh
         run: |
-          Copy-Item docs/versions/2.20.1-v06/r8/README.md dist/README-2.20.1-v06.txt
+          Copy-Item docs/versions/2.20.1-v06/r8-csx-mask/README.md dist/README-2.20.1-v06.txt
           Get-ChildItem -Recurse dist -File | ForEach-Object {
             $h = Get-FileHash $_.FullName -Algorithm SHA256
             "$($h.Hash)  $($_.FullName)"
@@ -370,13 +395,13 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force artifacts/r8 | Out-Null
           Copy-Item dist/*.7z artifacts/r8/
-          python scripts/v08/audit-package.py
+          python scripts/csx-mask/audit-package.py
           if ($LASTEXITCODE) { throw 'r8 package regression audit failed' }
 
       - name: Upload r8 package audit
         uses: actions/upload-artifact@v4
         with:
-          name: OpenNR-v06-r8-package-audit
+          name: OpenNR-v06-r8-csx-mask-package-audit
           path: audit-results/*
           if-no-files-found: error
           retention-days: 14
@@ -384,7 +409,7 @@ jobs:
       - name: Upload v06 checkpoint package
         uses: actions/upload-artifact@v4
         with:
-          name: OpenNR-2.20.1-v06-r8-neural-feather-carrier-excluded
+          name: OpenNR-2.20.1-v06-r8-csx-mask-carrier-excluded
           path: dist/*
           if-no-files-found: error
           retention-days: 14

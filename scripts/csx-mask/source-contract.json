@@ -1,0 +1,50 @@
+{
+  "runtime/open-shaders/src/State.h": {
+    "before": "a7a713e572ca47b1ff7f513e7cd8c418cc67aaec2de094097400e687e25bb058",
+    "after": "e98010c257dd2a04e7c8f4cdd9211f0fdae281dfdba662ad984011af9de7bb7c"
+  },
+  "runtime/open-shaders/src/State.cpp": {
+    "before": "da9ba70ba2dd366945421cabf575ca278e98192090f8ad2d57a32c666c63139d",
+    "after": "05397d132f4d371526d025eefb09be0a86bee585208ab73af118068d3fd37fed"
+  },
+  "runtime/open-shaders/package/Shaders/Water.hlsl": {
+    "before": "85bd45755cdc1efe076c8076225d8c4d3a149d4f50580796bccc5ef70d875f34",
+    "after": "c7eb712b4dd6c4d39cc0442e1687dbe41d9771099183afb81231ac45f1ef644c"
+  },
+  "runtime/open-shaders/package/Shaders/Lighting.hlsl": {
+    "before": "2f471523e8a7d1d8912aab1afe3d9a74dd670223e70d1cade3fbead919697d43",
+    "after": "49b005d26db68156a1bbfbb775ab40c21ff5daae9bd0ea2ee977dcbf1ae7a0ab"
+  },
+  "runtime/open-shaders/package/Shaders/Common/SharedData.hlsli": {
+    "before": "c4a10fb8b073dcf26ecef2b1441ed9fcdda4f9629c5c03446b4930175eeffb99",
+    "after": "ad1583a488bd0ce3933f656b27aeade1edc3d876421a76b74ad786330609d4a5"
+  },
+  "runtime/open-shaders/src/Features/VR.h": {
+    "before": "9013c7714df6126593390f8aefc9afb060a5d226d6e2d187e11d53a523050fd8",
+    "after": "04c18500a84d8b21ed034f3b619665c8d3ca67b966051cd8bfb3058b5d4eb171"
+  },
+  "runtime/open-shaders/src/Features/VR.cpp": {
+    "before": "cbef542a558debaccd7a92a2bb18138e771e3b56a3cad04d8af36ac78a064afe",
+    "after": "eef1bec4a0e239ab5eb06ff9a4c3b73f55029dd1fcbff0c172a16295d4615c60"
+  },
+  "runtime/open-shaders/src/Features/Upscaling/FoveatedRender.cpp": {
+    "before": "79c468cbb8d5f10d92ef51a9b0f629e03ef73325a95523ad955dcd08277e7aff",
+    "after": "d65f9484101cceaf7586f82d22d3de7b68fc964f5d43ac3f2ea97113a41c96d8"
+  },
+  "runtime/open-shaders/src/Features/VR/SettingsUI.cpp": {
+    "before": "27795209d1d5f0ff2ecd0fb00831f1d3379d8e5f55fa754061a7b92429e441a6",
+    "after": "da73ea0153f818766144f62db55727e4ea6dad9f8be85aae934e36eafc46aa30"
+  },
+  "runtime/open-shaders/features/Water Effects/Shaders/WaterEffects/WaterParallax.hlsli": {
+    "before": "b2956304b3edf30077db4f1fc33ba75f3d21d992b7a8fdac6753c35d2c610344",
+    "after": "fd4d5a7d0a1cba60498392de590afb7051bf2293c40c174c9d9133ff623ec711"
+  },
+  "runtime/open-shaders/package/Shaders/Common/ShaderDetailFoveation.hlsli": {
+    "before": null,
+    "after": "137e5b2f752d72434160022585afdf6bd8b64b9d62bdcd348c074b43b56c36b7"
+  },
+  "runtime/open-shaders/src/Features/Upscaling/ShaderDetailMask.h": {
+    "before": null,
+    "after": "1f5cd7a814a51df6b3a07f8a97e86858236be2ee61e22f7523b5ce3cdae023e7"
+  }
+}
