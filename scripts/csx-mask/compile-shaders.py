@@ -3,12 +3,14 @@ from pathlib import Path
 import argparse,itertools,json,shutil,subprocess,concurrent.futures
 import yaml
 root=Path(__file__).resolve().parents[2]
-ap=argparse.ArgumentParser();ap.add_argument('--fxc',required=True);args=ap.parse_args()
+ap=argparse.ArgumentParser();ap.add_argument('--fxc');ap.add_argument('--prepare-only',action='store_true');args=ap.parse_args()
 source=root/'runtime/open-shaders';merged=root/'shader-smoke';merged.mkdir(exist_ok=True)
 shutil.copytree(source/'package/Shaders',merged,dirs_exist_ok=True)
 for feature in sorted((source/'features').iterdir()):
     if (feature/'Shaders').is_dir(): shutil.copytree(feature/'Shaders',merged,dirs_exist_ok=True)
 shutil.copyfile(root/'scripts/csx-mask/TestMaskCS.hlsl',merged/'TestMaskCS.hlsl')
+if args.prepare_only: print('Shader tree prepared');raise SystemExit(0)
+assert args.fxc,'--fxc is required for compilation'
 cases=[]
 for runtime,suffix in [('VR','-vr'),('SE','')]:
     fixture=yaml.safe_load((source/f'.github/configs/shader-validation{suffix}.yaml').read_text())

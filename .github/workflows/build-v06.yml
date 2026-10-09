@@ -332,12 +332,14 @@ jobs:
           $sdkBin = Join-Path ${env:ProgramFiles(x86)} 'Windows Kits/10/bin'
           $fxc = Get-ChildItem $sdkBin -Filter fxc.exe -Recurse | Where-Object { $_.Directory.Name -eq 'x64' } | Sort-Object FullName -Descending | Select-Object -First 1
           if (-not $fxc) { throw 'Windows SDK shader compiler unavailable' }
-          python scripts/csx-mask/compile-shaders.py --fxc $fxc.FullName
-          if ($LASTEXITCODE) { throw 'Lighting/Water shader compilation failed' }
+          python scripts/csx-mask/compile-shaders.py --prepare-only
+          if ($LASTEXITCODE) { throw 'Shader tree preparation failed' }
           cl /nologo /std:c++20 /EHsc /W4 /WX scripts/csx-mask/test-mask-warp.cpp d3d11.lib d3dcompiler.lib /Fe:csx-mask-warp.exe
           if ($LASTEXITCODE) { throw 'CSX mask WARP compilation failed' }
           & ./csx-mask-warp.exe
           if ($LASTEXITCODE) { throw 'CSX mask HLSL or shared buffer ABI failed' }
+          python scripts/csx-mask/compile-shaders.py --fxc $fxc.FullName
+          if ($LASTEXITCODE) { throw 'Lighting/Water shader compilation failed' }
           git diff --check
           if ($LASTEXITCODE) { throw 'CSX mask whitespace check failed' }
 

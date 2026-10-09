@@ -9,10 +9,11 @@
 #include <iostream>
 #include <stdexcept>
 #include <vector>
+#include <string_view>
 using Microsoft::WRL::ComPtr;
-void Check(HRESULT result) {if(FAILED(result)) throw std::runtime_error("D3D11 test failed");}
+void Check(HRESULT result) {if(FAILED(result)) throw std::runtime_error("D3D11 HRESULT " + std::to_string(static_cast<unsigned>(result)));}
 void Require(bool result,const char* reason) {if(!result) throw std::runtime_error(reason);}
-int main() {
+int Run() {
  ComPtr<ID3D11Device> device;ComPtr<ID3D11DeviceContext> context;
  Check(D3D11CreateDevice(nullptr,D3D_DRIVER_TYPE_WARP,nullptr,0,nullptr,0,D3D11_SDK_VERSION,device.GetAddressOf(),nullptr,context.GetAddressOf()));
  ComPtr<ID3DBlob> code,error;D3D_SHADER_MACRO defines[]={{"VR","1"},{nullptr,nullptr}};
@@ -20,8 +21,15 @@ int main() {
  if(FAILED(result)&&error) std::cerr<<static_cast<const char*>(error->GetBufferPointer());Check(result);
  ComPtr<ID3D11ComputeShader> shader;Check(device->CreateComputeShader(code->GetBufferPointer(),code->GetBufferSize(),nullptr,shader.GetAddressOf()));
  ComPtr<ID3D11ShaderReflection> reflection;Check(D3DReflect(code->GetBufferPointer(),code->GetBufferSize(),IID_PPV_ARGS(reflection.GetAddressOf())));
- auto cb=reflection->GetConstantBufferByName("SharedData");D3D11_SHADER_BUFFER_DESC desc{};Check(cb->GetDesc(&desc));std::vector<float> data(desc.Size/4);
- auto offset=[&](const char* name) {D3D11_SHADER_VARIABLE_DESC v{};Check(cb->GetVariableByName(name)->GetDesc(&v));return v.StartOffset/4;};
+ D3D11_SHADER_DESC shaderDesc{};Check(reflection->GetDesc(&shaderDesc));
+ for(UINT i=0;i<shaderDesc.ConstantBuffers;++i) {D3D11_SHADER_BUFFER_DESC d{};Check(reflection->GetConstantBufferByIndex(i)->GetDesc(&d));std::cout<<"Constant buffer: "<<d.Name<<" size "<<d.Size<<std::endl;}
+
+ auto matches=[](const char* name,std::string_view target) {std::string_view actual=name;return actual==target||(actual.size()>target.size()+2&&actual.ends_with(target)&&actual.substr(actual.size()-target.size()-2,2)=="::");};
+ ID3D11ShaderReflectionConstantBuffer* cb=nullptr;D3D11_SHADER_BUFFER_DESC desc{};
+ for(UINT i=0;i<shaderDesc.ConstantBuffers;++i) {auto candidate=reflection->GetConstantBufferByIndex(i);D3D11_SHADER_BUFFER_DESC d{};Check(candidate->GetDesc(&d));if(matches(d.Name,"SharedData")) {cb=candidate;desc=d;break;}}
+ Require(cb!=nullptr,"Production SharedData buffer missing from reflection");std::vector<float> data(desc.Size/4);
+ auto offset=[&](const char* name) {for(UINT i=0;i<desc.Variables;++i) {D3D11_SHADER_VARIABLE_DESC v{};Check(cb->GetVariableByIndex(i)->GetDesc(&v));if(matches(v.Name,name)) return v.StartOffset/4;}throw std::runtime_error(std::string("SharedData variable missing: ")+name);};
+
  const auto modes=offset("VRDetailFoveationModes");Require(modes==offset("RefractionScale")+1,"Padding mode ABI changed");
  Require(offset("WindFieldTuning")==offset("RefractionScale")+4,"Wind ABI shifted");
  const auto mask=offset("VRFoveationData0"),centers=offset("VRFoveationCenterOffsets");
@@ -47,4 +55,7 @@ int main() {
   context->Unmap(readback.Get(),0);
  }
  std::cout<<"Actual HLSL mask: off, feather, hard cutoff, stereo offsets, corners and shared buffer ABI passed\n";
+ return 0;
 }
+
+int main() {try {return Run();} catch(const std::exception& error) {std::cerr<<error.what()<<std::endl;return 1;}}
