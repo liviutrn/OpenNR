@@ -50,9 +50,11 @@ rectangles use the existing `FeatherGeometry::Expand` helper with the same
 route conditions as Params.cpp. This deliberately protects the expanded
 region and can reduce the saving when exterior expansion is large.
 
-The actual mask's centers are those returned by the existing gaze/crop
-path. No additional smoothing, deadzone or temporal neural operation is
-introduced. Menu/reflection exclusions occur in the pixel shaders using
+The mask resolves gaze through the existing once-per-frame cache before
+material rendering. DLSS and NR reuse that exact sample and crop later in
+the frame. The adaptive controller is updated first, using its existing
+once-per-frame guard, so an early mask cannot lock an outdated crop size.
+No additional smoothing, deadzone or temporal neural operation is introduced. Menu/reflection exclusions occur in the pixel shaders using
 pass descriptors; the CPU's activeReflections flag is latched through the
 frame and is therefore unsuitable as a main-view mask enable gate.
 

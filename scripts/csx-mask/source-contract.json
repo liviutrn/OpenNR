@@ -5,7 +5,7 @@
   },
   "runtime/open-shaders/src/State.cpp": {
     "before": "da9ba70ba2dd366945421cabf575ca278e98192090f8ad2d57a32c666c63139d",
-    "after": "05397d132f4d371526d025eefb09be0a86bee585208ab73af118068d3fd37fed"
+    "after": "c263263e108e91b212a5fde18bb43516dda75c18562bd323d99d11ddb60113b7"
   },
   "runtime/open-shaders/package/Shaders/Water.hlsl": {
     "before": "85bd45755cdc1efe076c8076225d8c4d3a149d4f50580796bccc5ef70d875f34",
@@ -29,7 +29,7 @@
   },
   "runtime/open-shaders/src/Features/Upscaling/FoveatedRender.cpp": {
     "before": "79c468cbb8d5f10d92ef51a9b0f629e03ef73325a95523ad955dcd08277e7aff",
-    "after": "d65f9484101cceaf7586f82d22d3de7b68fc964f5d43ac3f2ea97113a41c96d8"
+    "after": "30b6c822ce176b5fb9750c001c4d786d3884abd6b1e8537babfca54ff474a4f5"
   },
   "runtime/open-shaders/src/Features/VR/SettingsUI.cpp": {
     "before": "27795209d1d5f0ff2ecd0fb00831f1d3379d8e5f55fa754061a7b92429e441a6",

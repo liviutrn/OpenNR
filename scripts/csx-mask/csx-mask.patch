@@ -20,7 +20,7 @@
  	static_assert(offsetof(SharedDataCB, VRFoveationData0) % 16 == 0);
 --- a/runtime/open-shaders/src/State.cpp
 +++ b/runtime/open-shaders/src/State.cpp
-@@ -1513,27 +1513,28 @@
+@@ -1513,27 +1513,30 @@
  		data.HDRData = globals::features::hdrDisplay.GetSharedDataHDR();
  		data.RefractionScale = refractionScale;
  
@@ -38,6 +38,8 @@
 -			                                 dynamicCubemaps.loaded && dynamicCubemaps.settings.EnabledSSR;
 -			if (ssrFoveationEnabled) {
 +			if (vr.loaded && upscaling.loaded) {
++				if (upscaling.foveatedRender.IsActive())
++					upscaling.foveatedRender.UpdateAdaptiveState(frameCount, true);
  				const auto profile = upscaling.foveatedRender.GetFoveationProfile();
 -				if (profile.available) {  // available already implies an active (non-full) coverage scale
 +				if (profile.available) {
@@ -413,7 +415,7 @@
  #include "NeuralRendering/FuturePipeline.h"
  #include "NeuralRendering/Renderer.h"
  #include "../../Profiler.h"
-@@ -968,37 +970,23 @@
+@@ -968,37 +970,35 @@
  	return (DlssMode)std::min(settings.dlssMode, 1u);
  }
  
@@ -452,6 +454,18 @@
 +	const auto& upscaling = globals::features::upscaling;
 +	auto leftUV = GetEffectiveLeftUV();
 +	auto rightUV = GetEffectiveRightUV();
++	const auto gazeConfig = FoveatedRenderImpl::NativeOpenVRGaze::MakeConfig(settings,
++		subrectController.GetUV().w, subrectController.GetUV().h);
++	const bool gazeRequested = gazeConfig.enabled && settings.neuralRenderingEnabled &&
++		GetDlssMode() == DlssMode::kDefault && upscaling.GetUpscaleMethod() == Upscaling::UpscaleMethod::kDLSS;
++	if (gazeRequested && globals::state) {
++		const auto renderSize = Util::ConvertToDynamic(globals::state->screenSize);
++		const auto gaze = FoveatedRenderImpl::NativeOpenVRGaze::ResolveForFrame(gazeConfig, leftUV, rightUV,
++			static_cast<std::uint32_t>(renderSize.x / 2), static_cast<std::uint32_t>(renderSize.y),
++			globals::state->frameCount, FoveatedRenderImpl::NativeOpenVRGaze::IsDynamicGazeAllowed());
++		leftUV = gaze.leftUV;
++		rightUV = gaze.rightUV;
++	}
 +	const bool expandedSR = settings.neuralFeatherEnabled && settings.neuralRenderingEnabled &&
 +		GetDlssMode() == DlssMode::kDefault && upscaling.GetUpscaleMethod() == Upscaling::UpscaleMethod::kDLSS &&
 +		(!settings.neuralRenderingAdaptiveEnabled || !adaptivePassInitialized || adaptiveActivePasses > 0);
