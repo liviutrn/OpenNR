@@ -1,0 +1,162 @@
+name: Reconstruct r7 for r10 review
+on:
+  push:
+    branches: ["verify/2.20.1-v06-r10-source"]
+    paths: [".github/workflows/review-r10.yml"]
+permissions:
+  contents: write
+jobs:
+  reconstruct:
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - name: Reconstruct validated v00-v02 chain
+        shell: pwsh
+        run: |
+          pwsh -NoProfile -File scripts/v01/apply-v00-base.ps1
+          if ($LASTEXITCODE) { throw 'v00 failed' }
+          pwsh -NoProfile -File scripts/v01/apply-settings.ps1
+          if ($LASTEXITCODE) { throw 'v01 settings failed' }
+          pwsh -NoProfile -File scripts/v01/apply-gaze-sequential-fixed3.ps1
+          if ($LASTEXITCODE) { throw 'v01 gaze/sequential failed' }
+          @(
+            'scripts/v01/apply-sequential-renderer-fixed2.ps1','scripts/v01/apply-pass2-composite.ps1',
+            'scripts/v01/apply-stereo-atlas-fixed2.ps1','scripts/v01/apply-atlas-safety.ps1','scripts/v01/apply-ui.ps1',
+            'scripts/v02/apply-gaze-stability.ps1','scripts/v02/apply-atlas-motion-stability.ps1',
+            'scripts/v02/apply-pass2-stability.ps1','scripts/v02/apply-sharpening-fixed4.ps1'
+          ) | ForEach-Object {
+            Write-Host "Applying $_"
+            pwsh -NoProfile -File $_
+            if ($LASTEXITCODE) { throw "Transform failed: $_" }
+          }
+          git diff --check
+          if ($LASTEXITCODE) { throw 'Inherited transformed source has whitespace errors' }
+
+      - name: Reconstruct retained v03 non-controller changes
+        shell: pwsh
+        run: |
+          pwsh -NoProfile -File scripts/v03/prepare-controller-contract.ps1
+          if ($LASTEXITCODE) { throw 'controller contract cleanup failed' }
+          pwsh -NoProfile -File scripts/v03/apply-adaptive-relative-crop.ps1
+          if ($LASTEXITCODE) { throw 'relative adaptive crop failed' }
+          pwsh -NoProfile -File scripts/v03/apply-gaze-fixation-stability.ps1
+          if ($LASTEXITCODE) { throw 'gaze fixation stability failed' }
+          pwsh -NoProfile -File scripts/v03/apply-sharpness-range.ps1
+          if ($LASTEXITCODE) { throw 'extended sharpness failed' }
+          git diff --check
+
+      - name: Reconstruct v03 controller substrate
+        shell: pwsh
+        run: |
+          pwsh -NoProfile -File scripts/v03/apply-smart-frametime-controller-fixed.ps1
+          if ($LASTEXITCODE) { throw 'v03 controller substrate failed' }
+          git diff --check
+
+      - name: Reconstruct v04 atlas-safe controller substrate
+        shell: pwsh
+        run: |
+          pwsh -NoProfile -File scripts/v04/apply-unified-frametime-controller-fixed.ps1
+          if ($LASTEXITCODE) { throw 'v04 unified controller failed' }
+          pwsh -NoProfile -File scripts/v04/apply-atlas-adaptive-safety.ps1
+          if ($LASTEXITCODE) { throw 'v04 atlas adaptive safety failed' }
+          git diff --check
+          if ($LASTEXITCODE) { throw 'v04 transformed source has whitespace errors' }
+
+      - name: Apply v05 simple crop-first frametime controller
+        shell: pwsh
+        run: |
+          pwsh -NoProfile -File scripts/v05/apply-simple-frametime-controller-fixed.ps1
+          if ($LASTEXITCODE) { throw 'v05 simple controller failed' }
+          git diff --check
+          if ($LASTEXITCODE) { throw 'v05 transformed source has whitespace errors' }
+          git diff --stat
+
+      - name: Verify v05 generated-source invariants
+        shell: pwsh
+        run: |
+          $policy = Get-Content runtime/open-shaders/src/Features/Upscaling/NeuralRendering/RuntimePolicy.h -Raw
+          $fov = Get-Content runtime/open-shaders/src/Features/Upscaling/FoveatedRender.cpp -Raw
+          $fovh = Get-Content runtime/open-shaders/src/Features/Upscaling/FoveatedRender.h -Raw
+          $crop = Get-Content runtime/open-shaders/src/Features/Upscaling/NeuralRendering/AdaptiveCropController.h -Raw
+          $cropCpp = Get-Content runtime/open-shaders/src/Features/Upscaling/NeuralRendering/AdaptiveCropController.cpp -Raw
+          $integration = Get-Content runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Integration.cpp -Raw
+          $renderer = Get-Content runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Renderer.cpp -Raw
+          $gaze = Get-Content runtime/open-shaders/src/Features/Upscaling/GazeCropPolicy.h -Raw
+          $shader = Get-Content runtime/open-shaders/features/Upscaling/Shaders/Upscaling/RCAS/RCAS.hlsl -Raw
+
+          foreach ($signature in @(
+            'bool FoveatedRender::IsEyeTrackedFoveationEnabled\(\) const',
+            'Util::Subrect::UVRegion FoveatedRender::GetEffectiveLeftUV\(\) const',
+            'Util::Subrect::UVRegion FoveatedRender::GetEffectiveRightUV\(\) const'
+          )) {
+            if (([regex]::Matches($fov, "(?m)^$signature\r?\n\{")).Count -ne 1) { throw "Missing or duplicate crop/gaze helper definition: $signature" }
+          }
+
+          if ($policy -notmatch 'kFullResolutionNeuralRenderingOnly = false') { throw 'Runtime policy unexpectedly relocked' }
+          if ($fovh -notmatch 'neuralRenderingAdaptivePassIncreaseBelowMs = 14\.0f' -or $fovh -notmatch 'adaptiveFilteredFrameTimeMs') { throw 'v05 controller settings/state missing' }
+          if ($fov -notmatch '\[DLSSNR\]\[ADAPTIVE-v05\]' -or $fov -notmatch '\[DLSSNR\]\[BUDGET-v05\]') { throw 'v05 controller diagnostics missing' }
+          if ($fov -match '\[DLSSNR\]\[ADAPTIVE-v04\]' -or $fov -match '\[DLSSNR\]\[BUDGET-v04\]') { throw 'v04 decision body survived v05' }
+          if ($fov -match 'adaptiveController\.Update\(') { throw 'Old model-resolution controller still drives adaptive decisions' }
+          if ($fov -match 'Use custom FPS target' -or $fov -match 'Headset refresh target' -or $fov -match 'Estimated DLSS5 NR pass cost') { throw 'Old automatic controller UI survived v05' }
+          if ($fov -notmatch 'Pass \+1 below.*10\.0f, 30\.0f' -or $fov -notmatch 'Pass -1 above.*10\.0f, 30\.0f') { throw '10-30 ms threshold controls missing' }
+          if ($crop -notmatch 'std::array<std::uint32_t, 3> kCoverageBuckets' -or $crop -notmatch '100, 80, 60') { throw 'Approved 100/80/60 crop ladder missing' }
+          if ($crop -match '100, 90, 80, 70, 60, 50') { throw 'Old six-tier crop ladder survived' }
+          if ($cropCpp -notmatch 'upshiftFrames, 1u, 240u' -or $cropCpp -notmatch 'minimumDwellFrames, 1u, 600u') { throw 'Hidden crop decision delay survived' }
+          if ($fov -notmatch 'base\.w \* scale' -or $fov -notmatch 'base\.h \* scale') { throw 'Relative-to-user-crop scaling regressed' }
+          if ($fov -notmatch '(?s)cropAtFloor.*adaptiveActivePasses > 0' -or $fov -notmatch '(?s)cropAtCeiling.*adaptiveActivePasses < adaptiveConfiguredPasses') { throw 'Pass decisions are not crop-endpoint gated' }
+          if ($fov -notmatch 'restoringPasses' -or $fov -notmatch 'NeuralRendering::ResetHistory\(\)') { throw 'Pass restoration history protection missing' }
+          if ($integration -notmatch 'adaptiveEligible && settings\.neuralRenderingAdaptiveEnabled &&\s*foveated\.adaptivePassInitialized') { throw 'Integration not keyed to v05 controller state' }
+          if ($integration -notmatch 'adaptiveActivePasses > 0 \? std::min\(foveated\.adaptiveActivePasses - 1u, 2u\)') { throw 'Adaptive pass wiring missing' }
+          if ($integration -notmatch 'adaptiveActivePasses == 0') { throw 'Zero-pass bypass missing' }
+          if ($integration -notmatch 'tuning\.modelResolutionPercent = settings\.neuralRenderingModelResolution') { throw 'User-selected NR resolution is not locked during adaptive control' }
+          if ($integration -notmatch 'tuning\.adaptiveResolution = false') { throw 'Adaptive model-resolution flag not disabled' }
+          if ($integration -notmatch 'tuning\.temporalReuseCadence = 0;\s*\r?\n\s*tuning\.temporalReuseStaggerEyes = false;') { throw 'Atlas temporal safety override missing' }
+          if ($renderer -notmatch 'passCount >= 1 && passCount <= 2 && !tuning\.adaptiveResolution') { throw 'Stereo Atlas compatibility guard changed unexpectedly' }
+          if ($gaze -notmatch 'microPixels' -or $gaze -match '> 2\.0f\)\s*\r?\n\s*return sample') { throw 'Validated gaze fixation contract regressed' }
+          if ($shader -notmatch 'deltaBoost = max\(sharpness, 1\.0\)') { throw 'Extended sharpness mapping regressed' }
+          if ($integration -match 'keep cropped/foveated regions on the established single-pass route') { throw 'Old crop/sequential restriction returned' }
+
+      - name: Apply v06 stability and controller extensions
+        shell: pwsh
+        run: |
+          python scripts/v06/apply-stability.py
+          if ($LASTEXITCODE) { throw 'v06 source contract or patch failed' }
+          python scripts/v06/apply-headmotion-fix.py
+          if ($LASTEXITCODE) { throw 'v06 head-motion contract or patch failed' }
+          python scripts/v06/apply-shaking-fix.py
+          if ($LASTEXITCODE) { throw 'v06 crop-grid contract or patch failed' }
+          python scripts/v06/apply-outside-tone.py
+          if ($LASTEXITCODE) { throw 'v06 outside-tone contract or patch failed' }
+          python scripts/v06/apply-boundary-tone.py
+          if ($LASTEXITCODE) { throw 'v06 boundary-tone contract or patch failed' }
+          python scripts/v06/audit-boundary-tone.py
+          if ($LASTEXITCODE) { throw 'v06 boundary-tone numerical oracle failed' }
+          python scripts/v06/apply-seam-tone.py
+          if ($LASTEXITCODE) { throw 'v06 targeted-seam contract or patch failed' }
+          python scripts/v06/audit-seam-tone.py
+          if ($LASTEXITCODE) { throw 'v06 targeted-seam numerical oracle failed' }
+          python scripts/v06/apply-nr-black.py
+          if ($LASTEXITCODE) { throw 'v06 inside-NR protection source contract failed' }
+          python scripts/v06/audit-nr-black.py
+          if ($LASTEXITCODE) { throw 'v06 inside-NR protection or range oracle failed' }
+
+
+
+      - name: Verify r7 and record reconstructed source
+        shell: pwsh
+        run: |
+          python scripts/v07/apply-r7.py
+          if ($LASTEXITCODE) { throw 'r7 reconstruction failed' }
+          python scripts/v07/audit-source.py
+          if ($LASTEXITCODE) { throw 'r7 baseline audit failed' }
+          git diff --check
+          if ($LASTEXITCODE) { throw 'source whitespace check failed' }
+          git config user.name Codex
+          git config user.email codex@openai.com
+          git add runtime/open-shaders
+          git commit -m "chore(nr): record reviewed r7 source [skip ci]"
+          if ($LASTEXITCODE) { throw 'snapshot commit failed' }
+          git push
+          if ($LASTEXITCODE) { throw 'snapshot push failed' }
