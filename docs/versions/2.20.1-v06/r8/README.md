@@ -2,7 +2,7 @@
 
 This custom OpenNR build combines DLSS Super Resolution with stereo-atlas Neural Rendering, gaze-tracked foveated crops, a coordinated GPU-frametime controller and configurable protection for dark scenes. The guide describes the features and controls present in this release.
 
-**Experimental test revision.** [Builds and downloadable artifacts](https://github.com/liviutrn/OpenNR/actions/workflows/build-v06.yml?query=branch%3Abuild%2F2.20.1-v06-r8). Use only a successful run for this branch. The previous stable release remains available separately.
+**Experimental test revision.** [Download the r8 prerelease](https://github.com/liviutrn/OpenNR/releases/tag/opennr-2.20.1-v06-r8) · [Download the mod archive](https://github.com/liviutrn/OpenNR/releases/download/opennr-2.20.1-v06-r8/OpenNR-2.20.1-v06-r8.7z). The previous stable release remains available separately.
 
 The new sampling option is off by default. It requires headset testing for seam visibility, gaze stability and GPU cost; software shader tests cannot establish those results.
 
@@ -145,7 +145,7 @@ Result Shaping is off on first run. Near-black protection works independently of
 
 Native gaze is used automatically when available. **Gaze smoothing** spans 0–250 ms; zero adds no gaze filtering. **Crop movement quantization** spans 0–64 input pixels; zero turns optional movement quantization off, while internal guide/sampling-grid alignment remains active. There is no configurable gaze deadzone. **Freeze crop at selected centre** provides a fixed-crop comparison.
 
-Diagnostics show provider/API, focus, query validity, dynamic/static crop, fallback, history-reset state, query age/cost, counters and filtered coordinates. Query age is time since the last valid application query, not headset sensor age. Invalid queries briefly hold the last valid crop before a static fallback; availability, focus, menu/loading and geometry checks can also select fallback. See [the current eye-tracking guide](https://github.com/liviutrn/OpenNR/blob/build/2.20.1-v06-r7/docs/versions/2.20.1-v06/r7/EYE_TRACKING.md).
+Diagnostics show provider/API, focus, query validity, dynamic/static crop, fallback, history-reset state, query age/cost, counters and filtered coordinates. Query age is time since the last valid application query, not headset sensor age. Invalid queries briefly hold the last valid crop before a static fallback; availability, focus, menu/loading and geometry checks can also select fallback. See [the current eye-tracking guide](https://github.com/liviutrn/OpenNR/blob/release/2.20.1-v06-r8/docs/versions/2.20.1-v06/r8/EYE_TRACKING.md).
 
 ## Shared Upscaling and settings
 
@@ -155,7 +155,7 @@ The settings page retains load/save/reset behavior. Save Settings persists your 
 
 ## Short installation and usage guide
 
-1. Download the **OpenNR-2.20.1-v06-r8-neural-feather-carrier-excluded** artifact from a successful r8 build, extract its ZIP, and install the enclosed **OpenNR 2.20.1.7z** archive as a mod in your manager. Its `SKSE`, `Shaders` and `Interface` folders belong under the game's `Data` directory. Use one active OpenNR/CommunityShaders plugin deployment and let this build win conflicts with an older build. Keep your existing working SKSE/Address Library and mod-list prerequisites.
+1. Install the **OpenNR-2.20.1-v06-r8.7z** prerelease asset as a mod in your manager. Its `SKSE`, `Shaders` and `Interface` folders belong under the game's `Data` directory. Use one active OpenNR/CommunityShaders plugin deployment and let this build win conflicts with an older build. Keep your existing working SKSE/Address Library and mod-list prerequisites.
 2. Put your compatible **`nvngx_dlssnr.dll`** at **`Data/Shaders/Upscaling/Streamline/nvngx_dlssnr.dll`**, or at that relative path inside the OpenNR mod folder. Keep the bundled SR/helper libraries. Without the NR carrier, NR cannot initialize; the release still supplies its normal non-NR rendering components.
 3. Start SteamVR with your compatible eye-tracking provider active, then launch Skyrim through your normal SKSE/mod-manager entry point. Open the OpenNR menu with your configured menu key.
 4. On Upscaling, select NVIDIA DLSS and your preferred quality/render scale. Enable the engine-resolution hook and foveated region source as needed; save and restart when the menu requests it. In the DLSS 5/Neural Rendering controls, enable NR, choose your crop preset and gaze controls, and select Auto controller mode.
@@ -177,6 +177,6 @@ These are the feature configurations shipped in this release. Their activation a
 
 ## Verification scope
 
-The r8 build checks exact reconstructed r7 inputs, retained gaze/guide/controller and near-black source contracts, CPU curve/phase/motion geometry, C++/HLSL buffer sizes, software D3D11 execution of sampling/residual/motion shaders, the existing controller transitions and near-black/resume shader tests, and a complete MSVC package build. The package audit compares every payload against the compiled r7 archive, allowing only the plugin DLL and the three new feather shader files to differ. Check the successful run and audit artifact for completion evidence. GPU timing and headset acceptance remain in-game checks.
+The r8 build checks exact reconstructed r7 inputs, retained gaze/guide/controller and near-black source contracts, CPU curve/phase/motion geometry, C++/HLSL buffer sizes, software D3D11 execution of sampling/residual/motion shaders, the existing controller transitions and near-black/resume shader tests, and a complete MSVC package build. The package audit compares every payload against the compiled r7 archive, allowing only the plugin DLL and the three new feather shader files to differ. The successful [Windows build](https://github.com/liviutrn/OpenNR/actions/runs/37897923100) passed these checks: 6,089 geometry/motion cases, 792 software-D3D11 sampling/residual/motion cases, 198 controller cases, retained near-black/resume tests, full compilation and payload audit. GPU timing and headset acceptance remain in-game checks.
 
 OpenNR retains the `CommunityShaders.dll` runtime identity. This custom fork derives from [Open Shaders](https://github.com/alandtse/open-shaders) and [Community Shaders](https://github.com/community-shaders/skyrim-community-shaders). Bundled attribution and license files remain with their assets.

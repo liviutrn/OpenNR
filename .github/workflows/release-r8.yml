@@ -1,0 +1,56 @@
+name: Publish experimental OpenNR r8
+
+on:
+  push:
+    branches: ['release/2.20.1-v06-r8']
+    paths:
+      - '.github/workflows/release-r8.yml'
+      - 'scripts/v08/release-package.py'
+  workflow_dispatch:
+
+concurrency:
+  group: opennr-public-prerelease-r8
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  release:
+    if: github.repository == 'liviutrn/OpenNR' && github.ref == 'refs/heads/release/2.20.1-v06-r8'
+    runs-on: windows-2025
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - name: Download audited compiled runtime
+        uses: actions/download-artifact@v4
+        with:
+          name: OpenNR-2.20.1-v06-r8-neural-feather-carrier-excluded
+          run-id: 37897923100
+          github-token: ${{ github.token }}
+          path: release-input/runtime
+      - name: Download matching package audit
+        uses: actions/download-artifact@v4
+        with:
+          name: OpenNR-v06-r8-package-audit
+          run-id: 37897923100
+          github-token: ${{ github.token }}
+          path: release-input/audit
+      - name: Verify and publish experimental release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python scripts/v08/release-package.py
+          if ($LASTEXITCODE) { throw 'r8 package verification/publication failed' }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: OpenNR-r8-release-verification
+          path: |
+            release/release-package-audit.json
+            release/release-manifest.json
+            release/SHA256SUMS.txt
