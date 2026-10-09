@@ -357,6 +357,14 @@ jobs:
             "$($h.Hash)  $($_.FullName)"
           } | Tee-Object -FilePath dist/SHA256SUMS.txt
 
+      - name: Upload v06 checkpoint package
+        uses: actions/upload-artifact@v4
+        with:
+          name: OpenNR-2.20.1-v06-r10-stable-carrier-excluded
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 14
+
       - name: Download compiled r6 baseline for audit
         uses: actions/download-artifact@v4
         with:
@@ -369,25 +377,16 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force artifacts/r10 | Out-Null
-          Copy-Item dist/*.7z artifacts/r7/
+          Copy-Item dist/*.7z artifacts/r10/
           python scripts/v10/audit-package.py
           if ($LASTEXITCODE) { throw 'r10 package regression audit failed' }
 
       - name: Upload r10 package audit
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: OpenNR-v06-r10-stable-package-audit
           path: audit-results/*
           if-no-files-found: error
           retention-days: 14
-
-      - name: Upload v06 checkpoint package
-        uses: actions/upload-artifact@v4
-        with:
-          name: OpenNR-2.20.1-v06-r10-stable-carrier-excluded
-          path: dist/*
-          if-no-files-found: error
-          retention-days: 14
-
-
 
