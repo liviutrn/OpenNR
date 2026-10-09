@@ -11,6 +11,6 @@ if before:
     subprocess.run(['git','apply','--check','--ignore-space-change','scripts/v10/r10.patch'],cwd=root,check=True)
     subprocess.run(['git','apply','--ignore-space-change','scripts/v10/r10.patch'],cwd=root,check=True)
 elif not after:
-    raise SystemExit('r10 exact source preimage mismatch')
+    raise SystemExit('r10 exact source preimage mismatch: '+str({name:{'actual':digest(name),'expected':value['before']} for name,value in contract.items() if digest(name)!=value['before']}))
 assert all(digest(name)==value['after'] for name,value in contract.items()),'r10 source postimage mismatch'
 print('r10 exact reviewed source applied')

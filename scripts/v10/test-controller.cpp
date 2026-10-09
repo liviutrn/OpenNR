@@ -20,7 +20,7 @@ void Settle(Crop& crop,unsigned& frame,const Crop::Config& config,unsigned targe
         Tick(crop,frame,config,target);
         assert(crop.RenderCoverage()>=60 && crop.RenderCoverage()<=100);
         assert(std::isfinite(crop.VisibleCoverage()));
-        assert(crop.VisibleCoverage()<=crop.RenderCoverage());
+        assert(crop.VisibleCoverage()<=static_cast<float>(crop.RenderCoverage()));
         if(!crop.IsTransitioning() && crop.RenderCoverage()==target) return;
     }
     assert(false && "stage target did not settle");

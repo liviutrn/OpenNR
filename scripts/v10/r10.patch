@@ -1,7 +1,7 @@
 diff --git a/runtime/open-shaders/cmake/ValidateOpenNRSourceContracts.cmake b/runtime/open-shaders/cmake/ValidateOpenNRSourceContracts.cmake
 --- a/runtime/open-shaders/cmake/ValidateOpenNRSourceContracts.cmake
 +++ b/runtime/open-shaders/cmake/ValidateOpenNRSourceContracts.cmake
-@@ -489,7 +489,10 @@
+@@ -491,7 +491,10 @@
      "void Upscaling::DrawDLSSNRPage()"
      "Adaptive Performance"
      "neuralRenderingForcedStage"
