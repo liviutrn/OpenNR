@@ -11,6 +11,7 @@
 #include "Core.h"
 #include "Ops.h"
 #include "Params.h"
+#include "../CropMotion.h"
 
 #include "../../../Globals.h"
 #include "../../../Utils/Subrect.h"
@@ -56,6 +57,11 @@ namespace FoveatedRenderImpl
 		const auto frame = globals::state ? globals::state->frameCount : 0;
 		globals::features::upscaling.foveatedRender.UpdateAdaptiveState(frame, true);
 		auto p = VRDlssParams::Resolve(upscalingTexture, depthTexture, reactiveMask, transparencyMask, motionVectors);
+		Core::neuralCropPlanFrame = UINT32_MAX;
+		std::array<std::array<float, 2>, 2> motionScales{};
+		for (uint32_t eye = 0; eye < motionScales.size(); ++eye)
+			motionScales[eye] = CropGeometry::MotionVectorScale(p.eyeWidthIn, p.eyeHeightIn, p.cropPlan.eyes[eye].input);
+		Bridge::SetMvecScaleForFrame(frame, motionScales);
 		// Preserve the source guides for the optional display-space crop handoff.
 		Core::vrAdaptiveCropDepthSource = p.depthTexture;
 		Core::vrAdaptiveCropMotionSource = p.motionVectors;
@@ -65,7 +71,7 @@ namespace FoveatedRenderImpl
 		// Gaze loss changes history, not resource identity: fixed-size crops
 		// retain their allocations across tracking and static fallback.
 		const bool fixedEnvelopeCandidate = globals::features::upscaling.foveatedRender.IsAdaptiveCropRuntimeActive() &&
-			!p.eyeTrackedGazeActive && !Core::vrSubrectFixedEnvelopeRejected;
+			!Core::vrSubrectFixedEnvelopeRejected;
 		const Util::Subrect::UVRegion envelopeUV{ 0.0f, 0.0f, 1.0f, 1.0f };
 		uint64_t uvHash = fixedEnvelopeCandidate ?
 			ComputeSubrectUVHash(envelopeUV, envelopeUV, (uint32_t)p.mode, false) :
@@ -85,11 +91,22 @@ namespace FoveatedRenderImpl
 		}
 
 		Bridge::gazeHistoryReset = p.eyeTrackedGazeReset;
+		if (p.mode == FoveatedRender::DlssMode::kDefault)
+			Bridge::SetCropForFrame(frame, p.cropPlan);
+		else
+			Bridge::cropFrame = UINT32_MAX;
 		Bridge::foveatedEvaluating = true;
 		Core::neuralGuidesFrame = UINT32_MAX;
 		bool result = (p.mode == FoveatedRender::DlssMode::kFaster) ?
 		                  ExecuteFasterMode(streamline, p) :
 		                  ExecuteDefaultMode(streamline, p);
+		for (uint32_t eye = 0; eye < 2; ++eye)
+			CropMotion::Commit(eye, result && Core::neuralGuidesFrame == frame && p.eyeTrackedGazeConfigured && !p.isFullEye);
+		Bridge::CommitCropFrame(result && Core::neuralGuidesFrame == frame && Bridge::cropFrame == frame);
+		if (result && Core::neuralGuidesFrame == frame) {
+			Core::neuralCropPlan = p.cropPlan;
+			Core::neuralCropPlanFrame = frame;
+		}
 		Bridge::foveatedEvaluating = false;
 		Bridge::gazeHistoryReset = false;
 		return result;
@@ -136,7 +153,7 @@ namespace FoveatedRenderImpl
 
 		// ── Subrect path: crop per-eye, DLSS at subrect size, stretch back ──
 		const bool fixedEnvelopeCandidate = globals::features::upscaling.foveatedRender.IsAdaptiveCropRuntimeActive() &&
-			!p.eyeTrackedGazeActive && !Core::vrSubrectFixedEnvelopeRejected;
+			!Core::vrSubrectFixedEnvelopeRejected;
 
 		// The shared resource path requires symmetric eye extents. Fail closed rather
 		// than write out of bounds; regular centered crop is the supported adaptive
@@ -147,28 +164,26 @@ namespace FoveatedRenderImpl
 			return false;
 		}
 
-		const Util::Subrect::UVRegion* eyeUVs[2] = { &p.leftUV, &p.rightUV };
+
 
 		// EnsureVRSubrectTextures allocates a shared per-eye envelope. The per-eye
 		// loop below still uses each eye's UV for the valid copy/dispatch extent.
-		uint32_t allocSubInW = std::max<uint32_t>(1, (uint32_t)(p.eyeWidthIn * p.leftUV.w));
-		uint32_t allocSubInH = std::max<uint32_t>(1, (uint32_t)(p.eyeHeightIn * p.leftUV.h));
-		uint32_t allocSubOutW = std::max<uint32_t>(1, (uint32_t)(p.eyeWidthOut * p.leftUV.w));
-		uint32_t allocSubOutH = std::max<uint32_t>(1, (uint32_t)(p.eyeHeightOut * p.leftUV.h));
-		const auto scaleDimension = [](std::uint32_t dimension, std::uint32_t percentage) {
-			return std::max<std::uint32_t>(1, static_cast<std::uint32_t>(
-				(static_cast<std::uint64_t>(dimension) * percentage + 50) / 100));
-		};
+		uint32_t allocSubInW = p.cropPlan.eyes[0].input.width;
+		uint32_t allocSubInH = p.cropPlan.eyes[0].input.height;
+		uint32_t allocSubOutW = p.cropPlan.eyes[0].output.width;
+		uint32_t allocSubOutH = p.cropPlan.eyes[0].output.height;
 		// Re-anchor the envelope to the configured adaptive maximum, not to the
 		// current tier. This matters after a route/device reset while the controller
 		// is already at a reduced tier: restoration must not grow the backing set one
 		// tier at a time and recreate resources again.
-		const std::uint32_t envelopeCoverage = std::clamp(
-			globals::features::upscaling.foveatedRender.GetAdaptiveCropMaximumCoverage(), 60u, 85u);
-		const uint32_t envelopeSubInW = fixedEnvelopeCandidate ? scaleDimension(p.eyeWidthIn, envelopeCoverage) : allocSubInW;
-		const uint32_t envelopeSubInH = fixedEnvelopeCandidate ? scaleDimension(p.eyeHeightIn, envelopeCoverage) : allocSubInH;
-		const uint32_t envelopeSubOutW = fixedEnvelopeCandidate ? scaleDimension(p.eyeWidthOut, envelopeCoverage) : allocSubOutW;
-		const uint32_t envelopeSubOutH = fixedEnvelopeCandidate ? scaleDimension(p.eyeHeightOut, envelopeCoverage) : allocSubOutH;
+		const auto selectedCrop = globals::features::upscaling.foveatedRender.subrectController.GetUV();
+		const auto envelopePlan = CropGeometry::MakeEyePlan(selectedCrop.x, selectedCrop.y, selectedCrop.w, selectedCrop.h,
+			p.eyeWidthIn, p.eyeHeightIn, p.eyeWidthOut, p.eyeHeightOut);
+		const uint32_t envelopeSubInW = fixedEnvelopeCandidate ? std::max(allocSubInW, envelopePlan.input.width) : allocSubInW;
+		const uint32_t envelopeSubInH = fixedEnvelopeCandidate ? std::max(allocSubInH, envelopePlan.input.height) : allocSubInH;
+		const uint32_t envelopeSubOutW = fixedEnvelopeCandidate ? std::max(allocSubOutW, envelopePlan.output.width) : allocSubOutW;
+		const uint32_t envelopeSubOutH = fixedEnvelopeCandidate ? std::max(allocSubOutH, envelopePlan.output.height) : allocSubOutH;
+
 
 		const auto frame = globals::state ? globals::state->frameCount : 0;
 		if (!EnsureVRSubrectTextures(envelopeSubInW, envelopeSubInH, envelopeSubOutW, envelopeSubOutH,
@@ -183,7 +198,10 @@ namespace FoveatedRenderImpl
 			// the old Streamline handles before they can observe the replacement.
 			Core::vrSubrectResourceContractChanged = false;
 			streamline.DestroyDLSSResources();
-			Core::InvalidateTemporalState();
+			const auto& foveated = globals::features::upscaling.foveatedRender;
+			const bool preserveAtlasHistory = foveated.adaptivePassInitialized &&
+				foveated.settings.neuralRenderingAdaptiveEnabled && foveated.settings.neuralRenderingSinglePassLadder;
+			Core::InvalidateTemporalState(!preserveAtlasHistory);
 			logger::debug("[FOVEATED] Streamline handles invalidated after subrect resource contract change frame={}", frame);
 		}
 
@@ -198,15 +216,13 @@ namespace FoveatedRenderImpl
 		// Crop subrect per-eye from mask-cleared snapshot (not kMAIN which was overwritten by stretch)
 		auto context = globals::d3d::context;
 		for (uint32_t i = 0; i < 2; ++i) {
-			const auto& uv = *eyeUVs[i];
-			// Per-eye sizing — right eye uses rightUV.w/h, not leftUV.
-			uint32_t subInW = std::max<uint32_t>(1, (uint32_t)(p.eyeWidthIn * uv.w));
-			uint32_t subInH = std::max<uint32_t>(1, (uint32_t)(p.eyeHeightIn * uv.h));
-			uint32_t subOutW = std::max<uint32_t>(1, (uint32_t)(p.eyeWidthOut * uv.w));
-			uint32_t subOutH = std::max<uint32_t>(1, (uint32_t)(p.eyeHeightOut * uv.h));
-
-			uint32_t cropX = (uint32_t)(uv.x * p.eyeWidthIn);
-			uint32_t cropY = (uint32_t)(uv.y * p.eyeHeightIn);
+			const auto& crop = p.cropPlan.eyes[i];
+			uint32_t subInW = crop.input.width;
+			uint32_t subInH = crop.input.height;
+			uint32_t subOutW = crop.output.width;
+			uint32_t subOutH = crop.output.height;
+			uint32_t cropX = crop.input.x;
+			uint32_t cropY = crop.input.y;
 			uint32_t sbsX = (i == 1 ? p.eyeWidthIn : 0) + cropX;
 			D3D11_BOX sbsCrop = { sbsX, cropY, 0, sbsX + subInW, cropY + subInH, 1 };
 
@@ -222,9 +238,23 @@ namespace FoveatedRenderImpl
 			if (p.transparencyMask)
 				context->CopySubresourceRegion(Core::vrSubrectTransparencyMask[i]->resource.get(), 0, 0, 0, 0, p.transparencyMask, 0, &sbsCrop);
 
+			ID3D11Resource* srMotion = Core::vrSubrectMotionVectors[i]->resource.get();
+			if (p.eyeTrackedGazeConfigured) {
+				float scaleX = 1.0f, scaleY = 1.0f;
+				Bridge::ComputeMvecScale(i, scaleX, scaleY);
+				bool reset = p.eyeTrackedGazeReset;
+				srMotion = CropMotion::Prepare(i, srMotion, { cropX, cropY, subInW, subInH },
+					subInW, subInH, { scaleX, scaleY }, frame, reset);
+				if (!srMotion) {
+					Core::InvalidateTemporalState();
+					return true;
+				}
+				Bridge::gazeHistoryReset = reset;
+			}
+
 			if (!DispatchUpscaleRegion(streamline, i,
 					Core::vrSubrectColorIn[i]->resource.get(), Core::vrSubrectColorOut[i]->resource.get(),
-					Core::vrSubrectDepth[i]->resource.get(), Core::vrSubrectMotionVectors[i]->resource.get(),
+					Core::vrSubrectDepth[i]->resource.get(), srMotion,
 					p.reactiveMask ? Core::vrSubrectReactiveMask[i]->resource.get() : nullptr,
 					p.transparencyMask ? Core::vrSubrectTransparencyMask[i]->resource.get() : nullptr,
 					subInW, subInH, subOutW, subOutH,
@@ -249,16 +279,15 @@ namespace FoveatedRenderImpl
 
 		// Write DLSS output back at subrect position (with optional blend)
 		for (uint32_t i = 0; i < 2; ++i) {
-			const auto& uv = *eyeUVs[i];
-			// Per-eye sizing.
-			uint32_t subOutW = std::max<uint32_t>(1, (uint32_t)(p.eyeWidthOut * uv.w));
-			uint32_t subOutH = std::max<uint32_t>(1, (uint32_t)(p.eyeHeightOut * uv.h));
-
-			uint32_t dstCropX = (uint32_t)(uv.x * p.eyeWidthOut);
-			uint32_t dstCropY = (uint32_t)(uv.y * p.eyeHeightOut);
+			const auto& crop = p.cropPlan.eyes[i];
+			uint32_t subOutW = crop.output.width;
+			uint32_t subOutH = crop.output.height;
+			uint32_t dstCropX = crop.output.x;
+			uint32_t dstCropY = crop.output.y;
 			uint32_t dstX = (i == 1 ? p.eyeWidthOut : 0) + dstCropX;
+			const auto sampling = CropGeometry::ColorSampling(p.cropPlan, i);
 			if (!BlendSubrectToOutput(Core::vrSubrectColorOut[i]->resource.get(), p.colorDst, p.colorDstUAV,
-					dstX, dstCropY, subOutW, subOutH)) {
+					dstX, dstCropY, subOutW, subOutH, 0, &sampling)) {
 				logger::error("[FOVEATED] ExecuteDefaultMode subrect blend failed for eye {} — falling back", i);
 				return false;
 			}

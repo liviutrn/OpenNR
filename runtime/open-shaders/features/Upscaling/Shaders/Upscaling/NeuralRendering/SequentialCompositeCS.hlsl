@@ -77,7 +77,7 @@ void main(uint3 tid : SV_DispatchThreadID)
     }
 
     const uint2 local = uint2(tid.x - Pass2OffsetX, tid.y - Pass2OffsetY);
-    const float4 pass2 = Pass2Tex.Load(int3(local, 0));
+    const float4 pass2 = Pass2Tex.Load(int3(dstPos, 0));
     if (BlendMode == 0) {
         OutputTex[dstPos] = pass2;
         return;

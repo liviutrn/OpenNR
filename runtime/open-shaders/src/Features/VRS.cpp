@@ -327,16 +327,15 @@ void VRS::UpdateVRShadingRateState()
 	frameInfo.renderWidth = std::max(static_cast<int>(renderSize.x), 1);
 	frameInfo.renderHeight = std::max(static_cast<int>(renderSize.y), 1);
 	auto& foveated = upscaling.foveatedRender;
+	if (foveated.IsActive())
+		foveated.UpdateAdaptiveState(globals::state->frameCount, true);
 	auto leftUV = foveated.GetEffectiveLeftUV();
 	auto rightUV = foveated.GetEffectiveRightUV();
 	if (vrsSettings.enable && foveated.IsActive() && foveated.settings.neuralRenderingEyeTrackedFoveation &&
 		foveated.settings.neuralRenderingEnabled && foveated.GetDlssMode() == FoveatedRender::DlssMode::kDefault &&
 		upscaling.GetUpscaleMethod() == Upscaling::UpscaleMethod::kDLSS) {
-		const FoveatedRenderImpl::NativeOpenVRGaze::Config config{
-			.enabled = true,
-			.smoothingMs = foveated.settings.neuralRenderingEyeTrackedSmoothingMs,
-			.quantizationPixels = foveated.settings.neuralRenderingEyeTrackedQuantizationPixels,
-		};
+		const auto config = FoveatedRenderImpl::NativeOpenVRGaze::MakeConfig(foveated.settings,
+			foveated.subrectController.GetUV().w, foveated.subrectController.GetUV().h);
 		const auto gaze = FoveatedRenderImpl::NativeOpenVRGaze::ResolveForFrame(config, leftUV, rightUV,
 			frameInfo.renderWidth / 2, frameInfo.renderHeight, globals::state->frameCount,
 			FoveatedRenderImpl::NativeOpenVRGaze::IsDynamicGazeAllowed());

@@ -60,11 +60,8 @@ namespace FoveatedRenderImpl
 		p.mode = enhancer.GetDlssMode();
 		p.leftUV = enhancer.GetEffectiveLeftUV();
 		p.rightUV = enhancer.GetEffectiveRightUV();
-		const NativeOpenVRGaze::Config gazeConfig{
-			.enabled = enhancer.settings.neuralRenderingEyeTrackedFoveation,
-			.smoothingMs = enhancer.settings.neuralRenderingEyeTrackedSmoothingMs,
-			.quantizationPixels = enhancer.settings.neuralRenderingEyeTrackedQuantizationPixels,
-		};
+		const auto gazeConfig = NativeOpenVRGaze::MakeConfig(enhancer.settings,
+			enhancer.subrectController.GetUV().w, enhancer.subrectController.GetUV().h);
 		const bool gazeRequested = gazeConfig.enabled && enhancer.settings.neuralRenderingEnabled &&
 			p.mode == FoveatedRender::DlssMode::kDefault &&
 			upscaling.GetUpscaleMethod() == Upscaling::UpscaleMethod::kDLSS;
@@ -83,6 +80,18 @@ namespace FoveatedRenderImpl
 		p.jitterX = upscaling.jitter.x;
 		p.jitterY = upscaling.jitter.y;
 
+		p.cropPlan.fullInputWidth = p.eyeWidthIn;
+		p.cropPlan.fullInputHeight = p.eyeHeightIn;
+		p.cropPlan.fullOutputWidth = p.eyeWidthOut;
+		p.cropPlan.fullOutputHeight = p.eyeHeightOut;
+		p.cropPlan.eyes[0] = CropGeometry::MakeEyePlan(p.leftUV.x, p.leftUV.y, p.leftUV.w, p.leftUV.h,
+			p.eyeWidthIn, p.eyeHeightIn, p.eyeWidthOut, p.eyeHeightOut);
+		p.cropPlan.eyes[1] = CropGeometry::MakeEyePlan(p.rightUV.x, p.rightUV.y, p.rightUV.w, p.rightUV.h,
+			p.eyeWidthIn, p.eyeHeightIn, p.eyeWidthOut, p.eyeHeightOut);
+		if (p.mode == FoveatedRender::DlssMode::kFaster) {
+			p.cropPlan.eyes[0].output = CropGeometry::MakePixelRect(p.leftUV.x, p.leftUV.y, p.leftUV.w, p.leftUV.h, p.eyeWidthOut, p.eyeHeightOut);
+			p.cropPlan.eyes[1].output = CropGeometry::MakePixelRect(p.rightUV.x, p.rightUV.y, p.rightUV.w, p.rightUV.h, p.eyeWidthOut, p.eyeHeightOut);
+		}
 		return p;
 	}
 }

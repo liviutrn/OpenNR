@@ -24,6 +24,8 @@ cbuffer BlendCB : register(b0)
 	float MaskRadiusX;     // Subrect-local oval radii, in pixels
 	float MaskRadiusY;
 	float _pad0;
+	float2 SourceScale;
+	float2 SourceOffset;
 };
 
 Texture2D<float4> SrcTex : register(t0);    // DLSS subrect output
@@ -73,6 +75,20 @@ float FalloffAlpha(float normalizedDistance, float curve)
 	uint2 dstPos = uint2(tid.x + DstOffsetX, tid.y + DstOffsetY);
 
 	float4 dlss = SrcTex.Load(int3(srcPos, 0));
+	if (any(SourceScale != 1.0.xx) || any(SourceOffset != 0.0.xx)) {
+		const float2 position = clamp((float2(tid.xy) + 0.5) * SourceScale + SourceOffset,
+			0.5.xx, float2(SubWidth, SubHeight) - 0.5) - 0.5;
+		const uint2 first = uint2(floor(position));
+		const uint2 last = min(first + 1u, uint2(SubWidth, SubHeight) - 1u);
+		const float2 fraction = frac(position);
+		const uint2 offset = uint2(SrcOffsetX, 0);
+		dlss = lerp(lerp(SrcTex.Load(int3(first + offset, 0)), SrcTex.Load(int3(uint2(last.x, first.y) + offset, 0)), fraction.x),
+			lerp(SrcTex.Load(int3(uint2(first.x, last.y) + offset, 0)), SrcTex.Load(int3(last + offset, 0)), fraction.x), fraction.y);
+	}
+	if (BlendMode == 2u) {
+		DstTex[dstPos] = dlss;
+		return;
+	}
 
 	// Distance from the selected mask edge in subrect-local space.
 	//

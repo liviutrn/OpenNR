@@ -98,6 +98,8 @@ namespace NeuralRendering
 		const char* decisionReason_ = "initial";
 		float lastFrameTimeMs_ = 0.0f;
 		float smoothedFrameTimeMs_ = 0.0f;
+		float fastFrameTimeMs_ = 0.0f;
+		float slowFrameTimeMs_ = 0.0f;
 		bool lastSampleOverBudget_ = false;
 		bool lastSampleHadHeadroom_ = false;
 	};

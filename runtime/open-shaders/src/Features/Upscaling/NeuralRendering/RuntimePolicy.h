@@ -11,7 +11,7 @@ namespace NeuralRendering
 	 * no-go because it weakens the neural effect. Reduced model tiers, adaptive NR tiers
 	 * and pre-upscale NR are therefore locked off at load time and at the runtime boundary.
 	 */
-	inline constexpr bool kFullResolutionNeuralRenderingOnly = true;
+	inline constexpr bool kFullResolutionNeuralRenderingOnly = false;
 
 	/** @brief Centered NR-only coverage presets (linear per axis). 100 = the full eye. */
 	inline constexpr std::array<std::uint32_t, 7> kNeuralCoveragePresets{ 100, 95, 90, 85, 80, 75, 70 };

@@ -47,14 +47,15 @@ namespace NeuralRendering
 	AdaptiveCropController::Config AdaptiveCropController::NormalizeConfig(const Config& config)
 	{
 		Config normalized = config;
-		normalized.maximumCoverage = FindBucketAtOrBelow(std::clamp(normalized.maximumCoverage, 60u, 85u));
-		normalized.minimumCoverage = FindBucketAtOrBelow(std::max(normalized.minimumCoverage, 60u));
+		normalized.maximumCoverage = FindBucketAtOrBelow(std::clamp(normalized.maximumCoverage, 60u, 100u));
+		normalized.minimumCoverage = FindBucketAtOrBelow(std::clamp(normalized.minimumCoverage, 60u, 100u));
 		if (normalized.maximumCoverage < normalized.minimumCoverage)
 			normalized.maximumCoverage = normalized.minimumCoverage;
 		normalized.downshiftFrames = std::clamp(normalized.downshiftFrames, 1u, 16u);
-		normalized.upshiftFrames = std::clamp(normalized.upshiftFrames, 8u, 240u);
-		normalized.minimumDwellFrames = std::clamp(normalized.minimumDwellFrames, 8u, 600u);
+		normalized.upshiftFrames = std::clamp(normalized.upshiftFrames, 1u, 240u);
+		normalized.minimumDwellFrames = std::clamp(normalized.minimumDwellFrames, 1u, 600u);
 		normalized.transitionFrames = std::clamp(normalized.transitionFrames, 2u, 24u);
+		normalized.stepCoverage = std::clamp(normalized.stepCoverage, 5u, 20u) / 5u * 5u;
 		return normalized;
 	}
 
@@ -105,6 +106,7 @@ namespace NeuralRendering
 			return;
 		lastFrame_ = frame;
 
+		const std::uint32_t previousRenderCoverage = RenderCoverage();
 		const Config config = NormalizeConfig(requestedConfig);
 		// The static crop preset supplies the stereo geometry and the eligibility
 		// floor. It is not the adaptive upper bound: otherwise a user who compares
@@ -118,7 +120,7 @@ namespace NeuralRendering
 			config.downshiftFrames != config_.downshiftFrames ||
 			config.upshiftFrames != config_.upshiftFrames ||
 			config.minimumDwellFrames != config_.minimumDwellFrames ||
-			config.transitionFrames != config_.transitionFrames || maximumBucket != maximumBucket_;
+			config.transitionFrames != config_.transitionFrames || config.stepCoverage != config_.stepCoverage || maximumBucket != maximumBucket_;
 		config_ = config;
 		maximumBucket_ = maximumBucket;
 		minimumBucket_ = minimumBucket;
@@ -153,11 +155,13 @@ namespace NeuralRendering
 			// Only the first enable, or a tier made illegal by the new bounds, is
 			// anchored to the nearest legal tier.
 			const bool activeWasLegal = wasEnabled && activeBucket_ >= maximumBucket && activeBucket_ <= minimumBucket;
-			if (!activeWasLegal)
+			if (!activeWasLegal) {
 				activeBucket_ = std::clamp(activeBucket_, maximumBucket, minimumBucket);
-			targetBucket_ = activeBucket_;
-			transitionFrame_ = 0;
-			transitionFrameCount_ = 0;
+				targetBucket_ = activeBucket_;
+				previousCoverage_ = previousRenderCoverage;
+				transitionFrame_ = 0;
+				transitionFrameCount_ = wasEnabled && previousCoverage_ != ActiveCoverage() ? config.transitionFrames : 0;
+			}
 			dwellFrames_ = 0;
 			overrunFrames_ = 0;
 			headroomFrames_ = 0;
@@ -170,6 +174,11 @@ namespace NeuralRendering
 		activeBucket_ = std::clamp(activeBucket_, maximumBucket_, minimumBucket_);
 		targetBucket_ = std::clamp(targetBucket_, maximumBucket_, minimumBucket_);
 
+		if (config.hold) {
+			overrunFrames_ = headroomFrames_ = 0;
+			return;
+		}
+
 		if (transitionFrameCount_ != 0) {
 			if (transitionFrame_ + 1 >= transitionFrameCount_) {
 				transitionFrame_ = 0;
@@ -180,7 +189,7 @@ namespace NeuralRendering
 		}
 
 		++dwellFrames_;
-		if (nrTransitioning || config.hold) {
+		if (nrTransitioning) {
 			overrunFrames_ = 0;
 			headroomFrames_ = 0;
 			return;
@@ -202,11 +211,11 @@ namespace NeuralRendering
 		if (dwellFrames_ >= config.minimumDwellFrames && transitionFrameCount_ == 0 &&
 			!nrTransitioning && allowDownshift &&
 				overrunFrames_ >= config.downshiftFrames && activeBucket_ < minimumBucket_)
-			StartTransition(activeBucket_ + 1, config.transitionFrames);
+			StartTransition(std::min(minimumBucket_, activeBucket_ + config.stepCoverage / 5u), config.transitionFrames);
 		else if (dwellFrames_ >= config.minimumDwellFrames && transitionFrameCount_ == 0 &&
 			!nrTransitioning && nrAtMaximum &&
 				headroomFrames_ >= config.upshiftFrames && activeBucket_ > maximumBucket_)
-			StartTransition(activeBucket_ - 1, config.transitionFrames);
+			StartTransition(activeBucket_ - std::min(activeBucket_ - maximumBucket_, config.stepCoverage / 5u), config.transitionFrames);
 	}
 
 	std::uint32_t AdaptiveCropController::ActiveCoverage() const
@@ -255,6 +264,7 @@ namespace NeuralRendering
 			return static_cast<float>(ActiveCoverage());
 		const float t = HandoffAlpha();
 		const float smooth = t * t * (3.0f - 2.0f * t);
-		return previousCoverage_ + (static_cast<float>(ActiveCoverage()) - previousCoverage_) * smooth;
+		return std::min(static_cast<float>(RenderCoverage()),
+			previousCoverage_ + (static_cast<float>(ActiveCoverage()) - previousCoverage_) * smooth);
 	}
 }

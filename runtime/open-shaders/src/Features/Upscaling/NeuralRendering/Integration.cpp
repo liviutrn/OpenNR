@@ -142,12 +142,11 @@ namespace NeuralRendering
 		{
 			const auto& settings = foveated.settings;
 			const bool adaptive = adaptiveEligible && settings.neuralRenderingAdaptiveEnabled &&
-				foveated.adaptiveController.IsEnabled();
+				foveated.adaptivePassInitialized;
 			const bool adaptiveCrop = adaptive && foveated.IsAdaptiveCropRuntimeActive();
-			const auto& controller = foveated.adaptiveController;
-			const int prewarmDirection = !adaptive || foveated.IsAdaptiveCropTransitioning() ? 0 :
-				controller.LastSampleOverBudget() && !controller.IsAtMinimum() ? -1 :
-				controller.LastSampleHadHeadroom() && !controller.IsAtMaximum() ? 1 : 0;
+			// v04 keeps model resolution fixed while adaptive is active. This avoids
+			// atlas fallback/resource recreation and leaves pass/crop as the only knobs.
+			const int prewarmDirection = 0;
 Tuning tuning{
 				settings.neuralRenderingIntensity,
 				settings.neuralRenderingLocalTone,
@@ -156,7 +155,7 @@ Tuning tuning{
 				settings.neuralRenderingStyle,
 				settings.neuralRenderingAutoMask,
 				settings.neuralRenderingUICorrection,
-				adaptive ? foveated.adaptiveController.ActiveResolution() : settings.neuralRenderingModelResolution,
+				settings.neuralRenderingModelResolution,
 				settings.neuralRenderingResolveMode,
 				// Keep the two experimental stage-order features mutually exclusive:
 				// pre-upscale already adds a second NR route before the normal DLSS pass.
@@ -169,10 +168,10 @@ Tuning tuning{
 				settings.neuralRenderingTemporalReuseResetAfterSkip,
 				adaptive,
 				!adaptiveCrop,
-				adaptive ? foveated.adaptiveController.HandoffAlpha() : 1.0f,
+				1.0f,
 				adaptive ? settings.neuralRenderingTemporalDepthThreshold : 0.05f,
 				prewarmDirection,
-				adaptive ? controller.MemoryCeiling() : 100u,
+				100u,
 				settings.neuralRenderingResultShapingEnabled,
 				settings.neuralRenderingResultEditStrength,
 				settings.neuralRenderingResultBrightening,
@@ -196,6 +195,41 @@ Tuning tuning{
 				settings.neuralRenderingStabilizeColorTolerance,
 				settings.neuralRenderingTemporalReuseStaggerEyes,
 			};
+			tuning.nearBlackProtection = settings.neuralRenderingNearBlackProtection;
+			tuning.nearBlackThreshold = settings.neuralRenderingNearBlackThreshold;
+			tuning.nearBlackLiftSoftness = settings.neuralRenderingNearBlackLiftSoftness;
+			tuning.singlePassLadder = adaptive;
+			tuning.ladderHandoffMs = settings.neuralRenderingLadderHandoffMs;
+			if (tuning.singlePassLadder) tuning.multiPass = 0;
+			tuning.stereoAtlas = true;
+			tuning.stereoAtlasGuardPixels = settings.neuralRenderingStereoAtlasGuardPixels;
+			tuning.adaptiveSecondPassCostMs = settings.neuralRenderingAdaptiveSecondPassCostMs;
+			if (adaptive)
+				tuning.multiPass = foveated.adaptiveActivePasses > 0 ? std::min(foveated.adaptiveActivePasses - 1u, 2u) : 0u;
+			if (adaptive || tuning.singlePassLadder) {
+				// The atlas ladder owns its model tier; the old independent-eye tier controller stays inactive.
+				tuning.modelResolutionPercent = tuning.singlePassLadder ? foveated.adaptiveModelResolution : settings.neuralRenderingModelResolution;
+				tuning.adaptiveResolution = false;
+				// Stereo atlas requires temporal reuse and staggered-eye reuse to be inactive.
+				// Keep stale experimental settings from forcing independent-eye fallback.
+				tuning.temporalReuseCadence = 0;
+				tuning.temporalReuseStaggerEyes = false;
+				tuning.adaptiveHandoff = !adaptiveCrop;
+				tuning.adaptiveHandoffAlpha = 1.0f;
+				tuning.adaptivePrewarmDirection = 0;
+				tuning.adaptiveMemoryCeiling = 100;
+			}
+			tuning.style = 0;
+			tuning.modelResolveMode = 1;
+			tuning.multiPass = 0;
+			tuning.temporalReuseCadence = 0;
+			tuning.temporalReuseStaggerEyes = false;
+			tuning.stabilizeMode = 0;
+			tuning.resultDarkening = tuning.resultHueShiftStrength = tuning.resultShadows = tuning.resultMidtones = 1.0f;
+			tuning.resultHaloSuppression = 0.0f;
+			tuning.modelResolutionPercent = adaptive ? foveated.adaptiveModelResolution : 100u;
+			tuning.resumeBlendAlpha = adaptive && settings.neuralRenderingLadderHandoffMs > 0.0f ?
+				std::clamp(1.0f - foveated.adaptiveResumeRemainingMs / settings.neuralRenderingLadderHandoffMs, 0.0f, 1.0f) : 1.0f;
 			if constexpr (kFullResolutionNeuralRenderingOnly) {
 				// Enforce the full-resolution contract at the runtime boundary too, so a
 				// remote/DevBench settings write cannot select a reduced NR model area.
@@ -484,7 +518,7 @@ Tuning tuning{
 			} else if (foveated.GetDlssMode() != FoveatedRender::DlssMode::kDefault) {
 				LogPreUpscaleBlocked("VR Faster mode does not provide the isolated pre-NR guide contract");
 			} else if (!IsFullEyeStereo(foveated)) {
-				LogPreUpscaleBlocked("VR pre-NR is currently limited to Full Eye");
+				LogPreUpscaleBlocked("VR pre-NR crop route is unavailable");
 			} else {
 				const std::uint32_t eyeWidth = colorDesc.Width / 2;
 				const std::uint32_t eyeHeight = colorDesc.Height;
@@ -590,6 +624,14 @@ Tuning tuning{
 		// choosing the native tier used by this frame. Calling it again from the
 		// foveated hook is harmless because it is frame-idempotent.
 		foveated.UpdateAdaptiveState(frame, true);
+		if (foveated.settings.neuralRenderingAdaptiveEnabled && foveated.adaptivePassInitialized &&
+			foveated.adaptiveActivePasses == 0) {
+			// Zero-pass edge case: leave the already completed DLSS image untouched.
+			// The controller keeps sampling SteamVR workload and only restores NR
+			// after measured headroom can pay the configured pass cost.
+			lastAppliedFrame = frame;
+			return false;
+		}
 
 		auto* renderer = globals::game::renderer;
 		auto* context = globals::d3d::context;
@@ -601,11 +643,8 @@ Tuning tuning{
 		D3D11_TEXTURE2D_DESC totalDesc{};
 		 total.texture->GetDesc(Util::AsW32(&totalDesc));
 
-		const FoveatedRenderImpl::NativeOpenVRGaze::Config gazeConfig{
-			.enabled = foveated.settings.neuralRenderingEyeTrackedFoveation,
-			.smoothingMs = foveated.settings.neuralRenderingEyeTrackedSmoothingMs,
-			.quantizationPixels = foveated.settings.neuralRenderingEyeTrackedQuantizationPixels,
-		};
+		const auto gazeConfig = FoveatedRenderImpl::NativeOpenVRGaze::MakeConfig(foveated.settings,
+			foveated.subrectController.GetUV().w, foveated.subrectController.GetUV().h);
 		const bool gazeRequested = gazeConfig.enabled && foveated.settings.neuralRenderingEnabled &&
 			foveated.GetDlssMode() == FoveatedRender::DlssMode::kDefault &&
 			upscaling.GetUpscaleMethod() == Upscaling::UpscaleMethod::kDLSS;
@@ -632,6 +671,11 @@ Tuning tuning{
 		if (leftUV.w != rightUV.w || leftUV.h != rightUV.h)
 			return false;
 		const std::uint32_t eyeWidth = totalDesc.Width / 2;
+		const auto& cropPlan = FoveatedRenderImpl::Core::neuralCropPlan;
+		const bool sharedCropPlan = FoveatedRenderImpl::Core::neuralCropPlanFrame == frame &&
+			cropPlan.fullOutputWidth == eyeWidth && cropPlan.fullOutputHeight == totalDesc.Height;
+		if (gaze.dynamic && !sharedCropPlan)
+			return false;
 		std::uint32_t outWidth = std::max<std::uint32_t>(1, static_cast<std::uint32_t>(eyeWidth * leftUV.w));
 		std::uint32_t outHeight = std::max<std::uint32_t>(1, static_cast<std::uint32_t>(totalDesc.Height * leftUV.h));
 			// The fixed crop envelope is a backing-resource contract only. Feature
@@ -644,11 +688,16 @@ Tuning tuning{
 			std::uint32_t guideWidth = fullGuideWidth;
 			std::uint32_t guideHeight = fullGuideHeight;
 
+		if (sharedCropPlan && !fullEye) {
+			outWidth = cropPlan.eyes[0].output.width;
+			outHeight = cropPlan.eyes[0].output.height;
+		}
+
 		// NR-only coverage: DLSS stays full eye and every NR pixel stays at 100%
 		// model resolution. Feature 18 runs on a centered region cropped from the
 		// full-eye guides, and the result is edge-blended over the DLSS image, so the
 		// periphery keeps full DLSS quality instead of the stretched foveated path.
-		const std::uint32_t coverage = NormalizeNeuralCoverage(foveated.settings.neuralRenderingCoverage);
+		const std::uint32_t coverage = 100;
 		NeuralCoverageRect coverageRect{};
 		bool coverageCrop = fullEye && coverage < 100 && !gaze.dynamic && !foveated.IsAdaptiveCropRuntimeActive();
 		if (coverageCrop) {
@@ -677,8 +726,7 @@ Tuning tuning{
 			coverageActivePercent = coverage;
 		}
 			Renderer::StereoResourceEnvelope resourceEnvelope{};
-			if (!fullEye && !gaze.dynamic &&
-				foveated.IsAdaptiveCropRuntimeActive() &&
+			if (!fullEye && foveated.IsAdaptiveCropRuntimeActive() &&
 				FoveatedRenderImpl::Core::vrSubrectResourceMode == FoveatedRenderImpl::Core::SubrectResourceMode::FixedEnvelope &&
 				!FoveatedRenderImpl::Core::vrSubrectFixedEnvelopeRejected &&
 				!FoveatedRenderImpl::Core::vrSubrectNeuralFixedEnvelopeRejected &&
@@ -731,8 +779,10 @@ Tuning tuning{
 		std::array<Renderer::StereoEyeInput, 2> inputs{};
 		for (std::uint32_t eye = 0; eye < 2; ++eye) {
 			const auto& uv = *eyeUVs[eye];
-			const std::uint32_t x = (eye ? eyeWidth : 0) + static_cast<std::uint32_t>(eyeWidth * uv.x);
-			const std::uint32_t y = static_cast<std::uint32_t>(totalDesc.Height * uv.y);
+			const std::uint32_t x = (eye ? eyeWidth : 0) + (sharedCropPlan ?
+				cropPlan.eyes[eye].output.x : static_cast<std::uint32_t>(eyeWidth * uv.x));
+			const std::uint32_t y = sharedCropPlan ? cropPlan.eyes[eye].output.y :
+				static_cast<std::uint32_t>(totalDesc.Height * uv.y);
 			float motionScaleX = 1.0f;
 			float motionScaleY = 1.0f;
 			FoveatedRenderImpl::Bridge::ComputeMvecScale(eye, motionScaleX, motionScaleY);
@@ -746,27 +796,27 @@ Tuning tuning{
 				// does not change the pixel displacement.
 				.motionVectorScaleX = motionScaleX * fullGuideWidth,
 				.motionVectorScaleY = motionScaleY * fullGuideHeight,
+				.compensateCropMotion = gazeConfig.enabled && !fullEye,
 				.guideSourceX = coverageCrop ? coverageRect.guideX : 0u,
 				.guideSourceY = coverageCrop ? coverageRect.guideY : 0u,
 			};
+			inputs[eye].sceneColorMotionScale = { float(eyeWidth), float(totalDesc.Height) };
+			if (sharedCropPlan && !fullEye && foveated.GetDlssMode() == FoveatedRender::DlssMode::kDefault) {
+				const auto sampling = FoveatedRenderImpl::CropGeometry::GuideSampling(cropPlan, eye);
+				inputs[eye].guideScale = sampling.scale;
+				inputs[eye].guideOffset = sampling.offset;
+			}
 		}
 		Tuning tuning = GetTuning(foveated, true);
 		if (!fullEye && tuning.adaptiveResolution && !tuning.adaptiveHandoff && !adaptiveCropHandoffDisabledLogged) {
 			logger::info("[DLSSNR] adaptive NR history handoff disabled while adaptive crop is active; using current-frame crop feathering");
 			adaptiveCropHandoffDisabledLogged = true;
 		}
-		if (!fullEye || coverageCrop)
-			// The cascade relies on full-eye dimensions and isolated stage history;
-			// keep cropped/foveated regions on the established single-pass route.
-		{
-			tuning.multiPass = 0;
-			// A fixed crop now owns crop-local temporal history in the renderer. Do
-			// not attempt reuse while an eye-tracked crop is moving: its local origin
-			// changes every frame and must first be handled by an explicit crop-origin
-			// transform. Adaptive crop already supplies cadence zero through GetTuning.
-			if (gaze.dynamic)
-				tuning.temporalReuseCadence = 0;
-		}
+		// v01: sequential Feature 18 is valid on cropped/gaze routes. Cadence-based
+		// whole-frame residual reuse remains disabled while crop geometry can move;
+		// each sequential stage keeps its own native Feature history.
+		if (gaze.dynamic || foveated.IsAdaptiveCropRuntimeActive())
+			tuning.temporalReuseCadence = 0;
 			// A hard-copy edge mode would expose the NR-only rectangle; upgrade it to
 			// feathering for this composite only.
 			FoveatedRenderImpl::Ops::forceFeatherBlend = coverageCrop;
@@ -774,7 +824,7 @@ Tuning tuning{
 				Util::AsReal(total.texture), inputs, guideWidth, guideHeight,
 				outWidth, outHeight, tuning, destination, destinationUAV, wantsEdgeBlend && destinationUAV != nullptr,
 				resourceEnvelope);
-			if (!succeeded && resourceEnvelope.IsValid() &&
+			if (!succeeded && !tuning.singlePassLadder && resourceEnvelope.IsValid() &&
 				Renderer::Instance().IsFailureRecoverable()) {
 				// A native Feature 18 failure is not allowed to leave the runtime
 				// latched on the experimental envelope. Drop only the NR renderer's

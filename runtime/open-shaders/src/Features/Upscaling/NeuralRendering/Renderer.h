@@ -25,10 +25,14 @@ namespace NeuralRendering
 			std::uint32_t sourceY = 0;
 			float motionVectorScaleX = 1.0f;
 			float motionVectorScaleY = 1.0f;
+			bool compensateCropMotion = false;
 			// Top-left of this eye's guide region inside the depth/motion sources. Non-zero
 			// only for NR-only coverage, which crops full-eye guides without a copy pass.
 			std::uint32_t guideSourceX = 0;
 			std::uint32_t guideSourceY = 0;
+			std::array<float, 2> guideScale{ 1.0f, 1.0f };
+			std::array<float, 2> guideOffset{};
+			std::array<float, 2> sceneColorMotionScale{};
 			};
 
 			// Optional stable resource envelope for the adaptive regular-crop
@@ -78,6 +82,9 @@ namespace NeuralRendering
 		bool Reset();
 		void ResetHistory();
 
+		[[nodiscard]] bool IsStereoAtlasActive() const;
+		/** @brief Whether either eye is still blending an adaptive layout transition. */
+		[[nodiscard]] bool IsOutputTransitioning() const;
 		[[nodiscard]] bool IsFailureLatched() const;
 		[[nodiscard]] bool IsFailureRecoverable() const;
 		/** @brief Holds adaptive upshifts after the session's bounded recovery attempt. */

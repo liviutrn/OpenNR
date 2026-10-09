@@ -17,7 +17,6 @@
 #include "Features/SubsurfaceScattering.h"
 #include "Features/TerrainBlending.h"
 #include "Features/Upscaling.h"
-#include "Features/Upscaling/NeuralRendering/SettingsBenchmark.h"
 #include "Features/VRS.h"
 #include "Features/VR.h"
 #include "Features/Wind/Wind.h"
@@ -257,10 +256,6 @@ void Deferred::EarlyPrepasses()
 
 	// Shadow maps have just been rendered — upload BSShadowDirectionalLight data to t98.
 	CopyShadowLightData();
-
-	// In-headset settings benchmark: samples compositor timing once per world frame
-	// and schedules its (main-thread task) settings switches. No-op unless running.
-	NeuralRendering::SettingsBenchmark::Tick();
 
 	Feature::ForEachLoadedFeature("EarlyPrepass", [](Feature* feature) { feature->EarlyPrepass(); }, true);
 }

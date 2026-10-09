@@ -459,13 +459,13 @@ foreach(_contract IN ITEMS
     "NativeOpenVRGaze::MakeConfig"
     "NativeOpenVRGaze::ResolveForFrame"
     "neuralRenderingEyeTrackedFoveation"
-    "Native OpenVR gaze provider"
+    "Native OpenVR gaze"
 )
     string(FIND "${_foveated_render}${_foveated_params}${_integration}" "${_contract}" _contract_index)
     if(_contract_index EQUAL -1)
         message(FATAL_ERROR
             "OpenNR native OpenVR eye-tracking wiring missing: ${_contract}\n"
-            "The experimental provider must stay opt-in and fail closed through the existing foveated/NR path."
+            "The native provider must fail closed through the existing foveated/NR path."
         )
     endif()
 endforeach()
@@ -487,15 +487,15 @@ endforeach()
 
 foreach(_contract IN ITEMS
     "void Upscaling::DrawDLSSNRPage()"
-    "Temporal Stability"
-    "neuralRenderingTemporalReuseCadence"
-    "neuralRenderingTemporalReuseResetAfterSkip"
+    "Adaptive Performance"
+    "neuralRenderingForcedStage"
+    "neuralRenderingCropDrop"
 )
     string(FIND "${_upscaling_page}${_foveated_render}" "${_contract}" _contract_index)
     if(_contract_index EQUAL -1)
         message(FATAL_ERROR
             "OpenNR Neural Rendering UI contract missing: ${_contract}\n"
-            "The temporal-reuse controls or dedicated page would regress."
+            "The adaptive controller controls or dedicated page would regress."
         )
     endif()
 endforeach()

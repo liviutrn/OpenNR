@@ -1,5 +1,7 @@
 #pragma once
 
+#include "NeuralRendering/SinglePassLadder.h"
+
 // ============================================================================
 // FoveatedRender — VR DLSS enhancement mode of Upscaling
 // ============================================================================
@@ -23,7 +25,6 @@
 
 #include "../../Utils/BootSnapshot.h"
 #include "../../Utils/Subrect.h"
-#include "NeuralRendering/AdaptiveController.h"
 #include "NeuralRendering/AdaptiveCropController.h"
 
 #include <chrono>
@@ -78,6 +79,50 @@ struct FoveatedRender
 	static const char* SubrectBlendModeName(SubrectBlendMode mode);
 	static const char* SubrectMaskModeName(SubrectMaskMode mode);
 
+	// Independent controls for sequential Feature 18 pass 2. Route ownership
+	// (gaze/adaptive controller) remains shared: pass 2 derives its region from
+	// the live pass-1 region every frame instead of maintaining a competing crop.
+	struct SequentialPassSettings
+	{
+		uint coveragePercent = 100;  // relative linear coverage of the live pass-1 crop
+		uint modelResolution = 100;
+		uint preset = 0;
+		float intensity = 1.70f;
+		float localTone = 1.00f;
+		float localStructure = 1.70f;
+		float skinStructure = -1.0f;
+		uint style = 0;
+		bool autoMask = true;
+		bool uiCorrection = false;
+		uint resolveMode = 0;
+		bool resultShapingEnabled = false;
+		float resultEditStrength = 1.0f;
+		float resultBrightening = 1.0f;
+		float resultDarkening = 1.0f;
+		float resultColor = 1.0f;
+		float resultHueShiftStrength = 1.0f;
+		float resultShadows = 1.0f;
+		float resultMidtones = 1.0f;
+		float resultHighlights = 1.0f;
+		float resultMaxBrighteningStops = 0.0f;
+		float resultMaxDarkeningStops = 0.0f;
+		float resultMaxColorChangeStops = 0.0f;
+		float resultLargeScaleTone = 1.0f;
+		float resultFineDetail = 1.0f;
+		float resultDetailRadius = 1.0f;
+		float resultHaloSuppression = 0.0f;
+		uint stabilizeMode = 0;
+		float stabilizeTimeMs = 60.0f;
+		bool stabilizeDetail = false;
+		float stabilizeDepthThreshold = 0.05f;
+		float stabilizeColorTolerance = 0.08f;
+		uint blendMode = static_cast<uint>(SubrectBlendMode::kFeather);
+		uint maskMode = static_cast<uint>(SubrectMaskMode::kOval);
+		float featherWidth = 64.0f;
+		float falloffCurve = 1.0f;
+		float ditherStrength = 1.0f;
+	};
+
 	// FoveatedRender-specific settings. Quality mode / sharpness / DLSS preset /
 	// Streamline log level live on Upscaling::Settings and are read through
 	// the accessors below — do not duplicate them here. Sharpening on/off is
@@ -92,24 +137,32 @@ struct FoveatedRender
 	{
 		uint enabled = 0;  // opt-in: requires restart to take effect via LatchEnabled()
 		uint dlssMode = (uint)DlssMode::kDefault;
-		uint stretchMode = (uint)StretchMode::kGaussianBlur;
+		uint stretchMode = (uint)StretchMode::kPoint;
 		float peripheryBlurRadius = 1.0f;
 		uint debugVisualize = 0;  // tint cheap-stretched periphery red; runtime toggle
 		uint peripheryAAMode = static_cast<uint>(PeripheryAAMode::kTemporalSmooth);
 		float peripheryTemporalAlpha = 0.16f;
-		uint subrectBlendMode = static_cast<uint>(SubrectBlendMode::kFeather);
+		uint subrectBlendMode = static_cast<uint>(SubrectBlendMode::kDither);
 		uint subrectMaskMode = static_cast<uint>(SubrectMaskMode::kOval);
-		float subrectFeatherWidth = 64.0f;
+		float subrectFeatherWidth = 128.0f;
 		// Shape of the oval/feather transition. 1.0 is the balanced smoothstep
 		// curve; lower values move the neural result farther into the band, while
 		// higher values keep the stretched periphery longer before the handoff.
-		float subrectFalloffCurve = 1.0f;
+		float subrectFalloffCurve = 0.5f;
 		float subrectDitherStrength = 1.0f;
 		// First-run NR defaults mirror the validated internal DLSSNR tuning target.
 		// FoveatedRender itself remains opt-in, so this does not activate NR outside
 		// an explicitly enabled foveated-DLSS session.
 		bool neuralRenderingEnabled = true;
 		uint neuralRenderingModelResolution = 100;
+		bool neuralRenderingSinglePassLadder = true;
+		float neuralRenderingLadderBudgetMs = 20.0f;
+		float neuralRenderingLadderReserveMs = 1.0f;
+		float neuralRenderingLadderHandoffMs = 150.0f;
+		float neuralRenderingDisableAboveMs = 24.0f;
+		float neuralRenderingEnableBelowMs = 14.0f;
+		uint neuralRenderingCropDrop = 20;
+		uint neuralRenderingForcedStage = 0;
 		// NR-only centered coverage (linear %, per axis). DLSS stays full eye; Feature 18
 		// runs at 100% model resolution on the center and is edge-blended onto DLSS.
 		uint neuralRenderingCoverage = 100;
@@ -139,6 +192,9 @@ struct FoveatedRender
 		float neuralRenderingResultFineDetail = 1.0f;
 		float neuralRenderingResultDetailRadius = 1.0f;
 		float neuralRenderingResultHaloSuppression = 0.0f;
+		float neuralRenderingNearBlackProtection = 0.0f;
+		float neuralRenderingNearBlackThreshold = 0.035f;
+		float neuralRenderingNearBlackLiftSoftness = 0.001f;
 		// 0 = off, 1 = static-pixel, 2 = game-motion-vector reprojection.
 		std::uint32_t neuralRenderingStabilizeMode = 0;
 		float neuralRenderingStabilizeTimeMs = 60.0f;
@@ -150,11 +206,23 @@ struct FoveatedRender
 		// falls back to post-upscale when its guide contract is unavailable.
 		uint neuralRenderingPreUpscale = 0;
 		// 0 = classic bounded resolve, 1 = exact-area + matched residual.
-		uint neuralRenderingResolveMode = 0;
+		uint neuralRenderingResolveMode = 1;
 		// Experimental screenshot/benchmark mode: 0 = single pass, 1 = two, or
 		// 2 = three sequential Feature 18 evaluations. Runtime-gated away from
 		// pre-upscale and cropped VR paths.
 		uint neuralRenderingMultiPass = 0;
+		// Pass 2 is independently tunable but inherits route ownership (gaze/adaptive
+		// crop center) from pass 1. coveragePercent is relative to the live pass-1
+		// crop, not the persisted static preset.
+		SequentialPassSettings neuralRenderingPass2{};
+		// Experimental stereo atlas: pack both eyes into one Feature 18 evaluation
+		// per sequential stage. Off by default; incompatible geometry fails closed
+		// to the normal independent-eye path.
+		bool neuralRenderingStereoAtlas = true;
+		uint neuralRenderingStereoAtlasGuardPixels = 50;
+		// Adaptive controller estimate used when deciding whether a two-pass route
+		// can fit the frame budget without oscillating simply because pass 2 toggles.
+		float neuralRenderingAdaptiveSecondPassCostMs = 6.0f;
 		// Experimental Feature 18 temporal reuse. 0 = off; 2/3/4 means a full
 		// neural pass every Nth frame, with exact-MV residual reprojection between
 		// full passes. Runtime-gated to native-size single-pass full-eye or stable
@@ -171,7 +239,7 @@ struct FoveatedRender
 		// application budget from the selected headset refresh unless a custom FPS
 		// target is set, then moves through the short native ladder; it never changes
 		// the display/compositor mode.
-		bool neuralRenderingAdaptiveEnabled = false;
+		bool neuralRenderingAdaptiveEnabled = true;
 		uint neuralRenderingAdaptiveRefreshHz = 80;
 		// Zero keeps the refresh-derived budget for existing settings. When set,
 		// the controller uses this custom application target instead.
@@ -181,6 +249,16 @@ struct FoveatedRender
 		uint neuralRenderingAdaptiveUpshiftFrames = 12;
 		uint neuralRenderingAdaptiveMinimumDwellFrames = 30;
 		float neuralRenderingAdaptiveGuardTimeMs = 1.0f;
+		// v05 KISS controller. All four thresholds are direct SteamVR application
+		// GPU frametime values and are user-configurable in the 10-30 ms range.
+		float neuralRenderingAdaptivePassIncreaseBelowMs = 14.0f;
+		float neuralRenderingAdaptiveCropIncreaseBelowMs = 16.0f;
+		float neuralRenderingAdaptiveCropDecreaseAboveMs = 18.0f;
+		float neuralRenderingAdaptivePassDecreaseAboveMs = 20.0f;
+		float neuralRenderingAdaptiveSmoothingMs = 250.0f;
+		float neuralRenderingAdaptiveDecreaseHoldMs = 350.0f;
+		float neuralRenderingAdaptiveIncreaseHoldMs = 1200.0f;
+		float neuralRenderingAdaptiveCooldownMs = 1000.0f;
 		bool neuralRenderingAdaptiveDiagnostics = false;
 		// Optional companion for the shared foveated crop. It is coordinated with
 		// adaptive NR and is hard-disabled while eye-tracked foveation owns UVs.
@@ -188,7 +266,7 @@ struct FoveatedRender
 		// Adaptive crop's upper tier is independent of the static crop preset. This
 		// lets a user compare against a smaller static preset, then re-arm adaptive
 		// crop at its normal 85% tier without silently changing the saved preset.
-		uint neuralRenderingAdaptiveCropMaximumCoverage = 85;
+		uint neuralRenderingAdaptiveCropMaximumCoverage = 100;
 		uint neuralRenderingAdaptiveCropMinimumCoverage = 60;
 		uint neuralRenderingAdaptiveCropDownshiftFrames = 2;
 		uint neuralRenderingAdaptiveCropUpshiftFrames = 24;
@@ -198,9 +276,27 @@ struct FoveatedRender
 		// fixed-size crop around the per-eye gaze point; it is opt-in, NR-only,
 		// and falls back to the persisted static crop whenever the native API is
 		// unavailable, stale, unfocused, or in a menu/loading context.
-		bool neuralRenderingEyeTrackedFoveation = false;
+		bool neuralRenderingEyeTrackedFoveation = true;
 		float neuralRenderingEyeTrackedSmoothingMs = 0.0f;
-		uint neuralRenderingEyeTrackedQuantizationPixels = 8;
+		uint neuralRenderingEyeTrackedQuantizationPixels = 0;
+		float neuralRenderingEyeTrackedDeadZonePercent = 0.0f;
+		bool neuralRenderingEyeTrackedAdaptiveSmoothing = true;
+		bool neuralRenderingEyeTrackedFreezeCrop = false;
+		float neuralRenderingEyeTrackedResponsiveness = 8.0f;
+		float neuralRenderingEyeTrackedSlowPercent = 10.0f;
+		float neuralRenderingEyeTrackedFastPercent = 100.0f;
+		float neuralRenderingEyeTrackedJumpPercent = 100.0f;
+		float neuralRenderingEyeTrackedJumpSpeed = 20.0f;
+		float neuralRenderingEyeTrackedMaxLagPercent = 25.0f;
+		bool neuralRenderingAdaptiveFirstPassPriority = false;
+		float neuralRenderingAdaptiveFirstPassIncreaseBelowMs = 14.0f;
+		float neuralRenderingAdaptiveFirstPassHoldMs = 1200.0f;
+		bool neuralRenderingAdaptiveFirstPassCostGuard = false;
+		float neuralRenderingAdaptiveFirstPassCostMs = 6.0f;
+		float neuralRenderingAdaptiveFirstPassMarginMs = 1.0f;
+		float neuralRenderingAdaptiveFirstPassRetryMs = 3000.0f;
+		uint neuralRenderingAdaptiveRelativeCropFloor = 60;
+		uint neuralRenderingAdaptiveRelativeCropStep = 20;
 	};
 
 	inline static constexpr Util::Settings::RestartTable<Settings, 1> kRestartFields{ {
@@ -224,13 +320,36 @@ struct FoveatedRender
 	static constexpr const char* kPresetNasalConvergence70 = "Nasal Convergence 70%";  ///< 70% crop biased toward nasal convergence.
 
 	Settings settings;
-	NeuralRendering::AdaptiveController adaptiveController;
+	bool measureNRProtection = false;
 	NeuralRendering::AdaptiveCropController adaptiveCropController;
 	Util::Subrect::Controller subrectController;
-	// Pressure alternates crop -> NR -> crop when both controllers can help.
-	// Restoration remains NR-first because crop is gated on NR maximum.
-	bool adaptiveNextDownshiftIsCrop = true;
-	std::uint64_t adaptiveCropDiagnosticGeneration = UINT64_MAX;
+	std::uint32_t adaptiveActivePasses = 1;
+	std::uint32_t adaptiveConfiguredPasses = 1;
+	bool adaptivePassInitialized = false;
+	std::uint32_t adaptiveUpdateFrame = UINT32_MAX;
+	std::array<float, 10> adaptiveWorkloadKey{};
+	bool adaptiveWorkloadObserved = false;
+	std::uint32_t adaptiveCropTargetCoverage = 100;
+	std::uint32_t adaptiveLadderStage = 0;
+	std::uint32_t adaptiveModelResolution = 100;
+	std::uint32_t adaptiveBlockedGrowthStage = UINT32_MAX;
+	float adaptiveGrowthBaselineMs = 0.0f;
+	float adaptiveBlockedGrowthBaselineMs = 0.0f;
+	// v05 authoritative controller state. Inherited v03/v04 diagnostic members
+	// remain for source compatibility but do not participate in v05 decisions.
+	float adaptiveFilteredFrameTimeMs = 0.0f;
+	float adaptiveLastFrameTimeMs = 0.0f;
+	float adaptiveDecreaseHoldMs = 0.0f;
+	float adaptiveIncreaseHoldMs = 0.0f;
+	float adaptiveCooldownRemainingMs = 0.0f;
+	std::uint32_t adaptivePendingAction = 0;
+	NeuralRendering::SinglePassLadder::Config adaptivePolicyConfig{};
+	bool adaptivePolicyObserved = false;
+	float adaptiveResumeRemainingMs = 0.0f;
+	std::uint32_t adaptiveLastAction = 0;
+	std::uint32_t adaptiveLastActionFrom = 0;
+	std::uint32_t adaptiveLastActionTo = 0;
+	float adaptiveLastActionFrameTimeMs = 0.0f;
 
 	// Called from Upscaling::DrawSettings. DrawEnable renders the always-visible
 	// header + Enable checkbox at the parent's top level; DrawSettings renders

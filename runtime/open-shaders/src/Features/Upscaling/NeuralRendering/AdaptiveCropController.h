@@ -35,12 +35,13 @@ namespace NeuralRendering
 			// Upper adaptive tier. This is intentionally independent of the static
 			// crop preset, which supplies geometry but must not pin re-arming at a
 			// smaller comparison crop.
-			std::uint32_t maximumCoverage = 85;
+			std::uint32_t maximumCoverage = 100;
 			std::uint32_t minimumCoverage = 60;
 			std::uint32_t downshiftFrames = 2;
 			std::uint32_t upshiftFrames = 24;
 			std::uint32_t minimumDwellFrames = 60;
 			std::uint32_t transitionFrames = 8;
+			std::uint32_t stepCoverage = 20;
 		};
 
 		void Reset();
@@ -66,7 +67,7 @@ namespace NeuralRendering
 		[[nodiscard]] std::uint64_t Generation() const { return generation_; }
 		static const char* ResetReasonName(ResetReason reason);
 
-		static constexpr const std::array<std::uint32_t, 6>& CoverageBuckets()
+		static constexpr const std::array<std::uint32_t, 9>& CoverageBuckets()
 		{
 			return kCoverageBuckets;
 		}
@@ -76,8 +77,8 @@ namespace NeuralRendering
 		// at the requested 60% floor. The named centered presets can still retain
 		// lower manual choices for compatibility; adaptive crop fails closed below
 		// this floor.
-		static constexpr std::array<std::uint32_t, 6> kCoverageBuckets{
-			85, 80, 75, 70, 65, 60 };
+		static constexpr std::array<std::uint32_t, 9> kCoverageBuckets{
+			100, 95, 90, 85, 80, 75, 70, 65, 60 };
 
 		static std::uint32_t FindBucketAtOrBelow(std::uint32_t coverage);
 		static std::uint32_t FindBucketIndexAtOrBelow(std::uint32_t coverage);
@@ -92,7 +93,7 @@ namespace NeuralRendering
 		bool geometryBlocked_ = false;
 		std::uint32_t lastFrame_ = UINT32_MAX;
 		std::uint32_t activeBucket_ = 0;
-		std::uint32_t previousCoverage_ = 85;
+		std::uint32_t previousCoverage_ = 100;
 		std::uint32_t targetBucket_ = 0;
 		std::uint32_t maximumBucket_ = 0;
 		std::uint32_t minimumBucket_ = 10;

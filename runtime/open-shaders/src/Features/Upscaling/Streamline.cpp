@@ -460,11 +460,33 @@ bool Streamline::CheckFrameConstants(sl::ViewportHandle p_viewport, uint32_t eye
 	const auto& frameBuffer = globals::game::frameBufferCached;
 	const auto& cameraPosition = frameBuffer.GetCameraPosAdjust(eyeIndex);
 	const auto& previousCameraPosition = frameBuffer.GetCameraPreviousPosAdjust(eyeIndex);
-	const auto cameraMatrices = UpscalingCamera::BuildReprojection(
+	auto cameraMatrices = UpscalingCamera::BuildReprojection(
 		viewMatrix,
 		frameBuffer.GetCameraViewProjUnjittered(eyeIndex).Transpose(),
 		frameBuffer.GetCameraPreviousViewProjUnjittered(eyeIndex).Transpose(),
 		float3(cameraPosition.x - previousCameraPosition.x, cameraPosition.y - previousCameraPosition.y, cameraPosition.z - previousCameraPosition.z));
+	if (FoveatedRenderImpl::Bridge::foveatedEvaluating && FoveatedRenderImpl::Bridge::cropFrame == frame) {
+		const auto& current = FoveatedRenderImpl::Bridge::currentCrop;
+		const bool previousValid = FoveatedRenderImpl::Bridge::cropHistoryValid &&
+			uint32_t(frame - FoveatedRenderImpl::Bridge::previousCropFrame) == 1u;
+		const auto& previous = previousValid ? FoveatedRenderImpl::Bridge::previousCrop : current;
+		const auto cropMatrix = [](const FoveatedRenderImpl::CropGeometry::FramePlan& plan, uint32_t eye) {
+			auto matrix = DirectX::SimpleMath::Matrix::Identity;
+			const auto transform = FoveatedRenderImpl::CropGeometry::ClipTransform(plan.fullInputWidth, plan.fullInputHeight, plan.eyes[eye].input);
+			matrix._11 = transform[0]; matrix._22 = transform[1];
+			matrix._41 = transform[2]; matrix._42 = transform[3];
+			return matrix;
+		};
+		cameraMatrices = UpscalingCamera::BuildReprojection(viewMatrix,
+			frameBuffer.GetCameraViewProjUnjittered(eyeIndex).Transpose() * cropMatrix(current, eyeIndex),
+			frameBuffer.GetCameraPreviousViewProjUnjittered(eyeIndex).Transpose() * cropMatrix(previous, eyeIndex),
+			float3(cameraPosition.x - previousCameraPosition.x, cameraPosition.y - previousCameraPosition.y, cameraPosition.z - previousCameraPosition.z));
+		const auto& crop = current.eyes[eyeIndex].input;
+		if (crop.width && crop.height && current.fullInputHeight) {
+			slConstants.cameraAspectRatio = float(crop.width) / crop.height;
+			slConstants.cameraFOV = 2.0f * std::atan(std::tan(slConstants.cameraFOV * 0.5f) * float(crop.height) / current.fullInputHeight);
+		}
+	}
 
 	slConstants.cameraMotionIncluded = sl::Boolean::eTrue;
 	slConstants.cameraPinholeOffset = { 0.f, 0.f };

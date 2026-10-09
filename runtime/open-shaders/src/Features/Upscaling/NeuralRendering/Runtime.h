@@ -10,6 +10,49 @@ struct ID3D12Resource;
 
 namespace NeuralRendering
 {
+	struct SequentialPassTuning
+	{
+		std::uint32_t coveragePercent = 100;
+		std::uint32_t modelResolutionPercent = 100;
+		std::uint32_t modelResolveMode = 0;
+		float intensity = 1.70f;
+		float localToneStrength = 1.00f;
+		float localStructureStrength = 1.70f;
+		float skinStructureStrength = -1.0f;
+		std::uint32_t style = 0;
+		bool useAutoMask = true;
+		bool uiCorrection = false;
+		bool resultShapingEnabled = false;
+		float resultEditStrength = 1.0f;
+		float resultBrightening = 1.0f;
+		float resultDarkening = 1.0f;
+		float resultColor = 1.0f;
+		float resultHueShiftStrength = 1.0f;
+		float resultShadows = 1.0f;
+		float resultMidtones = 1.0f;
+		float resultHighlights = 1.0f;
+		float resultMaxBrighteningStops = 0.0f;
+		float resultMaxDarkeningStops = 0.0f;
+		float resultMaxColorChangeStops = 0.0f;
+		float resultLargeScaleTone = 1.0f;
+		float resultFineDetail = 1.0f;
+		float resultDetailRadius = 1.0f;
+		float resultHaloSuppression = 0.0f;
+		std::uint32_t stabilizeMode = 0;
+		float stabilizeTimeMs = 60.0f;
+		bool stabilizeDetail = false;
+		float stabilizeDepthThreshold = 0.05f;
+		float stabilizeColorTolerance = 0.08f;
+		std::uint32_t blendMode = 1;
+		std::uint32_t maskMode = 1;
+		float featherWidth = 64.0f;
+		float falloffCurve = 1.0f;
+		float ditherStrength = 1.0f;
+		bool sharpeningEnabled = false;
+		float sharpeningStrength = 0.0f;
+		std::uint32_t sharpeningPlacement = 1;
+	};
+
 	struct Tuning
 	{
 		float intensity = 1.70f;
@@ -76,6 +119,22 @@ namespace NeuralRendering
 		// N2 only: alternate which eye receives native Feature 18 each frame so the
 		// per-frame NR cost stays flat; the other eye reuses its previous residual.
 		bool temporalReuseStaggerEyes = false;
+
+		// v01-only fields are trailing so all pre-v01 aggregate initializers retain
+		// their exact field mapping. Integration assigns them explicitly.
+		SequentialPassTuning secondPass{};
+		bool singlePassLadder = false;
+		float ladderHandoffMs = 150.0f;
+		bool stereoAtlas = false;
+		std::uint32_t stereoAtlasGuardPixels = 50;
+		float adaptiveSecondPassCostMs = 6.0f;
+		bool sharpeningEnabled = false;
+		float sharpeningStrength = 0.0f;
+		std::uint32_t sharpeningPlacement = 1;
+		float nearBlackProtection = 0.0f;
+		float nearBlackThreshold = 0.035f;
+		float nearBlackLiftSoftness = 0.001f;
+		float resumeBlendAlpha = 1.0f;
 	};
 
 	/**
@@ -192,7 +251,7 @@ namespace NeuralRendering
 		// Two eyes x nine fixed resolution tiers x three cascade stages. The
 		// adaptive controller still targets only its conservative 100%-70%
 		// bucket ladder; 50% and 33% are isolated fixed experimental tiers.
-		static constexpr std::uint32_t kFeatureSlotCount = 54;
+		static constexpr std::uint32_t kFeatureSlotCount = 81;
 		Runtime() = default;
 		bool EnsureFeature(ID3D12GraphicsCommandList* commandList, std::uint32_t slot,
 			const Feature18GuideContract& guide, bool* created = nullptr);

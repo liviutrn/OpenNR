@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Utils/Subrect.h"
+#include "GazeAdaptivePolicy.h"
 
 #include <array>
 #include <cstdint>
@@ -33,8 +34,34 @@ namespace FoveatedRenderImpl::NativeOpenVRGaze
 	{
 		bool enabled = false;
 		float smoothingMs = 0.0f;
-		std::uint32_t quantizationPixels = 8;
+		std::uint32_t quantizationPixels = 0;
+		bool adaptiveSmoothing = true;
+		bool freezeCrop = false;
+		float deadZonePercent = 0.0f;
+		float referenceWidth = 0.5f;
+		float referenceHeight = 0.5f;
+		GazeCropPolicy::AdaptiveSettings adaptive{};
 	};
+
+	/** Build the same crop/filter contract for VRS, SR and NR. */
+	template <class Settings>
+	Config MakeConfig(const Settings& settings, float width, float height)
+	{
+		Config result{};
+		result.enabled = settings.neuralRenderingEyeTrackedFoveation;
+		result.smoothingMs = settings.neuralRenderingEyeTrackedSmoothingMs;
+		result.quantizationPixels = settings.neuralRenderingEyeTrackedQuantizationPixels;
+		result.adaptiveSmoothing = settings.neuralRenderingEyeTrackedAdaptiveSmoothing;
+		result.freezeCrop = settings.neuralRenderingEyeTrackedFreezeCrop;
+		result.deadZonePercent = settings.neuralRenderingEyeTrackedDeadZonePercent;
+		result.referenceWidth = width;
+		result.referenceHeight = height;
+		result.adaptive = { result.smoothingMs, settings.neuralRenderingEyeTrackedResponsiveness,
+			settings.neuralRenderingEyeTrackedSlowPercent, settings.neuralRenderingEyeTrackedFastPercent,
+			settings.neuralRenderingEyeTrackedJumpPercent, settings.neuralRenderingEyeTrackedJumpSpeed,
+			settings.neuralRenderingEyeTrackedMaxLagPercent };
+		return result;
+	}
 
 	struct Diagnostics
 	{

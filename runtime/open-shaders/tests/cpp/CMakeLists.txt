@@ -78,7 +78,6 @@ add_executable(cpp_tests
     test_adaptive_crop_controller.cpp
     test_adaptive_nr_controller.cpp
     test_nr_runtime_policy.cpp
-    test_nr_benchmark_policy.cpp
     test_gaze_crop_policy.cpp
     # Stub I18n::Get so units-under-test that call T() (Subrect's DrawEditor)
     # link without pulling the translation loader into the test binary.

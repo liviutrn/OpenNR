@@ -1,5 +1,7 @@
 #pragma once
 
+#include "CropGeometry.h"
+
 // ============================================================================
 // FoveatedRenderImpl::Core — GPU resource pool & mode-dispatch entry point
 // ============================================================================
@@ -90,7 +92,7 @@ namespace FoveatedRenderImpl
 		// Drop crop-sensitive temporal state even when the replacement resources
 		// keep the same dimensions. A moved subrect must not inherit old guides
 		// or DLSSNR history from the previous eye region.
-		static void InvalidateTemporalState();
+		static void InvalidateTemporalState(bool resetNeuralHistory = true);
 		static void ClearShaderCache();
 
 		// ── Own VR resources (independent from Upscaling) ──
@@ -177,6 +179,8 @@ namespace FoveatedRenderImpl
 
 		// Subrect UV hash for resource recreation detection
 		static inline uint64_t activeSubrectUVHash = 0;
+		static inline CropGeometry::FramePlan neuralCropPlan{};
+		static inline uint32_t neuralCropPlanFrame = UINT32_MAX;
 		static inline uint32_t neuralGuidesFrame = UINT32_MAX;
 
 		// Full-SBS history for the optional adaptive crop transition. These are

@@ -3,6 +3,8 @@
 #include "../../../Buffer.h"
 #include "../../../State.h"
 
+#include <algorithm>
+#include <cmath>
 #include <d3d11_4.h>
 #include <winrt/base.h>
 
@@ -30,9 +32,17 @@ public:
 	 *
 	 * @param inputTexture SRV of the texture to sharpen (typically kMAIN render target).
 	 * @param outputUAV UAV to write sharpened result to.
-	 * @param sharpness Sharpening strength (0.0 = no sharpening, higher = more sharp).
+	 * @param sharpness RCAS attenuation/extended strength after slider conversion.
+	 * @return True when the sharpening dispatch was submitted.
 	 */
-	void ApplySharpen(ID3D11ShaderResourceView* inputTexture, ID3D11UnorderedAccessView* outputUAV, float sharpness);
+	bool ApplySharpen(ID3D11ShaderResourceView* inputTexture, ID3D11UnorderedAccessView* outputUAV, float sharpness);
+
+	/** @brief Convert the shared 0–3 slider to RCAS attenuation/extended strength. */
+	static float MapSliderStrength(float strength)
+	{
+		strength = std::clamp(std::isfinite(strength) ? strength : 0.0f, 0.0f, 3.0f);
+		return strength <= 1.0f ? std::exp2(2.0f * strength - 2.0f) : strength;
+	}
 
 private:
 	void CreateComputeShader();

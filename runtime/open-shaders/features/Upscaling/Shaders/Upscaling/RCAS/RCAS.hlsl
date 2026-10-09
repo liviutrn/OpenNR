@@ -100,7 +100,12 @@ RWTexture2D<float4> Dest : register(u0);
 	float lobeR = max(-hitMinR, hitMaxR);
 	float lobeG = max(-hitMinG, hitMaxG);
 	float lobeB = max(-hitMinB, hitMaxB);
-	float lobe = max(-FSR_RCAS_LIMIT, min(max(lobeR, max(lobeG, lobeB)), 0.0)) * sharpness;
+	// 0..1 keeps the historical RCAS behavior exactly. Values above 1 never
+	// overdrive the RCAS lobe itself (which can cross its stable denominator);
+	// instead they extrapolate the already-bounded sharpened delta below.
+	float kernelSharpness = min(sharpness, 1.0);
+	float deltaBoost = max(sharpness, 1.0);
+	float lobe = max(-FSR_RCAS_LIMIT, min(max(lobeR, max(lobeG, lobeB)), 0.0)) * kernelSharpness;
 
 	// Apply noise removal.
 	lobe *= nz;
@@ -111,5 +116,7 @@ RWTexture2D<float4> Dest : register(u0);
 	float pixG = (lobe * bG + lobe * dG + lobe * hG + lobe * fG + eG) * rcpL;
 	float pixB = (lobe * bB + lobe * dB + lobe * hB + lobe * fB + eB) * rcpL;
 
-	Dest[DTid.xy] = float4(pixR, pixG, pixB, 1.0);
+	float3 sharpened = float3(pixR, pixG, pixB);
+	float3 boosted = e + (sharpened - e) * deltaBoost;
+	Dest[DTid.xy] = float4(boosted, 1.0);
 }

@@ -12,6 +12,8 @@ cbuffer ModelResolutionParams : register(b0)
 	float gPadding0;
 	float gPadding1;
 	float gPadding2;
+	float2 gSampleScale;
+	float2 gSampleOffset;
 };
 
 Texture2D<float4> gProxy : register(t0);
@@ -77,35 +79,33 @@ float3 PreserveModelHue(float3 scaledModel, float3 model)
 // full-resolution source before Feature 18 sees it.
 float4 SampleExactArea(uint2 targetPixel)
 {
-	const float2 sourceSize = float2(max(gSourceWidth, 1u), max(gSourceHeight, 1u));
-	const float2 targetSize = float2(max(gWidth, 1u), max(gHeight, 1u));
-	const float2 begin = float2(targetPixel) * sourceSize / targetSize;
-	const float2 end = float2(targetPixel + 1u) * sourceSize / targetSize;
-	const uint2 sourceLast = uint2(max(gSourceWidth, 1u) - 1u, max(gSourceHeight, 1u) - 1u);
-	const uint2 first = min(uint2(floor(begin)), sourceLast);
-	const uint2 last = min(uint2(max(ceil(end) - 1.0, 0.0)), sourceLast);
+	const float2 begin = float2(targetPixel) * gSampleScale + gSampleOffset;
+	const float2 end = float2(targetPixel + 1u) * gSampleScale + gSampleOffset;
+	const int2 sourceLast = int2(max(gSourceWidth, 1u), max(gSourceHeight, 1u)) - 1;
+	const int2 first = int2(floor(begin));
+	const int2 last = int2(ceil(end)) - 1;
 
 	float4 sum = 0.0;
 	[loop]
-	for (uint y = first.y; y <= last.y; ++y) {
-		const float yWeight = max(0.0, min(end.y, float(y + 1u)) - max(begin.y, float(y)));
+	for (int y = first.y; y <= last.y; ++y) {
+		const float yWeight = max(0.0, min(end.y, float(y + 1)) - max(begin.y, float(y)));
 		[loop]
-		for (uint x = first.x; x <= last.x; ++x) {
-			const float xWeight = max(0.0, min(end.x, float(x + 1u)) - max(begin.x, float(x)));
-			sum += gProxy.Load(int3(x, y, 0)) * (xWeight * yWeight);
+		for (int x = first.x; x <= last.x; ++x) {
+			const float xWeight = max(0.0, min(end.x, float(x + 1)) - max(begin.x, float(x)));
+			sum += gProxy.Load(int3(clamp(int2(x, y), int2(0, 0), sourceLast), 0)) * (xWeight * yWeight);
 		}
 	}
 
 	return sum / max((end.x - begin.x) * (end.y - begin.y), 1e-6);
 }
 
-float4 SampleValidSource(Texture2D<float4> source, float2 uv)
+float4 SampleValidSource(Texture2D<float4> source, float2 position)
 {
 	uint width, height;
 	source.GetDimensions(width, height);
 	const float2 validSize = float2(gSourceWidth, gSourceHeight);
 	// Clamp to valid texel centers; sampler clamping alone includes unused envelope pixels.
-	const float2 pixel = clamp(uv * validSize, 0.5, validSize - 0.5);
+	const float2 pixel = clamp(position, 0.5, validSize - 0.5);
 	return source.SampleLevel(gLinear, pixel / float2(width, height), 0);
 }
 
@@ -115,10 +115,10 @@ void main(uint3 id : SV_DispatchThreadID)
 	if (id.x >= gWidth || id.y >= gHeight)
 		return;
 
-	const float2 uv = (float2(id.xy) + 0.5) / float2(gWidth, gHeight);
+	const float2 position = (float2(id.xy) + 0.5) * gSampleScale + gSampleOffset;
 	if (gMode == 0)
 	{
-		gTarget[id.xy] = SampleValidSource(gProxy, uv);
+		gTarget[id.xy] = SampleValidSource(gProxy, position);
 		return;
 	}
 	if (gMode == 2)
@@ -127,8 +127,8 @@ void main(uint3 id : SV_DispatchThreadID)
 		return;
 	}
 
-	const float3 proxy = SampleValidSource(gProxy, uv).rgb;
-	const float3 model = SampleValidSource(gModel, uv).rgb;
+	const float3 proxy = SampleValidSource(gProxy, position).rgb;
+	const float3 model = SampleValidSource(gModel, position).rgb;
 	const float4 originalSample = gOriginal.Load(int3(id.xy, 0));
 	const float3 original = max(originalSample.rgb, float3(0.0, 0.0, 0.0));
 	if (gMode == 3)

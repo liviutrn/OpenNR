@@ -70,6 +70,8 @@ namespace NeuralRendering
 		applicationDeadlineMs_ = 25.0f;
 		lastFrameTimeMs_ = 0.0f;
 		smoothedFrameTimeMs_ = 0.0f;
+		fastFrameTimeMs_ = 0.0f;
+		slowFrameTimeMs_ = 0.0f;
 		lastSampleOverBudget_ = false;
 		lastSampleHadHeadroom_ = false;
 	}
@@ -162,8 +164,20 @@ namespace NeuralRendering
 
 		if (frameTimeMs > 0.0f) {
 			lastFrameTimeMs_ = frameTimeMs;
-			smoothedFrameTimeMs_ = smoothedFrameTimeMs_ == 0.0f ? frameTimeMs :
-				smoothedFrameTimeMs_ * 0.90f + frameTimeMs * 0.10f;
+			if (fastFrameTimeMs_ == 0.0f || slowFrameTimeMs_ == 0.0f) {
+				fastFrameTimeMs_ = frameTimeMs;
+				slowFrameTimeMs_ = frameTimeMs;
+			} else {
+				// Fast path follows real interior/exterior or combat load changes within
+				// a few frames. Slow path clips isolated compositor spikes so recovery
+				// cannot immediately undo a degradation decision.
+				fastFrameTimeMs_ = fastFrameTimeMs_ * 0.55f + frameTimeMs * 0.45f;
+				const float low = std::max(0.1f, slowFrameTimeMs_ * 0.60f);
+				const float high = std::max(low, slowFrameTimeMs_ * 1.80f);
+				const float clipped = std::clamp(frameTimeMs, low, high);
+				slowFrameTimeMs_ = slowFrameTimeMs_ * 0.94f + clipped * 0.06f;
+			}
+			smoothedFrameTimeMs_ = slowFrameTimeMs_;
 		}
 
 		if (transitionFrameCount_ != 0) {
@@ -188,12 +202,15 @@ namespace NeuralRendering
 		}
 
 		const float guardedDeadline = std::max(1.0f, applicationDeadlineMs_ - config.guardTimeMs);
-		const bool emergencyOverrun = frameTimeMs > applicationDeadlineMs_ * 1.25f;
-		const bool overrun = emergencyOverrun || frameTimeMs > guardedDeadline ||
-			(smoothedFrameTimeMs_ > guardedDeadline && frameTimeMs > applicationDeadlineMs_ * 0.95f);
-		const float restorationBudget = std::min(applicationDeadlineMs_ * 0.85f,
-			applicationDeadlineMs_ - config.guardTimeMs * 2.0f);
-		const bool headroom = frameTimeMs < restorationBudget && smoothedFrameTimeMs_ < restorationBudget;
+		const bool emergencyOverrun = frameTimeMs > applicationDeadlineMs_ * 1.30f ||
+			fastFrameTimeMs_ > applicationDeadlineMs_ * 1.18f;
+		const bool overrun = emergencyOverrun ||
+			(fastFrameTimeMs_ > guardedDeadline && slowFrameTimeMs_ > applicationDeadlineMs_ * 0.96f) ||
+			(frameTimeMs > guardedDeadline && fastFrameTimeMs_ > guardedDeadline);
+		const float restorationBudget = std::max(1.0f, std::min(applicationDeadlineMs_ * 0.82f,
+			applicationDeadlineMs_ - std::max(config.guardTimeMs * 2.0f, 1.0f)));
+		const bool headroom = frameTimeMs < applicationDeadlineMs_ * 0.95f &&
+			fastFrameTimeMs_ < restorationBudget && slowFrameTimeMs_ < restorationBudget;
 		lastSampleOverBudget_ = overrun;
 		lastSampleHadHeadroom_ = headroom;
 		if (overrun) {

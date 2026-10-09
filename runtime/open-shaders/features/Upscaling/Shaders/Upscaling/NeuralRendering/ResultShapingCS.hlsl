@@ -28,6 +28,14 @@ cbuffer ResultShapingParams : register(b0)
 	uint gShapeEnabled;
 	uint gStabilizeMode;
 	uint gStabilizeDetail;
+	float gHistoryEdgeFadePixels;
+	float gTransitionWeightScale;
+	float gNearBlackProtection;
+	float gNearBlackThreshold;
+	uint4 gPreviousLayout;
+	float2 gOriginDelta;
+	float gNearBlackLiftSoftness;
+	float gResumeBlendAlpha;
 };
 
 Texture2D<float4> gInput : register(t0);
@@ -57,7 +65,22 @@ float2 ChromaCoordinates(float3 color)
 
 float2 ColorUV(float2 pixel)
 {
-	return (pixel + 0.5) / float2(max(gColorWidth, 1u), max(gColorHeight, 1u));
+	uint width, height;
+	gInput.GetDimensions(width, height);
+	return clamp(pixel + 0.5, 0.5, float2(gColorWidth, gColorHeight) - 0.5) / float2(width, height);
+}
+
+
+float2 PreviousUV(float2 position)
+{
+	uint width, height;
+	gPreviousInput.GetDimensions(width, height);
+	return position / float2(width, height);
+}
+uint2 PreviousGuidePixel(float2 position)
+{
+	return min(uint2(max(position, 0.0) * float2(gPreviousLayout.zw) / max(float2(gPreviousLayout.xy), 1.0)),
+		max(gPreviousLayout.zw, 1u) - 1u);
 }
 
 uint2 GuidePixel(float2 colorPosition)
@@ -75,6 +98,9 @@ float3 CurrentDeltaAt(float2 pixel)
 
 float3 PreviousDeltaAt(float2 uv)
 {
+	uint width, height;
+	gPreviousInput.GetDimensions(width, height);
+	uv = clamp(uv * float2(width, height), 0.5, float2(gPreviousLayout.xy) - 0.5) / float2(width, height);
 	return gPreviousResult.SampleLevel(gLinearClamp, uv, 0).rgb -
 		gPreviousInput.SampleLevel(gLinearClamp, uv, 0).rgb;
 }
@@ -82,20 +108,9 @@ float3 PreviousDeltaAt(float2 uv)
 float3 CurrentLowFrequencyDelta(float2 pixel)
 {
 	const float radiusPixels = max(gDetailRadius, 0.1) * 0.01 * max(gColorHeight, 1u);
-	const float2 offset = radiusPixels / float2(max(gColorWidth, 1u), max(gColorHeight, 1u));
-	const float3 center = CurrentDeltaAt(pixel);
-	const float2 uv = ColorUV(pixel);
-	const float3 horizontal =
-		gNRResult.SampleLevel(gLinearClamp, uv + float2(offset.x, 0.0), 0).rgb -
-		gInput.SampleLevel(gLinearClamp, uv + float2(offset.x, 0.0), 0).rgb +
-		gNRResult.SampleLevel(gLinearClamp, uv - float2(offset.x, 0.0), 0).rgb -
-		gInput.SampleLevel(gLinearClamp, uv - float2(offset.x, 0.0), 0).rgb;
-	const float3 vertical =
-		gNRResult.SampleLevel(gLinearClamp, uv + float2(0.0, offset.y), 0).rgb -
-		gInput.SampleLevel(gLinearClamp, uv + float2(0.0, offset.y), 0).rgb +
-		gNRResult.SampleLevel(gLinearClamp, uv - float2(0.0, offset.y), 0).rgb -
-		gInput.SampleLevel(gLinearClamp, uv - float2(0.0, offset.y), 0).rgb;
-	return (center * 4.0 + horizontal + vertical) / 8.0;
+	return (CurrentDeltaAt(pixel) * 4.0 + CurrentDeltaAt(pixel + float2(radiusPixels,0)) +
+		CurrentDeltaAt(pixel - float2(radiusPixels,0)) + CurrentDeltaAt(pixel + float2(0,radiusPixels)) +
+		CurrentDeltaAt(pixel - float2(0,radiusPixels))) / 8.0;
 }
 
 float SoftCeiling(float value, float ceiling)
@@ -117,7 +132,9 @@ float SoftFloor(float value, float floorValue)
 float3 PreviousLowFrequencyDelta(float2 uv)
 {
 	const float radiusPixels = max(gDetailRadius, 0.1) * 0.01 * max(gColorHeight, 1u);
-	const float2 offset = radiusPixels / float2(max(gColorWidth, 1u), max(gColorHeight, 1u));
+	uint resourceWidth, resourceHeight;
+	gInput.GetDimensions(resourceWidth, resourceHeight);
+	const float2 offset = radiusPixels / float2(resourceWidth, resourceHeight);
 	const float3 center = PreviousDeltaAt(uv);
 	return (center * 4.0 +
 		PreviousDeltaAt(uv + float2(offset.x, 0.0)) +
@@ -203,19 +220,28 @@ float3 ShapeDelta(float2 pixel, float3 baseColor, float3 delta, float3 lowFreque
 	return lumaDelta.xxx + chromaDelta;
 }
 
-bool IsBoundedMotion(float2 motion, float2 limit)
+bool IsFiniteMotion(float2 motion)
 {
-	return all(motion == motion) && all(abs(motion) <= limit);
+	return all(isfinite(motion)) && !any(asuint(motion) == 0x00800000u);
+}
+
+float HistoryEdgeWeight(float2 previousPosition)
+{
+	if (gHistoryEdgeFadePixels <= 0.0)
+		return 1.0;
+	const float2 edgeDistance = min(previousPosition - 0.5,
+		float2(gPreviousLayout.xy) - 0.5 - previousPosition);
+	return saturate(min(edgeDistance.x, edgeDistance.y) / gHistoryEdgeFadePixels);
 }
 
 bool IsHistoryValid(float2 pixel, float2 previousPosition, float3 baseColor)
 {
-	const float2 colorLimit = float2(gColorWidth, gColorHeight);
+	const float2 colorLimit = float2(gPreviousLayout.xy);
 	if (!all(previousPosition >= 0.5.xx) || !all(previousPosition <= colorLimit - 0.5))
 		return false;
 
 	const float currentDepth = gDepth.Load(int3(GuidePixel(pixel), 0));
-	const float previousDepth = gPreviousDepth.Load(int3(GuidePixel(previousPosition - 0.5), 0));
+	const float previousDepth = gPreviousDepth.Load(int3(PreviousGuidePixel(previousPosition), 0));
 	if (!(abs(currentDepth) > 1e-6) || !(abs(previousDepth) > 1e-6) ||
 		!(abs(currentDepth) < 1e20) || !(abs(previousDepth) < 1e20))
 		return false;
@@ -223,7 +249,7 @@ bool IsHistoryValid(float2 pixel, float2 previousPosition, float3 baseColor)
 	if (abs(currentDepth - previousDepth) > gDepthThreshold * depthScale)
 		return false;
 
-	const float previousLuma = dot(gPreviousInput.SampleLevel(gLinearClamp, ColorUV(previousPosition - 0.5), 0).rgb, kLuma);
+	const float previousLuma = dot(gPreviousInput.SampleLevel(gLinearClamp, PreviousUV(previousPosition), 0).rgb, kLuma);
 	const float currentLuma = dot(baseColor, kLuma);
 	const float colorScale = max(max(abs(currentLuma), abs(previousLuma)), 0.05);
 	return abs(currentLuma - previousLuma) / colorScale <= gColorTolerance;
@@ -252,17 +278,17 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
 		bool motionValid = true;
 		if (gStabilizeMode == 2u)
 		{
-			const float2 motion = gMotionVectors.Load(int3(GuidePixel(pixelPosition), 0)) *
-				float2(gMotionScaleX, gMotionScaleY);
-			motionValid = IsBoundedMotion(motion, float2(gColorWidth, gColorHeight) * 0.5);
-			previousPosition += motion;
+			const float2 rawMotion = gMotionVectors.Load(int3(GuidePixel(pixelPosition), 0));
+			const float2 motion = rawMotion * float2(gMotionScaleX, gMotionScaleY);
+			motionValid = IsFiniteMotion(rawMotion) && all(isfinite(motion));
+			previousPosition += motion + gOriginDelta;
 		}
 
 		if (motionValid && IsHistoryValid(pixelPosition, previousPosition, baseColor.rgb))
 		{
-			const float2 previousUV = ColorUV(previousPosition - 0.5);
+			const float2 previousUV = PreviousUV(previousPosition);
 			const float3 previousDelta = PreviousDeltaAt(previousUV);
-			const float historyWeight = exp(-max(gFrameDeltaSeconds, 1.0 / 240.0) /
+			const float historyWeight = gTransitionWeightScale * HistoryEdgeWeight(previousPosition) * exp(-max(gFrameDeltaSeconds, 1.0 / 240.0) /
 				max(gStabilizeTimeMs * 0.001, 0.001));
 			if (gStabilizeDetail != 0u)
 			{
@@ -288,7 +314,14 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
 	if (gShapeEnabled != 0u)
 		delta = ShapeDelta(pixelPosition, baseColor.rgb, delta, lowFrequency);
 
-	float3 result = baseColor.rgb + delta;
+	if (gNearBlackProtection > 0.0 && dot(delta, kLuma) > 0.0) {
+		const float peak = max(max(baseColor.r, baseColor.g), max(baseColor.b, 0.0));
+		const float positiveWeight = smoothstep(0.0, gNearBlackLiftSoftness, dot(delta, kLuma));
+		const float attenuation = saturate(gNearBlackProtection * (1.0 - smoothstep(0.0, gNearBlackThreshold, peak)) * positiveWeight);
+		delta *= 1.0 - attenuation;
+	}
+
+	float3 result = baseColor.rgb + delta * saturate(gResumeBlendAlpha);
 	if (!all(result == result) || !all(abs(result) < float3(1e20, 1e20, 1e20)))
 		result = nrColor.rgb;
 	gOutput[pixel] = float4(max(result, 0.0.xxx), nrColor.a);

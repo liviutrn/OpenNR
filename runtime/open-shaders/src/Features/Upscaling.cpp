@@ -31,7 +31,6 @@
 #include <stdexcept>
 
 #include "Features/PostProcessing.h"
-#include "Features/Upscaling/NeuralRendering/SettingsBenchmark.h"
 
 #define I18N_KEY_PREFIX "feature.upscaling."
 
@@ -401,7 +400,7 @@ void Upscaling::DrawDLSSNRSharedControls()
 		if (auto _tt = Util::HoverTooltipWrapper())
 			ImGui::TextUnformatted(T(TKEY("enable_sharpening_tooltip"), "Applies RCAS sharpening to the DLSS output. Off by default; DLSS already resolves a sharp image."));
 		if (settings.sharpnessEnabledDLSS)
-			ImGui::SliderFloat(T(TKEY("sharpness"), "Sharpness"), &settings.sharpnessDLSS, 0.0f, 1.0f, "%.1f");
+			ImGui::SliderFloat(T(TKEY("sharpness"), "Sharpness"), &settings.sharpnessDLSS, 0.0f, 3.0f, "%.1f");
 
 		const char* presets[] = {
 			T(TKEY("dlss_model_preset_default"), "Default"),
@@ -475,15 +474,8 @@ void Upscaling::DrawDLSSNRPage()
 			"Enable foveation, choose a coverage preset, then adjust the edge blend."));
 		DrawFoveationControls(true, false, true, false);
 		ImGui::Separator();
-		ImGui::TextUnformatted(T("menu.dlssnr.shared_header", "DLSS and Upscaling"));
-		ImGui::TextWrapped("%s", T("menu.dlssnr.shared_description",
-			"These settings are shared with Upscaling."));
-		DrawDLSSNRSharedControls();
 		ImGui::Separator();
-		if (ImGui::CollapsingHeader(T("menu.dlssnr.benchmark_header", "Settings Benchmark (measure in headset)")))
-			NeuralRendering::SettingsBenchmark::DrawPanel();
 	} else {
-		DrawDLSSNRSharedControls();
 		ImGui::Separator();
 		ImGui::TextUnformatted(T("menu.dlssnr.neural_header", "Neural Rendering"));
 		ImGui::TextWrapped("%s", T("menu.dlssnr.flat_description",
@@ -680,6 +672,23 @@ std::string Upscaling::GetProfilePreviewText(PerfProfile profile) const
 
 void Upscaling::RegisterUxActions()
 {
+	FEATURE_COMMAND("configureNeuralBlackProtection",
+		"Inside-NR positive-edit protection after shaping. Optional strength [0,2], threshold [0.001,0.25] in source RGB-peak units, liftSoftness [0.00001,0.05]. 0 disables. Validated atomically; no native/history reset. Independent of result-shaping toggle.",
+		[](Feature*, const json& args) {
+			const auto read = [&args](const char* key, float current, float low, float high) {
+				if (!args.contains(key)) return current;
+				if (!args[key].is_number()) throw std::invalid_argument(std::string(key) + " must be numeric");
+				const float value = args[key].get<float>();
+				if (!std::isfinite(value) || value < low || value > high) throw std::invalid_argument(std::string(key) + " is outside its finite range");
+				return value;
+			};
+			const float strength = read("strength", foveatedRender.settings.neuralRenderingNearBlackProtection, 0, 2);
+			const float threshold = read("threshold", foveatedRender.settings.neuralRenderingNearBlackThreshold, 0.001f, 0.25f);
+			const float softness = read("liftSoftness", foveatedRender.settings.neuralRenderingNearBlackLiftSoftness, 0.00001f, 0.05f);
+			foveatedRender.settings.neuralRenderingNearBlackLiftSoftness = softness;
+			foveatedRender.settings.neuralRenderingNearBlackProtection = strength;
+			foveatedRender.settings.neuralRenderingNearBlackThreshold = threshold;
+		});
 	FEATURE_QUERY("eyeTrackingStatus",
 		"Read native OpenVR query validity/cost, last-valid-query age (not sensor age), raw/filtered gaze, resolved crops and history-reset counters. Params: none.",
 		[](const Feature*, const json&) -> json {
@@ -694,6 +703,86 @@ void Upscaling::RegisterUxActions()
 				{ "leftCropUV", gaze.leftCropUV }, { "rightCropUV", gaze.rightCropUV },
 				{ "cropChanged", gaze.cropChanged }, { "historyReset", gaze.historyReset },
 				{ "cropChangeCount", gaze.cropChangeCount }, { "historyResetCount", gaze.historyResetCount } });
+		});
+	FEATURE_COMMAND("freezeGazeCrop",
+		"Keep gaze tracking active while freezing the crop at the selected static centre for stability comparison. Params: enabled (boolean). Takes effect next frame.",
+		[](Feature*, const json& args) {
+			if (!args.contains("enabled") || !args["enabled"].is_boolean())
+				throw std::invalid_argument("enabled must be a boolean");
+			foveatedRender.settings.neuralRenderingEyeTrackedFreezeCrop = args["enabled"].get<bool>();
+		});
+	FEATURE_QUERY("adaptiveFrameStatus",
+		"Read live NR passes, crop coverage, ladder stage/model resolution, selected budget/headroom, actual atlas status and failure. One six-stage controller. Pending actions: 0 hold, 1 quality down, 2 quality up. Stage 6 suspends NR; restoration waits for the selected floor crop commit. Params: none.",
+		[](const Feature*, const json&) -> json {
+			return json({ { "stageCount", 6 },
+				{ "adaptiveEnabled", foveatedRender.settings.neuralRenderingAdaptiveEnabled },
+				{ "budgetMs", foveatedRender.settings.neuralRenderingLadderBudgetMs },
+				{ "forcedStage", foveatedRender.settings.neuralRenderingForcedStage },
+				{ "settling", !foveatedRender.adaptivePassInitialized || foveatedRender.adaptiveCropController.IsTransitioning() ||
+					foveatedRender.adaptiveCropController.RenderCoverage() != foveatedRender.adaptiveCropTargetCoverage ||
+					foveatedRender.adaptiveResumeRemainingMs > 0.0f ||
+					(foveatedRender.adaptiveActivePasses > 0 && NeuralRendering::Renderer::Instance().IsOutputTransitioning()) ||
+					(foveatedRender.adaptiveLadderStage != 5 && foveatedRender.adaptiveActivePasses == 0) },
+				{ "cropDrop", foveatedRender.settings.neuralRenderingCropDrop },
+				{ "disableAboveMs", foveatedRender.settings.neuralRenderingDisableAboveMs },
+				{ "enableBelowMs", foveatedRender.settings.neuralRenderingEnableBelowMs },
+				{ "resumeRemainingMs", foveatedRender.adaptiveResumeRemainingMs },
+				{ "recoveryHeadroomMs", foveatedRender.settings.neuralRenderingLadderReserveMs },
+				{ "recoveryThresholdMs", foveatedRender.settings.neuralRenderingLadderBudgetMs - foveatedRender.settings.neuralRenderingLadderReserveMs },
+				{ "handoffMs", foveatedRender.settings.neuralRenderingLadderHandoffMs },
+				{ "ladderStage", foveatedRender.adaptiveLadderStage },
+				{ "stageNumber", foveatedRender.adaptiveLadderStage + 1 },
+				{ "nrResolutionPercent", foveatedRender.adaptiveModelResolution },
+				{ "atlasActive", foveatedRender.adaptiveActivePasses != 0 && NeuralRendering::Renderer::Instance().IsStereoAtlasActive() },
+				{ "failureLatched", NeuralRendering::Renderer::Instance().IsFailureLatched() },
+				{ "status", NeuralRendering::Renderer::Instance().StatusText() },
+				{ "passes", foveatedRender.adaptiveActivePasses },
+				{ "configuredPasses", foveatedRender.adaptiveConfiguredPasses },
+				{ "cropTarget", foveatedRender.adaptiveCropTargetCoverage },
+				{ "cropRender", foveatedRender.adaptiveCropController.RenderCoverage() },
+				{ "filteredMs", foveatedRender.adaptiveFilteredFrameTimeMs },
+				{ "pendingAction", foveatedRender.adaptivePendingAction },
+				{ "cooldownMs", foveatedRender.adaptiveCooldownRemainingMs } });
+		});
+	FEATURE_COMMAND("configureAdaptivePerformance",
+		"Set six-stage controller budget/headroom/handoff and NR endpoint thresholds. Optional budgetMs [10,30], recoveryHeadroomMs [0.5,5], handoffMs [0,500], disableAboveMs [10,50], enableBelowMs [1,50]; enableBelowMs must be less than disableAboveMs. Optional forcedStage integer 0 Auto or 1-6 forced (forcing enables controller); cropDrop integer 10,15,20; two relative crop reductions. NR disable applies only at stage 5, restore only at stage 6. Rejects invalid values atomically. Only forcing a stage enables the controller; settings are not saved to disk.",
+		[](Feature*, const json& args) {
+			const auto read = [&](const char* name, float current, float minimum, float maximum) {
+				if (!args.contains(name)) return current;
+				if (!args[name].is_number()) throw std::invalid_argument(std::string(name) + " must be numeric");
+				const auto value = args[name].get<float>();
+				if (!std::isfinite(value) || value < minimum || value > maximum)
+					throw std::invalid_argument(std::string(name) + " is outside its supported range");
+				return value;
+			};
+			const float budget = read("budgetMs", foveatedRender.settings.neuralRenderingLadderBudgetMs, 10.0f, 30.0f);
+			const float reserve = read("recoveryHeadroomMs", foveatedRender.settings.neuralRenderingLadderReserveMs, 0.5f, 5.0f);
+			const float handoff = read("handoffMs", foveatedRender.settings.neuralRenderingLadderHandoffMs, 0.0f, 500.0f);
+			std::uint32_t forcedStage = foveatedRender.settings.neuralRenderingForcedStage;
+			if (args.contains("forcedStage")) {
+				if (!args["forcedStage"].is_number_integer()) throw std::invalid_argument("forcedStage must be integer 0..6");
+				const int requestedStage = args["forcedStage"].get<int>();
+				if (requestedStage < 0 || requestedStage > 6) throw std::invalid_argument("forcedStage must be 0..6");
+				forcedStage = static_cast<std::uint32_t>(requestedStage);
+			}
+			std::uint32_t cropDrop = foveatedRender.settings.neuralRenderingCropDrop;
+			if (args.contains("cropDrop")) {
+				if (!args["cropDrop"].is_number_integer()) throw std::invalid_argument("cropDrop must be integer 10,15,20");
+				const int requestedDrop = args["cropDrop"].get<int>();
+				if (requestedDrop != 10 && requestedDrop != 15 && requestedDrop != 20) throw std::invalid_argument("cropDrop must be 10,15,20");
+				cropDrop = static_cast<std::uint32_t>(requestedDrop);
+			}
+			const float disable = read("disableAboveMs", foveatedRender.settings.neuralRenderingDisableAboveMs, 10.0f, 50.0f);
+			const float enable = read("enableBelowMs", foveatedRender.settings.neuralRenderingEnableBelowMs, 1.0f, 50.0f);
+			if (enable >= disable) throw std::invalid_argument("enableBelowMs must be below disableAboveMs");
+			foveatedRender.settings.neuralRenderingForcedStage = forcedStage;
+			if (forcedStage != 0) foveatedRender.settings.neuralRenderingAdaptiveEnabled = true;
+			foveatedRender.settings.neuralRenderingCropDrop = cropDrop;
+			foveatedRender.settings.neuralRenderingDisableAboveMs = disable;
+			foveatedRender.settings.neuralRenderingEnableBelowMs = enable;
+			foveatedRender.settings.neuralRenderingLadderBudgetMs = budget;
+			foveatedRender.settings.neuralRenderingLadderReserveMs = reserve;
+			foveatedRender.settings.neuralRenderingLadderHandoffMs = handoff;
 		});
 	FEATURE_COMMAND("resetNeuralRendering",
 		"Queue the same full NR/DLSS/adaptive-failure reset as the Neural Rendering menu button. Executes on the next render update; does not edit settings. Params: none.",
@@ -712,11 +801,13 @@ void Upscaling::RegisterUxActions()
 			const auto& settings = foveatedRender.settings;
 			const auto& nr = NeuralRendering::Renderer::Instance();
 			const bool adaptiveNR = settings.neuralRenderingAdaptiveEnabled &&
-				foveatedRender.adaptiveController.IsEnabled();
-			const bool alternateRouteDisablesReuse = adaptiveNR || settings.neuralRenderingPreUpscale != 0;
+				foveatedRender.adaptivePassInitialized;
+			const bool movingCrop = foveatedRender.IsEyeTrackedFoveationEnabled() || foveatedRender.IsAdaptiveCropRuntimeActive();
+			const bool alternateRouteDisablesReuse = adaptiveNR || movingCrop || settings.neuralRenderingPreUpscale != 0;
 			const std::uint32_t effectiveTemporalReuseCadence = alternateRouteDisablesReuse ? 0u :
 				settings.neuralRenderingTemporalReuseCadence;
 			return json({ { "resultShapingEnabled", settings.neuralRenderingResultShapingEnabled },
+				{ "nearBlackProtection", settings.neuralRenderingNearBlackProtection }, { "nearBlackThreshold", settings.neuralRenderingNearBlackThreshold }, { "nearBlackLiftSoftness", settings.neuralRenderingNearBlackLiftSoftness },
 				{ "stabilizationConfigured", settings.neuralRenderingStabilizeMode != 0 },
 				{ "stabilizeMode", settings.neuralRenderingStabilizeMode },
 				{ "stabilizationSuppressedByTemporalReuse", settings.neuralRenderingStabilizeMode != 0 &&
@@ -724,19 +815,6 @@ void Upscaling::RegisterUxActions()
 				{ "temporalReuseCadence", effectiveTemporalReuseCadence },
 				{ "runtimeStatus", nr.StatusText() }, { "successfulEvaluations", nr.SuccessfulFrames() } });
 		});
-	FEATURE_COMMAND("startSettingsBenchmark",
-		"Start the in-headset settings benchmark (VR only). Applies each enabled variant live, measures SteamVR compositor GPU time against bracketing baselines, then restores the original settings. Params: none.",
-		[](Feature*, const json&) {
-			std::string error;
-			if (!NeuralRendering::SettingsBenchmark::Start(&error))
-				throw std::runtime_error(error);
-		});
-	FEATURE_COMMAND("cancelSettingsBenchmark",
-		"Cancel a running settings benchmark and restore the original settings. Params: none.",
-		[](Feature*, const json&) { NeuralRendering::SettingsBenchmark::Cancel(); });
-	FEATURE_QUERY("settingsBenchmarkStatus",
-		"Read the settings benchmark phase, progress, result file and per-variant GPU/CPU deltas. Params: none.",
-		[](const Feature*, const json&) -> json { return NeuralRendering::SettingsBenchmark::StatusJson(); });
 	FEATURE_COMMAND("setNeuralRenderingResultShaping",
 		"Enable or disable the optional post-NR result-shaping pass. Params: enabled (boolean). Requests a safe NR history reset after the change.",
 		[](Feature*, const json& args) {
@@ -750,11 +828,7 @@ void Upscaling::RegisterUxActions()
 		[](Feature*, const json& args) {
 			foveatedRender.subrectController.ApplyPresetByName(args.value("name", std::string{}));
 		});
-	FEATURE_COMMAND("applyNeuralRenderingPreset",
-		"Apply a Neural Rendering tuning preset from the dedicated Neural Rendering page. Params: name (string): Default, Balanced, Fabric Detail, Natural, or Custom.",
-		[](Feature*, const json& args) {
-			foveatedRender.ApplyNeuralRenderingPreset(args.value("name", std::string("Default")));
-		});
+
 }
 
 void Upscaling::DrawSettings()
@@ -905,7 +979,7 @@ void Upscaling::DrawSettings()
 			}
 
 			if (settings.sharpnessEnabledDLSS)
-				ImGui::SliderFloat(T(TKEY("sharpness"), "Sharpness"), &settings.sharpnessDLSS, 0.0f, 1.0f, "%.1f");
+				ImGui::SliderFloat(T(TKEY("sharpness"), "Sharpness"), &settings.sharpnessDLSS, 0.0f, 3.0f, "%.1f");
 
 			const char* presets[] = {
 				T(TKEY("dlss_model_preset_default"), "Default"),
@@ -3356,9 +3430,9 @@ void Upscaling::ApplySharpening()
 
 		CS_GPU_PASS("Upscaling::Sharpening");
 
-		float currentSharpness = (-2.0f * settings.sharpnessDLSS) + 2.0f;
-		currentSharpness = exp2(-currentSharpness);
-		rcas.ApplySharpen(perfMode.GetRefraTempSRV(), perfMode.GetTestTextureUAV(), currentSharpness);
+		const float currentSharpness = RCAS::MapSliderStrength(settings.sharpnessDLSS);
+		if (!rcas.ApplySharpen(perfMode.GetRefraTempSRV(), perfMode.GetTestTextureUAV(), currentSharpness))
+			globals::d3d::context->CopyResource(perfMode.GetTestTexture(), perfMode.GetRefraTempTex());
 		return;
 	}
 
@@ -3381,11 +3455,11 @@ void Upscaling::ApplySharpening()
 		// Match FSR3's slider->RCAS conversion exactly (ffx_fsr3upscaler.cpp + FsrRcasCon):
 		//   sharpenessRemapped = -2*slider + 2   (sharpness in stops)
 		//   rcasAttenuation    = exp2(-sharpenessRemapped) = exp2(2*slider - 2)
-		float currentSharpness = (-2.0f * settings.sharpnessDLSS) + 2.0f;
-		currentSharpness = exp2(-currentSharpness);
+		const float currentSharpness = RCAS::MapSliderStrength(settings.sharpnessDLSS);
 
 		// DLSS has already written to sharpenerTexture; sharpen directly into kMAIN.UAV.
-		rcas.ApplySharpen(sharpenerTexture->srv.get(), Util::AsReal(main.UAV), currentSharpness);
+		if (!rcas.ApplySharpen(sharpenerTexture->srv.get(), Util::AsReal(main.UAV), currentSharpness))
+			context->CopyResource(Util::AsReal(main.texture), sharpenerTexture->resource.get());
 	} else {
 		// Sharpening is disabled: resolve the DLSS output without altering it.
 		context->CopyResource(Util::AsReal(main.texture), sharpenerTexture->resource.get());

@@ -1,5 +1,7 @@
 #pragma once
 
+#include "CropGeometry.h"
+
 #include "../FoveatedRender.h"
 #include "Utils/Subrect.h"
 #include <d3d11.h>
@@ -12,6 +14,7 @@ namespace FoveatedRenderImpl
 	// testTexture (see Params.cpp).
 	struct VRDlssParams
 	{
+		CropGeometry::FramePlan cropPlan{};
 		// Dimensions
 		uint32_t renderW;       // SBS render width  (after DRS)
 		uint32_t renderH;       // SBS render height (after DRS)

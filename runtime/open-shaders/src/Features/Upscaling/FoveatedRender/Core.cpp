@@ -1,5 +1,7 @@
 #include "Core.h"
+#include "Bridge.h"
 #include "Ops.h"
+#include "../CropMotion.h"
 
 #include "../../../State.h"
 #include "../../../Util.h"
@@ -1128,8 +1130,10 @@ namespace FoveatedRenderImpl::Ops
 		float MaskRadiusX;
 		float MaskRadiusY;
 		float _pad0;
+		std::array<float, 2> SourceScale;
+		std::array<float, 2> SourceOffset;
 	};
-	static_assert(sizeof(BlendCB) == 64);
+	static_assert(sizeof(BlendCB) == 80);
 
 	uint64_t ComputeSubrectUVHash(const Util::Subrect::UVRegion& leftUV,
 		const Util::Subrect::UVRegion& rightUV, uint32_t mode, bool includeOrigins)
@@ -1188,11 +1192,14 @@ namespace FoveatedRenderImpl::Ops
 	}
 
 	bool BlendSubrectToOutput(ID3D11Resource* dlssSrc, ID3D11Resource* dst, ID3D11UnorderedAccessView* dstUAV,
-		uint32_t dstOffsetX, uint32_t dstOffsetY, uint32_t subWidth, uint32_t subHeight, uint32_t srcOffsetX)
+		uint32_t dstOffsetX, uint32_t dstOffsetY, uint32_t subWidth, uint32_t subHeight, uint32_t srcOffsetX,
+		const CropGeometry::Sampling* sampling)
 	{
 		auto context = globals::d3d::context;
 		auto& foveated = globals::features::upscaling.foveatedRender;
 		auto blendMode = foveated.GetSubrectBlendMode();
+		const auto map = sampling ? *sampling : CropGeometry::Sampling{};
+		const bool resample = map.scale != std::array<float, 2>{ 1, 1 } || map.offset != std::array<float, 2>{};
 		const bool adaptiveMask = foveated.IsAdaptiveCropRuntimeActive();
 		if (adaptiveMask)
 			blendMode = FoveatedRender::SubrectBlendMode::kFeather;
@@ -1200,13 +1207,15 @@ namespace FoveatedRenderImpl::Ops
 			blendMode = FoveatedRender::SubrectBlendMode::kFeather;
 
 		// Fast path: hard copy (original behaviour)
-		if (blendMode == FoveatedRender::SubrectBlendMode::kHardCopy) {
+		if (blendMode == FoveatedRender::SubrectBlendMode::kHardCopy && !resample) {
 			D3D11_BOX srcBox = { srcOffsetX, 0, 0, srcOffsetX + subWidth, subHeight, 1 };
 			context->CopySubresourceRegion(dst, 0, dstOffsetX, dstOffsetY, 0, dlssSrc, 0, &srcBox);
 			return true;
 		}
 
 		if (!dstUAV) {
+			if (resample)
+				return false;
 			// No UAV available — fall back to hard copy
 			D3D11_BOX srcBox = { srcOffsetX, 0, 0, srcOffsetX + subWidth, subHeight, 1 };
 			context->CopySubresourceRegion(dst, 0, dstOffsetX, dstOffsetY, 0, dlssSrc, 0, &srcBox);
@@ -1280,7 +1289,8 @@ namespace FoveatedRenderImpl::Ops
 			cb->DstOffsetY = dstOffsetY;
 			cb->SubWidth = subWidth;
 			cb->SubHeight = subHeight;
-			cb->BlendMode = (blendMode == FoveatedRender::SubrectBlendMode::kDither) ? 1 : 0;
+			cb->BlendMode = blendMode == FoveatedRender::SubrectBlendMode::kHardCopy ? 2u :
+				(blendMode == FoveatedRender::SubrectBlendMode::kDither ? 1u : 0u);
 			cb->MaskMode = (foveated.GetSubrectMaskMode() == FoveatedRender::SubrectMaskMode::kOval) ? 1 : 0;
 			cb->FrameIndex = globals::state->frameCount;
 			cb->SrcOffsetX = srcOffsetX;
@@ -1298,10 +1308,13 @@ namespace FoveatedRenderImpl::Ops
 			cb->MaskRadiusX = std::max(0.5f, cb->MaskCenterX);
 			cb->MaskRadiusY = std::max(0.5f, cb->MaskCenterY);
 			const float maskScale = adaptiveMask ?
-				foveated.adaptiveCropController.VisibleCoverage() / foveated.adaptiveCropController.RenderCoverage() : 1.0f;
+				std::clamp(foveated.adaptiveCropController.VisibleCoverage() /
+					std::max(foveated.adaptiveCropController.RenderCoverage(), 1u), 0.0f, 1.0f) : 1.0f;
 			cb->MaskRadiusX *= maskScale;
 			cb->MaskRadiusY *= maskScale;
 			cb->_pad0 = maskScale;
+			cb->SourceScale = map.scale;
+			cb->SourceOffset = map.offset;
 			if (adaptiveMask)
 				cb->FeatherWidth = std::max(cb->FeatherWidth, 32.0f);
 			context->Unmap(Core::vrSubrectBlendCB.get(), 0);
@@ -1723,28 +1736,34 @@ namespace FoveatedRenderImpl
 
 		activeSubrectUVHash = 0;
 		neuralGuidesFrame = UINT32_MAX;
+		neuralCropPlanFrame = UINT32_MAX;
+		CropMotion::Clear();
 		ResetAdaptiveCropHandoff();
 	}
 
-	void Core::InvalidateTemporalState()
+	void Core::InvalidateTemporalState(bool resetNeuralHistory)
 	{
+		Bridge::cropHistoryValid = false;
+		CropMotion::Invalidate();
 		// A crop can move without changing the intermediate dimensions. In that
 		// case resource recreation alone is insufficient: the old guide snapshot,
 		// periphery history, and DLSSNR history all describe the previous region.
 		vrTemporalFrameIdx = 0;
 		vrTemporalHistoryValid = false;
 		neuralGuidesFrame = UINT32_MAX;
+		neuralCropPlanFrame = UINT32_MAX;
 		// Keep the displayed image only while the adaptive crop controller is in
 		// its short transition. Ordinary crop/menu/history resets must fail closed
 		// rather than blend against an unrelated frame.
 		const auto& foveated = globals::features::upscaling.foveatedRender;
 		if (!foveated.IsAdaptiveCropRuntimeActive() || !foveated.IsAdaptiveCropTransitioning())
 			ResetAdaptiveCropHandoff();
-		NeuralRendering::ResetHistory();
+		if (resetNeuralHistory) NeuralRendering::ResetHistory();
 	}
 
 	void Core::ClearShaderCache()
 	{
+		CropMotion::Clear();
 		vrSubrectStretchCS = nullptr;
 		vrSubrectStretchCB = nullptr;
 		vrSubrectStretchSampler = nullptr;

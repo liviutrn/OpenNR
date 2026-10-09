@@ -1,4 +1,5 @@
 #pragma once
+#include "CropGeometry.h"
 
 #include "Core.h"
 #include "Utils/Subrect.h"
@@ -87,7 +88,8 @@ namespace FoveatedRenderImpl::Ops
 	// kHardCopy fast-paths to CopySubresourceRegion; Feather/Dither dispatch
 	// SubrectBlendCS into dstUAV.
 	bool BlendSubrectToOutput(ID3D11Resource* dlssSrc, ID3D11Resource* dst, ID3D11UnorderedAccessView* dstUAV,
-		uint32_t dstOffsetX, uint32_t dstOffsetY, uint32_t subWidth, uint32_t subHeight, uint32_t srcOffsetX = 0);
+		uint32_t dstOffsetX, uint32_t dstOffsetY, uint32_t subWidth, uint32_t subHeight, uint32_t srcOffsetX = 0,
+		const CropGeometry::Sampling* sampling = nullptr);
 
 	// Set by the NR-only coverage route while it composites: a hard-copy edge mode
 	// is upgraded to feathering so the NR rectangle never shows as a hard seam.

@@ -10,10 +10,13 @@
 #include "../Upscaling.h"
 #include "../VR.h"
 #include "FoveatedRender/Core.h"
+#include "GazeCropPolicy.h"
 #include "NativeOpenVRGaze.h"
 #include "NeuralRendering/Integration.h"
 #include "NeuralRendering/FuturePipeline.h"
 #include "NeuralRendering/Renderer.h"
+#include "../../Profiler.h"
+#include "../../State.h"
 #include "NeuralRendering/RuntimePolicy.h"
 
 #include <algorithm>
@@ -27,86 +30,84 @@ static_assert(!NeuralRendering::Future::AsyncOwnershipContract::kRuntimeEnabled)
 static_assert(!NeuralRendering::Future::DepthMatchedResidualFillContract::kRuntimeEnabled);
 static_assert(!NeuralRendering::Future::PeripheralCompressionContract::kRuntimeEnabled);
 
-namespace
+#define OPENNR_SEQUENTIAL_PASS_FIELDS(X) \
+	X(coveragePercent) \
+	X(modelResolution) \
+	X(preset) \
+	X(intensity) \
+	X(localTone) \
+	X(localStructure) \
+	X(skinStructure) \
+	X(style) \
+	X(autoMask) \
+	X(uiCorrection) \
+	X(resolveMode) \
+	X(resultShapingEnabled) \
+	X(resultEditStrength) \
+	X(resultBrightening) \
+	X(resultDarkening) \
+	X(resultColor) \
+	X(resultHueShiftStrength) \
+	X(resultShadows) \
+	X(resultMidtones) \
+	X(resultHighlights) \
+	X(resultMaxBrighteningStops) \
+	X(resultMaxDarkeningStops) \
+	X(resultMaxColorChangeStops) \
+	X(resultLargeScaleTone) \
+	X(resultFineDetail) \
+	X(resultDetailRadius) \
+	X(resultHaloSuppression) \
+	X(stabilizeMode) \
+	X(stabilizeTimeMs) \
+	X(stabilizeDetail) \
+	X(stabilizeDepthThreshold) \
+	X(stabilizeColorTolerance) \
+	X(blendMode) \
+	X(maskMode) \
+	X(featherWidth) \
+	X(falloffCurve) \
+	X(ditherStrength)
+
+template <typename BasicJsonType>
+void to_json(BasicJsonType& json, const FoveatedRender::SequentialPassSettings& settings)
 {
-	constexpr float kStereoGeometryEpsilon = 0.0025f;
+	json = BasicJsonType::object();
+#define OPENNR_WRITE_SEQUENTIAL_PASS_SETTING(field) json[#field] = settings.field;
+	OPENNR_SEQUENTIAL_PASS_FIELDS(OPENNR_WRITE_SEQUENTIAL_PASS_SETTING)
+#undef OPENNR_WRITE_SEQUENTIAL_PASS_SETTING
+}
 
-	bool IsNasalConvergenceGeometry(const Util::Subrect::UVRegion& left,
-		const Util::Subrect::UVRegion& right)
-	{
-		// The known-good SkyrimVR arrangement places the left-eye crop toward the
-		// nasal/right side and the right-eye crop toward the nasal/left side. The
-		// extents must still match because the shared Feature 18 resource contract
-		// is size-symmetric; only the per-eye x origins differ.
-		const bool sameExtent = std::abs(left.w - right.w) <= kStereoGeometryEpsilon &&
-			std::abs(left.h - right.h) <= kStereoGeometryEpsilon;
-		const bool mirrored = std::abs(right.x - (1.0f - left.x - left.w)) <= kStereoGeometryEpsilon;
-		return sameExtent && mirrored && left.x > right.x + kStereoGeometryEpsilon;
+template <typename BasicJsonType>
+void from_json(const BasicJsonType& json, FoveatedRender::SequentialPassSettings& settings)
+{
+	const FoveatedRender::SequentialPassSettings defaults{};
+	if (json.is_null()) {
+		settings = defaults;
+		return;
 	}
-
-	Util::Subrect::UVRegion MakeAdaptiveCropUV(float coverage, bool leftEye, bool nasalConvergence)
-	{
-		const float offset = (1.0f - coverage) * 0.5f;
-		if (!nasalConvergence)
-			return { offset, offset, coverage, coverage };
-
-		// Keep the two eye crops on their original HMD convergence sides while
-		// changing only their shared coverage. At 60% this exactly reproduces the
-		// persisted Nasal Convergence 60% preset: left=(.4,.2,.6,.6),
-		// right=(0,.2,.6,.6).
-		return leftEye ?
-			Util::Subrect::UVRegion{ 1.0f - coverage, offset, coverage, coverage } :
-			Util::Subrect::UVRegion{ 0.0f, offset, coverage, coverage };
-	}
-
-	std::uint32_t AdjacentAdaptiveResolution(std::uint32_t resolution, bool higher)
-	{
-		const auto& buckets = NeuralRendering::AdaptiveController::ResolutionBuckets();
-		for (std::size_t index = 0; index < buckets.size(); ++index) {
-			if (buckets[index] != resolution)
-				continue;
-			if (higher && index > 0)
-				return buckets[index - 1];
-			if (!higher && index + 1 < buckets.size())
-				return buckets[index + 1];
-			return resolution;
-		}
-		return resolution;
-	}
+#define OPENNR_READ_SEQUENTIAL_PASS_SETTING(field) settings.field = json.value(#field, defaults.field);
+	OPENNR_SEQUENTIAL_PASS_FIELDS(OPENNR_READ_SEQUENTIAL_PASS_SETTING)
+#undef OPENNR_READ_SEQUENTIAL_PASS_SETTING
 }
 
 #define OPENNR_FOVEATED_SETTINGS_FIELDS(X) \
 	X(enabled) \
-	X(dlssMode) \
-	X(stretchMode) \
-	X(peripheryBlurRadius) \
 	X(debugVisualize) \
 	X(peripheryAAMode) \
 	X(peripheryTemporalAlpha) \
-	X(subrectBlendMode) \
 	X(subrectMaskMode) \
-	X(subrectFeatherWidth) \
-	X(subrectFalloffCurve) \
-	X(subrectDitherStrength) \
 	X(neuralRenderingEnabled) \
-	X(neuralRenderingModelResolution) \
-	X(neuralRenderingCoverage) \
-	X(neuralRenderingPreset) \
 	X(neuralRenderingIntensity) \
 	X(neuralRenderingLocalTone) \
 	X(neuralRenderingLocalStructure) \
 	X(neuralRenderingSkinStructure) \
-	X(neuralRenderingStyle) \
 	X(neuralRenderingAutoMask) \
 	X(neuralRenderingUICorrection) \
 	X(neuralRenderingResultShapingEnabled) \
 	X(neuralRenderingResultEditStrength) \
 	X(neuralRenderingResultBrightening) \
-	X(neuralRenderingResultDarkening) \
 	X(neuralRenderingResultColor) \
-	X(neuralRenderingResultHueShiftStrength) \
-	X(neuralRenderingResultShadows) \
-	X(neuralRenderingResultMidtones) \
 	X(neuralRenderingResultHighlights) \
 	X(neuralRenderingResultMaxBrighteningStops) \
 	X(neuralRenderingResultMaxDarkeningStops) \
@@ -114,38 +115,26 @@ namespace
 	X(neuralRenderingResultLargeScaleTone) \
 	X(neuralRenderingResultFineDetail) \
 	X(neuralRenderingResultDetailRadius) \
-	X(neuralRenderingResultHaloSuppression) \
-	X(neuralRenderingStabilizeMode) \
-	X(neuralRenderingStabilizeTimeMs) \
-	X(neuralRenderingStabilizeDetail) \
-	X(neuralRenderingStabilizeDepthThreshold) \
-	X(neuralRenderingStabilizeColorTolerance) \
-	X(neuralRenderingPreUpscale) \
-	X(neuralRenderingResolveMode) \
-	X(neuralRenderingMultiPass) \
-	X(neuralRenderingTemporalReuseCadence) \
-	X(neuralRenderingTemporalDepthThreshold) \
-	X(neuralRenderingTemporalColorTolerance) \
-	X(neuralRenderingTemporalReuseResetAfterSkip) \
-	X(neuralRenderingTemporalReuseStaggerEyes) \
+	X(neuralRenderingNearBlackProtection) \
+	X(neuralRenderingNearBlackThreshold) \
+	X(neuralRenderingNearBlackLiftSoftness) \
+	X(neuralRenderingStereoAtlasGuardPixels) \
 	X(neuralRenderingAdaptiveEnabled) \
-	X(neuralRenderingAdaptiveRefreshHz) \
-	X(neuralRenderingAdaptiveTargetFps) \
-	X(neuralRenderingAdaptiveMinimumResolution) \
-	X(neuralRenderingAdaptiveDownshiftFrames) \
-	X(neuralRenderingAdaptiveUpshiftFrames) \
-	X(neuralRenderingAdaptiveMinimumDwellFrames) \
-	X(neuralRenderingAdaptiveGuardTimeMs) \
+	X(neuralRenderingAdaptiveSmoothingMs) \
+	X(neuralRenderingAdaptiveDecreaseHoldMs) \
+	X(neuralRenderingAdaptiveIncreaseHoldMs) \
+	X(neuralRenderingAdaptiveCooldownMs) \
 	X(neuralRenderingAdaptiveDiagnostics) \
-	X(neuralRenderingAdaptiveCropEnabled) \
-	X(neuralRenderingAdaptiveCropMaximumCoverage) \
-	X(neuralRenderingAdaptiveCropMinimumCoverage) \
-	X(neuralRenderingAdaptiveCropDownshiftFrames) \
-	X(neuralRenderingAdaptiveCropUpshiftFrames) \
-	X(neuralRenderingAdaptiveCropMinimumDwellFrames) \
 	X(neuralRenderingAdaptiveCropTransitionFrames) \
-	X(neuralRenderingEyeTrackedFoveation) \
 	X(neuralRenderingEyeTrackedSmoothingMs) \
+	X(neuralRenderingEyeTrackedFreezeCrop) \
+	X(neuralRenderingLadderBudgetMs) \
+	X(neuralRenderingLadderReserveMs) \
+	X(neuralRenderingLadderHandoffMs) \
+	X(neuralRenderingDisableAboveMs) \
+	X(neuralRenderingEnableBelowMs) \
+	X(neuralRenderingCropDrop) \
+	X(neuralRenderingForcedStage) \
 	X(neuralRenderingEyeTrackedQuantizationPixels)
 
 template <typename BasicJsonType>
@@ -171,6 +160,7 @@ void from_json(const BasicJsonType& json, FoveatedRender::Settings& settings)
 }
 
 #undef OPENNR_FOVEATED_SETTINGS_FIELDS
+#undef OPENNR_SEQUENTIAL_PASS_FIELDS
 
 // ============================================================================
 // Lifecycle
@@ -179,7 +169,6 @@ void from_json(const BasicJsonType& json, FoveatedRender::Settings& settings)
 void FoveatedRender::PostPostLoad()
 {
 	bootSnapshot.LatchIfNeeded(settings);
-	adaptiveController.Reset();
 	adaptiveCropController.Reset();
 
 	// Opt into the stereo extension so the controller tracks a separate
@@ -373,13 +362,65 @@ void FoveatedRender::ClampSettings()
 	settings.neuralRenderingResultFineDetail = clampFinite(settings.neuralRenderingResultFineDetail, 1.0f, 0.0f, 2.0f);
 	settings.neuralRenderingResultDetailRadius = clampFinite(settings.neuralRenderingResultDetailRadius, 1.0f, 0.1f, 8.0f);
 	settings.neuralRenderingResultHaloSuppression = clampFinite(settings.neuralRenderingResultHaloSuppression, 0.0f, 0.0f, 1.0f);
+	settings.neuralRenderingNearBlackProtection = clampFinite(settings.neuralRenderingNearBlackProtection, 0.0f, 0.0f, 2.0f);
+	settings.neuralRenderingNearBlackThreshold = clampFinite(settings.neuralRenderingNearBlackThreshold, 0.035f, 0.001f, 0.25f);
+	settings.neuralRenderingNearBlackLiftSoftness = clampFinite(settings.neuralRenderingNearBlackLiftSoftness, 0.001f, 0.00001f, 0.05f);
 	settings.neuralRenderingStabilizeMode = std::min(settings.neuralRenderingStabilizeMode, 2u);
 	settings.neuralRenderingStabilizeTimeMs = clampFinite(settings.neuralRenderingStabilizeTimeMs, 60.0f, 10.0f, 250.0f);
 	settings.neuralRenderingStabilizeDepthThreshold = clampFinite(settings.neuralRenderingStabilizeDepthThreshold, 0.05f, 0.0f, 0.25f);
 	settings.neuralRenderingStabilizeColorTolerance = clampFinite(settings.neuralRenderingStabilizeColorTolerance, 0.08f, 0.0f, 0.50f);
-	settings.neuralRenderingPreUpscale = std::min(settings.neuralRenderingPreUpscale, 1u);
+	// v01 retires the pre-upscale experiment; sequential NR is post-upscale only.
+	settings.neuralRenderingPreUpscale = 0;
 	settings.neuralRenderingResolveMode = std::min(settings.neuralRenderingResolveMode, 1u);
 	settings.neuralRenderingMultiPass = std::min(settings.neuralRenderingMultiPass, 2u);
+	settings.neuralRenderingStereoAtlasGuardPixels = std::clamp(settings.neuralRenderingStereoAtlasGuardPixels, 8u, 256u);
+	settings.neuralRenderingAdaptiveSecondPassCostMs = clampFinite(settings.neuralRenderingAdaptiveSecondPassCostMs, 6.0f, 0.0f, 20.0f);
+	auto& pass2 = settings.neuralRenderingPass2;
+	switch (pass2.coveragePercent) {
+	case 50: case 60: case 70: case 80: case 90: case 100:
+		break;
+	default:
+		pass2.coveragePercent = 100;
+		break;
+	}
+	if (pass2.modelResolution != 33 && pass2.modelResolution != 50 && pass2.modelResolution != 70 &&
+		pass2.modelResolution != 75 && pass2.modelResolution != 80 && pass2.modelResolution != 85 &&
+		pass2.modelResolution != 90 && pass2.modelResolution != 95 && pass2.modelResolution != 100)
+		pass2.modelResolution = pass2.modelResolution < 33 ? 33 : (pass2.modelResolution < 70 ? 70 : 100);
+	if constexpr (NeuralRendering::kFullResolutionNeuralRenderingOnly)
+		pass2.modelResolution = 100;
+	if (pass2.preset == 4 || pass2.preset > 5)
+		pass2.preset = 5;
+	pass2.intensity = clampFinite(pass2.intensity, 1.70f, 0.0f, 2.0f);
+	pass2.localTone = clampFinite(pass2.localTone, 1.00f, 0.0f, 2.0f);
+	pass2.localStructure = clampFinite(pass2.localStructure, 1.70f, 0.0f, 2.0f);
+	pass2.skinStructure = clampFinite(pass2.skinStructure, -1.0f, -1.0f, 2.0f);
+	pass2.style = std::min(pass2.style, 2u);
+	pass2.resolveMode = std::min(pass2.resolveMode, 1u);
+	pass2.resultEditStrength = clampFinite(pass2.resultEditStrength, 1.0f, 0.0f, 2.0f);
+	pass2.resultBrightening = clampFinite(pass2.resultBrightening, 1.0f, 0.0f, 2.0f);
+	pass2.resultDarkening = clampFinite(pass2.resultDarkening, 1.0f, 0.0f, 2.0f);
+	pass2.resultColor = clampFinite(pass2.resultColor, 1.0f, 0.0f, 2.0f);
+	pass2.resultHueShiftStrength = clampFinite(pass2.resultHueShiftStrength, 1.0f, 0.0f, 2.0f);
+	pass2.resultShadows = clampFinite(pass2.resultShadows, 1.0f, 0.0f, 2.0f);
+	pass2.resultMidtones = clampFinite(pass2.resultMidtones, 1.0f, 0.0f, 2.0f);
+	pass2.resultHighlights = clampFinite(pass2.resultHighlights, 1.0f, 0.0f, 2.0f);
+	pass2.resultMaxBrighteningStops = clampFinite(pass2.resultMaxBrighteningStops, 0.0f, 0.0f, 4.0f);
+	pass2.resultMaxDarkeningStops = clampFinite(pass2.resultMaxDarkeningStops, 0.0f, 0.0f, 4.0f);
+	pass2.resultMaxColorChangeStops = clampFinite(pass2.resultMaxColorChangeStops, 0.0f, 0.0f, 4.0f);
+	pass2.resultLargeScaleTone = clampFinite(pass2.resultLargeScaleTone, 1.0f, 0.0f, 2.0f);
+	pass2.resultFineDetail = clampFinite(pass2.resultFineDetail, 1.0f, 0.0f, 2.0f);
+	pass2.resultDetailRadius = clampFinite(pass2.resultDetailRadius, 1.0f, 0.1f, 8.0f);
+	pass2.resultHaloSuppression = clampFinite(pass2.resultHaloSuppression, 0.0f, 0.0f, 1.0f);
+	pass2.stabilizeMode = std::min(pass2.stabilizeMode, 2u);
+	pass2.stabilizeTimeMs = clampFinite(pass2.stabilizeTimeMs, 60.0f, 10.0f, 250.0f);
+	pass2.stabilizeDepthThreshold = clampFinite(pass2.stabilizeDepthThreshold, 0.05f, 0.0f, 0.25f);
+	pass2.stabilizeColorTolerance = clampFinite(pass2.stabilizeColorTolerance, 0.08f, 0.0f, 0.50f);
+	pass2.blendMode = std::min(pass2.blendMode, 2u);
+	pass2.maskMode = std::min(pass2.maskMode, 1u);
+	pass2.featherWidth = clampFinite(pass2.featherWidth, 64.0f, 2.0f, 128.0f);
+	pass2.falloffCurve = clampFinite(pass2.falloffCurve, 1.0f, 0.5f, 2.0f);
+	pass2.ditherStrength = clampFinite(pass2.ditherStrength, 1.0f, 0.0f, 2.0f);
 	if (settings.neuralRenderingTemporalReuseCadence != 0 &&
 		settings.neuralRenderingTemporalReuseCadence != 2 &&
 		settings.neuralRenderingTemporalReuseCadence != 3 &&
@@ -416,29 +457,28 @@ void FoveatedRender::ClampSettings()
 	settings.neuralRenderingAdaptiveUpshiftFrames = std::clamp(settings.neuralRenderingAdaptiveUpshiftFrames, 4u, 64u);
 	settings.neuralRenderingAdaptiveMinimumDwellFrames = std::clamp(settings.neuralRenderingAdaptiveMinimumDwellFrames, 4u, 240u);
 	settings.neuralRenderingAdaptiveGuardTimeMs = std::clamp(settings.neuralRenderingAdaptiveGuardTimeMs, 0.0f, 5.0f);
+	settings.neuralRenderingAdaptivePassIncreaseBelowMs = clampFinite(settings.neuralRenderingAdaptivePassIncreaseBelowMs, 14.0f, 10.0f, 30.0f);
+	settings.neuralRenderingAdaptiveCropIncreaseBelowMs = clampFinite(settings.neuralRenderingAdaptiveCropIncreaseBelowMs, 16.0f, 10.0f, 30.0f);
+	settings.neuralRenderingAdaptiveCropDecreaseAboveMs = clampFinite(settings.neuralRenderingAdaptiveCropDecreaseAboveMs, 18.0f, 10.0f, 30.0f);
+	settings.neuralRenderingAdaptivePassDecreaseAboveMs = clampFinite(settings.neuralRenderingAdaptivePassDecreaseAboveMs, 20.0f, 10.0f, 30.0f);
+	settings.neuralRenderingAdaptiveSmoothingMs = clampFinite(settings.neuralRenderingAdaptiveSmoothingMs, 250.0f, 0.0f, 1000.0f);
+	settings.neuralRenderingAdaptiveDecreaseHoldMs = clampFinite(settings.neuralRenderingAdaptiveDecreaseHoldMs, 350.0f, 0.0f, 2500.0f);
+	settings.neuralRenderingAdaptiveIncreaseHoldMs = clampFinite(settings.neuralRenderingAdaptiveIncreaseHoldMs, 1200.0f, 0.0f, 5000.0f);
+	settings.neuralRenderingAdaptiveCooldownMs = clampFinite(settings.neuralRenderingAdaptiveCooldownMs, 1000.0f, 0.0f, 5000.0f);
 	switch (settings.neuralRenderingAdaptiveCropMinimumCoverage) {
+	case 50:
 	case 60:
-	case 65:
 	case 70:
-	case 75:
 	case 80:
+	case 90:
 		break;
 	default:
 		settings.neuralRenderingAdaptiveCropMinimumCoverage = 60;
 		break;
 	}
-	switch (settings.neuralRenderingAdaptiveCropMaximumCoverage) {
-	case 60:
-	case 65:
-	case 70:
-	case 75:
-	case 80:
-	case 85:
-		break;
-	default:
-		settings.neuralRenderingAdaptiveCropMaximumCoverage = 85;
-		break;
-	}
+	// v03 semantics: 100% means exactly the user-selected crop. Adaptive logic
+	// may only shrink from that baseline; it never expands beyond the user's choice.
+	settings.neuralRenderingAdaptiveCropMaximumCoverage = 100;
 	// Keep the configured ladder ordered. If a user raises the minimum above
 	// the saved maximum, preserving the requested floor is the least surprising
 	// repair and avoids a controller with an empty legal range.
@@ -448,14 +488,66 @@ void FoveatedRender::ClampSettings()
 	settings.neuralRenderingAdaptiveCropUpshiftFrames = std::clamp(settings.neuralRenderingAdaptiveCropUpshiftFrames, 8u, 240u);
 	settings.neuralRenderingAdaptiveCropMinimumDwellFrames = std::clamp(settings.neuralRenderingAdaptiveCropMinimumDwellFrames, 8u, 600u);
 	settings.neuralRenderingAdaptiveCropTransitionFrames = std::clamp(settings.neuralRenderingAdaptiveCropTransitionFrames, 2u, 24u);
-	settings.neuralRenderingEyeTrackedSmoothingMs = std::clamp(settings.neuralRenderingEyeTrackedSmoothingMs, 0.0f, 250.0f);
+	settings.neuralRenderingEyeTrackedSmoothingMs = clampFinite(settings.neuralRenderingEyeTrackedSmoothingMs, 60.0f, 0.0f, 250.0f);
+	settings.neuralRenderingEyeTrackedResponsiveness = clampFinite(settings.neuralRenderingEyeTrackedResponsiveness, 8.0f, 0.0f, 50.0f);
+	settings.neuralRenderingEyeTrackedSlowPercent = clampFinite(settings.neuralRenderingEyeTrackedSlowPercent, 10.0f, 0.0f, 50.0f);
+	settings.neuralRenderingEyeTrackedFastPercent = clampFinite(settings.neuralRenderingEyeTrackedFastPercent, 100.0f, 5.0f, 200.0f);
+	settings.neuralRenderingEyeTrackedJumpPercent = clampFinite(settings.neuralRenderingEyeTrackedJumpPercent, 100.0f, 5.0f, 200.0f);
+	settings.neuralRenderingEyeTrackedJumpSpeed = clampFinite(settings.neuralRenderingEyeTrackedJumpSpeed, 20.0f, 1.0f, 100.0f);
+	settings.neuralRenderingEyeTrackedMaxLagPercent = clampFinite(settings.neuralRenderingEyeTrackedMaxLagPercent, 25.0f, 0.0f, 50.0f);
+	settings.neuralRenderingLadderBudgetMs = clampFinite(settings.neuralRenderingLadderBudgetMs, 20.0f, 10.0f, 30.0f);
+	settings.neuralRenderingLadderReserveMs = clampFinite(settings.neuralRenderingLadderReserveMs, 1.0f, 0.5f, 5.0f);
+	settings.neuralRenderingLadderHandoffMs = clampFinite(settings.neuralRenderingLadderHandoffMs, 150.0f, 0.0f, 500.0f);
+	settings.neuralRenderingAdaptiveFirstPassIncreaseBelowMs = clampFinite(settings.neuralRenderingAdaptiveFirstPassIncreaseBelowMs, 14.0f, 10.0f, 30.0f);
+	settings.neuralRenderingAdaptiveFirstPassHoldMs = clampFinite(settings.neuralRenderingAdaptiveFirstPassHoldMs, 1200.0f, 0.0f, 5000.0f);
+	settings.neuralRenderingAdaptiveFirstPassCostMs = clampFinite(settings.neuralRenderingAdaptiveFirstPassCostMs, 6.0f, 0.0f, 20.0f);
+	settings.neuralRenderingAdaptiveFirstPassMarginMs = clampFinite(settings.neuralRenderingAdaptiveFirstPassMarginMs, 1.0f, 0.0f, 5.0f);
+	settings.neuralRenderingAdaptiveFirstPassRetryMs = clampFinite(settings.neuralRenderingAdaptiveFirstPassRetryMs, 3000.0f, 0.0f, 10000.0f);
+	settings.neuralRenderingAdaptiveRelativeCropFloor = std::clamp(settings.neuralRenderingAdaptiveRelativeCropFloor, 60u, 100u) / 5u * 5u;
+	settings.neuralRenderingAdaptiveRelativeCropStep = std::clamp(settings.neuralRenderingAdaptiveRelativeCropStep, 5u, 20u) / 5u * 5u;
 	settings.neuralRenderingEyeTrackedQuantizationPixels = std::clamp(settings.neuralRenderingEyeTrackedQuantizationPixels, 0u, 64u);
+	settings.neuralRenderingEyeTrackedDeadZonePercent = clampFinite(settings.neuralRenderingEyeTrackedDeadZonePercent, 0.0f, 0.0f, 10.0f);
 	// Preset clamping reads from Upscaling::Settings now.
 	auto& sharedPreset = globals::features::upscaling.settings.presetDLSS;
 	sharedPreset = std::min(sharedPreset, 6u);
 	if (!IsPresetCompatibleWithMode(sharedPreset)) {
 		sharedPreset = 3;  // Fall back to L
 	}
+	// Retired saved values cannot reactivate unsupported render modes.
+	settings.dlssMode = 0;
+	settings.stretchMode = 1;
+	settings.peripheryBlurRadius = 1.0f;
+	settings.subrectBlendMode = 2;
+	settings.subrectFeatherWidth = 128.0f;
+	settings.subrectFalloffCurve = 0.5f;
+	settings.subrectDitherStrength = 1.0f;
+	settings.neuralRenderingSinglePassLadder = true;
+	settings.neuralRenderingStyle = 0;
+	settings.neuralRenderingPreset = 5;
+	settings.neuralRenderingCoverage = 100;
+	settings.neuralRenderingModelResolution = 100;
+	settings.neuralRenderingResolveMode = 1;
+	settings.neuralRenderingMultiPass = 0;
+	settings.neuralRenderingPreUpscale = 0;
+	settings.neuralRenderingStereoAtlas = true;
+	settings.neuralRenderingTemporalReuseCadence = 0;
+	settings.neuralRenderingTemporalReuseStaggerEyes = false;
+	settings.neuralRenderingStabilizeMode = 0;
+	settings.neuralRenderingStabilizeDetail = false;
+	settings.neuralRenderingResultDarkening = 1.0f;
+	settings.neuralRenderingResultHueShiftStrength = 1.0f;
+	settings.neuralRenderingResultShadows = 1.0f;
+	settings.neuralRenderingResultMidtones = 1.0f;
+	settings.neuralRenderingResultHaloSuppression = 0.0f;
+	settings.neuralRenderingEyeTrackedFoveation = true;
+	settings.neuralRenderingEyeTrackedAdaptiveSmoothing = false;
+	settings.neuralRenderingEyeTrackedDeadZonePercent = 0.0f;
+	settings.neuralRenderingForcedStage = std::min(settings.neuralRenderingForcedStage, 6u);
+	if (settings.neuralRenderingForcedStage != 0) settings.neuralRenderingAdaptiveEnabled = true;
+	settings.neuralRenderingCropDrop = NeuralRendering::SinglePassLadder::NormalizeCropStep(settings.neuralRenderingCropDrop);
+	settings.neuralRenderingDisableAboveMs = clampFinite(settings.neuralRenderingDisableAboveMs, 24.0f, 10.0f, 50.0f);
+	settings.neuralRenderingEnableBelowMs = clampFinite(settings.neuralRenderingEnableBelowMs, 14.0f, 1.0f, 50.0f);
+
 }
 
 // ============================================================================
@@ -496,15 +588,36 @@ bool FoveatedRender::IsRuntimeSupported() const
 
 void FoveatedRender::ResetAdaptiveState()
 {
+	const std::uint32_t manualPasses = 1;
+	const bool restoringPasses = adaptivePassInitialized && adaptiveActivePasses < manualPasses;
 	const bool cropWasActive = adaptiveCropController.IsRuntimeActive();
-	adaptiveController.Reset();
 	adaptiveCropController.Reset();
-	adaptiveNextDownshiftIsCrop = true;
-	adaptiveCropDiagnosticGeneration = UINT64_MAX;
+	adaptiveConfiguredPasses = manualPasses;
+	adaptiveActivePasses = manualPasses;
+	adaptivePassInitialized = false;
+	adaptiveCropTargetCoverage = 100;
+	adaptiveFilteredFrameTimeMs = 0.0f;
+	adaptiveLastFrameTimeMs = 0.0f;
+	adaptiveDecreaseHoldMs = 0.0f;
+	adaptiveIncreaseHoldMs = 0.0f;
+	adaptiveCooldownRemainingMs = 0.0f;
+	adaptivePendingAction = 0;
+	adaptiveLastAction = 0;
+	adaptiveLastActionFrom = 0;
+	adaptiveLastActionTo = 0;
+	adaptiveLastActionFrameTimeMs = 0.0f;
+	adaptivePolicyObserved = false;
+	adaptiveWorkloadObserved = false;
+	adaptiveLadderStage = 0;
+	adaptiveModelResolution = 100;
+	adaptiveBlockedGrowthStage = UINT32_MAX;
+	adaptiveGrowthBaselineMs = adaptiveBlockedGrowthBaselineMs = 0.0f;
+	adaptiveResumeRemainingMs = 0.0f;
 	if (cropWasActive)
 		FoveatedRenderImpl::Core::ResetAdaptiveCropHandoff();
+	if (restoringPasses)
+		NeuralRendering::ResetHistory();
 }
-
 bool FoveatedRender::IsEyeTrackedFoveationEnabled() const
 {
 	// The performance crop must not become a second owner of UV geometry. Keep
@@ -516,223 +629,326 @@ bool FoveatedRender::IsEyeTrackedFoveationEnabled() const
 
 void FoveatedRender::UpdateAdaptiveState(std::uint32_t frame, bool routeEligible)
 {
+	if (adaptiveUpdateFrame == frame) return;
+	adaptiveUpdateFrame = frame;
 	const auto& nrRenderer = NeuralRendering::Renderer::Instance();
 	const auto& streamline = globals::features::upscaling.streamline;
 	const bool recentDLSSFailure = streamline.lastDLSSFailureFrame != UINT32_MAX &&
-		frame >= streamline.lastDLSSFailureFrame &&
-		frame - streamline.lastDLSSFailureFrame <= 1;
+		frame >= streamline.lastDLSSFailureFrame && frame - streamline.lastDLSSFailureFrame <= 1;
 	const bool runtimeHealthy = !nrRenderer.IsFailureLatched() && !recentDLSSFailure;
 	const auto method = globals::features::upscaling.GetUpscaleMethod();
 	const bool nrEligible = routeEligible && IsActive() &&
-		method == Upscaling::UpscaleMethod::kDLSS &&
-		GetDlssMode() == DlssMode::kDefault && settings.neuralRenderingEnabled &&
-		!globals::features::upscaling.IsFrameGenerationActive() &&
+		method == Upscaling::UpscaleMethod::kDLSS && GetDlssMode() == DlssMode::kDefault &&
+		settings.neuralRenderingEnabled && !globals::features::upscaling.IsFrameGenerationActive() &&
 		!globals::features::openNRCapture.settings.enableCapture &&
 		settings.neuralRenderingPreUpscale == 0 && runtimeHealthy;
+
+	const std::uint32_t requestedPasses = 1;
+
+	if (!settings.neuralRenderingAdaptiveEnabled || !nrEligible) {
+		if (adaptivePassInitialized || adaptiveCropController.IsRuntimeActive())
+			ResetAdaptiveState();
+		adaptiveConfiguredPasses = 1;
+		adaptiveActivePasses = adaptiveConfiguredPasses;
+		return;
+	}
+
 	const auto leftUV = subrectController.GetUV();
 	const auto rightUV = subrectController.GetRightEyeUV();
-	const bool geometryCompatible = std::abs(leftUV.w - rightUV.w) <= 0.0005f &&
-		std::abs(leftUV.h - rightUV.h) <= 0.0005f;
-	const std::uint32_t configuredCoverage = static_cast<std::uint32_t>(std::lround(std::clamp(
-		std::min({ leftUV.w, leftUV.h, rightUV.w, rightUV.h }) * 100.0f, 0.0f, 100.0f)));
-	const bool eyeTrackingOwnsCrop = IsEyeTrackedFoveationEnabled();
-	const bool cropPolicyAvailable = nrEligible && settings.neuralRenderingAdaptiveEnabled &&
-		settings.neuralRenderingAdaptiveCropEnabled && geometryCompatible && !eyeTrackingOwnsCrop &&
-		configuredCoverage >= 60;
-	const bool cropCanDownshift = cropPolicyAvailable &&
-		!FoveatedRenderImpl::Core::vrSubrectFixedEnvelopeRejected &&
-		!FoveatedRenderImpl::Core::vrSubrectNeuralFixedEnvelopeRejected &&
-		(adaptiveCropController.IsRuntimeActive() ?
-			adaptiveCropController.ActiveCoverage() > adaptiveCropController.MinimumCoverage() :
-			configuredCoverage > settings.neuralRenderingAdaptiveCropMinimumCoverage);
-	const bool nrCanDownshift = !adaptiveController.IsAtMinimum();
-	// Pressure order is deliberately interleaved. Crop gets the first available
-	// step, then NR, then crop again. If one controller is already at its floor,
-	// the other controller becomes eligible instead of stalling the response.
-	const bool cropShouldDownshiftFirst = cropCanDownshift &&
-		(adaptiveNextDownshiftIsCrop || !nrCanDownshift);
-	const auto activeNRForReadiness = adaptiveController.ActiveResolution();
-	const auto higherNR = AdjacentAdaptiveResolution(activeNRForReadiness, true);
-	const auto lowerNR = AdjacentAdaptiveResolution(activeNRForReadiness, false);
-	// Feature 18 creation is not a frame-safe operation on this route. The
-	// renderer prewarms the adjacent tier while the current tier is running;
-	// do not let the controller expose a tier until both eyes and its native
-	// handle are resident. This turns an on-demand multi-hundred-ms create into
-	// a quiet wait on the current image instead of a stale/reprojected frame.
-	const bool nrUpshiftReady = adaptiveController.IsAtMaximum() ||
-		nrRenderer.IsAdaptiveTierReady(higherNR);
-	const bool nrDownshiftReady = adaptiveController.IsAtMinimum() ||
-		nrRenderer.IsAdaptiveTierReady(lowerNR);
+	const bool geometryCompatible = leftUV.w > 0.01f && leftUV.h > 0.01f &&
+		rightUV.w > 0.01f && rightUV.h > 0.01f &&
+		leftUV.w == rightUV.w && leftUV.h == rightUV.h;
+	const bool eyeTrackingOwnsOrigin = IsEyeTrackedFoveationEnabled();
+	const bool cropPolicyAvailable = geometryCompatible;
+	const bool decisionsSuspended = globals::state->isLoadingMenuOpen ||
+		globals::state->IsPausedOrMenuOpen(globals::game::ui);
+	const bool envelopeRejected = FoveatedRenderImpl::Core::vrSubrectFixedEnvelopeRejected ||
+		FoveatedRenderImpl::Core::vrSubrectNeuralFixedEnvelopeRejected;
+	const auto& upscaling = globals::features::upscaling;
+	const auto displaySize = upscaling.perfMode.IsHookActive() ? upscaling.perfMode.GetDisplayScreenSize() : globals::state->screenSize;
+	const float renderWidth = upscaling.perfMode.IsHookActive() ? static_cast<float>(upscaling.perfMode.GetRenderEyeWidth() * 2u) : displaySize.x * upscaling.resolutionScale.x;
+	const float renderHeight = upscaling.perfMode.IsHookActive() ? static_cast<float>(upscaling.perfMode.GetRenderEyeHeight()) : displaySize.y * upscaling.resolutionScale.y;
+	const std::array<float, 10> workloadKey{ leftUV.w, leftUV.h, rightUV.w, rightUV.h,
+		displaySize.x, displaySize.y, renderWidth, renderHeight,
+		static_cast<float>(upscaling.settings.qualityMode), static_cast<float>(upscaling.settings.presetDLSS) };
+	if (adaptiveWorkloadObserved && adaptiveWorkloadKey != workloadKey) {
+		adaptiveFilteredFrameTimeMs = 0.0f;
+		adaptiveDecreaseHoldMs = adaptiveIncreaseHoldMs = 0.0f;
+		adaptivePendingAction = 0;
+		adaptiveBlockedGrowthStage = UINT32_MAX;
+		adaptiveGrowthBaselineMs = adaptiveBlockedGrowthBaselineMs = 0.0f;
+		adaptiveCooldownRemainingMs = settings.neuralRenderingAdaptiveCooldownMs;
+	}
+	adaptiveWorkloadKey = workloadKey;
+	adaptiveWorkloadObserved = true;
 
-	NeuralRendering::AdaptiveController::Config nrConfig;
-	nrConfig.enabled = settings.neuralRenderingAdaptiveEnabled;
-	nrConfig.memoryPressure = streamline.IsVRAMPressure();
-	nrConfig.allowDownshift = !cropShouldDownshiftFirst && !adaptiveCropController.IsTransitioning() &&
-		nrDownshiftReady;
-	nrConfig.allowUpshift = !adaptiveCropController.IsTransitioning() &&
-		!nrRenderer.IsRecoveryLimited() && !streamline.IsVRAMPressure() && nrUpshiftReady;
-	nrConfig.refreshHz = settings.neuralRenderingAdaptiveRefreshHz;
-	nrConfig.targetFps = settings.neuralRenderingAdaptiveTargetFps;
-	nrConfig.minimumResolution = settings.neuralRenderingAdaptiveMinimumResolution;
-	nrConfig.downshiftFrames = settings.neuralRenderingAdaptiveDownshiftFrames;
-	nrConfig.upshiftFrames = settings.neuralRenderingAdaptiveUpshiftFrames;
-	nrConfig.minimumDwellFrames = settings.neuralRenderingAdaptiveMinimumDwellFrames;
-	nrConfig.guardTimeMs = settings.neuralRenderingAdaptiveGuardTimeMs;
+	if (!adaptivePassInitialized) {
+		adaptivePassInitialized = true;
+		adaptiveConfiguredPasses = requestedPasses;
+		adaptiveActivePasses = requestedPasses;
+		adaptiveCropTargetCoverage = 100;
+		adaptiveFilteredFrameTimeMs = 0.0f;
+		adaptiveLastFrameTimeMs = 0.0f;
+		adaptiveDecreaseHoldMs = 0.0f;
+		adaptiveIncreaseHoldMs = 0.0f;
+		adaptiveCooldownRemainingMs = 0.0f;
+		adaptivePendingAction = 0;
+	}
+	if (requestedPasses != adaptiveConfiguredPasses) {
+		const auto oldConfigured = adaptiveConfiguredPasses;
+		adaptiveConfiguredPasses = requestedPasses;
+		adaptiveActivePasses = std::min(adaptiveActivePasses, adaptiveConfiguredPasses);
+		adaptiveDecreaseHoldMs = 0.0f;
+		adaptiveIncreaseHoldMs = 0.0f;
+		adaptiveCooldownRemainingMs = 0.0f;
+		logger::info("[DLSSNR][ADAPTIVE-v05] configured pass ceiling {} -> {} active={}",
+			oldConfigured, adaptiveConfiguredPasses, adaptiveActivePasses);
+	}
 
-	const auto previousNR = adaptiveController.ActiveResolution();
-	const auto previousNRTarget = adaptiveController.TargetResolution();
-	float workloadMs = -1.0f;
-	float gpuWorkMs = -1.0f;
-	float activeSubmitMs = -1.0f;
+	const NeuralRendering::SinglePassLadder::Config policyConfig{
+		.budget = settings.neuralRenderingLadderBudgetMs,
+		.reserve = settings.neuralRenderingLadderReserveMs,
+		.disableAbove = settings.neuralRenderingDisableAboveMs,
+		.enableBelow = settings.neuralRenderingEnableBelowMs,
+		.decreaseHold = settings.neuralRenderingAdaptiveDecreaseHoldMs,
+		.increaseHold = settings.neuralRenderingAdaptiveIncreaseHoldMs,
+		.cooldown = settings.neuralRenderingAdaptiveCooldownMs,
+		.smoothing = settings.neuralRenderingAdaptiveSmoothingMs,
+		.cropFloor = 100u - 2u * NeuralRendering::SinglePassLadder::NormalizeCropStep(settings.neuralRenderingCropDrop),
+		.cropStep = NeuralRendering::SinglePassLadder::NormalizeCropStep(settings.neuralRenderingCropDrop),
+		.transitionFrames = settings.neuralRenderingAdaptiveCropTransitionFrames,
+		.forcedStage = std::min(settings.neuralRenderingForcedStage, 6u),
+	};
+	if (!adaptivePolicyObserved || !(adaptivePolicyConfig == policyConfig)) {
+		adaptivePolicyConfig = policyConfig;
+		adaptivePolicyObserved = true;
+		adaptiveBlockedGrowthStage = UINT32_MAX;
+		adaptiveDecreaseHoldMs = adaptiveIncreaseHoldMs = 0.0f;
+		adaptivePendingAction = 0;
+		const auto quality = NeuralRendering::SinglePassLadder::Level(adaptiveLadderStage, policyConfig.cropStep);
+		adaptiveCropTargetCoverage = quality.crop;
+		adaptiveModelResolution = quality.model;
+	}
+	if (policyConfig.forcedStage != 0 && adaptiveLadderStage != policyConfig.forcedStage - 1) {
+		const auto previousStage = adaptiveLadderStage;
+		adaptiveLadderStage = policyConfig.forcedStage - 1;
+		const auto quality = NeuralRendering::SinglePassLadder::Level(adaptiveLadderStage, policyConfig.cropStep);
+		adaptiveCropTargetCoverage = quality.crop;
+		adaptiveModelResolution = quality.model;
+		if (!quality.nrEnabled || previousStage == NeuralRendering::SinglePassLadder::suspendedStage) adaptiveActivePasses = 0;
+		adaptiveDecreaseHoldMs = adaptiveIncreaseHoldMs = 0.0f;
+		adaptivePendingAction = 0;
+		adaptiveCooldownRemainingMs = settings.neuralRenderingAdaptiveCooldownMs;
+	}
+	const auto selectedQuality = NeuralRendering::SinglePassLadder::Level(adaptiveLadderStage, policyConfig.cropStep);
+	adaptiveCropTargetCoverage = cropPolicyAvailable ? selectedQuality.crop : 100u;
+	adaptiveModelResolution = cropPolicyAvailable ? selectedQuality.model : 100u;
+
+	float gpuFrameTimeMs = -1.0f;
+	float sampleDeltaMs = 11.1f;
+	bool freshTiming = false;
+	bool timingAttempted = false;
 	static std::uint32_t timingFrame = UINT32_MAX;
-	static std::uint32_t sampledEngineFrame = UINT32_MAX;
-	if (globals::game::isVR && nrEligible && frame != sampledEngineFrame) {
-		sampledEngineFrame = frame;
+	if (globals::game::isVR) {
+		timingAttempted = true;
 		if (auto* compositor = RE::BSOpenVR::GetIVRCompositor()) {
 			vr::Compositor_FrameTiming timing{};
 			timing.m_nSize = sizeof(timing);
 			if (compositor->GetFrameTiming(&timing) && timing.m_nFrameIndex != timingFrame) {
 				timingFrame = timing.m_nFrameIndex;
 				const float gpuMs = timing.m_flPreSubmitGpuMs + timing.m_flPostSubmitGpuMs;
-				const float cpuMs = timing.m_flNewFrameReadyMs - timing.m_flNewPosesReadyMs;
-				gpuWorkMs = gpuMs;
-				activeSubmitMs = cpuMs;
-				if (std::isfinite(gpuMs) && gpuMs > 0.0f && std::isfinite(cpuMs) && cpuMs >= 0.0f)
-					workloadMs = std::max(gpuMs, cpuMs);
+				if (std::isfinite(gpuMs) && gpuMs > 0.0f) {
+					gpuFrameTimeMs = gpuMs;
+					freshTiming = true;
+				}
+				if (std::isfinite(timing.m_flClientFrameIntervalMs) && timing.m_flClientFrameIntervalMs > 0.0f)
+					sampleDeltaMs = std::clamp(timing.m_flClientFrameIntervalMs, 1.0f, 100.0f);
 			}
 		}
 	}
-	if (streamline.IsVRAMPressure())
-		workloadMs = std::max(workloadMs, 1.3f * adaptiveController.ApplicationDeadlineMs());
-	const auto previousMemoryCeiling = adaptiveController.MemoryCeiling();
-	adaptiveController.Update(frame, nrConfig, nrEligible, workloadMs);
-	if (previousMemoryCeiling != adaptiveController.MemoryCeiling())
-		logger::info("[DLSSNR][MEMORY] ceiling {}% -> {}% active={}%; higher tiers held until Neural Rendering Reset or restart",
-			previousMemoryCeiling, adaptiveController.MemoryCeiling(), adaptiveController.ActiveResolution());
-	const bool adaptiveNRActive = nrEligible && adaptiveController.IsEnabled();
-	if (nrEligible && previousNR != adaptiveController.ActiveResolution()) {
-		logger::info("[DLSSNR] adaptive NR handoff {}% -> {}% alpha={:.2f} work={:.2f}/{:.2f}ms reason={}",
-			previousNR, adaptiveController.ActiveResolution(), adaptiveController.HandoffAlpha(),
-			adaptiveController.SmoothedFrameTimeMs(), adaptiveController.ApplicationDeadlineMs(), adaptiveController.DecisionReason());
+
+	bool qualityChanged = false;
+	if (freshTiming) {
+		adaptiveResumeRemainingMs = std::max(0.0f, adaptiveResumeRemainingMs - sampleDeltaMs);
+		adaptiveLastFrameTimeMs = gpuFrameTimeMs;
+		// A single loading hitch must not dominate the EMA for seconds. The 60 ms
+		// filter cap is still above the highest configurable 50 ms threshold,
+		// so sustained severe load continues to downshift normally.
+		const float filterSampleMs = std::min(gpuFrameTimeMs, 60.0f);
+		const float smoothingMs = std::clamp(settings.neuralRenderingAdaptiveSmoothingMs, 0.0f, 1000.0f);
+		if (adaptiveFilteredFrameTimeMs <= 0.0f || smoothingMs <= 1.0f) {
+			adaptiveFilteredFrameTimeMs = filterSampleMs;
+		} else {
+			const float alpha = std::clamp(1.0f - std::exp(-sampleDeltaMs / smoothingMs), 0.001f, 1.0f);
+			adaptiveFilteredFrameTimeMs += (filterSampleMs - adaptiveFilteredFrameTimeMs) * alpha;
+		}
+
+		if (adaptiveCooldownRemainingMs > 0.0f) {
+			adaptiveCooldownRemainingMs = std::max(0.0f, adaptiveCooldownRemainingMs - sampleDeltaMs);
+			adaptiveDecreaseHoldMs = 0.0f;
+			adaptiveIncreaseHoldMs = 0.0f;
+			adaptivePendingAction = 0;
+		} else {
+			const bool cropTransitioning = adaptiveCropController.IsTransitioning();
+			const auto previousAction = adaptivePendingAction;
+			const bool blocked = adaptiveBlockedGrowthStage == adaptiveLadderStage &&
+				adaptiveFilteredFrameTimeMs > adaptiveBlockedGrowthBaselineMs - policyConfig.reserve;
+			const bool resumePending = adaptiveLadderStage != NeuralRendering::SinglePassLadder::suspendedStage && adaptiveActivePasses == 0;
+			adaptivePendingAction = NeuralRendering::SinglePassLadder::Select(adaptiveLadderStage,
+				adaptiveFilteredFrameTimeMs, policyConfig,
+				(adaptiveActivePasses > 0 && nrRenderer.IsOutputTransitioning()) || cropTransitioning || adaptiveCropController.RenderCoverage() != adaptiveCropTargetCoverage || resumePending || adaptiveResumeRemainingMs > 0.0f || !cropPolicyAvailable || envelopeRejected || decisionsSuspended, blocked);
+
+			if (previousAction != adaptivePendingAction)
+				adaptiveDecreaseHoldMs = adaptiveIncreaseHoldMs = 0.0f;
+
+			const bool decreasing = adaptivePendingAction == 1;
+			const bool increasing = adaptivePendingAction == 2;
+			if (decreasing) {
+				adaptiveDecreaseHoldMs += sampleDeltaMs;
+				adaptiveIncreaseHoldMs = 0.0f;
+			} else if (increasing) {
+				adaptiveIncreaseHoldMs += sampleDeltaMs;
+				adaptiveDecreaseHoldMs = 0.0f;
+			} else {
+				adaptiveDecreaseHoldMs = 0.0f;
+				adaptiveIncreaseHoldMs = 0.0f;
+			}
+
+			const bool actionReady = decreasing ?
+				adaptiveDecreaseHoldMs >= settings.neuralRenderingAdaptiveDecreaseHoldMs :
+				(increasing && adaptiveIncreaseHoldMs >=
+					policyConfig.increaseHold);
+			if (adaptivePendingAction != 0 && actionReady) {
+				adaptiveLastAction = adaptivePendingAction;
+				adaptiveLastActionFrameTimeMs = adaptiveFilteredFrameTimeMs;
+				const auto oldStage = adaptiveLadderStage;
+				if (adaptivePendingAction == 1) {
+					adaptiveLadderStage = std::min(NeuralRendering::SinglePassLadder::suspendedStage, oldStage + 1);
+					if (adaptiveLastActionFrom == adaptiveLadderStage && adaptiveGrowthBaselineMs > 0.0f) {
+						adaptiveBlockedGrowthStage = adaptiveLadderStage;
+						adaptiveBlockedGrowthBaselineMs = adaptiveGrowthBaselineMs;
+					}
+				} else {
+					adaptiveLadderStage = oldStage - 1;
+					adaptiveGrowthBaselineMs = adaptiveFilteredFrameTimeMs;
+				}
+				adaptiveLastActionFrom = oldStage;
+				adaptiveLastActionTo = adaptiveLadderStage;
+				const auto quality = NeuralRendering::SinglePassLadder::Level(adaptiveLadderStage, policyConfig.cropStep);
+				adaptiveCropTargetCoverage = quality.crop;
+				adaptiveModelResolution = quality.model;
+				if (!quality.nrEnabled || oldStage == NeuralRendering::SinglePassLadder::suspendedStage) adaptiveActivePasses = 0;
+				qualityChanged = true;
+
+				if (qualityChanged) {
+					adaptiveCooldownRemainingMs = settings.neuralRenderingAdaptiveCooldownMs;
+					adaptiveDecreaseHoldMs = 0.0f;
+					adaptiveIncreaseHoldMs = 0.0f;
+					adaptivePendingAction = 0;
+				}
+			}
+		}
+	}
+
+	if (timingAttempted && !freshTiming) {
+		adaptiveDecreaseHoldMs = adaptiveIncreaseHoldMs = 0.0f;
+		adaptivePendingAction = 0;
 	}
 
 	NeuralRendering::AdaptiveCropController::Config cropConfig;
-	cropConfig.enabled = settings.neuralRenderingAdaptiveCropEnabled;
-	cropConfig.hold = FoveatedRenderImpl::Core::vrSubrectFixedEnvelopeRejected ||
-		FoveatedRenderImpl::Core::vrSubrectNeuralFixedEnvelopeRejected;
-	cropConfig.maximumCoverage = settings.neuralRenderingAdaptiveCropMaximumCoverage;
-	cropConfig.minimumCoverage = settings.neuralRenderingAdaptiveCropMinimumCoverage;
-	cropConfig.downshiftFrames = settings.neuralRenderingAdaptiveCropDownshiftFrames;
-	cropConfig.upshiftFrames = settings.neuralRenderingAdaptiveCropUpshiftFrames;
-	cropConfig.minimumDwellFrames = settings.neuralRenderingAdaptiveCropMinimumDwellFrames;
+	cropConfig.enabled = cropPolicyAvailable;
+	cropConfig.hold = envelopeRejected || decisionsSuspended;
+	cropConfig.maximumCoverage = 100;
+	cropConfig.minimumCoverage = policyConfig.cropFloor;
+	cropConfig.stepCoverage = policyConfig.cropStep;
+	// v05 owns smoothing, hysteresis, holds and cooldown. The crop controller is
+	// only a stereo-safe actuator/handoff mechanism, so its own decision delays
+	// are one frame and cannot create a hidden second policy.
+	cropConfig.downshiftFrames = 1;
+	cropConfig.upshiftFrames = 1;
+	cropConfig.minimumDwellFrames = 1;
 	cropConfig.transitionFrames = settings.neuralRenderingAdaptiveCropTransitionFrames;
-
 	const bool cropWasActive = adaptiveCropController.IsRuntimeActive();
-	const auto previousCrop = adaptiveCropController.ActiveCoverage();
-	const auto previousCropTarget = adaptiveCropController.TargetCoverage();
-	const auto previousRenderCrop = adaptiveCropController.RenderCoverage();
-	// Crop restoration must wait until NR has completed its handoff to the true
-	// maximum tier. A pending 100% target is still a transition and must not
-	// expand the crop in the same interval.
-	const bool nrAtStableMaximum = adaptiveController.IsAtMaximum() && !adaptiveController.IsTransitioning();
-	adaptiveCropController.Update(frame, cropConfig, adaptiveNRActive && geometryCompatible,
-		configuredCoverage, geometryCompatible, eyeTrackingOwnsCrop, cropShouldDownshiftFirst,
-		adaptiveController.IsTransitioning(), nrAtStableMaximum,
-		adaptiveController.LastSampleOverBudget(), adaptiveController.LastSampleHadHeadroom());
+	const std::uint32_t previousRenderCrop = cropWasActive ? adaptiveCropController.RenderCoverage() : 100u;
+	const std::uint32_t currentCrop = cropWasActive ? adaptiveCropController.ActiveCoverage() : 100u;
+	const bool driveCropDown = cropPolicyAvailable && !envelopeRejected && !decisionsSuspended && currentCrop > adaptiveCropTargetCoverage;
+	const bool driveCropUp = cropPolicyAvailable && !envelopeRejected && !decisionsSuspended && currentCrop < adaptiveCropTargetCoverage;
+	// Eye/gaze tracking keeps ownership of crop origin. Adaptive v05 changes only
+	// scale relative to that live user-selected crop, exactly as v03 established.
+	adaptiveCropController.Update(frame, cropConfig, cropPolicyAvailable,
+		100, geometryCompatible, false, driveCropDown, false, true,
+		driveCropDown, driveCropUp);
 	if (cropWasActive && !adaptiveCropController.IsRuntimeActive())
 		FoveatedRenderImpl::Core::ResetAdaptiveCropHandoff();
-	const auto currentCrop = adaptiveCropController.ActiveCoverage();
-	const auto currentRenderCrop = adaptiveCropController.RenderCoverage();
-	const auto currentNR = adaptiveController.ActiveResolution();
-	static std::uint32_t lastBudgetLog = UINT32_MAX;
-	if (settings.neuralRenderingAdaptiveEnabled && frame % 300 == 0 && frame != lastBudgetLog) {
-		lastBudgetLog = frame;
-		logger::info("[DLSSNR][BUDGET] frame={} source=steamvr-workload fresh={} workMs={:.2f} averageMs={:.2f} deadlineMs={:.2f} pressure={} headroom={} nr={} crop={} cropHeld={} nrTransition={} cropTransition={} nrUpReady={} nrDownReady={} gpuMs={:.2f} activeSubmitMs={:.2f}",
-			frame, workloadMs > 0.0f, workloadMs, adaptiveController.SmoothedFrameTimeMs(),
-			adaptiveController.ApplicationDeadlineMs(), adaptiveController.LastSampleOverBudget(),
-			adaptiveController.LastSampleHadHeadroom(), currentNR, currentCrop, cropConfig.hold,
-			adaptiveController.IsTransitioning(), adaptiveCropController.IsTransitioning(), nrUpshiftReady,
-			nrDownshiftReady, gpuWorkMs, activeSubmitMs);
+	const std::uint32_t committedRenderCrop = adaptiveCropController.IsRuntimeActive() ?
+		adaptiveCropController.RenderCoverage() : 100u;
+	if (adaptiveCropController.IsRuntimeActive() && previousRenderCrop != committedRenderCrop) {
+		// The resident atlas and residual handoff preserve NR history on geometry
+		// commits. Gaze motion retains the validated guide alignment.
+		logger::info("[DLSSNR][ADAPTIVE-v05] crop geometry commit {}% -> {}% of selected crop frame={}",
+			previousRenderCrop, committedRenderCrop, frame);
 	}
-	const auto effectiveLeftUV = GetEffectiveLeftUV();
-	const auto effectiveRightUV = GetEffectiveRightUV();
-	if (adaptiveCropController.LastResetReason() != NeuralRendering::AdaptiveCropController::ResetReason::None &&
-		adaptiveCropDiagnosticGeneration != adaptiveCropController.Generation()) {
-		adaptiveCropDiagnosticGeneration = adaptiveCropController.Generation();
-		const char* resourceMode = FoveatedRenderImpl::Core::vrSubrectResourceMode ==
-			FoveatedRenderImpl::Core::SubrectResourceMode::FixedEnvelope ? "fixed-envelope" : "exact-cache";
-		logger::info("[DLSSNR][ADAPTIVE] frame={} generation={} reset={} eligible={} nrEligible={} cropEligible={} eyeTracking={} geometry={} configuredCrop={} adaptiveCropMax={} prevNR={} prevNRTarget={} activeNR={} targetNR={} prevCrop={} prevCropTarget={} activeCrop={} targetCrop={} effectiveLUV=({:.3f},{:.3f},{:.3f},{:.3f}) effectiveRUV=({:.3f},{:.3f},{:.3f},{:.3f}) validOut={}x{} validIn={}x{} envelopeOut={}x{} envelopeIn={}x{} resourceMode={} creates={} reuses={} frees={} envelopeChecks={} fallbackEntries={} fallbackEvictions={} neuralFallbackEntries={}",
-			frame, adaptiveCropController.Generation(),
-			NeuralRendering::AdaptiveCropController::ResetReasonName(adaptiveCropController.LastResetReason()),
-			adaptiveNRActive && geometryCompatible, nrEligible, cropPolicyAvailable, eyeTrackingOwnsCrop,
-			geometryCompatible, configuredCoverage, cropConfig.maximumCoverage, previousNR, previousNRTarget, currentNR, adaptiveController.TargetResolution(),
-			previousCrop, previousCropTarget, currentCrop, adaptiveCropController.TargetCoverage(),
-			effectiveLeftUV.x, effectiveLeftUV.y, effectiveLeftUV.w, effectiveLeftUV.h,
-			effectiveRightUV.x, effectiveRightUV.y, effectiveRightUV.w, effectiveRightUV.h,
-			FoveatedRenderImpl::Core::vrSubrectValidOutW, FoveatedRenderImpl::Core::vrSubrectValidOutH,
-			FoveatedRenderImpl::Core::vrSubrectValidInW, FoveatedRenderImpl::Core::vrSubrectValidInH,
-			FoveatedRenderImpl::Core::vrSubrectOutW, FoveatedRenderImpl::Core::vrSubrectOutH,
-			FoveatedRenderImpl::Core::vrSubrectInW, FoveatedRenderImpl::Core::vrSubrectInH,
-			resourceMode, FoveatedRenderImpl::Core::vrSubrectResourceCreates,
-			FoveatedRenderImpl::Core::vrSubrectResourceReuses, FoveatedRenderImpl::Core::vrSubrectResourceFrees,
-			FoveatedRenderImpl::Core::vrSubrectEnvelopeValidations, FoveatedRenderImpl::Core::vrSubrectFallbackEntries,
-			FoveatedRenderImpl::Core::vrSubrectFallbackEvictions,
-			FoveatedRenderImpl::Core::vrSubrectNeuralFallbackEntries);
-	}
-	if (adaptiveCropController.IsRuntimeActive() && previousCrop != currentCrop) {
-		// ActiveCoverage changes when the controller makes a new decision, while
-		// RenderCoverage remains on the old UV geometry until the handoff is
-		// complete. Do not invalidate temporal history here: the renderer is still
-		// sampling the old crop geometry during this part of the transition.
-		logger::info("[DLSSNR] adaptive crop decision {}% -> {}% render={} -> {}% alpha={:.2f} frame={} generation={} valid={}x{} envelope={}x{}",
-			previousCrop, currentCrop, previousRenderCrop, currentRenderCrop,
-			adaptiveCropController.HandoffAlpha(), frame,
-			adaptiveCropController.Generation(), FoveatedRenderImpl::Core::vrSubrectValidOutW,
-			FoveatedRenderImpl::Core::vrSubrectValidOutH, FoveatedRenderImpl::Core::vrSubrectOutW,
-			FoveatedRenderImpl::Core::vrSubrectOutH);
-		if (currentCrop < previousCrop)
-			adaptiveNextDownshiftIsCrop = false;
-	}
-	if (adaptiveCropController.IsRuntimeActive() && previousRenderCrop != currentRenderCrop) {
-		// The fixed envelope keeps the native resource identity stable, but the
-		// crop origin/extent changes the meaning of every temporal sample. Reset
-		// only when RenderCoverage commits the new UV geometry, so Feature 18 and
-		// both eyes cannot blend history produced for the previous crop tier.
-		FoveatedRenderImpl::Core::InvalidateTemporalState();
-		logger::info("[DLSSNR] adaptive crop geometry commit {}% -> {}% decision={} -> {}% frame={} generation={} valid={}x{} envelope={}x{}",
-			previousRenderCrop, currentRenderCrop, previousCrop, currentCrop, frame,
-			adaptiveCropController.Generation(), FoveatedRenderImpl::Core::vrSubrectValidOutW,
-			FoveatedRenderImpl::Core::vrSubrectValidOutH, FoveatedRenderImpl::Core::vrSubrectOutW,
-			FoveatedRenderImpl::Core::vrSubrectOutH);
-	}
-	if (nrEligible && previousNR != currentNR && currentNR < previousNR)
-		adaptiveNextDownshiftIsCrop = true;
-	if (!cropPolicyAvailable)
-		adaptiveNextDownshiftIsCrop = true;
-}
 
+	if (adaptiveLadderStage != NeuralRendering::SinglePassLadder::suspendedStage && adaptiveActivePasses == 0 &&
+		!adaptiveCropController.IsTransitioning() && committedRenderCrop == adaptiveCropTargetCoverage &&
+		cropPolicyAvailable && !envelopeRejected && !decisionsSuspended) {
+		NeuralRendering::ResetHistory();
+		adaptiveActivePasses = 1;
+		adaptiveResumeRemainingMs = settings.neuralRenderingLadderHandoffMs;
+		adaptiveCooldownRemainingMs = settings.neuralRenderingAdaptiveCooldownMs;
+		adaptiveDecreaseHoldMs = adaptiveIncreaseHoldMs = 0.0f;
+		adaptivePendingAction = 0;
+	}
+
+	if (qualityChanged) {
+		const char* action = adaptiveLastAction == 1 ? "quality-down" : "quality-up";
+		logger::info("[DLSSNR][ADAPTIVE-v05] action={} {} -> {} raw={:.2f}ms filtered={:.2f}ms passes={}/{} cropTarget={} atlas={} gaze={}",
+			action, adaptiveLastActionFrom, adaptiveLastActionTo,
+			adaptiveLastFrameTimeMs, adaptiveFilteredFrameTimeMs,
+			adaptiveActivePasses, adaptiveConfiguredPasses, adaptiveCropTargetCoverage,
+			nrRenderer.IsStereoAtlasActive(), eyeTrackingOwnsOrigin);
+	}
+
+	if (frame % 300 == 0) {
+		logger::info("[DLSSNR][BUDGET-v05] frame={} fresh={} raw={:.2f} filtered={:.2f} passes={}/{} cropRender={} cropTarget={} decHold={:.0f} incHold={:.0f} cooldown={:.0f} atlas={} gaze={}",
+			frame, freshTiming, adaptiveLastFrameTimeMs, adaptiveFilteredFrameTimeMs,
+			adaptiveActivePasses, adaptiveConfiguredPasses,
+			adaptiveCropController.IsRuntimeActive() ? adaptiveCropController.RenderCoverage() : 100u,
+			adaptiveCropTargetCoverage, adaptiveDecreaseHoldMs, adaptiveIncreaseHoldMs,
+			adaptiveCooldownRemainingMs, nrRenderer.IsStereoAtlasActive(), eyeTrackingOwnsOrigin);
+	}
+}
 Util::Subrect::UVRegion FoveatedRender::GetEffectiveLeftUV() const
 {
+	const auto base = subrectController.GetUV();
 	if (!adaptiveCropController.IsRuntimeActive())
-		return subrectController.GetUV();
-	const float coverage = std::clamp(
-		static_cast<float>(adaptiveCropController.RenderCoverage()) / 100.0f, 0.01f, 1.0f);
-	const bool nasalConvergence = IsNasalConvergenceGeometry(
-		subrectController.GetUV(), subrectController.GetRightEyeUV());
-	return MakeAdaptiveCropUV(coverage, true, nasalConvergence);
+		return base;
+	const float scale = std::clamp(static_cast<float>(adaptiveCropController.RenderCoverage()) / 100.0f, 0.01f, 1.0f);
+	Util::Subrect::UVRegion out = base;
+	const float centerX = base.x + base.w * 0.5f;
+	const float centerY = base.y + base.h * 0.5f;
+	out.w = std::clamp(base.w * scale, 0.01f, 1.0f);
+	out.h = std::clamp(base.h * scale, 0.01f, 1.0f);
+	out.x = std::clamp(centerX - out.w * 0.5f, 0.0f, 1.0f - out.w);
+	out.y = std::clamp(centerY - out.h * 0.5f, 0.0f, 1.0f - out.h);
+	return out;
 }
 
 Util::Subrect::UVRegion FoveatedRender::GetEffectiveRightUV() const
 {
+	const auto base = subrectController.GetRightEyeUV();
 	if (!adaptiveCropController.IsRuntimeActive())
-		return subrectController.GetRightEyeUV();
-	const float coverage = std::clamp(
-		static_cast<float>(adaptiveCropController.RenderCoverage()) / 100.0f, 0.01f, 1.0f);
-	const bool nasalConvergence = IsNasalConvergenceGeometry(
-		subrectController.GetUV(), subrectController.GetRightEyeUV());
-	return MakeAdaptiveCropUV(coverage, false, nasalConvergence);
+		return base;
+	const float scale = std::clamp(static_cast<float>(adaptiveCropController.RenderCoverage()) / 100.0f, 0.01f, 1.0f);
+	Util::Subrect::UVRegion out = base;
+	const float centerX = base.x + base.w * 0.5f;
+	const float centerY = base.y + base.h * 0.5f;
+	out.w = std::clamp(base.w * scale, 0.01f, 1.0f);
+	out.h = std::clamp(base.h * scale, 0.01f, 1.0f);
+	out.x = std::clamp(centerX - out.w * 0.5f, 0.0f, 1.0f - out.w);
+	out.y = std::clamp(centerY - out.h * 0.5f, 0.0f, 1.0f - out.h);
+	return out;
 }
-
 FoveatedRender::DlssMode FoveatedRender::GetDlssMode() const
 {
 	if (globals::features::upscaling.GetUpscaleMethod() == Upscaling::UpscaleMethod::kFSR)
@@ -791,7 +1007,7 @@ uint FoveatedRender::GetActivePresetDLSS() const
 
 float FoveatedRender::GetActiveSharpnessDLSS() const
 {
-	return std::clamp(globals::features::upscaling.settings.sharpnessDLSS, 0.0f, 1.0f);
+	return std::clamp(globals::features::upscaling.settings.sharpnessDLSS, 0.0f, 3.0f);
 }
 
 float FoveatedRender::GetRenderScaleForQuality(uint qualityMode)
@@ -926,12 +1142,13 @@ const char* FoveatedRender::SubrectMaskModeName(SubrectMaskMode mode)
 		auto& renderer = NeuralRendering::Renderer::Instance();
 		const bool failed = renderer.IsFailureLatched();
 		const bool waitingForFirstFrame = renderer.SuccessfulFrames() == 0;
-		const char* state = !enabled ? "OFF" : !routeSupported ? "UNAVAILABLE" : failed ? "ERROR" :
+		const bool automaticallySuspended = settings.neuralRenderingAdaptiveEnabled && adaptivePassInitialized && adaptiveActivePasses == 0;
+		const char* state = !enabled ? "OFF" : !routeSupported ? "UNAVAILABLE" : failed ? "ERROR" : automaticallySuspended ? (adaptiveLadderStage == 5 ? "SUSPENDED" : "RESUMING") :
 			waitingForFirstFrame ? "STARTING" : "ON";
 		const std::string label = std::format("NEURAL RENDERING  |  {}", state);
 
 		ImVec4 color = ImGui::GetStyleColorVec4(ImGuiCol_Button);
-		if (enabled && routeSupported && !failed && !waitingForFirstFrame)
+		if (enabled && routeSupported && !failed && !waitingForFirstFrame && !automaticallySuspended)
 			color = ImVec4(0.20f, 0.58f, 0.50f, 1.0f);
 		else if (failed)
 			color = ImVec4(0.58f, 0.20f, 0.22f, 1.0f);
@@ -965,6 +1182,8 @@ const char* FoveatedRender::SubrectMaskModeName(SubrectMaskMode mode)
 			detail = "Unavailable: VR Neural Rendering requires active PerfMode.";
 		} else if (failed) {
 			detail = std::format("Runtime error: {}. Use Reset Neural Rendering to retry.", renderer.StatusText());
+		} else if (automaticallySuspended) {
+			detail = "Adaptive controller has suspended NR. SR remains active; NR restores after sustained headroom and crop commit.";
 		} else if (waitingForFirstFrame) {
 			detail = std::format("Starting: waiting for the first NR frame. Runtime: {}.", renderer.StatusText());
 		} else {
@@ -987,82 +1206,7 @@ const char* FoveatedRender::SubrectMaskModeName(SubrectMaskMode mode)
 	const auto drawVrControls = [&]() {
 	// ── VR-only knobs ──
 	if (globals::game::isVR) {
-			ImGui::Separator();
-			ImGui::Text("%s", T(TKEY("foveated_dlss_mode_header"), "VR DLSS Mode"));
-			if (auto _tt = Util::HoverTooltipWrapper()) {
-				drawWrapped(T(TKEY("foveated_dlss_mode_tooltip"),
-									  "Default — highest quality. Each eye gets its own isolated copy of color/depth/motion\n"
-									  "vectors so DLSS can't sample across the stereo midline. 5 copies per eye per frame.\n"
-									  "All DLSS presets supported. Best for screenshots or when Faster shows edge artifacts.\n"
-								  "\n"
-								  "Faster — lower overhead. DLSS reads directly from the frame buffer using a viewport\n"
-								  "offset instead of isolating each eye. 1 snapshot + 2 mask clears per frame.\n"
-								  "DLSS may sample 1-2 pixels from the neighboring eye near the stereo center — usually\n"
-								  "invisible in motion. Presets J and K are incompatible and auto-clamp to L."));
-		}
-
-		const bool isFSR = globals::features::upscaling.GetUpscaleMethod() == Upscaling::UpscaleMethod::kFSR;
-		if (isFSR)
-			ImGui::BeginDisabled();
-		uint prevMode = settings.dlssMode;
-		ImGui::SliderInt(T(TKEY("foveated_dlss_mode_label"), "DLSS Mode"), reinterpret_cast<int*>(&settings.dlssMode), 0, 1, DlssModeName((DlssMode)std::min(settings.dlssMode, 1u)));
-		if (settings.dlssMode != prevMode) {
-			const uint prevPreset = globals::features::upscaling.settings.presetDLSS;
-			ClampPresetToMode();
-			if (globals::features::upscaling.settings.presetDLSS != prevPreset) {
-				logger::info("[FOVEATED] DLSS preset clamped from {} to {} after mode switch (J/K incompatible with Faster)",
-					prevPreset, globals::features::upscaling.settings.presetDLSS);
-			}
-		}
-		if (isFSR) {
-			ImGui::EndDisabled();
-			ImGui::TextWrapped(T(TKEY("foveated_dlss_mode_fsr_desc"), "Not used by FSR -- applies only when DLSS is the selected upscaler."));
-		} else {
-			switch (GetDlssMode()) {
-			case DlssMode::kDefault:
-				ImGui::TextWrapped(T(TKEY("foveated_dlss_mode_default_desc"), "Per-eye isolation: 5 copies per frame, 2 DLSS evaluates. All presets."));
-				break;
-			case DlssMode::kFaster:
-				ImGui::TextWrapped(T(TKEY("foveated_dlss_mode_faster_desc"), "Viewport offset: 1 snapshot, 2 mask clears, 2 DLSS evaluates. Presets J/K unavailable."));
-				break;
-			default:
-				break;
-			}
-		}
-
-			ImGui::Separator();
-			ImGui::Text("%s", T(TKEY("foveated_periphery_header"), "Periphery Rendering"));
-			if (auto _tt = Util::HoverTooltipWrapper()) {
-				drawWrapped(T(TKEY("foveated_periphery_tooltip"),
-									  "The area outside your selected subrect is filled cheaply rather than running\n"
-								  "the selected upscaler. These settings control how that cheap fill looks and\n"
-								  "whether it flickers.\n"
-								  "\n"
-								  "Stretch method: how pixels outside the subrect are reconstructed from the lower-res\n"
-								  "render buffer. Does not affect the upscaled subrect region at all.\n"
-								  "\n"
-								  "Periphery AA: reduces temporal flicker in the stretched area using motion-compensated\n"
-								  "history blending. Independent of the upscaled subrect.\n"
-								  "\n"
-								  "Edge Blend: controls how the upscaled subrect edge meets the stretched periphery.\n"
-								  "Hard Copy leaves a sharp seam; Feather/Dither soften it. Edge Shape selects a\n"
-								  "rectangle or oval composite. The Feature 18 subrect remains rectangular internally."));
-		}
-
-		ImGui::SliderInt(T(TKEY("foveated_stretch_label"), "Stretch"), reinterpret_cast<int*>(&settings.stretchMode), 0, 2, StretchModeName((StretchMode)settings.stretchMode));
-		switch (GetStretchMode()) {
-		case StretchMode::kBilinear:
-			ImGui::TextWrapped(T(TKEY("foveated_stretch_bilinear_desc"), "Bilinear: smooth upscale of the render buffer. Looks soft but clean."));
-			break;
-		case StretchMode::kPoint:
-			ImGui::TextWrapped(T(TKEY("foveated_stretch_point_desc"), "Point: cheapest, visibly pixelated. Good for benchmarking foveated savings."));
-			break;
-		case StretchMode::kGaussianBlur:
-			ImGui::TextWrapped(T(TKEY("foveated_stretch_gaussian_desc"), "Gaussian: blurs the periphery further into soft focus. Good default for foveated use."));
-			ImGui::SliderFloat(T(TKEY("foveated_blur_radius"), "Blur Radius"), &settings.peripheryBlurRadius, 0.5f, 4.0f, "%.1f px");
-			break;
-		}
-
+		ImGui::TextDisabled("VR DLSS: Default | Periphery: Point");
 		ImGui::SliderInt(T(TKEY("foveated_periphery_aa_label"), "Periphery AA"), reinterpret_cast<int*>(&settings.peripheryAAMode), 0, 1, PeripheryAAModeName((PeripheryAAMode)settings.peripheryAAMode));
 		if (GetPeripheryAAMode() == PeripheryAAMode::kTemporalSmooth) {
 			ImGui::TextWrapped(T(TKEY("foveated_periphery_aa_temporal_desc"), "Blends the stretched periphery with motion-reprojected history to reduce flicker."));
@@ -1072,26 +1216,7 @@ const char* FoveatedRender::SubrectMaskModeName(SubrectMaskMode mode)
 				}
 		}
 
-		ImGui::SliderInt(T(TKEY("foveated_edge_blend_label"), "Edge Blend"), reinterpret_cast<int*>(&settings.subrectBlendMode), 0, 2, SubrectBlendModeName((SubrectBlendMode)std::min(settings.subrectBlendMode, 2u)));
-		switch (GetSubrectBlendMode()) {
-		case SubrectBlendMode::kHardCopy:
-			ImGui::TextWrapped(T(TKEY("foveated_blend_hard_copy_desc"), "Sharp seam at the subrect boundary. Lowest cost."));
-			break;
-	case SubrectBlendMode::kFeather:
-			ImGui::TextWrapped(T(TKEY("foveated_blend_feather_desc"), "Smoothstep fade over N pixels at the boundary. Hides the seam."));
-				ImGui::SliderFloat(T(TKEY("foveated_feather_width"), "Feather Width"), &settings.subrectFeatherWidth, 2.0f, 128.0f, "%.0f px");
-				ImGui::SliderFloat(T(TKEY("foveated_falloff_curve"), "Falloff Curve"), &settings.subrectFalloffCurve, 0.5f, 2.0f, "%.2f");
-				if (auto _tt = Util::HoverTooltipWrapper())
-					drawWrapped(T(TKEY("foveated_falloff_curve_tooltip"), "Controls how the oval transition distributes the fade. 1.00 is balanced; lower values carry the neural result farther into the band, higher values hold the periphery longer."));
-			break;
-	case SubrectBlendMode::kDither:
-			ImGui::TextWrapped(T(TKEY("foveated_blend_dither_desc"), "Noise-dithered fade — more natural-looking than feather at large subrects."));
-			ImGui::SliderFloat(T(TKEY("foveated_band_width"), "Band Width"), &settings.subrectFeatherWidth, 2.0f, 128.0f, "%.0f px");
-			ImGui::SliderFloat(T(TKEY("foveated_falloff_curve"), "Falloff Curve"), &settings.subrectFalloffCurve, 0.5f, 2.0f, "%.2f");
-			ImGui::SliderFloat(T(TKEY("foveated_noise_amount"), "Noise Amount"), &settings.subrectDitherStrength, 0.0f, 2.0f, "%.2f");
-			break;
-		}
-
+		ImGui::TextDisabled("Inner edge: Dither | width 128 px | falloff 0.5 | noise 1.0");
 		ImGui::SliderInt(T(TKEY("foveated_mask_shape_label"), "Edge Shape"), reinterpret_cast<int*>(&settings.subrectMaskMode), 0, 1,
 			SubrectMaskModeName(GetSubrectMaskMode()));
 		if (GetSubrectMaskMode() == SubrectMaskMode::kOval)
@@ -1100,6 +1225,8 @@ const char* FoveatedRender::SubrectMaskModeName(SubrectMaskMode mode)
 		else
 			ImGui::TextWrapped(T(TKEY("foveated_mask_rectangle_desc"),
 				"Rectangle: keep the original rectangular feather/dither mask. Use this fallback if the oval edge is not preferred."));
+
+		ImGui::Separator();
 
 		ImGui::Separator();
 		ImGui::Text("%s", T(TKEY("foveated_subrect_region_header"), "Subrect Region"));
@@ -1150,6 +1277,7 @@ const char* FoveatedRender::SubrectMaskModeName(SubrectMaskMode mode)
 			!globals::features::upscaling.IsFrameGenerationConfiguredForSession() &&
 			(!globals::game::isVR || (GetDlssMode() == DlssMode::kDefault &&
 				globals::features::upscaling.perfMode.IsHookActive()));
+		auto& neuralRenderer = NeuralRendering::Renderer::Instance();
 		if (!supportedRoute) {
 			if (globals::features::upscaling.IsFrameGenerationConfiguredForSession())
 				drawWarningWrapped("Disable Frame Generation and restart before enabling Neural Rendering.");
@@ -1160,118 +1288,8 @@ const char* FoveatedRender::SubrectMaskModeName(SubrectMaskMode mode)
 		if (settings.neuralRenderingEnabled) {
 			drawDisabledWrapped("Tune NR quality, output shaping, and optional frame-time controls.");
 
-			// Expose supported styles as named cards with tuning kept independent.
-			// what "Style 1" or "Style 2" means.  Keep the lower-level tuning
-			// preset and sliders below this row; selecting a style is intentionally
-			// independent of those numeric strength controls.
-			const char* styleLabels[] = {
-				T(TKEY("neural_rendering_style_natural"), "Natural"),
-				T(TKEY("neural_rendering_style_fabric_detail"), "Fabric Detail"),
-				T(TKEY("neural_rendering_style_cinematic"), "Cinematic")
-			};
-			const char* styleDescriptions[] = {
-				T(TKEY("neural_rendering_style_natural_desc"), "Neutral detail with restrained contrast."),
-				T(TKEY("neural_rendering_style_fabric_detail_desc"), "Emphasizes fine materials and surface texture."),
-				T(TKEY("neural_rendering_style_cinematic_desc"), "More character and local contrast.")
-			};
-			const int activeStyle = static_cast<int>(settings.neuralRenderingStyle);
+			ImGui::TextDisabled("Visual style: Natural | NR resolution and coverage: controller managed");
 			bool custom = false;
-
-			ImGui::SeparatorText(T(TKEY("neural_rendering_visual_style"), "Visual Style"));
-			if (auto _tt = Util::HoverTooltipWrapper())
-				drawWrapped(T(TKEY("neural_rendering_visual_style_tooltip"), "Select a style. Fine intensity and structure controls remain below."));
-
-			const float minimumStyleCardWidth = 150.0f * Util::GetUIScale();
-			const int styleColumnCount = std::clamp(
-				static_cast<int>(ImGui::GetContentRegionAvail().x / minimumStyleCardWidth),
-				1,
-				IM_ARRAYSIZE(styleLabels));
-			if (ImGui::BeginTable("##neural_rendering_visual_styles", styleColumnCount,
-				ImGuiTableFlags_SizingStretchSame | ImGuiTableFlags_PadOuterX | ImGuiTableFlags_NoSavedSettings)) {
-				for (int styleIndex = 0; styleIndex < IM_ARRAYSIZE(styleLabels); ++styleIndex) {
-					ImGui::TableNextColumn();
-					ImGui::PushID(styleIndex);
-					const bool selected = styleIndex == activeStyle;
-					if (selected) {
-						ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
-						ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
-					}
-					if (ImGui::Button(styleLabels[styleIndex], ImVec2(-1.0f, 0.0f))) {
-						settings.neuralRenderingStyle = static_cast<uint>(styleIndex);
-						custom = true;
-					}
-					if (selected)
-						ImGui::PopStyleColor(2);
-					if (auto _tt = Util::HoverTooltipWrapper()) {
-						drawWrapped(styleDescriptions[styleIndex]);
-						drawDisabledWrapped(std::format("DLSSNR style {}", styleIndex).c_str());
-					}
-					ImGui::PopID();
-				}
-				ImGui::EndTable();
-			}
-			ImGui::TextDisabled("%s %s", T(TKEY("neural_rendering_active_style"), "Active style:"), styleLabels[activeStyle]);
-
-			ImGui::SeparatorText("NR Cost");
-			{
-				static const char* coverageLabels[] = {
-					"Full eye (100%)", "Center 95% | 90% NR area", "Center 90% | 81% NR area", "Center 85% | 72% NR area",
-					"Center 80% | 64% NR area", "Center 75% | 56% NR area", "Center 70% | 49% NR area" };
-				static_assert(IM_ARRAYSIZE(coverageLabels) == NeuralRendering::kNeuralCoveragePresets.size());
-				int coverageIndex = 0;
-				for (int index = 0; index < IM_ARRAYSIZE(coverageLabels); ++index)
-					if (settings.neuralRenderingCoverage == NeuralRendering::kNeuralCoveragePresets[index]) {
-						coverageIndex = index;
-						break;
-					}
-				if (ImGui::Combo(T(TKEY("neural_rendering_coverage"), "NR Coverage"), &coverageIndex,
-						coverageLabels, IM_ARRAYSIZE(coverageLabels)))
-					settings.neuralRenderingCoverage = NeuralRendering::kNeuralCoveragePresets[coverageIndex];
-				if (auto _tt = Util::HoverTooltipWrapper())
-					drawWrapped(T(TKEY("neural_rendering_coverage_tooltip"),
-						"Runs NR only on the center of each eye at full 100% model resolution. DLSS stays full eye, and the NR edge is blended with your Edge Blend settings (Hard Copy is upgraded to Feather). NR cost scales with the NR area. Requires Full Eye foveation."));
-				if (settings.neuralRenderingCoverage < 100 &&
-					!(subrectController.GetUV().IsFullEye() && subrectController.GetRightEyeUV().IsFullEye()))
-					drawWarningWrapped(T(TKEY("neural_rendering_coverage_crop_warning"),
-						"NR Coverage applies only with the Full Eye foveation preset."));
-			}
-			if constexpr (NeuralRendering::kFullResolutionNeuralRenderingOnly) {
-				ImGui::TextDisabled("%s", T(TKEY("neural_rendering_model_resolution_locked"),
-					"Model resolution: 100% (reduced NR resolution is disabled in this build)"));
-			} else {
-			static const char* modelResolutions[] = {
-				"Full (100%)", "95%", "90%", "85%", "80%", "75%", "70%", "50% (experimental)", "33% (experimental)" };
-			static constexpr uint modelResolutionValues[] = { 100u, 95u, 90u, 85u, 80u, 75u, 70u, 50u, 33u };
-			int modelResolution = 0;
-			for (int index = 0; index < IM_ARRAYSIZE(modelResolutionValues); ++index) {
-				if (settings.neuralRenderingModelResolution == modelResolutionValues[index]) {
-					modelResolution = index;
-					break;
-				}
-			}
-			if (ImGui::Combo(T(TKEY("neural_rendering_model_resolution"), "Model Resolution"),
-				&modelResolution, modelResolutions, IM_ARRAYSIZE(modelResolutions))) {
-				settings.neuralRenderingModelResolution = modelResolutionValues[modelResolution];
-			}
-			if (auto _tt = Util::HoverTooltipWrapper())
-				drawWrapped(T(TKEY("neural_rendering_model_resolution_tooltip"),
-					"The display stays full resolution. Only the NR model area changes. 50% and 33% are fixed experimental tiers; adaptive NR remains limited to 70% and above."));
-			}
-
-			ImGui::SeparatorText("Advanced NR Tuning");
-			static const char* presets[] = { "Default", "Balanced", "Fabric Detail", "Natural", "Custom" };
-			static constexpr uint presetValues[] = { 0u, 1u, 2u, 3u, 5u };
-			int preset = 0;
-			for (int index = 0; index < IM_ARRAYSIZE(presetValues); ++index) {
-				if (settings.neuralRenderingPreset == presetValues[index]) {
-					preset = index;
-					break;
-				}
-			}
-			if (ImGui::Combo(T(TKEY("neural_rendering_preset"), "Model Preset"), &preset, presets, IM_ARRAYSIZE(presets))) {
-				static constexpr std::string_view presetNames[] = { "Default", "Balanced", "Fabric Detail", "Natural", "Custom" };
-				ApplyNeuralRenderingPreset(presetNames[std::clamp(preset, 0, IM_ARRAYSIZE(presetNames) - 1)]);
-			}
 			custom |= ImGui::SliderFloat(T(TKEY("neural_rendering_intensity"), "Intensity"), &settings.neuralRenderingIntensity, 0.0f, 2.0f, "%.2f");
 			custom |= ImGui::SliderFloat(T(TKEY("neural_rendering_local_tone"), "Local Tone"), &settings.neuralRenderingLocalTone, 0.0f, 2.0f, "%.2f");
 			custom |= ImGui::SliderFloat(T(TKEY("neural_rendering_local_structure"), "Local Structure"), &settings.neuralRenderingLocalStructure, 0.0f, 2.0f, "%.2f");
@@ -1281,246 +1299,60 @@ const char* FoveatedRender::SubrectMaskModeName(SubrectMaskMode mode)
 			if (custom)
 				settings.neuralRenderingPreset = 5;
 
-			if (NeuralRendering::kFullResolutionNeuralRenderingOnly) {
-				// Adaptive NR works by lowering the NR model tier, and adaptive crop needs
-				// adaptive NR; neither is offered while NR is fixed at full resolution.
-			} else if (ImGui::CollapsingHeader("Adaptive Performance")) {
-				ImGui::SeparatorText("Adaptive Neural Rendering");
-				ImGui::Checkbox("Enable adaptive NR resolution", &settings.neuralRenderingAdaptiveEnabled);
-				if (auto _tt = Util::HoverTooltipWrapper())
-					drawWrapped("Adjusts one NR tier after sustained pressure. Handoffs are blended.");
-				if (settings.neuralRenderingAdaptiveEnabled) {
-					static constexpr uint adaptiveRefreshValues[] = { 70u, 72u, 80u, 90u };
-					static const char* adaptiveRefreshRates[] = {
-						"70 Hz | 35 FPS budget", "72 Hz | 36 FPS budget", "80 Hz | 40 FPS budget", "90 Hz | 45 FPS budget" };
-					int refreshIndex = 2;
-					for (int index = 0; index < IM_ARRAYSIZE(adaptiveRefreshValues); ++index)
-						if (settings.neuralRenderingAdaptiveRefreshHz == adaptiveRefreshValues[index]) {
-							refreshIndex = index;
-							break;
-						}
-
-					bool customFpsEnabled = settings.neuralRenderingAdaptiveTargetFps != 0;
-					if (ImGui::Checkbox("Use custom FPS target", &customFpsEnabled))
-						settings.neuralRenderingAdaptiveTargetFps = customFpsEnabled ? 40u : 0u;
-					int targetFps = customFpsEnabled ? static_cast<int>(std::clamp(settings.neuralRenderingAdaptiveTargetFps, 15u, 60u)) : 40;
-					ImGui::BeginDisabled(!customFpsEnabled);
-					if (ImGui::SliderInt("FPS target", &targetFps, 15, 60, "%d FPS"))
-						settings.neuralRenderingAdaptiveTargetFps = static_cast<uint>(targetFps);
-					ImGui::EndDisabled();
-
-					ImGui::TextDisabled("Headset refresh target");
-					ImGui::BeginDisabled(customFpsEnabled);
-					if (ImGui::BeginTable("##neural_rendering_adaptive_refresh", IM_ARRAYSIZE(adaptiveRefreshValues),
-							ImGuiTableFlags_SizingStretchSame | ImGuiTableFlags_PadOuterX | ImGuiTableFlags_NoSavedSettings)) {
-						for (int index = 0; index < IM_ARRAYSIZE(adaptiveRefreshValues); ++index) {
-							ImGui::TableNextColumn();
-							const bool selected = index == refreshIndex;
-							if (selected)
-								ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
-							if (ImGui::Button(adaptiveRefreshRates[index], ImVec2(-1.0f, 32.0f * Util::GetUIScale())))
-								settings.neuralRenderingAdaptiveRefreshHz = adaptiveRefreshValues[index];
-							if (selected)
-								ImGui::PopStyleColor();
-						}
-						ImGui::EndTable();
-					}
-					ImGui::EndDisabled();
-					drawDisabledWrapped(customFpsEnabled ? "Custom FPS mode is active; headset buttons are disabled." : "Hz mode uses half the selected headset refresh.");
-
-					static const char* adaptiveMinimums[] = {
-						"100% | 100% model area", "95% | 90% model area", "90% | 81% model area", "85% | 72% model area",
-						"80% | 64% model area", "75% | 56% model area", "70% | 49% model area" };
-					static constexpr uint adaptiveMinimumValues[] = { 100u, 95u, 90u, 85u, 80u, 75u, 70u };
-					int minimumIndex = 6;
-					for (int index = 0; index < IM_ARRAYSIZE(adaptiveMinimumValues); ++index)
-						if (settings.neuralRenderingAdaptiveMinimumResolution == adaptiveMinimumValues[index]) {
-							minimumIndex = index;
-							break;
-						}
-					if (ImGui::Combo("Adaptive minimum NR cost", &minimumIndex, adaptiveMinimums, IM_ARRAYSIZE(adaptiveMinimums)))
-						settings.neuralRenderingAdaptiveMinimumResolution = adaptiveMinimumValues[minimumIndex];
-
-					int downshiftFrames = static_cast<int>(settings.neuralRenderingAdaptiveDownshiftFrames);
-					if (ImGui::SliderInt("NR downshift fade", &downshiftFrames, 1, 16, "%d budget frames"))
-						settings.neuralRenderingAdaptiveDownshiftFrames = static_cast<uint>(downshiftFrames);
-					int upshiftFrames = static_cast<int>(settings.neuralRenderingAdaptiveUpshiftFrames);
-					if (ImGui::SliderInt("NR restore response", &upshiftFrames, 4, 64, "%d frames"))
-						settings.neuralRenderingAdaptiveUpshiftFrames = static_cast<uint>(upshiftFrames);
-					int minimumDwellFrames = static_cast<int>(settings.neuralRenderingAdaptiveMinimumDwellFrames);
-					if (ImGui::SliderInt("NR tier minimum dwell", &minimumDwellFrames, 4, 240, "%d frames"))
-						settings.neuralRenderingAdaptiveMinimumDwellFrames = static_cast<uint>(minimumDwellFrames);
-					ImGui::SliderFloat("Adaptive reserved headroom", &settings.neuralRenderingAdaptiveGuardTimeMs,
-						0.0f, 5.0f, "%.1f ms");
-					ImGui::TextDisabled("Target %.0f FPS | NR tier %u%% -> %u%% | frame %.2f / %.2f ms",
-						adaptiveController.ApplicationTargetFps(),
-						adaptiveController.ActiveResolution(), adaptiveController.TargetResolution(),
-						adaptiveController.HandoffAlpha(), adaptiveController.SmoothedFrameTimeMs(),
-						adaptiveController.ApplicationDeadlineMs());
-					drawDisabledWrapped("Order: crop → NR → crop. If crop is unavailable, NR adapts alone.");
-					drawWarningWrapped("Resource setup may hitch once.");
-					ImGui::Checkbox("Show handoff diagnostics", &settings.neuralRenderingAdaptiveDiagnostics);
+			if (ImGui::CollapsingHeader("Adaptive Performance")) {
+				if (ImGui::Checkbox("Enable adaptive performance controller", &settings.neuralRenderingAdaptiveEnabled) && !settings.neuralRenderingAdaptiveEnabled) settings.neuralRenderingForcedStage = 0;
+				ImGui::TextWrapped("Two crop reductions, then NR resolution 85% and 70%, then NR off at 100% of your selected crop. Recovery reverses the order. Stereo atlas is permanent.");
+				const char* stageModes[] = { "Auto", "Force stage 1", "Force stage 2", "Force stage 3", "Force stage 4", "Force stage 5", "Force stage 6 (NR off)" };
+				int forcedStage = static_cast<int>(settings.neuralRenderingForcedStage);
+				if (ImGui::Combo("Controller mode", &forcedStage, stageModes, 7)) {
+					settings.neuralRenderingForcedStage = static_cast<uint>(forcedStage);
+					if (forcedStage != 0) settings.neuralRenderingAdaptiveEnabled = true;
 				}
-
-				ImGui::SeparatorText("Adaptive Foveated Crop");
-				const bool adaptiveCropParentEnabled = settings.neuralRenderingAdaptiveEnabled;
-				if (!adaptiveCropParentEnabled)
-					ImGui::BeginDisabled();
-				ImGui::Checkbox("Enable adaptive crop", &settings.neuralRenderingAdaptiveCropEnabled);
-				if (!adaptiveCropParentEnabled)
-					ImGui::EndDisabled();
-				if (auto _tt = Util::HoverTooltipWrapper())
-					drawWrapped("Order: crop → NR → crop. NR restores before crop expands. Eye-tracked foveation disables adaptive crop.");
-				if (!adaptiveCropParentEnabled)
-					ImGui::TextDisabled("Enable Adaptive Neural Rendering before enabling its crop companion.");
-				if (settings.neuralRenderingAdaptiveCropEnabled && adaptiveCropParentEnabled) {
-					static const char* adaptiveCropMaximums[] = { "85%", "80%", "75%", "70%", "65%", "60%" };
-					static constexpr uint adaptiveCropMaximumValues[] = { 85u, 80u, 75u, 70u, 65u, 60u };
-					int cropMaximumIndex = 0;
-					for (int index = 0; index < IM_ARRAYSIZE(adaptiveCropMaximumValues); ++index)
-						if (settings.neuralRenderingAdaptiveCropMaximumCoverage == adaptiveCropMaximumValues[index]) {
-							cropMaximumIndex = index;
-							break;
-						}
-					if (ImGui::Combo("Adaptive maximum crop coverage", &cropMaximumIndex,
-						adaptiveCropMaximums, IM_ARRAYSIZE(adaptiveCropMaximums)))
-						settings.neuralRenderingAdaptiveCropMaximumCoverage = adaptiveCropMaximumValues[cropMaximumIndex];
-					if (auto _tt = Util::HoverTooltipWrapper())
-						drawWrapped("Maximum is independent of the static crop preset; it is the tier used when adaptive crop is re-armed.");
-
-					static const char* adaptiveCropMinimums[] = { "80%", "75%", "70%", "65%", "60%" };
-					static constexpr uint adaptiveCropMinimumValues[] = { 80u, 75u, 70u, 65u, 60u };
-					int cropMinimumIndex = IM_ARRAYSIZE(adaptiveCropMinimumValues) - 1;
-					for (int index = 0; index < IM_ARRAYSIZE(adaptiveCropMinimumValues); ++index)
-						if (settings.neuralRenderingAdaptiveCropMinimumCoverage == adaptiveCropMinimumValues[index]) {
-							cropMinimumIndex = index;
-							break;
-						}
-					if (ImGui::Combo("Adaptive minimum crop coverage", &cropMinimumIndex,
-						adaptiveCropMinimums, IM_ARRAYSIZE(adaptiveCropMinimums)))
-						settings.neuralRenderingAdaptiveCropMinimumCoverage = adaptiveCropMinimumValues[cropMinimumIndex];
-
-					int cropDownshiftFrames = static_cast<int>(settings.neuralRenderingAdaptiveCropDownshiftFrames);
-					if (ImGui::SliderInt("Crop downshift response", &cropDownshiftFrames, 1, 16, "%d frames"))
-						settings.neuralRenderingAdaptiveCropDownshiftFrames = static_cast<uint>(cropDownshiftFrames);
-					int cropUpshiftFrames = static_cast<int>(settings.neuralRenderingAdaptiveCropUpshiftFrames);
-					if (ImGui::SliderInt("Crop restore response", &cropUpshiftFrames, 8, 240, "%d frames"))
-						settings.neuralRenderingAdaptiveCropUpshiftFrames = static_cast<uint>(cropUpshiftFrames);
-					int cropMinimumDwellFrames = static_cast<int>(settings.neuralRenderingAdaptiveCropMinimumDwellFrames);
-					if (ImGui::SliderInt("Crop tier minimum dwell", &cropMinimumDwellFrames, 8, 600, "%d frames"))
-						settings.neuralRenderingAdaptiveCropMinimumDwellFrames = static_cast<uint>(cropMinimumDwellFrames);
-					int cropTransitionFrames = static_cast<int>(settings.neuralRenderingAdaptiveCropTransitionFrames);
-					if (ImGui::SliderInt("Crop handoff duration", &cropTransitionFrames, 2, 24, "%d frames"))
-						settings.neuralRenderingAdaptiveCropTransitionFrames = static_cast<uint>(cropTransitionFrames);
-					ImGui::TextDisabled("Crop: %u%% -> %u%% | max %u%% | handoff %.2f",
-						adaptiveCropController.ActiveCoverage(), adaptiveCropController.TargetCoverage(),
-						settings.neuralRenderingAdaptiveCropMaximumCoverage,
-						adaptiveCropController.HandoffAlpha());
-				}
-				if (IsEyeTrackedFoveationEnabled())
-					drawWarningWrapped("Adaptive crop is disabled while eye-tracked foveation owns the crop.");
-				if (FoveatedRenderImpl::Core::vrSubrectFixedEnvelopeRejected ||
-					FoveatedRenderImpl::Core::vrSubrectNeuralFixedEnvelopeRejected)
-					drawWarningWrapped("Crop held: resource contract failed. Restart required to retry.");
-
-				if (settings.neuralRenderingAdaptiveDiagnostics) {
-					ImGui::SeparatorText("Handoff Diagnostics");
-					const char* resourceMode = FoveatedRenderImpl::Core::vrSubrectResourceMode ==
-						FoveatedRenderImpl::Core::SubrectResourceMode::FixedEnvelope ? "fixed envelope" : "exact cache";
-					ImGui::TextDisabled("Resources: %s | valid %ux%u | envelope %ux%u",
-						resourceMode, FoveatedRenderImpl::Core::vrSubrectValidOutW,
-						FoveatedRenderImpl::Core::vrSubrectValidOutH, FoveatedRenderImpl::Core::vrSubrectOutW,
-						FoveatedRenderImpl::Core::vrSubrectOutH);
-					ImGui::TextDisabled("Creates %llu | reuses %llu | frees %llu",
-						static_cast<unsigned long long>(FoveatedRenderImpl::Core::vrSubrectResourceCreates),
-						static_cast<unsigned long long>(FoveatedRenderImpl::Core::vrSubrectResourceReuses),
-						static_cast<unsigned long long>(FoveatedRenderImpl::Core::vrSubrectResourceFrees));
-					ImGui::TextDisabled("Fallback entries %llu | evictions %llu | envelope checks %llu",
-						static_cast<unsigned long long>(FoveatedRenderImpl::Core::vrSubrectFallbackEntries),
-						static_cast<unsigned long long>(FoveatedRenderImpl::Core::vrSubrectFallbackEvictions),
-						static_cast<unsigned long long>(FoveatedRenderImpl::Core::vrSubrectEnvelopeValidations));
-					ImGui::TextDisabled("Crop reset: %s | generation %llu",
-						NeuralRendering::AdaptiveCropController::ResetReasonName(adaptiveCropController.LastResetReason()),
-						static_cast<unsigned long long>(adaptiveCropController.Generation()));
-				}
-
+				const char* cropDrops[] = { "20 points: 100 / 80 / 60", "15 points: 100 / 85 / 70", "10 points: 100 / 90 / 80" };
+				int cropDrop = settings.neuralRenderingCropDrop == 10 ? 2 : settings.neuralRenderingCropDrop == 15 ? 1 : 0;
+				if (ImGui::Combo("Crop reduction per step", &cropDrop, cropDrops, 3))
+					settings.neuralRenderingCropDrop = cropDrop == 2 ? 10u : cropDrop == 1 ? 15u : 20u;
+				ImGui::SliderFloat("GPU budget", &settings.neuralRenderingLadderBudgetMs, 10.0f, 30.0f, "%.1f ms");
+				ImGui::SliderFloat("Recovery headroom", &settings.neuralRenderingLadderReserveMs, 0.5f, 5.0f, "%.1f ms");
+				ImGui::SliderFloat("Disable NR above (stage 5 only)", &settings.neuralRenderingDisableAboveMs, 10.0f, 50.0f, "%.1f ms");
+				ImGui::SliderFloat("Re-enable NR below (stage 6 only)", &settings.neuralRenderingEnableBelowMs, 1.0f, 50.0f, "%.1f ms");
+				if (settings.neuralRenderingEnableBelowMs >= settings.neuralRenderingDisableAboveMs)
+					drawWarningWrapped("Re-enable must be below Disable. NR on/off changes are held until the thresholds are ordered.");
+				ImGui::SliderFloat("Frametime smoothing", &settings.neuralRenderingAdaptiveSmoothingMs, 0.0f, 1000.0f, "%.0f ms");
+				ImGui::SliderFloat("Decrease hold", &settings.neuralRenderingAdaptiveDecreaseHoldMs, 0.0f, 2500.0f, "%.0f ms");
+				ImGui::SliderFloat("Increase hold", &settings.neuralRenderingAdaptiveIncreaseHoldMs, 0.0f, 5000.0f, "%.0f ms");
+				ImGui::SliderFloat("Cooldown after change", &settings.neuralRenderingAdaptiveCooldownMs, 0.0f, 5000.0f, "%.0f ms");
+				ImGui::SliderFloat("NR transition smoothing", &settings.neuralRenderingLadderHandoffMs, 0.0f, 500.0f, "%.0f ms");
+				ImGui::TextDisabled("Stage %u/6 | crop %u%% | NR %u%% | %s | GPU %.2f ms", adaptiveLadderStage + 1,
+					adaptiveCropTargetCoverage, adaptiveModelResolution,
+					adaptiveActivePasses == 0 ? "NR suspended / waiting for crop" : "NR active", adaptiveFilteredFrameTimeMs);
+				if (adaptiveCropController.IsTransitioning() || adaptiveCropController.RenderCoverage() != adaptiveCropTargetCoverage || adaptiveResumeRemainingMs > 0.0f || (adaptiveActivePasses > 0 && neuralRenderer.IsOutputTransitioning())) ImGui::TextUnformatted("Settling: wait before measuring this stage");
+				ImGui::TextDisabled("Hold down %.0f ms | hold up %.0f ms | cooldown %.0f ms", adaptiveDecreaseHoldMs, adaptiveIncreaseHoldMs, adaptiveCooldownRemainingMs);
 			}
 
-			if (ImGui::CollapsingHeader("Experimental Pipeline")) {
-				ImGui::SeparatorText("Resolve and Pipeline");
-				if (!NeuralRendering::kFullResolutionNeuralRenderingOnly) {
-				static const char* resolveModes[] = { "Classic (bounded source)", "Matched Residual (experimental)" };
-				int resolveMode = static_cast<int>(std::min(settings.neuralRenderingResolveMode, 1u));
-				if (ImGui::Combo(T(TKEY("neural_rendering_resolve_mode"), "Reduced NR Resolve"), &resolveMode,
-					resolveModes, IM_ARRAYSIZE(resolveModes))) {
-					settings.neuralRenderingResolveMode = static_cast<uint>(resolveMode);
-				}
-				if (auto _tt = Util::HoverTooltipWrapper())
-					drawWrapped(T(TKEY("neural_rendering_resolve_mode_tooltip"), "Matched Residual uses an area-matched input and adds only the matching residual. Compare it at the same model resolution."));
 
-				bool preUpscale = settings.neuralRenderingPreUpscale != 0;
-				if (ImGui::Checkbox(T(TKEY("neural_rendering_pre_upscale"), "Experimental pre-upscale NR"), &preUpscale))
-					settings.neuralRenderingPreUpscale = preUpscale ? 1u : 0u;
-				if (auto _tt = Util::HoverTooltipWrapper())
-					drawWrapped(T(TKEY("neural_rendering_pre_upscale_tooltip"), "Runs NR before DLSS. It may reduce halos but can change color and is incompatible with Ray Reconstruction. VR requires Full Eye + Default mode."));
-				if (settings.neuralRenderingPreUpscale)
-					drawWarningWrapped(T(TKEY("neural_rendering_pre_upscale_warning"), "Experimental. Disable Ray Reconstruction and use Full Eye + Default mode."));
-				}
+			ImGui::TextDisabled("Pipeline: SR → one stereo-atlas NR pass | Matched Residual");
 
-				static const char* multiPassModes[] = { "Off", "2x sequential NR", "3x sequential NR" };
-				int multiPass = static_cast<int>(std::min(settings.neuralRenderingMultiPass, 2u));
-				if (ImGui::Combo(T(TKEY("neural_rendering_multi_pass"), "Experimental sequential NR (screenshot/benchmark)"),
-					&multiPass, multiPassModes, IM_ARRAYSIZE(multiPassModes)))
-					settings.neuralRenderingMultiPass = static_cast<uint>(multiPass);
-				if (auto _tt = Util::HoverTooltipWrapper())
-					drawWrapped(T(TKEY("neural_rendering_multi_pass_tooltip"), "Runs NR two or three times with separate resources. This roughly doubles or triples work and is intended for screenshots or benchmarks."));
-				if (settings.neuralRenderingMultiPass) {
-					if (settings.neuralRenderingMultiPass >= 2)
-						drawWarningWrapped(T(TKEY("neural_rendering_multi_pass_warning"), "Experimental 3x: very large frame-time and VRAM increase."));
-					else
-						drawWarningWrapped(T(TKEY("neural_rendering_multi_pass_warning"), "Experimental 2x: major frame-time increase and possible smearing."));
-					if (settings.neuralRenderingPreUpscale)
-						drawWarningWrapped(T(TKEY("neural_rendering_multi_pass_pre_warning"), "Sequential NR is suppressed while pre-upscale NR is enabled."));
-					if (globals::game::isVR && !(subrectController.GetUV().IsFullEye() && subrectController.GetRightEyeUV().IsFullEye()))
-						drawWarningWrapped(T(TKEY("neural_rendering_multi_pass_subrect_warning"), "VR sequential NR is limited to Full Eye mode."));
-				}
-
-			}
-
-			if (ImGui::CollapsingHeader(T(TKEY("neural_rendering_temporal_header"), "Temporal Stability"))) {
-				static const char* temporalReuseModes[] = { "Off", "Every 2nd frame", "Every 3rd frame", "Every 4th frame" };
-				static constexpr uint temporalReuseValues[] = { 0u, 2u, 3u, 4u };
-				int temporalReuseMode = 0;
-				for (int index = 0; index < IM_ARRAYSIZE(temporalReuseValues); ++index) {
-					if (settings.neuralRenderingTemporalReuseCadence == temporalReuseValues[index]) {
-						temporalReuseMode = index;
-						break;
-					}
-				}
-				if (ImGui::Combo(T(TKEY("neural_rendering_temporal_mode"), "Temporal residual reuse"),
-					&temporalReuseMode, temporalReuseModes, IM_ARRAYSIZE(temporalReuseModes)))
-					settings.neuralRenderingTemporalReuseCadence = temporalReuseValues[temporalReuseMode];
-				if (auto _tt = Util::HoverTooltipWrapper())
-					drawWrapped(T(TKEY("neural_rendering_temporal_mode_tooltip"), "Runs a full Feature 18 pass every Nth frame and reuses its residual between passes. Supports 100% single-pass Full Eye or a stable fixed crop; moving/adaptive crop origins disable reuse."));
-				if (settings.neuralRenderingTemporalReuseCadence != 0) {
-					ImGui::SliderFloat(T(TKEY("neural_rendering_temporal_depth_threshold"), "Depth rejection threshold"),
-						&settings.neuralRenderingTemporalDepthThreshold, 0.0f, 0.25f, "%.3f");
-					ImGui::SliderFloat(T(TKEY("neural_rendering_temporal_color_tolerance"), "Color rejection tolerance"),
-						&settings.neuralRenderingTemporalColorTolerance, 0.0f, 0.50f, "%.3f");
-					if (settings.neuralRenderingTemporalReuseCadence == 2) {
-						ImGui::Checkbox(T(TKEY("neural_rendering_temporal_stagger_eyes"), "Stagger eyes (one native eye per frame)"),
-							&settings.neuralRenderingTemporalReuseStaggerEyes);
-						if (auto _tt = Util::HoverTooltipWrapper())
-							drawWrapped(T(TKEY("neural_rendering_temporal_stagger_eyes_tooltip"),
-								"Alternates which eye gets full Feature 18 each frame; the other eye reuses its previous-frame residual. Per-frame NR cost stays flat instead of alternating heavy and light frames. Watch for left/right differences during fast motion."));
-					}
-					ImGui::Checkbox(T(TKEY("neural_rendering_temporal_reset_after_skip"), "Reset native history after a skipped frame"),
-						&settings.neuralRenderingTemporalReuseResetAfterSkip);
-					if (auto _tt = Util::HoverTooltipWrapper())
-						drawWrapped(T(TKEY("neural_rendering_temporal_reset_after_skip_tooltip"),
-							"Diagnostic only. Disable only for an isolated quiet-scene A/B; stale native history may cause ghosting or motion instability."));
-					drawWarningWrapped(T(TKEY("neural_rendering_temporal_warning"), "Experimental. Watch for ghosting, cadence shimmer, and disocclusion errors."));
-				}
+			if (ImGui::CollapsingHeader("NR near-black protection")) {
+				ImGui::SliderFloat("Protection strength", &settings.neuralRenderingNearBlackProtection, 0.0f, 2.0f, "%.2f");
+				ImGui::SliderFloat("Dark threshold", &settings.neuralRenderingNearBlackThreshold, 0.001f, 0.25f, "%.3f");
+				ImGui::SliderFloat("Positive lift onset", &settings.neuralRenderingNearBlackLiftSoftness, 0.00001f, 0.05f, "%.5f");
+				if (auto _tt = Util::HoverTooltipWrapper()) drawWrapped("Smoothly enables protection as NR brightening grows, preventing a hard switch when small color edits cross zero brightness. Larger values preserve more tiny brightening edits.");
+				drawWrapped("Inside the NR region only. Reduces positive NR edits on originally near-black pixels after result shaping; darker edits and bright source pixels are preserved. 0 disables it, 1 is normal, 2 protects more of the threshold range. Higher values also reduce intentional shadow lifting. Original RGB peak controls eligibility so saturated highlights are preserved.");
+				drawWrapped("Uses the ResultShaping GPU pass; no new NR evaluation or temporal filter. If that pass was inactive, enabling protection adds one postprocess dispatch per eye. Measures the shared output shaping/protection/transition pass.");
+				ImGui::Checkbox("Measure NR postprocess GPU cost", &measureNRProtection);
+				auto* profiler = globals::profiler;
+				if (measureNRProtection && profiler && profiler->IsUserEnabled()) {
+					profiler->RequestCapture(Profiler::CaptureMode::GPU, "NeuralRendering::ResultShaping");
+					bool fresh = false;
+					for (const auto& timer : profiler->GetResults())
+						if (timer.name == "NeuralRendering::ResultShaping" && timer.hasGpu && timer.activeGpu && globals::state->frameCount - profiler->GetCapturedGpuFrameCount() <= 10) {
+							ImGui::Text("NR postprocess GPU: %.3f ms latest, %.3f ms rolling average", timer.gpuTimeMs, timer.avgMs);
+							fresh = true;
+						}
+					if (!fresh) ImGui::TextUnformatted("GPU timing: waiting for active NR postprocess");
+				} else if (measureNRProtection) drawWrapped("Enable runtime profiling in the Profiling menu to measure GPU cost.");
+				drawWrapped("Timing includes output shaping, near-black protection and controller transitions, combined across the eyes that ran. Compare protection 0 versus your chosen strength with the same scene and settings. Turn measurement off after tuning.");
 
 			}
 
@@ -1533,15 +1365,9 @@ const char* FoveatedRender::SubrectMaskModeName(SubrectMaskMode mode)
 					if (auto _tt = Util::HoverTooltipWrapper())
 						drawWrapped("Scales the whole NR correction: 0 removes it, 1 preserves it, and 2 doubles it.");
 					ImGui::SliderFloat("Brightening", &settings.neuralRenderingResultBrightening, 0.0f, 2.0f, "%.2f");
-					ImGui::SliderFloat("Darkening", &settings.neuralRenderingResultDarkening, 0.0f, 2.0f, "%.2f");
 					ImGui::SliderFloat("Color", &settings.neuralRenderingResultColor, 0.0f, 2.0f, "%.2f");
 					if (auto _tt = Util::HoverTooltipWrapper())
 						drawWrapped("Scales how far NR moves colors toward or away from gray.");
-					ImGui::SliderFloat("Hue shift", &settings.neuralRenderingResultHueShiftStrength, 0.0f, 2.0f, "%.2f");
-					if (auto _tt = Util::HoverTooltipWrapper())
-						drawWrapped("0 keeps the game's hues, 1 preserves NR's hue change, and 2 doubles that change.");
-					ImGui::SliderFloat("Shadows", &settings.neuralRenderingResultShadows, 0.0f, 2.0f, "%.2f");
-					ImGui::SliderFloat("Midtones", &settings.neuralRenderingResultMidtones, 0.0f, 2.0f, "%.2f");
 					ImGui::SliderFloat("Highlights", &settings.neuralRenderingResultHighlights, 0.0f, 2.0f, "%.2f");
 					ImGui::SliderFloat("Max brightening", &settings.neuralRenderingResultMaxBrighteningStops, 0.0f, 4.0f, "%.2f stops");
 					ImGui::SliderFloat("Max darkening", &settings.neuralRenderingResultMaxDarkeningStops, 0.0f, 4.0f, "%.2f stops");
@@ -1552,78 +1378,33 @@ const char* FoveatedRender::SubrectMaskModeName(SubrectMaskMode mode)
 					ImGui::SliderFloat("Detail radius", &settings.neuralRenderingResultDetailRadius, 0.1f, 8.0f, "%.2f%%");
 					if (auto _tt = Util::HoverTooltipWrapper())
 						drawWrapped("Sets where the broad lighting change ends and fine detail begins, as a share of image height.");
-					ImGui::SliderFloat("Halo suppression", &settings.neuralRenderingResultHaloSuppression, 0.0f, 1.0f, "%.2f");
-				}
-
-			}
-
-			if (ImGui::CollapsingHeader("Result Stabilization")) {
-				static const char* resultStabilizeModes[] = { "Off", "Static", "Motion" };
-				int resultStabilizeMode = static_cast<int>(settings.neuralRenderingStabilizeMode);
-				if (ImGui::Combo("Result stabilization", &resultStabilizeMode,
-					resultStabilizeModes, IM_ARRAYSIZE(resultStabilizeModes)))
-					settings.neuralRenderingStabilizeMode = static_cast<std::uint32_t>(resultStabilizeMode);
-				if (auto _tt = Util::HoverTooltipWrapper())
-					drawWrapped("Optional temporal smoothing of the NR correction. Motion mode reprojects per-eye history with the game's motion vectors and rejects disocclusions using depth and color.");
-				if (settings.neuralRenderingStabilizeMode != 0) {
-					ImGui::SliderFloat("Stabilize time", &settings.neuralRenderingStabilizeTimeMs, 10.0f, 250.0f, "%.0f ms");
-					ImGui::Checkbox("Stabilize fine detail", &settings.neuralRenderingStabilizeDetail);
-					if (auto _tt = Util::HoverTooltipWrapper())
-						drawWrapped("Off smooths broad lighting changes while preserving fine detail. Turn this on to smooth the fine changes too, with more risk of trailing.");
-					ImGui::SliderFloat("Stabilizer depth threshold", &settings.neuralRenderingStabilizeDepthThreshold, 0.0f, 0.25f, "%.3f");
-					ImGui::SliderFloat("Stabilizer color tolerance", &settings.neuralRenderingStabilizeColorTolerance, 0.0f, 0.50f, "%.3f");
-					const bool adaptiveNR = settings.neuralRenderingAdaptiveEnabled && adaptiveController.IsEnabled();
-					if (settings.neuralRenderingTemporalReuseCadence != 0 && !adaptiveNR &&
-						settings.neuralRenderingPreUpscale == 0)
-						drawWarningWrapped("Result stabilization is suspended while temporal residual reuse is configured, to avoid stacking two temporal filters.");
 				}
 
 			}
 
 			if (ImGui::CollapsingHeader("Eye-tracked Foveation")) {
-				bool eyeTrackedFoveation = settings.neuralRenderingEyeTrackedFoveation;
-				if (ImGui::Checkbox("Native OpenVR gaze provider", &eyeTrackedFoveation))
-					settings.neuralRenderingEyeTrackedFoveation = eyeTrackedFoveation;
-				if (auto _tt = Util::HoverTooltipWrapper())
-					drawWrapped("Optional moving crop for native OpenVR eye tracking. Requires VR, Default mode, and a cropped region; stale gaze falls back to the static crop.");
-				if (settings.neuralRenderingEyeTrackedFoveation) {
-					ImGui::SliderFloat("Fixation smoothing", &settings.neuralRenderingEyeTrackedSmoothingMs,
-						0.0f, 250.0f, "%.0f ms");
-					drawWrapped("Eye movements respond immediately; smoothing applies only to tiny fixation noise. Crop motion resets temporal history.");
-					int quantizationPixels = static_cast<int>(std::min(settings.neuralRenderingEyeTrackedQuantizationPixels, 64u));
-					if (ImGui::SliderInt("Crop movement quantization", &quantizationPixels, 0, 64, quantizationPixels == 0 ? "Off" : "%d input px"))
-						settings.neuralRenderingEyeTrackedQuantizationPixels = static_cast<uint>(std::clamp(quantizationPixels, 0, 64));
-					if (!globals::game::isVR)
-						drawWarningWrapped("Native OpenVR gaze is available only in VR.");
-					else if (GetDlssMode() != DlssMode::kDefault)
-						drawWarningWrapped("Native OpenVR gaze requires Foveated Default mode.");
-					else if (subrectController.GetUV().IsFullEye() && subrectController.GetRightEyeUV().IsFullEye())
-						drawWarningWrapped("Select a cropped eye region before enabling moving gaze.");
-					if (settings.neuralRenderingTemporalReuseCadence != 0)
-						drawWarningWrapped("Temporal residual reuse is disabled while this crop moves; use a fixed crop for the N2 test.");
-
-					const auto gaze = FoveatedRenderImpl::NativeOpenVRGaze::GetDiagnostics();
-					ImGui::TextDisabled("Provider: %s | API: %s | Focus: %s | Native sample: %s",
-						FoveatedRenderImpl::NativeOpenVRGaze::StatusName(gaze.status), gaze.interfaceVersion.c_str(),
-						gaze.focused ? "yes" : "no", gaze.nativeQueryValid ? "valid" : "invalid");
-					ImGui::TextDisabled("Crop: %s | Fallback: %s | History reset: %s | Last valid query: %.1f ms",
-						gaze.dynamic ? "dynamic" : "static", gaze.usingFallback ? "yes" : "no",
-						gaze.historyReset ? "yes" : "no", gaze.sampleAgeMs);
-					ImGui::TextDisabled("Query: %.3f ms | Crop changes: %llu | Resets: %llu",
-						gaze.providerQueryMs, static_cast<unsigned long long>(gaze.cropChangeCount),
-						static_cast<unsigned long long>(gaze.historyResetCount));
-					ImGui::TextDisabled("Filtered gaze L=(%.3f, %.3f) R=(%.3f, %.3f) | sequence=%llu",
-						gaze.filteredLeftUV[0], gaze.filteredLeftUV[1], gaze.filteredRightUV[0], gaze.filteredRightUV[1],
-						static_cast<unsigned long long>(gaze.sampleSequence));
-				}
-
+				ImGui::TextWrapped("Native OpenVR gaze is used when available. Freeze crop selects the fixed centre for comparison.");
+				ImGui::SliderFloat("Gaze smoothing", &settings.neuralRenderingEyeTrackedSmoothingMs, 0.0f, 250.0f, "%.0f ms");
+				ImGui::Checkbox("Freeze crop at selected centre (comparison)", &settings.neuralRenderingEyeTrackedFreezeCrop);
+				int quantizationPixels = static_cast<int>(settings.neuralRenderingEyeTrackedQuantizationPixels);
+				if (ImGui::SliderInt("Crop movement quantization", &quantizationPixels, 0, 64, quantizationPixels == 0 ? "Off" : "%d input px"))
+					settings.neuralRenderingEyeTrackedQuantizationPixels = static_cast<uint>(quantizationPixels);
+				const auto gaze = FoveatedRenderImpl::NativeOpenVRGaze::GetDiagnostics();
+				ImGui::TextDisabled("Provider: %s | API: %s | Focus: %s | Native sample: %s",
+					FoveatedRenderImpl::NativeOpenVRGaze::StatusName(gaze.status), gaze.interfaceVersion.c_str(),
+					gaze.focused ? "yes" : "no", gaze.nativeQueryValid ? "valid" : "invalid");
+				ImGui::TextDisabled("Crop: %s | Fallback: %s | History reset: %s | Last valid query: %.1f ms",
+					gaze.dynamic ? "dynamic" : "static", gaze.usingFallback ? "yes" : "no",
+					gaze.historyReset ? "yes" : "no", gaze.sampleAgeMs);
+				ImGui::TextDisabled("Query: %.3f ms | Crop changes: %llu | Resets: %llu",
+					gaze.providerQueryMs, static_cast<unsigned long long>(gaze.cropChangeCount),
+					static_cast<unsigned long long>(gaze.historyResetCount));
+				ImGui::TextDisabled("Filtered gaze L=(%.3f, %.3f) R=(%.3f, %.3f) | sequence=%llu",
+					gaze.filteredLeftUV[0], gaze.filteredLeftUV[1], gaze.filteredRightUV[0], gaze.filteredRightUV[1],
+					static_cast<unsigned long long>(gaze.sampleSequence));
 			}
 
-				auto& neuralRenderer = NeuralRendering::Renderer::Instance();
-				if (adaptiveController.MemoryCeiling() < 100)
-					ImGui::TextDisabled("VRAM-limited NR ceiling: %u%%. Reset retries higher tiers.", adaptiveController.MemoryCeiling());
 				if (neuralRenderer.IsFailureLatched() || neuralRenderer.IsRecoveryLimited() ||
-					adaptiveController.MemoryCeiling() < 100 ||
 					FoveatedRenderImpl::Core::vrSubrectFixedEnvelopeRejected ||
 					FoveatedRenderImpl::Core::vrSubrectNeuralFixedEnvelopeRejected) {
 					drawWarningWrapped("Neural rendering recovery or adaptive crop is limited after a failure. Reset to retry.");
