@@ -1,8 +1,8 @@
-name: Build OpenNR R8 CSX detail mask
+name: Build OpenNR R9 combined rebuild
 
 on:
   push:
-    branches: ["build/2.20.1-v06-r8-csx-mask"]
+    branches: ["build/2.20.1-v06-r9-rebuild"]
   workflow_dispatch:
 
 concurrency:
@@ -343,6 +343,35 @@ jobs:
           git diff --check
           if ($LASTEXITCODE) { throw 'CSX mask whitespace check failed' }
 
+      - name: Refactor and validate R9 runtime
+        shell: pwsh
+        run: |
+          python scripts/v09/apply-r9.py
+          if ($LASTEXITCODE) { throw 'R9 exact source replay failed' }
+          python scripts/v09/audit-source.py
+          if ($LASTEXITCODE) { throw 'R9 source and retained architecture audit failed' }
+          python scripts/v07/verify-stack.py
+          if ($LASTEXITCODE) { throw 'Retained CPU/HLSL layouts failed' }
+          cl /nologo /std:c++20 /EHsc /W4 /WX scripts/v09/test-frame-plan.cpp /Fe:r9-frame-plan.exe
+          if ($LASTEXITCODE) { throw 'R9 integrated frame-plan test compilation failed' }
+          & ./r9-frame-plan.exe
+          if ($LASTEXITCODE) { throw 'R9 quantized core/SR/mask integration failed' }
+          cl /nologo /std:c++20 /EHsc /W4 /WX scripts/v08/test-feather.cpp /Fe:r9-feather.exe
+          if ($LASTEXITCODE) { throw 'R9 retained nonlinear geometry compilation failed' }
+          & ./r9-feather.exe
+          if ($LASTEXITCODE) { throw 'R9 retained nonlinear geometry failed' }
+          & ./r7-controller.exe
+          if ($LASTEXITCODE) { throw 'R9 retained controller failed' }
+          & ./r7-nr-black-warp.exe
+          if ($LASTEXITCODE) { throw 'R9 retained near-black/resume shader failed' }
+          $sdkBin = Join-Path ${env:ProgramFiles(x86)} 'Windows Kits/10/bin'
+          $fxc = (Get-ChildItem $sdkBin -Filter fxc.exe -Recurse | Where-Object { $_.FullName -match 'x64' } | Sort-Object FullName -Descending | Select-Object -First 1).FullName
+          if (-not $fxc) { throw 'Windows shader compiler unavailable' }
+          python scripts/csx-mask/compile-shaders.py --fxc $fxc
+          if ($LASTEXITCODE) { throw 'R9 Lighting/Water optimized permutations failed' }
+          git diff --check
+          if ($LASTEXITCODE) { throw 'R9 source whitespace check failed' }
+
       - name: Install CMake
         uses: lukka/get-cmake@v4.3.3
         with:
@@ -378,7 +407,7 @@ jobs:
       - name: Add v06 package notes and hashes
         shell: pwsh
         run: |
-          Copy-Item docs/versions/2.20.1-v06/r8-csx-mask/README.md dist/README-2.20.1-v06.txt
+          Copy-Item docs/versions/2.20.1-v06/r9-rebuild/README.md dist/README-2.20.1-v06.txt
           Get-ChildItem -Recurse dist -File | ForEach-Object {
             $h = Get-FileHash $_.FullName -Algorithm SHA256
             "$($h.Hash)  $($_.FullName)"
@@ -392,18 +421,37 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           path: artifacts/r7
 
-      - name: Audit compiled r8 package
+      - name: Audit compiled R9 package
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force artifacts/r8 | Out-Null
           Copy-Item dist/*.7z artifacts/r8/
-          python scripts/csx-mask/audit-package.py
+          python scripts/v09/audit-package.py
           if ($LASTEXITCODE) { throw 'r8 package regression audit failed' }
 
-      - name: Upload r8 package audit
+      - name: Execute extracted package with production shader loader
+        shell: pwsh
+        run: |
+          $dependencies = Get-ChildItem runtime/open-shaders/build -Directory -Recurse -Filter 'x64-windows-static-md-release' | Where-Object { Test-Path (Join-Path $_.FullName 'share/spdlog') } | Select-Object -First 1
+          if (-not $dependencies) { throw 'Runtime dependency prefix unavailable' }
+          cmake -S scripts/v09 -B build/r9-package-validation -G Ninja "-DCMAKE_PREFIX_PATH=$($dependencies.FullName)" -DCMAKE_BUILD_TYPE=Release
+          if ($LASTEXITCODE) { throw 'Production-loader harness configure failed' }
+          cmake --build build/r9-package-validation --parallel
+          if ($LASTEXITCODE) { throw 'Production-loader harness build failed' }
+          New-Item -ItemType Directory -Force packaged-test/Data | Out-Null
+          Copy-Item expanded/r8/Shaders packaged-test/Data/ -Recurse
+          $validation = Join-Path $env:GITHUB_WORKSPACE 'build/r9-package-validation/opennr_packaged_validation.exe'
+          Push-Location packaged-test
+          & $validation
+          $validationResult = $LASTEXITCODE
+          Pop-Location
+          if ($validationResult) { throw 'Extracted package shader loading/binding/atlas/resolve validation failed' }
+          '{"production_include_loader":true,"extracted_package":true,"d3d11_debug_layer":true,"native_feature18_and_headset":false}' | Set-Content audit-results/r9-packaged-execution.json
+
+      - name: Upload R9 rebuild audit
         uses: actions/upload-artifact@v4
         with:
-          name: OpenNR-v06-r8-csx-mask-package-audit
+          name: OpenNR-v06-r9-rebuild-audit
           path: audit-results/*
           if-no-files-found: error
           retention-days: 14
@@ -411,7 +459,7 @@ jobs:
       - name: Upload v06 checkpoint package
         uses: actions/upload-artifact@v4
         with:
-          name: OpenNR-2.20.1-v06-r8-csx-mask-carrier-excluded
+          name: OpenNR-2.20.1-v06-r9-rebuild-carrier-excluded
           path: dist/*
           if-no-files-found: error
           retention-days: 14

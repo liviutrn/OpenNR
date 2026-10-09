@@ -1,0 +1,756 @@
+diff --git a/runtime/open-shaders/features/Upscaling/Shaders/Upscaling/NeuralRendering/FeatherGuidesCS.hlsl b/runtime/open-shaders/features/Upscaling/Shaders/Upscaling/NeuralRendering/FeatherGuidesCS.hlsl
+--- a/runtime/open-shaders/features/Upscaling/Shaders/Upscaling/NeuralRendering/FeatherGuidesCS.hlsl
++++ b/runtime/open-shaders/features/Upscaling/Shaders/Upscaling/NeuralRendering/FeatherGuidesCS.hlsl
+@@ -1,5 +1,5 @@
+ #define FEATHER_LUT_SLOT t4
+-#include "FeatherMap.hlsli"
++#include "Upscaling/NeuralRendering/FeatherMap.hlsli"
+ cbuffer FeatherGuides : register(b0)
+ {
+ 	uint4 gCurrent, gPrevious, gLayout;
+diff --git a/runtime/open-shaders/features/Upscaling/Shaders/Upscaling/NeuralRendering/FeatherModelCS.hlsl b/runtime/open-shaders/features/Upscaling/Shaders/Upscaling/NeuralRendering/FeatherModelCS.hlsl
+--- a/runtime/open-shaders/features/Upscaling/Shaders/Upscaling/NeuralRendering/FeatherModelCS.hlsl
++++ b/runtime/open-shaders/features/Upscaling/Shaders/Upscaling/NeuralRendering/FeatherModelCS.hlsl
+@@ -1,9 +1,9 @@
+-#include "FeatherMap.hlsli"
++#include "Upscaling/NeuralRendering/FeatherMap.hlsli"
+ cbuffer FeatherModel : register(b0)
+ {
+ 	uint4 gSize;
+ 	FeatherMapping gMap;
+-	float4 gOptions; // zero=pack, positive=resolve strength; exterior strength, outer fade, luma limit
++	float4 gOptions; // residual strength, exterior strength, outer fade, luma limit
+ };
+ Texture2D<float4> gProxy : register(t0);
+ Texture2D<float4> gModel : register(t1);
+@@ -19,7 +19,7 @@
+ void main(uint3 id : SV_DispatchThreadID)
+ {
+ 	if (any(id.xy >= gSize.xy)) return;
+-	if (gOptions.x == 0.0) {
++	#if !defined(FEATHER_RESOLVE)
+ 		float2 begin = FeatherPhysical(float2(id.xy), gMap);
+ 		float2 end = FeatherPhysical(float2(id.xy + 1u), gMap);
+ 		float2 footprint = max(end - begin, 1e-5);
+@@ -41,7 +41,7 @@
+ 			gTarget[id.xy] = sum / float(samples.x * samples.y);
+ 		}
+ 		return;
+-	}
++	#else
+ 	float2 physical = float2(id.xy) + 0.5;
+ 	float2 model = FeatherModel(physical, gMap);
+ 	float3 residual = ValidSample(gModel, model, float2(gSize.zw)).rgb - ValidSample(gProxy, model, float2(gSize.zw)).rgb;
+@@ -60,4 +60,5 @@
+ 		if (abs(residualLuma) > maxDelta) residual *= maxDelta / max(abs(residualLuma),1e-6);
+ 	}
+ 	gTarget[id.xy] = float4(max(original.rgb + residual * weight * gOptions.x, 0.0), original.a);
++	#endif
+ }
+diff --git a/runtime/open-shaders/package/Shaders/Lighting.hlsl b/runtime/open-shaders/package/Shaders/Lighting.hlsl
+--- a/runtime/open-shaders/package/Shaders/Lighting.hlsl
++++ b/runtime/open-shaders/package/Shaders/Lighting.hlsl
+@@ -1705,7 +1705,7 @@
+ #	if defined(HAIR) && defined(CS_HAIR)
+ 	float3 hairTint = 0;
+ 
+-	if (SharedData::hairSpecularSettings.Enabled && shaderDetailActive) {
++	if (SharedData::hairSpecularSettings.Enabled) {
+ 		hairTint = lerp(1, Color::AuthoredColor(TintColor.xyz), input.Color.y);
+ 		baseColor.xyz *= hairTint;
+ 		baseColor.xyz = Hair::Saturation(baseColor.xyz, SharedData::hairSpecularSettings.HairSaturation);
+@@ -1716,7 +1716,7 @@
+ 	float3 sampledHairFlow = 0;
+ 	bool useHairFlowMap = false;
+ #		if defined(BACK_LIGHTING)
+-	if (SharedData::hairSpecularSettings.Enabled && shaderDetailActive) {
++	if (SharedData::hairSpecularSettings.Enabled) {
+ 		uint2 hairFlowDimensions = uint2(0, 0);
+ 		sampledHairFlow = float3(TexBackLightSampler.Sample(SampBackLightSampler, uv).xy, 0.5f);
+ 		TexBackLightSampler.GetDimensions(hairFlowDimensions.x, hairFlowDimensions.y);
+@@ -1939,7 +1939,7 @@
+ #		endif
+ 	hairT = Hair::ReorientTangent(hairT, worldNormal);
+ 
+-	if (SharedData::hairSpecularSettings.Enabled && shaderDetailActive) {
++	if (SharedData::hairSpecularSettings.Enabled) {
+ 		if (SharedData::hairSpecularSettings.EnableTangentShift && SharedData::hairSpecularSettings.HairMode != 1) {
+ 			float3 shiftedNormal = Hair::ShiftWorldNormal(hairT, worldNormal, 0, uv);
+ 			screenSpaceNormal = normalize(FrameBuffer::WorldToView(shiftedNormal, false, eyeIndex));
+@@ -2131,7 +2131,7 @@
+ #	endif
+ 
+ #	if defined(CS_HAIR) && defined(HAIR)
+-	if (SharedData::hairSpecularSettings.Enabled && shaderDetailActive) {
++	if (SharedData::hairSpecularSettings.Enabled) {
+ 		material.Shininess = SharedData::hairSpecularSettings.HairGlossiness;
+ 		material.F0 = Hair::HairF0();
+ 		if (SharedData::hairSpecularSettings.HairMode == 1) {
+@@ -2654,7 +2654,7 @@
+ #	endif  // defined(EMAT) && (defined(SKINNED) || !defined(MODELSPACENORMALS))
+ 
+ #	if defined(CS_HAIR) && defined(HAIR)
+-	if (SharedData::hairSpecularSettings.Enabled && shaderDetailActive) {
++	if (SharedData::hairSpecularSettings.Enabled) {
+ 		vertexNormal.xyz = worldNormal.xyz;
+ 		worldNormal.xyz = hairT;
+ 	}
+@@ -3097,7 +3097,7 @@
+ 		ambientNormal *= dot(ambientNormal, viewDirection) < 0 ? -1 : 1;
+ #	endif
+ #	if defined(HAIR) && defined(CS_HAIR)
+-	if (SharedData::hairSpecularSettings.Enabled && shaderDetailActive) {
++	if (SharedData::hairSpecularSettings.Enabled) {
+ 		if (SharedData::hairSpecularSettings.HairMode == 1)
+ 			ambientNormal = normalize(viewDirection - hairT * dot(viewDirection, hairT));
+ 		else
+diff --git a/runtime/open-shaders/src/Features/Upscaling/FoveatedRender/CropGeometry.h b/runtime/open-shaders/src/Features/Upscaling/FoveatedRender/CropGeometry.h
+--- a/runtime/open-shaders/src/Features/Upscaling/FoveatedRender/CropGeometry.h
++++ b/runtime/open-shaders/src/Features/Upscaling/FoveatedRender/CropGeometry.h
+@@ -55,12 +55,11 @@
+ 		return { left, top, rectWidth, rectHeight };
+ 	}
+ 
+-	inline EyePlan MakeEyePlan(float x, float y, float width, float height,
++	inline EyePlan MakeEyePlan(const PixelRect& input,
+ 		std::uint32_t fullInputWidth, std::uint32_t fullInputHeight,
+ 		std::uint32_t fullOutputWidth, std::uint32_t fullOutputHeight)
+ 	{
+-		const auto input = MakePixelRect(x, y, width, height, fullInputWidth, fullInputHeight);
+-		if (!input.width || !input.height || !fullOutputWidth || !fullOutputHeight)
++		if (!input.width || !input.height || !fullInputWidth || !fullInputHeight || !fullOutputWidth || !fullOutputHeight)
+ 			return {};
+ 		const auto extent = [](std::uint32_t crop, std::uint32_t source, std::uint32_t target) {
+ 			return std::clamp(static_cast<std::uint32_t>(std::lround(double(crop) * target / source)), 1u, target);
+@@ -71,6 +70,14 @@
+ 			std::min(static_cast<std::uint32_t>(std::uint64_t(input.x) * fullOutputWidth / fullInputWidth), fullOutputWidth - outWidth),
+ 			std::min(static_cast<std::uint32_t>(std::uint64_t(input.y) * fullOutputHeight / fullInputHeight), fullOutputHeight - outHeight),
+ 			outWidth, outHeight } };
++	}
++
++	inline EyePlan MakeEyePlan(float x, float y, float width, float height,
++		std::uint32_t fullInputWidth, std::uint32_t fullInputHeight,
++		std::uint32_t fullOutputWidth, std::uint32_t fullOutputHeight)
++	{
++		return MakeEyePlan(MakePixelRect(x, y, width, height, fullInputWidth, fullInputHeight),
++			fullInputWidth, fullInputHeight, fullOutputWidth, fullOutputHeight);
+ 	}
+ 
+ 	/** Map display-grid centers to the crop-local SR sampling grid. */
+diff --git a/runtime/open-shaders/src/Features/Upscaling/FoveatedRender/Modes.cpp b/runtime/open-shaders/src/Features/Upscaling/FoveatedRender/Modes.cpp
+--- a/runtime/open-shaders/src/Features/Upscaling/FoveatedRender/Modes.cpp
++++ b/runtime/open-shaders/src/Features/Upscaling/FoveatedRender/Modes.cpp
+@@ -182,8 +182,16 @@
+ 		// tier at a time and recreate resources again.
+ 		auto selectedCrop = globals::features::upscaling.foveatedRender.subrectController.GetUV();
+ 		if (p.neuralFeatherActive) selectedCrop = NeuralRendering::FeatherGeometry::Expand(selectedCrop, globals::features::upscaling.foveatedRender.settings.neuralFeatherExpansion);
+-		const auto envelopePlan = CropGeometry::MakeEyePlan(selectedCrop.x, selectedCrop.y, selectedCrop.w, selectedCrop.h,
++		auto envelopePlan = CropGeometry::MakeEyePlan(selectedCrop.x, selectedCrop.y, selectedCrop.w, selectedCrop.h,
+ 			p.eyeWidthIn, p.eyeHeightIn, p.eyeWidthOut, p.eyeHeightOut);
++		if (p.neuralFeatherActive) {
++			auto envelope = envelopePlan.input;
++			envelope.width = std::min(p.eyeWidthIn, envelope.width + 2u);
++			envelope.height = std::min(p.eyeHeightIn, envelope.height + 2u);
++			envelope.x = std::min(envelope.x, p.eyeWidthIn - envelope.width);
++			envelope.y = std::min(envelope.y, p.eyeHeightIn - envelope.height);
++			envelopePlan = CropGeometry::MakeEyePlan(envelope, p.eyeWidthIn, p.eyeHeightIn, p.eyeWidthOut, p.eyeHeightOut);
++		}
+ 		const uint32_t envelopeSubInW = fixedEnvelopeCandidate ? std::max(allocSubInW, envelopePlan.input.width) : allocSubInW;
+ 		const uint32_t envelopeSubInH = fixedEnvelopeCandidate ? std::max(allocSubInH, envelopePlan.input.height) : allocSubInH;
+ 		const uint32_t envelopeSubOutW = fixedEnvelopeCandidate ? std::max(allocSubOutW, envelopePlan.output.width) : allocSubOutW;
+diff --git a/runtime/open-shaders/src/Features/Upscaling/FoveatedRender/Params.cpp b/runtime/open-shaders/src/Features/Upscaling/FoveatedRender/Params.cpp
+--- a/runtime/open-shaders/src/Features/Upscaling/FoveatedRender/Params.cpp
++++ b/runtime/open-shaders/src/Features/Upscaling/FoveatedRender/Params.cpp
+@@ -1,5 +1,5 @@
+ #include "Params.h"
+-#include "../NeuralRendering/FeatherGeometry.h"
++#include "../NeuralRendering/FeatherPlan.h"
+ 
+ #include "../../../State.h"
+ #include "../../../Utils/Game.h"
+@@ -75,32 +75,21 @@
+ 		p.eyeTrackedGazeActive = gaze.dynamic;
+ 		p.eyeTrackedGazeConfigured = gazeRequested;
+ 		p.eyeTrackedGazeReset = gaze.historyReset;
+-		p.neuralCorePlan = { p.eyeWidthIn, p.eyeHeightIn, p.eyeWidthOut, p.eyeHeightOut,
+-			{ CropGeometry::MakeEyePlan(p.leftUV.x, p.leftUV.y, p.leftUV.w, p.leftUV.h, p.eyeWidthIn, p.eyeHeightIn, p.eyeWidthOut, p.eyeHeightOut),
+-			  CropGeometry::MakeEyePlan(p.rightUV.x, p.rightUV.y, p.rightUV.w, p.rightUV.h, p.eyeWidthIn, p.eyeHeightIn, p.eyeWidthOut, p.eyeHeightOut) } };
+-		p.neuralFeatherActive = enhancer.settings.neuralFeatherEnabled && enhancer.settings.neuralFeatherExpansion > 0.0f &&
+-			enhancer.settings.neuralRenderingEnabled && p.mode == FoveatedRender::DlssMode::kDefault &&
+-			upscaling.GetUpscaleMethod() == Upscaling::UpscaleMethod::kDLSS &&
+-			(!enhancer.settings.neuralRenderingAdaptiveEnabled || !enhancer.adaptivePassInitialized || enhancer.adaptiveActivePasses > 0) &&
+-			!(p.leftUV.IsFullEye() && p.rightUV.IsFullEye());
+-		if (p.neuralFeatherActive) {
+-			p.leftUV = NeuralRendering::FeatherGeometry::Expand(p.leftUV, enhancer.settings.neuralFeatherExpansion);
+-			p.rightUV = NeuralRendering::FeatherGeometry::Expand(p.rightUV, enhancer.settings.neuralFeatherExpansion);
+-		}
+-		p.isFullEye = p.leftUV.IsFullEye() && p.rightUV.IsFullEye();
++		const auto plan = NeuralRendering::FeatherPlan::Make(p.leftUV, p.rightUV,
++			enhancer.IsNeuralFeatherRouteEnabled(), enhancer.settings.neuralFeatherExpansion,
++			p.eyeWidthIn, p.eyeHeightIn, p.eyeWidthOut, p.eyeHeightOut);
++		p.neuralCorePlan = plan.core;
++		p.cropPlan = plan.sr;
++		p.neuralFeatherActive = plan.expanded;
++		p.leftUV = plan.regions[0];
++		p.rightUV = plan.regions[1];
++		p.isFullEye = p.cropPlan.eyes[0].input.width == p.eyeWidthIn && p.cropPlan.eyes[0].input.height == p.eyeHeightIn &&
++			p.cropPlan.eyes[1].input.width == p.eyeWidthIn && p.cropPlan.eyes[1].input.height == p.eyeHeightIn;
+ 
+ 		// Jitter — ConfigureUpscaling already computed correct DLSS jitter.
+ 		p.jitterX = upscaling.jitter.x;
+ 		p.jitterY = upscaling.jitter.y;
+ 
+-		p.cropPlan.fullInputWidth = p.eyeWidthIn;
+-		p.cropPlan.fullInputHeight = p.eyeHeightIn;
+-		p.cropPlan.fullOutputWidth = p.eyeWidthOut;
+-		p.cropPlan.fullOutputHeight = p.eyeHeightOut;
+-		p.cropPlan.eyes[0] = CropGeometry::MakeEyePlan(p.leftUV.x, p.leftUV.y, p.leftUV.w, p.leftUV.h,
+-			p.eyeWidthIn, p.eyeHeightIn, p.eyeWidthOut, p.eyeHeightOut);
+-		p.cropPlan.eyes[1] = CropGeometry::MakeEyePlan(p.rightUV.x, p.rightUV.y, p.rightUV.w, p.rightUV.h,
+-			p.eyeWidthIn, p.eyeHeightIn, p.eyeWidthOut, p.eyeHeightOut);
+ 		if (p.mode == FoveatedRender::DlssMode::kFaster) {
+ 			p.cropPlan.eyes[0].output = CropGeometry::MakePixelRect(p.leftUV.x, p.leftUV.y, p.leftUV.w, p.leftUV.h, p.eyeWidthOut, p.eyeHeightOut);
+ 			p.cropPlan.eyes[1].output = CropGeometry::MakePixelRect(p.rightUV.x, p.rightUV.y, p.rightUV.w, p.rightUV.h, p.eyeWidthOut, p.eyeHeightOut);
+diff --git a/runtime/open-shaders/src/Features/Upscaling/FoveatedRender.cpp b/runtime/open-shaders/src/Features/Upscaling/FoveatedRender.cpp
+--- a/runtime/open-shaders/src/Features/Upscaling/FoveatedRender.cpp
++++ b/runtime/open-shaders/src/Features/Upscaling/FoveatedRender.cpp
+@@ -13,7 +13,8 @@
+ #include "GazeCropPolicy.h"
+ #include "NativeOpenVRGaze.h"
+ #include "NeuralRendering/Integration.h"
+-#include "NeuralRendering/FeatherGeometry.h"
++#include "NeuralRendering/FeatherPlan.h"
++#include "PerfMode.h"
+ #include "ShaderDetailMask.h"
+ #include "NeuralRendering/FuturePipeline.h"
+ #include "NeuralRendering/Renderer.h"
+@@ -971,6 +972,15 @@
+ }
+ 
+ 
++bool FoveatedRender::IsNeuralFeatherRouteEnabled() const
++{
++	return !NeuralRendering::Renderer::Instance().IsFailureLatched() &&
++		settings.neuralFeatherEnabled && settings.neuralFeatherExpansion > 0.0f &&
++		settings.neuralRenderingEnabled && GetDlssMode() == DlssMode::kDefault &&
++		globals::features::upscaling.GetUpscaleMethod() == Upscaling::UpscaleMethod::kDLSS &&
++		(!settings.neuralRenderingAdaptiveEnabled || !adaptivePassInitialized || adaptiveActivePasses > 0);
++}
++
+ FoveatedRender::FoveationProfile FoveatedRender::GetFoveationProfile() const
+ {
+ 	FoveationProfile profile;
+@@ -991,14 +1001,18 @@
+ 		leftUV = gaze.leftUV;
+ 		rightUV = gaze.rightUV;
+ 	}
+-	const bool expandedSR = settings.neuralFeatherEnabled && settings.neuralRenderingEnabled &&
+-		GetDlssMode() == DlssMode::kDefault && upscaling.GetUpscaleMethod() == Upscaling::UpscaleMethod::kDLSS &&
+-		(!settings.neuralRenderingAdaptiveEnabled || !adaptivePassInitialized || adaptiveActivePasses > 0);
+-	if (expandedSR) {
+-		leftUV = NeuralRendering::FeatherGeometry::Expand(leftUV, settings.neuralFeatherExpansion);
+-		rightUV = NeuralRendering::FeatherGeometry::Expand(rightUV, settings.neuralFeatherExpansion);
+-	}
+-	ShaderDetailMask::ProtectRectangles(profile, leftUV, rightUV);
++	if (!globals::state)
++		return profile;
++	const auto renderSize = Util::ConvertToDynamic(globals::state->screenSize);
++	const auto& perfMode = upscaling.perfMode;
++	const auto displaySize = perfMode.IsHookActive() && perfMode.GetTestTexture() ?
++		perfMode.GetDisplayScreenSize() : globals::state->screenSize;
++	const auto plan = NeuralRendering::FeatherPlan::Make(leftUV, rightUV,
++		IsNeuralFeatherRouteEnabled(), settings.neuralFeatherExpansion,
++		static_cast<std::uint32_t>(renderSize.x / 2), static_cast<std::uint32_t>(renderSize.y),
++		static_cast<std::uint32_t>(displaySize.x / 2), static_cast<std::uint32_t>(displaySize.y));
++	ShaderDetailMask::ProtectRenderRectangles(profile, plan.sr);
++
+ 	return profile;
+ }
+ 
+@@ -1284,6 +1298,22 @@
+ 
+ 	if (vrControlsFirst)
+ 		drawVrControls();
++	if (globals::game::isVR && ImGui::CollapsingHeader("CSX shader detail mask", ImGuiTreeNodeFlags_DefaultOpen)) {
++		auto& vrSettings = globals::features::vr.settings;
++		ImGui::Checkbox("CSX lighting detail mask", &vrSettings.EnableShaderDetailFoveation);
++		ImGui::Checkbox("CSX water parallax mask", &vrSettings.EnableWaterParallaxFoveation);
++		ImGui::Checkbox("Hard cutoff for CSX detail mask", &vrSettings.EnableShaderDetailFoveationHardCutoff);
++		const auto profile = GetFoveationProfile();
++		if (!vrSettings.EnableShaderDetailFoveation && !vrSettings.EnableWaterParallaxFoveation)
++			ImGui::TextUnformatted("Mask off");
++		else if (!profile.available)
++			ImGui::TextUnformatted("Mask bypassed: full/near-full SR protection or inactive route");
++		else
++			ImGui::Text("Estimated region with detail fully skipped: %.1f%%", 100.0f *
++				ShaderDetailMask::SkippedFraction(profile, vrSettings.EnableShaderDetailFoveationHardCutoff));
++		drawWrapped("Selective work skip: hair self-shadow, contact-shadow rays, extra wetness lighting and water parallax. Base shading remains. The full SR rectangle, including expanded SR, stays protected. This percentage describes screen area, not GPU savings.");
++	}
++
+ 	if (ImGui::CollapsingHeader(T(TKEY("neural_rendering_header"), "DLSS Neural Rendering"), ImGuiTreeNodeFlags_DefaultOpen)) {
+ 		const bool supportedRoute = globals::features::upscaling.GetUpscaleMethod() == Upscaling::UpscaleMethod::kDLSS &&
+ 			!globals::features::upscaling.IsFrameGenerationConfiguredForSession() &&
+@@ -1343,7 +1373,8 @@
+ 			}
+ 
+ 
+-			ImGui::TextDisabled("Pipeline: SR → one stereo-atlas NR pass | Matched Residual");
++			ImGui::TextDisabled("R9 rebuild: SR → compressed input → one stereo-atlas NR pass → residual resolve");
++
+ 
+ 			if (ImGui::CollapsingHeader("Experimental neural feather")) {
+ 				ImGui::Checkbox("Expand SR and neural feather", &settings.neuralFeatherEnabled);
+diff --git a/runtime/open-shaders/src/Features/Upscaling/FoveatedRender.h b/runtime/open-shaders/src/Features/Upscaling/FoveatedRender.h
+--- a/runtime/open-shaders/src/Features/Upscaling/FoveatedRender.h
++++ b/runtime/open-shaders/src/Features/Upscaling/FoveatedRender.h
+@@ -413,6 +413,8 @@
+ 		float2 centerOffsets[2] = {};        // [0]=left eye, [1]=right eye
+ 	};
+ 	FoveationProfile GetFoveationProfile() const;
++	/** @brief Return whether the current DLSS/NR controller route permits expanded SR. */
++	bool IsNeuralFeatherRouteEnabled() const;
+ 
+ 	// Main enable: latched at boot, change requires restart
+ 	void LatchEnabled() { enabledAtBoot = (settings.enabled != 0); }
+diff --git a/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/FeatherGeometry.h b/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/FeatherGeometry.h
+--- a/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/FeatherGeometry.h
++++ b/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/FeatherGeometry.h
+@@ -13,6 +13,22 @@
+ 	};
+ 	struct Mapping { Axis x, y; };
+ 	static_assert(sizeof(Mapping) == 64);
++
++	/** @brief Reject invalid or unbounded sampling maps before allocating or dispatching. */
++	inline bool IsValid(const Mapping& mapping)
++	{
++		const auto valid = [](const Axis& a) {
++			return std::isfinite(a.begin) && std::isfinite(a.end) && std::isfinite(a.extent) &&
++				std::isfinite(a.packedBegin) && std::isfinite(a.packedExtent) && std::isfinite(a.pitch) &&
++				std::isfinite(a.compression) && std::isfinite(a.power) && a.extent > 0.0f &&
++				a.pitch >= 1.0f && a.pitch <= 100.0f / 70.0f && a.begin >= -a.pitch &&
++				a.end >= a.begin && a.end <= a.extent && a.packedBegin >= 0.0f &&
++				a.packedExtent >= 1.0f && a.packedExtent <= a.extent + 2.0f &&
++				a.compression >= 1.0f && a.compression <= 20.0f && a.power >= 1.0f && a.power <= 4.0f;
++		};
++		return valid(mapping.x) && valid(mapping.y) && mapping.x.compression == mapping.y.compression &&
++			mapping.x.power == mapping.y.power;
++	}
+ 
+ 	/** Expand around the current gaze centre without changing the selected crop. */
+ 	template<class Region> Region Expand(Region region, float percent)
+diff --git a/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/FeatherPlan.h b/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/FeatherPlan.h
+new file mode 100644
+--- /dev/null
++++ b/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/FeatherPlan.h
+@@ -0,0 +1,90 @@
++#pragma once
++
++#include "FeatherGeometry.h"
++#include "../FoveatedRender/CropGeometry.h"
++
++namespace NeuralRendering::FeatherPlan
++{
++	using namespace FoveatedRenderImpl::CropGeometry;
++
++	template<class Region>
++	struct Plan
++	{
++		std::array<Region, 2> regions;
++		FramePlan core;
++		FramePlan sr;
++		bool expanded = false;
++	};
++
++	inline bool Contains(const PixelRect& outer, const PixelRect& inner)
++	{
++		return inner.width && inner.height && outer.x <= inner.x && outer.y <= inner.y &&
++			outer.x + outer.width >= inner.x + inner.width && outer.y + outer.height >= inner.y + inner.height;
++	}
++
++	/** @brief Quantize the selected and expanded SR regions on the same render grid. */
++	template<class Region>
++	Plan<Region> Make(const Region& left, const Region& right, bool requested, float expansion,
++		std::uint32_t inputWidth, std::uint32_t inputHeight, std::uint32_t outputWidth, std::uint32_t outputHeight)
++	{
++		Plan<Region> plan{ { left, right }, {}, {}, requested && expansion > 0.0f &&
++			!(left.w >= 0.999f && left.h >= 0.999f && right.w >= 0.999f && right.h >= 0.999f) };
++		plan.core = { inputWidth, inputHeight, outputWidth, outputHeight, {} };
++		plan.sr = plan.core;
++		for (unsigned eye = 0; eye < 2; ++eye) {
++			const auto& r = plan.regions[eye];
++			plan.core.eyes[eye] = MakeEyePlan(r.x, r.y, r.w, r.h, inputWidth, inputHeight, outputWidth, outputHeight);
++			if (plan.expanded)
++				plan.regions[eye] = FeatherGeometry::Expand(r, expansion);
++			const auto& sr = plan.regions[eye];
++			plan.sr.eyes[eye] = MakeEyePlan(sr.x, sr.y, sr.w, sr.h, inputWidth, inputHeight, outputWidth, outputHeight);
++		}
++		if (!plan.expanded || !inputWidth || !inputHeight || !outputWidth || !outputHeight)
++			return plan;
++
++		std::uint32_t width = 0, height = 0;
++		for (unsigned eye = 0; eye < 2; ++eye) {
++			auto& sr = plan.sr.eyes[eye].input;
++			const auto& core = plan.core.eyes[eye].input;
++			const auto rightEdge = std::max(sr.x + sr.width, core.x + core.width);
++			const auto bottomEdge = std::max(sr.y + sr.height, core.y + core.height);
++			sr.x = std::min(sr.x, core.x);
++			sr.y = std::min(sr.y, core.y);
++			sr.width = rightEdge - sr.x;
++			sr.height = bottomEdge - sr.y;
++			width = std::max(width, sr.width);
++			height = std::max(height, sr.height);
++		}
++		for (unsigned attempt = 0; attempt < 3; ++attempt) {
++			bool growWidth = false, growHeight = false;
++			for (unsigned eye = 0; eye < 2; ++eye) {
++				auto input = plan.sr.eyes[eye].input;
++				input.x = std::min(input.x, inputWidth - width);
++				input.y = std::min(input.y, inputHeight - height);
++				input.width = width;
++				input.height = height;
++				plan.sr.eyes[eye] = MakeEyePlan(input, inputWidth, inputHeight, outputWidth, outputHeight);
++				const auto& output = plan.sr.eyes[eye].output;
++				const auto& core = plan.core.eyes[eye].output;
++				growWidth |= output.x > core.x || output.x + output.width < core.x + core.width;
++				growHeight |= output.y > core.y || output.y + output.height < core.y + core.height;
++			}
++			if (!growWidth && !growHeight)
++				break;
++			width = std::min(inputWidth, width + (growWidth ? 1u : 0u));
++			height = std::min(inputHeight, height + (growHeight ? 1u : 0u));
++		}
++		return plan;
++	}
++
++	/** @brief Build the compressed model mapping from the actual SR output and selected core. */
++	inline FeatherGeometry::Mapping Mapping(const EyePlan& core, const EyePlan& sr, float pitch, float compression, float power)
++	{
++		return {
++			FeatherGeometry::MakeAxis(float(core.output.x) - sr.output.x, float(core.output.x + core.output.width) - sr.output.x,
++				float(sr.output.width), float(sr.output.x), pitch, compression, power),
++			FeatherGeometry::MakeAxis(float(core.output.y) - sr.output.y, float(core.output.y + core.output.height) - sr.output.y,
++				float(sr.output.height), float(sr.output.y), pitch, compression, power)
++		};
++	}
++}
+diff --git a/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Integration.cpp b/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Integration.cpp
+--- a/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Integration.cpp
++++ b/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Integration.cpp
+@@ -1,6 +1,7 @@
+ #include "Integration.h"
+ 
+ #include "Renderer.h"
++#include "FeatherPlan.h"
+ #include "RuntimePolicy.h"
+ #include "Features/HDRDisplay.h"
+ #include "Features/Upscaling.h"
+@@ -808,14 +809,16 @@
+ 			};
+ 			inputs[eye].sceneColorMotionScale = { float(eyeWidth), float(totalDesc.Height) };
+ 			if (featherActive && sharedCropPlan) {
+-				const auto& core = FoveatedRenderImpl::Core::neuralCorePlan.eyes[eye].output;
+-				const auto& expanded = cropPlan.eyes[eye].output;
+ 				const float pitch = 100.0f / (foveated.settings.neuralRenderingAdaptiveEnabled && foveated.adaptivePassInitialized ? foveated.adaptiveModelResolution : 100u);
+ 				const auto& settings = foveated.settings;
++				const auto& core = FoveatedRenderImpl::Core::neuralCorePlan.eyes[eye];
++				const auto& sr = cropPlan.eyes[eye];
++				if (!FeatherPlan::Contains(sr.output, core.output)) {
++					logger::error("[DLSSNR][Feather] selected core is outside current SR output eye={}", eye);
++					return false;
++				}
+ 				inputs[eye].featherEnabled = true;
+-				inputs[eye].feather = {
+-					FeatherGeometry::MakeAxis(float(core.x) - expanded.x, float(core.x + core.width) - expanded.x, float(outWidth), float(x), pitch, settings.neuralFeatherCompression, settings.neuralFeatherCurve),
+-					FeatherGeometry::MakeAxis(float(core.y) - expanded.y, float(core.y + core.height) - expanded.y, float(outHeight), float(y), pitch, settings.neuralFeatherCompression, settings.neuralFeatherCurve) };
++				inputs[eye].feather = FeatherPlan::Mapping(core, sr, pitch, settings.neuralFeatherCompression, settings.neuralFeatherCurve);
+ 				inputs[eye].featherStrength = settings.neuralFeatherStrength;
+ 				inputs[eye].featherFade = settings.neuralFeatherFade;
+ 			}
+diff --git a/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Renderer.cpp b/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Renderer.cpp
+--- a/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Renderer.cpp
++++ b/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Renderer.cpp
+@@ -674,6 +674,7 @@
+ 
+ 			auto& eye = eyes[eyeIndex];
+ 			auto& tier = eye.tiers[tierIndex];
++			eye.featherEnabled = false;
+ 			eye.movingCrop = false;
+ 			eye.sceneColorMotionScale = {};
+ 			eye.modelSampling = FoveatedRenderImpl::CropGeometry::ModelSampling(colorWidth, colorHeight,
+@@ -978,6 +979,9 @@
+ 				return false;
+ 			const std::uint32_t modelResolution = NormalizeModelResolution(tuning.modelResolutionPercent);
+ 			const bool featherEnabled = inputs[0].featherEnabled && inputs[1].featherEnabled;
++			if (inputs[0].featherEnabled != inputs[1].featherEnabled || (featherEnabled &&
++				(!FeatherGeometry::IsValid(inputs[0].feather) || !FeatherGeometry::IsValid(inputs[1].feather))))
++				return LatchFailure("invalid stereo feather plan", E_INVALIDARG);
+ 			const std::uint32_t modelWidth = featherEnabled ? static_cast<std::uint32_t>(std::max(inputs[0].feather.x.packedExtent, inputs[1].feather.x.packedExtent)) : ScaleDimension(colorWidth, modelResolution);
+ 			const std::uint32_t modelHeight = featherEnabled ? static_cast<std::uint32_t>(std::max(inputs[0].feather.y.packedExtent, inputs[1].feather.y.packedExtent)) : ScaleDimension(colorHeight, modelResolution);
+ 			const bool stableEnvelope = resourceEnvelope.IsValid();
+@@ -1022,7 +1026,7 @@
+ 				context->CopySubresourceRegion(eye.color.resource11.Get(), 0, 0, 0, 0, color, 0, &sourceBox);
+ 				if (tier.reducedResolution && !DispatchModelInput(device, context, eye, tier, colorWidth, colorHeight, modelWidth, modelHeight,
+ 					 tuning.modelResolveMode == 1))
+-					return LatchFailure("model input downsample stereo", E_FAIL);
++					return failureLatched ? false : LatchFailure("model input downsample stereo", E_FAIL);
+ 				auto guideInput = input;
+ 				if (input.compensateCropMotion && !tuning.singlePassLadder) {
+ 					bool reset = stereoAtlasActiveLastFrame ? stereoAtlasResetPending : resetPending[eyeIndex][tierIndex];
+@@ -1312,7 +1316,7 @@
+ 				if (captureFrame)
+ 					globals::features::openNRCapture.AbortFrame();
+ #endif
+-				return LatchFailure("stereo atlas", E_FAIL);
++				return failureLatched ? false : LatchFailure("stereo atlas", E_FAIL);
+ 			}
+ 			nativeEvaluationDone = atlasResult == StereoAtlasResult::Applied;
+ 
+@@ -1390,7 +1394,7 @@
+ 					if (captureFrame)
+ 						globals::features::openNRCapture.AbortFrame();
+ #endif
+-					return LatchFailure("model output resolve stereo", E_FAIL);
++					return failureLatched ? false : LatchFailure("model output resolve stereo", E_FAIL);
+ 				}
+ #if defined(OPENNR_CAPTURE_ENABLED)
+ 				if (captureFrame && globals::features::openNRCapture.settings.capturePostNR) {
+@@ -1592,7 +1596,8 @@
+ 			alignGuidesCS.Reset();
+ 			alignGuidesCB.Reset();
+ 			modelResolutionCS.Reset();
+-			featherModelCS.Reset();
++			featherPackCS.Reset();
++			featherResolveCS.Reset();
+ 			featherGuidesCS.Reset();
+ 			temporalSnapshotCS.Reset();
+ 			temporalAccumulateCS.Reset();
+@@ -1611,11 +1616,14 @@
+ 			stereoAtlas = {};
+ 			stereoAtlasResetPending = true;
+ 			stereoAtlasActiveLastFrame = false;
++			stereoAtlasModeObserved = false;
++			stereoAtlasFeatherMode = false;
+ 			stereoAtlasActiveLogged = false;
+ 			stereoAtlasFallbackLogged = false;
+ 			modelResolutionCB.Reset();
+ 			featherModelCB.Reset();
+ 			featherInverseSRV.Reset();
++			featherCurve = {};
+ 			featherGuideCB.Reset();
+ 			modelResolutionSampler.Reset();
+ 			temporalReuseCB.Reset();
+@@ -1653,7 +1661,8 @@
+ 			alignGuidesCS.Reset();
+ 			alignGuidesCB.Reset();
+ 			modelResolutionCS.Reset();
+-			featherModelCS.Reset();
++			featherPackCS.Reset();
++			featherResolveCS.Reset();
+ 			featherGuidesCS.Reset();
+ 			temporalSnapshotCS.Reset();
+ 			temporalAccumulateCS.Reset();
+@@ -2545,6 +2554,12 @@
+ 				Util::SetResourceName(modelResolutionCB.Get(), "NeuralRendering::ModelResolutionCB");
+ 			}
+ 
++			return EnsureModelSampler(device);
++		}
++
++		bool EnsureModelSampler(ID3D11Device* device)
++		{
++			if (!device) return false;
+ 			if (!modelResolutionSampler) {
+ 				D3D11_SAMPLER_DESC samplerDesc{};
+ 				samplerDesc.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
+@@ -2609,11 +2624,31 @@
+ 			const TierResources& tier, std::uint32_t width, std::uint32_t height,
+ 			std::uint32_t sourceWidth, std::uint32_t sourceHeight, bool resolve, float maxRatio, float residualStrength)
+ 		{
+-			if (!context || !EnsureModelResolutionResources(device) || !EnsureFeatherCurve(device, eye.feather) ||
+-				!featherModelCS.Get(L"Data\\Shaders\\Upscaling\\NeuralRendering\\FeatherModelCS.hlsl", {}, "cs_5_0", "main", "NeuralRendering::FeatherModel") ||
+-				!EnsureFeatherBuffer(device, featherModelCB, sizeof(FeatherModelConstants), "NeuralRendering::FeatherModelCB")) return false;
++
++			if (!device || !context || !width || !height || !sourceWidth || !sourceHeight ||
++				!FeatherGeometry::IsValid(eye.feather))
++				return LatchFailure("feather dispatch parameters", E_INVALIDARG);
++			if (!EnsureModelSampler(device))
++				return LatchFailure("feather sampler creation", E_FAIL);
++			if (!EnsureFeatherCurve(device, eye.feather))
++				return LatchFailure("feather inverse LUT creation", E_FAIL);
++			auto& shader = resolve ? featherResolveCS : featherPackCS;
++			const std::vector<std::pair<const char*, const char*>> defines = resolve ?
++				std::vector<std::pair<const char*, const char*>>{ { "FEATHER_RESOLVE", "1" } } :
++				std::vector<std::pair<const char*, const char*>>{};
++			if (!shader.Get(L"Data\\Shaders\\Upscaling\\NeuralRendering\\FeatherModelCS.hlsl", defines, "cs_5_0", "main",
++				resolve ? "NeuralRendering::FeatherResolveCS" : "NeuralRendering::FeatherPackCS"))
++				return LatchFailure(resolve ? "feather resolve shader compile/load" : "feather packing shader compile/load", E_FAIL);
++			if (!EnsureFeatherBuffer(device, featherModelCB, sizeof(FeatherModelConstants), "NeuralRendering::FeatherModelCB"))
++				return LatchFailure("feather model constant buffer", E_FAIL);
+ 			const auto* target = resolve ? tier.resolvedUAV.Get() : tier.modelInput.uav11.Get();
+-			if (!target || !eye.color.srv11 || (resolve && (!tier.modelInput.srv11 || !tier.output.srv11))) return false;
++			const auto targetWidth = resolve ? eye.color.desc.Width : tier.modelInput.desc.Width;
++			const auto targetHeight = resolve ? eye.color.desc.Height : tier.modelInput.desc.Height;
++			const auto sourceExtentX = resolve ? tier.modelInput.desc.Width : eye.color.desc.Width;
++			const auto sourceExtentY = resolve ? tier.modelInput.desc.Height : eye.color.desc.Height;
++			if (!target || !eye.color.srv11 || (resolve && (!tier.modelInput.srv11 || !tier.output.srv11)) ||
++				width > targetWidth || height > targetHeight || sourceWidth > sourceExtentX || sourceHeight > sourceExtentY)
++				return LatchFailure("feather texture extent/view contract", E_INVALIDARG);
+ 			FeatherModelConstants data{ { width, height, sourceWidth, sourceHeight }, eye.feather,
+ 				{ resolve ? residualStrength : 0.0f, eye.featherStrength, eye.featherFade, maxRatio } };
+ 			context->UpdateSubresource(featherModelCB.Get(), 0, nullptr, &data, 0, 0);
+@@ -2623,7 +2658,7 @@
+ 			ID3D11Buffer* cb = featherModelCB.Get();
+ 			ID3D11SamplerState* sampler = modelResolutionSampler.Get();
+ 			CS_GPU_PASS_SELECT(resolve, "NeuralRendering::FeatherResolve", "NeuralRendering::FeatherDownsample");
+-			context->CSSetShader(featherModelCS.get(), nullptr, 0);
++			context->CSSetShader(shader.get(), nullptr, 0);
+ 			context->CSSetConstantBuffers(0, 1, &cb);
+ 			context->CSSetShaderResources(0, 4, sources);
+ 			context->CSSetUnorderedAccessViews(0, 1, &uav, nullptr);
+@@ -3214,6 +3249,8 @@
+ 			const UINT sharedFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
+ 			const auto resourceModelWidth = featherEnabled ? resourceColorWidth + 2u : ScaleDimension(resourceColorWidth, modelResolution);
+ 			const auto resourceModelHeight = featherEnabled ? resourceColorHeight + 2u : ScaleDimension(resourceColorHeight, modelResolution);
++			if (modelWidth > resourceModelWidth || modelHeight > resourceModelHeight)
++				return LatchFailure("packed model exceeds resource envelope", E_INVALIDARG);
+ 			const auto modelInputDesc = MakeSharedDesc(eye.color.desc, resourceModelWidth, resourceModelHeight, sharedFlags);
+ 			const auto outputDesc = MakeSharedDesc(eye.color.desc, resourceModelWidth, resourceModelHeight, sharedFlags);
+ 			const auto pass2OutputDesc = outputDesc;
+@@ -3742,8 +3779,9 @@
+ 
+ 		bool DispatchFeatherGuides(ID3D11Device* device, ID3D11DeviceContext* context, const LadderAtlasConstants& ladder)
+ 		{
+-			if (!EnsureModelResolutionResources(device) || !EnsureFeatherCurve(device, eyes[0].feather) || !featherGuidesCS.Get(L"Data\\Shaders\\Upscaling\\NeuralRendering\\FeatherGuidesCS.hlsl", {}, "cs_5_0", "main", "NeuralRendering::FeatherGuides") ||
+-				!EnsureFeatherBuffer(device, featherGuideCB, sizeof(FeatherGuideConstants), "NeuralRendering::FeatherGuideCB")) return false;
++			if (!EnsureModelSampler(device) || !EnsureFeatherCurve(device, eyes[0].feather) || !featherGuidesCS.Get(L"Data\\Shaders\\Upscaling\\NeuralRendering\\FeatherGuidesCS.hlsl", {}, "cs_5_0", "main", "NeuralRendering::FeatherGuides") ||
++				!EnsureFeatherBuffer(device, featherGuideCB, sizeof(FeatherGuideConstants), "NeuralRendering::FeatherGuideCB"))
++				return LatchFailure("feather guide shader/resources", E_FAIL);
+ 			FeatherGuideConstants data{ ladder, { eyes[0].feather, eyes[1].feather,
+ 				ladderAtlasGeometry.feather[0], ladderAtlasGeometry.feather[1] } };
+ 			if (!data.ladder.flags[0]) {
+@@ -3782,7 +3820,7 @@
+ 			std::uint32_t guideWidth, std::uint32_t guideHeight, std::uint32_t colorGuard, std::uint32_t guideGuard,
+ 			std::uint32_t sourceGuideWidth, std::uint32_t sourceGuideHeight)
+ 		{
+-			if (!ladderAtlasGuidesCS.Get(L"Data\\Shaders\\Upscaling\\NeuralRendering\\LadderAtlasGuidesCS.hlsl", {}, "cs_5_0", "main", "NeuralRendering::LadderAtlasGuides"))
++			if (!eyes[0].featherEnabled && !ladderAtlasGuidesCS.Get(L"Data\\Shaders\\Upscaling\\NeuralRendering\\LadderAtlasGuidesCS.hlsl", {}, "cs_5_0", "main", "NeuralRendering::LadderAtlasGuides"))
+ 				return false;
+ 			if (!ladderAtlasCB) {
+ 				D3D11_BUFFER_DESC desc{};
+@@ -4042,7 +4080,7 @@
+ 		Util::LazyShader<ID3D11ComputeShader> stereoAtlasMotionPackCS;
+ 		Microsoft::WRL::ComPtr<ID3D11Buffer> sequentialCompositeCB;
+ 		Microsoft::WRL::ComPtr<ID3D11Buffer> stereoAtlasPackCB;
+-		Util::LazyShader<ID3D11ComputeShader> featherModelCS, featherGuidesCS;
++		Util::LazyShader<ID3D11ComputeShader> featherPackCS, featherResolveCS, featherGuidesCS;
+ 		Microsoft::WRL::ComPtr<ID3D11Buffer> featherModelCB, featherGuideCB;
+ 		Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> featherInverseSRV;
+ 		std::array<float, 2> featherCurve{};
+diff --git a/runtime/open-shaders/src/Features/Upscaling/ShaderDetailMask.h b/runtime/open-shaders/src/Features/Upscaling/ShaderDetailMask.h
+--- a/runtime/open-shaders/src/Features/Upscaling/ShaderDetailMask.h
++++ b/runtime/open-shaders/src/Features/Upscaling/ShaderDetailMask.h
+@@ -1,10 +1,11 @@
+ #pragma once
+ #include <cstdint>
+ #include "../FoveatedCommon.h"
++#include "FoveatedRender/CropGeometry.h"
+ 
+ namespace ShaderDetailMask
+ {
+-	inline constexpr float kRectangleGuard = 1.189208f;
++	inline constexpr float kRectangleGuard = 1.18921f;
+ 
+ 	/** @brief Encloses both SR rectangles in a power-four mask without reducing their corners. */
+ 	template<class Profile, class Region>
+@@ -22,4 +23,44 @@
+ 		profile.centerOffsets[1] = { right.x + right.w * 0.5f - 0.5f, right.y + right.h * 0.5f - 0.5f };
+ 		return true;
+ 	}
++
++	/** @brief Protect quantized render pixel bounds plus two pixels for jitter/sampling. */
++	template<class Profile>
++	bool ProtectRenderRectangles(Profile& profile, const FoveatedRenderImpl::CropGeometry::FramePlan& plan)
++	{
++		if (!plan.fullInputWidth || !plan.fullInputHeight)
++			return false;
++		struct Region { float x, y, w, h; };
++		const auto region = [&](const auto& rect) {
++			const auto left = rect.x > 2 ? rect.x - 2 : 0u;
++			const auto top = rect.y > 2 ? rect.y - 2 : 0u;
++			const auto right = std::min(plan.fullInputWidth, rect.x + rect.width + 2u);
++			const auto bottom = std::min(plan.fullInputHeight, rect.y + rect.height + 2u);
++			return Region{ float(left) / plan.fullInputWidth, float(top) / plan.fullInputHeight,
++				float(right - left) / plan.fullInputWidth, float(bottom - top) / plan.fullInputHeight };
++		};
++		return ProtectRectangles(profile, region(plan.eyes[0].input), region(plan.eyes[1].input));
++	}
++
++	/** @brief Estimate zero-detail screen area; this is not a GPU timing measurement. */
++	template<class Profile>
++	float SkippedFraction(const Profile& profile, bool hardCutoff)
++	{
++		if (!profile.available)
++			return 0.0f;
++		constexpr unsigned grid = 64;
++		unsigned skipped = 0;
++		const float radiusX = profile.coverageScale * profile.centerHorizontalScale * 0.5f;
++		const float radiusY = profile.coverageScale * 0.5f;
++		const float feather = FoveatedCommon::kCenterFeather / std::min(radiusX, radiusY);
++		for (unsigned eye = 0; eye < 2; ++eye)
++			for (unsigned y = 0; y < grid; ++y)
++				for (unsigned x = 0; x < grid; ++x) {
++					const float nx = ((float(x) + 0.5f) / grid - 0.5f - profile.centerOffsets[eye].x) / radiusX;
++					const float ny = ((float(y) + 0.5f) / grid - 0.5f - profile.centerOffsets[eye].y) / radiusY;
++					const float distance = std::sqrt(std::sqrt(nx * nx * nx * nx + ny * ny * ny * ny));
++					skipped += distance > (hardCutoff ? 1.0f : 1.0f + feather) ? 1u : 0u;
++				}
++		return float(skipped) / (2u * grid * grid);
++	}
+ }
+diff --git a/runtime/open-shaders/src/Features/Upscaling.cpp b/runtime/open-shaders/src/Features/Upscaling.cpp
+--- a/runtime/open-shaders/src/Features/Upscaling.cpp
++++ b/runtime/open-shaders/src/Features/Upscaling.cpp
+@@ -698,12 +698,14 @@
+ 			settings.neuralFeatherFade = fade;
+ 		});
+ 	FEATURE_QUERY("neuralFeatherStatus",
+-		"Read experimental sampling settings and active SR/core extents. Active is false in controller stage 6, full-eye selection, or NR bypass. GPU timings are available under FeatherDownsample, FeatherGuides, FeatherResolve.",
++		"Read R9 expanded SR/compressed NR settings, current core/SR extents and renderer failure status. Active is false when the renderer is failed, in controller stage 6, full-eye selection, or NR bypass. GPU timings: FeatherDownsample, FeatherGuides, FeatherResolve. Area is not a GPU timing measurement.",
+ 		[](const Feature*, const json&) -> json {
+ 			const auto& settings = foveatedRender.settings;
+ 			const auto& core = FoveatedRenderImpl::Core::neuralCorePlan.eyes[0].output;
+ 			const auto& expanded = FoveatedRenderImpl::Core::neuralCropPlan.eyes[0].output;
+-			return json({ { "enabled", settings.neuralFeatherEnabled }, { "active", FoveatedRenderImpl::Core::neuralFeatherActive },
++			return json({ { "enabled", settings.neuralFeatherEnabled }, { "active", FoveatedRenderImpl::Core::neuralFeatherActive && !NeuralRendering::Renderer::Instance().IsFailureLatched() },
++				{ "rendererFailed", NeuralRendering::Renderer::Instance().IsFailureLatched() },
++				{ "rendererStatus", NeuralRendering::Renderer::Instance().StatusText() },
+ 				{ "expansion", settings.neuralFeatherExpansion }, { "compression", settings.neuralFeatherCompression },
+ 				{ "curve", settings.neuralFeatherCurve }, { "strength", settings.neuralFeatherStrength }, { "fade", settings.neuralFeatherFade },
+ 				{ "coreSize", { core.width, core.height } }, { "srSize", { expanded.width, expanded.height } } });
+diff --git a/runtime/open-shaders/src/Features/VR.cpp b/runtime/open-shaders/src/Features/VR.cpp
+--- a/runtime/open-shaders/src/Features/VR.cpp
++++ b/runtime/open-shaders/src/Features/VR.cpp
+@@ -1,4 +1,5 @@
+ #include "VR.h"
++#include "Upscaling/ShaderDetailMask.h"
+ #include "Menu.h"
+ #include "RE/B/BSOpenVR.h"
+ #include "RE/P/PlayerCharacter.h"
+@@ -304,7 +305,7 @@
+ void VR::RegisterUxActions()
+ {
+ 	FEATURE_QUERY("shaderDetailMaskStatus",
+-		"Read VR shader-detail mask settings and protected SR profile. Args: none. Returns available, coverageScale, horizontalScale, left/right offsets, lightingEnabled, waterParallaxEnabled, hardCutoff and ssrEnabled. Lighting includes hair self-shadow, extra direct wetness lighting and LLF contact shadows. Water includes parallax raymarching. Base lighting, geometry and neural inference remain unchanged. Toggle settings via openshaders.feature set for A/B verification.",
++		"Read VR shader-detail mask settings and protected SR profile. Args: none. Returns available, coverageScale, horizontalScale, left/right offsets, lightingEnabled, waterParallaxEnabled, hardCutoff, ssrEnabled and estimatedSkippedAreaFraction (screen area, not GPU timing). Full/near-full protected SR bypasses masking. Lighting includes hair self-shadow, extra direct wetness lighting and LLF contact shadows. Water includes parallax raymarching. Base lighting, geometry and neural inference remain unchanged. Toggle settings via openshaders.feature set for A/B verification.",
+ 		([](const Feature* feature, const json&) -> json {
+ 			const auto& settings = static_cast<const VR*>(feature)->settings;
+ 			const auto profile = globals::features::upscaling.foveatedRender.GetFoveationProfile();
+@@ -315,6 +316,7 @@
+ 				{ "lightingEnabled", settings.EnableShaderDetailFoveation },
+ 				{ "waterParallaxEnabled", settings.EnableWaterParallaxFoveation },
+ 				{ "hardCutoff", settings.EnableShaderDetailFoveationHardCutoff },
+-				{ "ssrEnabled", settings.EnableSSRFoveation } };
++				{ "ssrEnabled", settings.EnableSSRFoveation },
++				{ "estimatedSkippedAreaFraction", ShaderDetailMask::SkippedFraction(profile, settings.EnableShaderDetailFoveationHardCutoff) } };
+ 		}));
+ }

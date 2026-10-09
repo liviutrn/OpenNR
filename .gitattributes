@@ -14,3 +14,8 @@ scripts/v01/*.ps1 text eol=lf
 scripts/v06/*.patch -text whitespace=-blank-at-eol,-space-before-tab
 scripts/v06/*.py text eol=lf
 scripts/v06/*.h text eol=lf
+
+scripts/v09/*.patch -text whitespace=-blank-at-eol,-space-before-tab
+scripts/v09/*.py text eol=lf
+scripts/v09/*.cpp text eol=lf
+scripts/v09/*.json text eol=lf
