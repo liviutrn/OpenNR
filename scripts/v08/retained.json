@@ -1,0 +1,20 @@
+{
+  "files": {
+    "runtime/open-shaders/features/Upscaling/Shaders/Upscaling/FoveatedRender/SubrectBlendCS.hlsl": "ebe986f93ad58053f1a59fb081aa49e25dd11457bfecaf46652c60b0ad7b5a20",
+    "runtime/open-shaders/features/Upscaling/Shaders/Upscaling/FoveatedRender/CropMotionCS.hlsl": "064ddda8ea0a393759f00720b5e36c9e38bfef820dab62fab3ef06719b188e09",
+    "runtime/open-shaders/features/Upscaling/Shaders/Upscaling/NeuralRendering/ModelResolutionCS.hlsl": "8ff4033740be8793d8b1b3c7479787abb1c3675c67cc9626fc1a91721d872adf",
+    "runtime/open-shaders/features/Upscaling/Shaders/Upscaling/NeuralRendering/LadderAtlasGuidesCS.hlsl": "6c433874e76ce2c8dd560152d5f79c62d58003ed6e4002e926441819727663fa",
+    "runtime/open-shaders/features/Upscaling/Shaders/Upscaling/NeuralRendering/AlignGuidesCS.hlsl": "cfe04c9ab62e01ede16b6923a846a5c7e7f2deb48212a103212064d7acf9bc09",
+    "runtime/open-shaders/src/Features/Upscaling/NativeOpenVRGaze.cpp": "7b8773b1b6e26401138c6085ce506387ce16fb58233f93bd07c5882d2227adae",
+    "runtime/open-shaders/src/Features/Upscaling/GazeCropPolicy.h": "d613333b559801db71b4ce1f5c43d3d20a4078e7c5a4e1690a8cddb8851be321",
+    "runtime/open-shaders/src/Features/Upscaling/CropMotionHistory.h": "8915172e7997556329462208ef87876dd1a801d223478fb6f7ece2674840cc00",
+    "runtime/open-shaders/src/Features/Upscaling/NativeOpenVRGaze.h": "2ea48b3494be65e08dbbc9bd1621e9f530e8c24354dd576c10843bf60f8cc6e9",
+    "runtime/open-shaders/src/Features/Upscaling/GazeAdaptivePolicy.h": "885ab1ba4ef51fd8c973d7c7bbbd3c60a2a403da8fc12a5d950374c447278a2d",
+    "runtime/open-shaders/src/Features/Upscaling/CropMotion.cpp": "f27ab03725f387052077dbb4ae352025df91eb8df9559861ea1f04501895f054",
+    "runtime/open-shaders/src/Features/Upscaling/FoveatedRender/CropGeometry.h": "55ec27a616ab0656434eb9cafb4a0b845cf7c71f4fce58a8b3b839a428273eef",
+    "runtime/open-shaders/src/Features/Upscaling/NeuralRendering/AdaptiveCropController.h": "a7ea509c9a762b75c6e586e5e97b653f205099137be514eac3994c273a360b1e",
+    "runtime/open-shaders/src/Features/Upscaling/NeuralRendering/SimpleFramePolicy.h": "4f1486c12944ba1deb61a853b0ab9466dbe76ab309b9ee4037804139d0b2c867",
+    "runtime/open-shaders/features/Upscaling/Shaders/Upscaling/NeuralRendering/ResultShapingCS.hlsl": "53cfabe3843719f2bfe387be9898b0ca4ca8b24ac22c4ba8e7976d5d31396ddc"
+  },
+  "controller_body_sha256": "05a8e76b4dbf0a21b474531b71844c5545734067c8341d01772911a1facf92d5"
+}

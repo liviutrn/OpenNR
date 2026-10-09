@@ -1,8 +1,8 @@
-name: Build OpenNR 2.20.1-v06-r7
+name: Build OpenNR 2.20.1-v06-r8 experimental
 
 on:
   push:
-    branches: ["build/2.20.1-v06-adaptive-single-pass", "build/2.20.1-v06-r6", "build/2.20.1-v06-r7"]
+    branches: ["build/2.20.1-v06-r8"]
   workflow_dispatch:
 
 concurrency:
@@ -288,6 +288,34 @@ jobs:
           git diff --check
           if ($LASTEXITCODE) { throw 'r7 source whitespace check failed' }
 
+      - name: Apply and verify r8 experimental sampling
+        shell: pwsh
+        run: |
+          python scripts/v08/apply-r8.py
+          if ($LASTEXITCODE) { throw 'r8 exact source replay failed' }
+          python scripts/v08/audit-source.py
+          if ($LASTEXITCODE) { throw 'r8 retained integration audit failed' }
+          cl /nologo /std:c++20 /EHsc /W4 /WX scripts/v08/test-feather.cpp /Fe:r8-feather.exe
+          if ($LASTEXITCODE) { throw 'r8 geometry compilation failed' }
+          & ./r8-feather.exe
+          if ($LASTEXITCODE) { throw 'r8 geometry/motion oracle failed' }
+          cl /nologo /std:c++20 /EHsc /W4 /WX scripts/v08/test-feather-warp.cpp d3d11.lib d3dcompiler.lib /Fe:r8-feather-warp.exe
+          if ($LASTEXITCODE) { throw 'r8 software D3D11 test compilation failed' }
+          & ./r8-feather-warp.exe
+          if ($LASTEXITCODE) { throw 'r8 HLSL sampling/residual/motion execution failed' }
+          python scripts/v07/verify-stack.py --write-layout-cpp r8-buffer-layout.cpp
+          if ($LASTEXITCODE) { throw 'r8 retained buffer contracts failed' }
+          cl /nologo /std:c++20 /EHsc /W4 /WX r8-buffer-layout.cpp /Fe:r8-buffer-layout.exe
+          if ($LASTEXITCODE) { throw 'r8 retained layout compilation failed' }
+          & ./r8-buffer-layout.exe
+          if ($LASTEXITCODE) { throw 'r8 retained layout execution failed' }
+          & ./r7-controller.exe
+          if ($LASTEXITCODE) { throw 'r8 retained controller execution failed' }
+          & ./r7-nr-black-warp.exe
+          if ($LASTEXITCODE) { throw 'r8 retained near-black/resume execution failed' }
+          git diff --check
+          if ($LASTEXITCODE) { throw 'r8 whitespace check failed' }
+
       - name: Install CMake
         uses: lukka/get-cmake@v4.3.3
         with:
@@ -323,32 +351,32 @@ jobs:
       - name: Add v06 package notes and hashes
         shell: pwsh
         run: |
-          Copy-Item docs/versions/2.20.1-v06/r7/README.md dist/README-2.20.1-v06.txt
+          Copy-Item docs/versions/2.20.1-v06/r8/README.md dist/README-2.20.1-v06.txt
           Get-ChildItem -Recurse dist -File | ForEach-Object {
             $h = Get-FileHash $_.FullName -Algorithm SHA256
             "$($h.Hash)  $($_.FullName)"
           } | Tee-Object -FilePath dist/SHA256SUMS.txt
 
-      - name: Download compiled r6 baseline for audit
+      - name: Download compiled r7 baseline for audit
         uses: actions/download-artifact@v4
         with:
-          name: OpenNR-2.20.1-v06-r6-inside-black-protection-carrier-excluded
-          run-id: 37420891871
+          name: OpenNR-2.20.1-v06-r7-adaptive-controls-carrier-excluded
+          run-id: 37738693746
           github-token: ${{ secrets.GITHUB_TOKEN }}
-          path: artifacts/r6
+          path: artifacts/r7
 
-      - name: Audit compiled r7 package
+      - name: Audit compiled r8 package
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force artifacts/r7 | Out-Null
-          Copy-Item dist/*.7z artifacts/r7/
-          python scripts/v07/audit-package.py
-          if ($LASTEXITCODE) { throw 'r7 package regression audit failed' }
+          New-Item -ItemType Directory -Force artifacts/r8 | Out-Null
+          Copy-Item dist/*.7z artifacts/r8/
+          python scripts/v08/audit-package.py
+          if ($LASTEXITCODE) { throw 'r8 package regression audit failed' }
 
-      - name: Upload r7 package audit
+      - name: Upload r8 package audit
         uses: actions/upload-artifact@v4
         with:
-          name: OpenNR-v06-r7-package-audit
+          name: OpenNR-v06-r8-package-audit
           path: audit-results/*
           if-no-files-found: error
           retention-days: 14
@@ -356,7 +384,7 @@ jobs:
       - name: Upload v06 checkpoint package
         uses: actions/upload-artifact@v4
         with:
-          name: OpenNR-2.20.1-v06-r7-adaptive-controls-carrier-excluded
+          name: OpenNR-2.20.1-v06-r8-neural-feather-carrier-excluded
           path: dist/*
           if-no-files-found: error
           retention-days: 14

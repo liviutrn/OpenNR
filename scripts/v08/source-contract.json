@@ -1,0 +1,66 @@
+{
+  "runtime/open-shaders/features/Upscaling/Shaders/Upscaling/NeuralRendering/FeatherGuidesCS.hlsl": {
+    "before": null,
+    "after": "1314a1f62d91cd11552b52aa2d3ce15a84833842d2c2a73b1359a31c507829b9"
+  },
+  "runtime/open-shaders/features/Upscaling/Shaders/Upscaling/NeuralRendering/FeatherMap.hlsli": {
+    "before": null,
+    "after": "b6cb985d768b29c32babb1b24666430384757858d63092b0678125767fa35188"
+  },
+  "runtime/open-shaders/features/Upscaling/Shaders/Upscaling/NeuralRendering/FeatherModelCS.hlsl": {
+    "before": null,
+    "after": "5d607836cf6953901133c24d87cc7ef8105987896367e756e9fb0fbffbc0808b"
+  },
+  "runtime/open-shaders/src/Features/RemoteControl/DevBenchBridge.cpp": {
+    "before": "27c7ef00a5522750c2f93fd63b6e5a19b27e6500a34f6bc74965c100aa4126d6",
+    "after": "b2d7aac5a0f0dcd494a05046b967204cbff3c2915679c6c44809506ac96cb7ec"
+  },
+  "runtime/open-shaders/src/Features/Upscaling.cpp": {
+    "before": "1e0852ba5222fbd08563bd33d3ccb3a4be74a940f745e4fc5ca8f2ccff627b7f",
+    "after": "a970d1b35b4710ce7c8bf362a7779e9146ce20dc05743e6caf5a62bfcad7329b"
+  },
+  "runtime/open-shaders/src/Features/Upscaling/FoveatedRender.cpp": {
+    "before": "0368064706c35a9daee6edb096ec1d8bb0497ea00d0a0a67c2beda27af629f54",
+    "after": "79c468cbb8d5f10d92ef51a9b0f629e03ef73325a95523ad955dcd08277e7aff"
+  },
+  "runtime/open-shaders/src/Features/Upscaling/FoveatedRender.h": {
+    "before": "abe8f4d1d72b2e6885756ccb9132aa80f4de9f6c28a75a69c41d006a97d99b70",
+    "after": "4d6770ee8e9d5414d0153b9f258b0ddb3988c51778546fd7057824bfe2404326"
+  },
+  "runtime/open-shaders/src/Features/Upscaling/FoveatedRender/Core.cpp": {
+    "before": "96cb17e397f1c2b9d09450e09f17884a4f327322fe20962ecd987e1f617af808",
+    "after": "d685d527fd1b81f9034f22a14568529e246c44948c43f7dc70ea1a507464be7a"
+  },
+  "runtime/open-shaders/src/Features/Upscaling/FoveatedRender/Core.h": {
+    "before": "66fc07be599d8fd564014802aca1faf9feac680dcd6b7c4e2d8db831c0b3831c",
+    "after": "7d779d4ac3c26435c6c520a3c79beaa5372a10efc638253ca16b68490f8527c0"
+  },
+  "runtime/open-shaders/src/Features/Upscaling/FoveatedRender/Modes.cpp": {
+    "before": "621606435781fa406fc9f956f9180c298036609ccc1c34e58d433095a34ca56c",
+    "after": "84f8f8973abb91b98ac28014f4f1e7a4f489c52f5786b2941bfe67cc873b4545"
+  },
+  "runtime/open-shaders/src/Features/Upscaling/FoveatedRender/Params.cpp": {
+    "before": "4100f585ebff1c04f30e6ea85d277402ba1d86eb225f846e5f9f7eb253c36cba",
+    "after": "4d05dc3bd3eea52f2f3ff041caedc8e76e15c8844c7caa670f669b3404e4a39e"
+  },
+  "runtime/open-shaders/src/Features/Upscaling/FoveatedRender/Params.h": {
+    "before": "033889f55efe852ef815daf56a2d741f4faed56b90662a54f8125a8bcaa32ddd",
+    "after": "54cd7d0df0ad25f88d95156da25a15ac128bb3550e89146739efed8191ae68c4"
+  },
+  "runtime/open-shaders/src/Features/Upscaling/NeuralRendering/FeatherGeometry.h": {
+    "before": null,
+    "after": "c37e3a6ce87f86c7f06476785108c1d3a3f7263a683e1348db18bf630e3876ca"
+  },
+  "runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Integration.cpp": {
+    "before": "4d49fbfd7717ff68a5a0aa1157fb8aa817901f340ce76092a79cf056f8548b27",
+    "after": "3ef45150ec5bb90466c890ccb1c01db1cc5e03c54ad3590a872f64e164c75965"
+  },
+  "runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Renderer.cpp": {
+    "before": "c7d34330ad4722f53752dfe99cd98e17d3101c7bd9e7377a156d2aca9e4092ca",
+    "after": "860347a3ed2a4351ed0a4ff14355e727e5108f77c52e2b8afd4dd71cd6ce8da2"
+  },
+  "runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Renderer.h": {
+    "before": "2c0451aab39657946249122e9e297d8cbdb8a9dddac574a41cce6e0f21e90789",
+    "after": "d998fabffdbb4b775dbc53b65629fdc4d07b885a1e2673cd1c9165e1c7b379a9"
+  }
+}

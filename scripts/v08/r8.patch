@@ -1,0 +1,953 @@
+diff --git a/runtime/open-shaders/features/Upscaling/Shaders/Upscaling/NeuralRendering/FeatherGuidesCS.hlsl b/runtime/open-shaders/features/Upscaling/Shaders/Upscaling/NeuralRendering/FeatherGuidesCS.hlsl
+new file mode 100644
+index 0000000..757c03e
+--- /dev/null
++++ b/runtime/open-shaders/features/Upscaling/Shaders/Upscaling/NeuralRendering/FeatherGuidesCS.hlsl
+@@ -0,0 +1,53 @@
++#define FEATHER_LUT_SLOT t4
++#include "FeatherMap.hlsli"
++cbuffer FeatherGuides : register(b0)
++{
++	uint4 gCurrent, gPrevious, gLayout;
++	float4 gLeftOrigin, gRightOrigin, gMotionScale;
++	uint4 gFlags;
++	float4 gModelPitch, gLeftPhase, gRightPhase;
++	FeatherMapping gLeft, gRight, gPreviousLeft, gPreviousRight;
++};
++Texture2D<float2> gLeftMotion : register(t0);
++Texture2D<float2> gRightMotion : register(t1);
++Texture2D<float> gLeftDepth : register(t2);
++Texture2D<float> gRightDepth : register(t3);
++RWTexture2D<float2> gMotion : register(u0);
++RWTexture2D<float> gDepth : register(u1);
++float StableDelta(float physical, float previousPhysical, float sceneShift, FeatherAxis current, FeatherAxis previous, float fallback)
++{
++	if (physical >= current.bounds.x && physical <= current.bounds.y &&
++		previousPhysical >= previous.bounds.x && previousPhysical <= previous.bounds.y && current.curve.x == previous.curve.x)
++		return previous.bounds.w - current.bounds.w + (current.bounds.x - previous.bounds.x + sceneShift) / current.curve.x;
++	return fallback;
++}
++[numthreads(8,8,1)]
++void main(uint3 id : SV_DispatchThreadID)
++{
++	uint rightStart = gCurrent.z + gFlags.y;
++	if (id.x >= rightStart + gCurrent.z || id.y >= gCurrent.w) return;
++	bool right = id.x >= rightStart;
++	uint x = right ? id.x - rightStart : min(id.x, gCurrent.z-1);
++	FeatherMapping current = gLeft;
++	FeatherMapping previous = gPreviousLeft;
++	if (right) { current = gRight; previous = gPreviousRight; }
++	float4 origin = right ? gRightOrigin : gLeftOrigin;
++	float2 currentModel = (float2(x,id.y)+0.5) * float2(gCurrent.xy) / float2(gCurrent.zw);
++	float2 currentColor = FeatherPhysical(currentModel, current);
++	uint2 pixel = uint2(clamp(currentColor * float2(gCurrent.zw) / float2(gLayout.xy), 0.0, float2(gCurrent.zw)-1.0));
++	float2 raw = right ? gRightMotion.Load(int3(pixel,0)) : gLeftMotion.Load(int3(pixel,0));
++	gDepth[id.xy] = right ? gRightDepth.Load(int3(pixel,0)) : gLeftDepth.Load(int3(pixel,0));
++	float2 previousColor = currentColor + origin.xy - origin.zw + raw * gMotionScale.xy;
++	float2 previousModel = FeatherModel(previousColor, previous);
++	bool sourceValid = all(isfinite(raw)) && !any(asuint(raw) == 0x00800000u);
++	bool valid = gFlags.x != 0 && sourceValid && all(previousColor >= 0.0) &&
++		all(previousColor <= float2(gPrevious.zw)) && all(previousModel >= 0.5-0.001) &&
++		all(previousModel <= float2(gPrevious.xy)-0.5+0.001);
++	float2 delta = previousModel - currentModel;
++	float2 shift = origin.xy - origin.zw + raw * gMotionScale.xy;
++	delta.x = StableDelta(currentColor.x, previousColor.x, shift.x, current.x, previous.x, delta.x);
++	delta.y = StableDelta(currentColor.y, previousColor.y, shift.y, current.y, previous.y, delta.y);
++	if (right) delta.x += float(gPrevious.x + gLayout.w) - float(gCurrent.x + gLayout.z);
++	float2 rejection = float2(0.0, 2.0*gFlags.z/gMotionScale.w);
++	gMotion[id.xy] = !sourceValid ? raw : valid ? delta/gMotionScale.zw : rejection;
++}
+diff --git a/runtime/open-shaders/features/Upscaling/Shaders/Upscaling/NeuralRendering/FeatherMap.hlsli b/runtime/open-shaders/features/Upscaling/Shaders/Upscaling/NeuralRendering/FeatherMap.hlsli
+new file mode 100644
+index 0000000..74b45b3
+--- /dev/null
++++ b/runtime/open-shaders/features/Upscaling/Shaders/Upscaling/NeuralRendering/FeatherMap.hlsli
+@@ -0,0 +1,41 @@
++#ifndef FEATHER_LUT_SLOT
++#define FEATHER_LUT_SLOT t3
++#endif
++Texture1D<float> gFeatherInverse : register(FEATHER_LUT_SLOT);
++SamplerState gFeatherSampler : register(s0);
++
++struct FeatherAxis { float4 bounds; float4 curve; };
++struct FeatherMapping { FeatherAxis x; FeatherAxis y; };
++
++float FeatherToPhysical(float model, FeatherAxis axis)
++{
++	float end = axis.bounds.w + (axis.bounds.y - axis.bounds.x) / axis.curve.x;
++	bool left = model < axis.bounds.w;
++	if (!left && model <= end) return axis.bounds.x + (model - axis.bounds.w) * axis.curve.x;
++	float length = left ? axis.bounds.x : axis.bounds.z - axis.bounds.y;
++	float a = (axis.curve.y - 1.0) / (axis.curve.z + 1.0);
++	float distance = left ? axis.bounds.w - model : model - end;
++	float q = distance * axis.curve.x * (1.0 + a) / max(length, 1e-6);
++	float physical = length * (q + a * pow(max(q, 0.0), axis.curve.z + 1.0)) / (1.0 + a);
++	return left ? axis.bounds.x - physical : axis.bounds.y + physical;
++}
++float FeatherToModel(float physical, FeatherAxis axis)
++{
++	bool left = physical < axis.bounds.x;
++	if (!left && physical <= axis.bounds.y) return axis.bounds.w + (physical - axis.bounds.x) / axis.curve.x;
++	float length = left ? axis.bounds.x : axis.bounds.z - axis.bounds.y;
++	float distance = left ? axis.bounds.x - physical : physical - axis.bounds.y;
++	float a = (axis.curve.y - 1.0) / (axis.curve.z + 1.0);
++	float t = saturate(distance / max(length, 1e-6));
++	float q = gFeatherInverse.SampleLevel(gFeatherSampler, (t * 4096.0 + 0.5) / 4097.0, 0);
++	float packed = length * q / ((1.0 + a) * axis.curve.x);
++	return left ? axis.bounds.w - packed : axis.bounds.w + (axis.bounds.y - axis.bounds.x) / axis.curve.x + packed;
++}
++float2 FeatherPhysical(float2 model, FeatherMapping map)
++{
++	return float2(FeatherToPhysical(model.x, map.x), FeatherToPhysical(model.y, map.y));
++}
++float2 FeatherModel(float2 physical, FeatherMapping map)
++{
++	return float2(FeatherToModel(physical.x, map.x), FeatherToModel(physical.y, map.y));
++}
+diff --git a/runtime/open-shaders/features/Upscaling/Shaders/Upscaling/NeuralRendering/FeatherModelCS.hlsl b/runtime/open-shaders/features/Upscaling/Shaders/Upscaling/NeuralRendering/FeatherModelCS.hlsl
+new file mode 100644
+index 0000000..2533834
+--- /dev/null
++++ b/runtime/open-shaders/features/Upscaling/Shaders/Upscaling/NeuralRendering/FeatherModelCS.hlsl
+@@ -0,0 +1,63 @@
++#include "FeatherMap.hlsli"
++cbuffer FeatherModel : register(b0)
++{
++	uint4 gSize;
++	FeatherMapping gMap;
++	float4 gOptions; // mode, strength, outer fade fraction, residual luma limit
++};
++Texture2D<float4> gProxy : register(t0);
++Texture2D<float4> gModel : register(t1);
++Texture2D<float4> gOriginal : register(t2);
++RWTexture2D<float4> gTarget : register(u0);
++
++float4 ValidSample(Texture2D<float4> source, float2 pixel, float2 valid)
++{
++	uint width, height; source.GetDimensions(width, height);
++	return source.SampleLevel(gFeatherSampler, clamp(pixel, 0.5, valid - 0.5) / float2(width, height), 0);
++}
++[numthreads(8,8,1)]
++void main(uint3 id : SV_DispatchThreadID)
++{
++	if (any(id.xy >= gSize.xy)) return;
++	if (gOptions.x == 0.0) {
++		float2 begin = FeatherPhysical(float2(id.xy), gMap);
++		float2 end = FeatherPhysical(float2(id.xy + 1u), gMap);
++		float2 footprint = max(end - begin, 1e-5);
++		float4 sum = 0;
++		if (all(footprint <= 2.0)) {
++			int2 first = int2(floor(begin)), last = int2(ceil(end)) - 1;
++			[loop] for (int y = first.y; y <= last.y; ++y)
++				[loop] for (int x = first.x; x <= last.x; ++x) {
++					float weight = max(0.0, min(end.x, float(x+1)) - max(begin.x, float(x))) *
++						max(0.0, min(end.y, float(y+1)) - max(begin.y, float(y)));
++					sum += gProxy.Load(int3(clamp(int2(x,y), int2(0,0), int2(gSize.zw)-1),0)) * weight;
++				}
++			gTarget[id.xy] = sum / (footprint.x * footprint.y);
++		} else {
++			uint2 samples = uint2(clamp(ceil(footprint), 1.0, 4.0));
++			[loop] for (uint y = 0; y < samples.y; ++y)
++				[loop] for (uint x = 0; x < samples.x; ++x)
++					sum += ValidSample(gProxy, begin + (float2(x,y)+0.5) * footprint / float2(samples), float2(gSize.zw));
++			gTarget[id.xy] = sum / float(samples.x * samples.y);
++		}
++		return;
++	}
++	float2 physical = float2(id.xy) + 0.5;
++	float2 model = FeatherModel(physical, gMap);
++	float3 residual = ValidSample(gModel, model, float2(gSize.zw)).rgb - ValidSample(gProxy, model, float2(gSize.zw)).rgb;
++	float2 coreBegin = float2(gMap.x.bounds.x, gMap.y.bounds.x);
++	float2 coreEnd = float2(gMap.x.bounds.y, gMap.y.bounds.y);
++	float2 extent = float2(gMap.x.bounds.z, gMap.y.bounds.z);
++	float2 outer = max((coreBegin - physical) / max(coreBegin, 1e-6), (physical - coreEnd) / max(extent - coreEnd, 1e-6));
++	float distance = saturate(max(outer.x, outer.y));
++	float exterior = smoothstep(0.0, 0.05, distance);
++	float weight = lerp(1.0, gOptions.y, exterior) * (1.0 - smoothstep(1.0 - gOptions.z, 1.0, distance));
++	float4 original = gOriginal.Load(int3(id.xy,0));
++	if (gOptions.w > 1.0) {
++		float originalLuma = dot(original.rgb, float3(0.2126,0.7152,0.0722));
++		float residualLuma = dot(residual, float3(0.2126,0.7152,0.0722));
++		float maxDelta = max(originalLuma * max(gOptions.w-1.0, 0.05), 0.01);
++		if (abs(residualLuma) > maxDelta) residual *= maxDelta / max(abs(residualLuma),1e-6);
++	}
++	gTarget[id.xy] = float4(max(original.rgb + residual * weight, 0.0), original.a);
++}
+diff --git a/runtime/open-shaders/src/Features/RemoteControl/DevBenchBridge.cpp b/runtime/open-shaders/src/Features/RemoteControl/DevBenchBridge.cpp
+index 56bb3cf..59b444f 100644
+--- a/runtime/open-shaders/src/Features/RemoteControl/DevBenchBridge.cpp
++++ b/runtime/open-shaders/src/Features/RemoteControl/DevBenchBridge.cpp
+@@ -1288,7 +1288,7 @@ namespace DevBenchBridge
+ 		RegisterDevBenchUx();
+ 
+ 		static constexpr const char* actionsDesc =
+-			R"({"description":"Devbench-registered one-shot commands and read-only queries -- the imperative/derived-state counterpart to openshaders.feature's settings get/set. A feature exposes these via FEATURE_COMMAND/FEATURE_QUERY in its Feature::RegisterUxActions() override (see Utils/DevBenchUx.h); every feature also gets two built-in queries for free: matchesPerformanceProfile and profilePreviewText (params: profile=performance|balanced|quality), mirroring Feature::MatchesPerformanceProfile/GetProfilePreviewText so a profile button's highlighted/tooltip state is readable without re-deriving it from raw settings. Upscaling also exposes resetNeuralRendering (queued render-thread NR/DLSS/crop recovery reset, no arguments), neuralRenderingStatus (read-only failure, recovery and evaluation counters, no arguments), neuralRenderingOutputStatus (read-only optional result-shaping/stabilization settings and temporal-reuse suppression state, configuration eligibility only), setNeuralRenderingResultShaping (params enabled: boolean), and eyeTrackingStatus (read-only native gaze validity, query cost, last-valid-query age rather than sensor age, raw/filtered gaze, crop coordinates and reset counters, no arguments). Action-dispatched. listCommands/listQueries: params shortName, returns [{name,description}]. invokeCommand: params shortName, name, args (object, optional) -- queued onto the main thread, fire-and-forget, same as openshaders.feature toggle/set. invokeQuery: params shortName, name, args (object, optional) -- runs synchronously on the main thread and returns the result (queries read live feature state, so they marshal the same way a settings get does). Unknown shortName/name returns a plain error, never a crash. Inside-NR configureNeuralBlackProtection accepts optional strength [0,2] and threshold [0.001,0.25], liftSoftness [0.00001,0.05]; neuralRenderingOutputStatus reports both. configureAdaptivePerformance changes the sole six-stage controller; adaptiveFrameStatus reports its live state. Endpoint thresholds act only at stages 5 and 6. Protection controls do not reset NR histories.","inputSchema":{"type":"object","properties":{"action":{"type":"string","enum":["listCommands","listQueries","invokeCommand","invokeQuery"]},"shortName":{"type":"string"},"name":{"type":"string"},"args":{"type":"object","description":"Command-specific parameters. configureAdaptivePerformance: optional budgetMs [10,30], recoveryHeadroomMs [0.5,5], handoffMs [0,500], disableAboveMs [10,50], enableBelowMs [1,50], ordered enableBelowMs less than disableAboveMs; cropDrop integer 10,15,20; forcedStage integer 0 Auto or 1..6 forced; endpoint thresholds apply only at stages 5 and 6. configureNeuralBlackProtection: optional strength [0,2], threshold [0.001,0.25], liftSoftness [0.00001,0.05]; positive NR edits only, after shaping, inside the NR crop. Other commands retain their listed parameters."}}}})";
++			R"({"description":"Devbench-registered one-shot commands and read-only queries -- the imperative/derived-state counterpart to openshaders.feature's settings get/set. A feature exposes these via FEATURE_COMMAND/FEATURE_QUERY in its Feature::RegisterUxActions() override (see Utils/DevBenchUx.h); every feature also gets two built-in queries for free: matchesPerformanceProfile and profilePreviewText (params: profile=performance|balanced|quality), mirroring Feature::MatchesPerformanceProfile/GetProfilePreviewText so a profile button's highlighted/tooltip state is readable without re-deriving it from raw settings. Upscaling also exposes resetNeuralRendering (queued render-thread NR/DLSS/crop recovery reset, no arguments), neuralRenderingStatus (read-only failure, recovery and evaluation counters, no arguments), neuralRenderingOutputStatus (read-only optional result-shaping/stabilization settings and temporal-reuse suppression state, configuration eligibility only), setNeuralRenderingResultShaping (params enabled: boolean), and eyeTrackingStatus (read-only native gaze validity, query cost, last-valid-query age rather than sensor age, raw/filtered gaze, crop coordinates and reset counters, no arguments). Action-dispatched. listCommands/listQueries: params shortName, returns [{name,description}]. invokeCommand: params shortName, name, args (object, optional) -- queued onto the main thread, fire-and-forget, same as openshaders.feature toggle/set. invokeQuery: params shortName, name, args (object, optional) -- runs synchronously on the main thread and returns the result (queries read live feature state, so they marshal the same way a settings get does). Unknown shortName/name returns a plain error, never a crash. Inside-NR configureNeuralBlackProtection accepts optional strength [0,2] and threshold [0.001,0.25], liftSoftness [0.00001,0.05]; neuralRenderingOutputStatus reports both. configureAdaptivePerformance changes the sole six-stage controller; adaptiveFrameStatus reports its live state. Endpoint thresholds act only at stages 5 and 6. Protection controls do not reset NR histories. configureNeuralFeather controls experimental expanded SR and compressed exterior in the same atlas; neuralFeatherStatus reports settings and active extents. Disabled by default.","inputSchema":{"type":"object","properties":{"action":{"type":"string","enum":["listCommands","listQueries","invokeCommand","invokeQuery"]},"shortName":{"type":"string"},"name":{"type":"string"},"args":{"type":"object","description":"Command-specific parameters. configureAdaptivePerformance: optional budgetMs [10,30], recoveryHeadroomMs [0.5,5], handoffMs [0,500], disableAboveMs [10,50], enableBelowMs [1,50], ordered enableBelowMs less than disableAboveMs; cropDrop integer 10,15,20; forcedStage integer 0 Auto or 1..6 forced; endpoint thresholds apply only at stages 5 and 6. configureNeuralBlackProtection: optional strength [0,2], threshold [0.001,0.25], liftSoftness [0.00001,0.05]; positive NR edits only, after shaping, inside the NR crop. configureNeuralFeather: optional enabled boolean, expansion [0,100] percent per axis, compression [1,20], curve [1,4], strength [0,2], fade [0.01,1]; atomic finite validation. Other commands retain their listed parameters."}}}})";
+ 		dvb->RegisterTool("openshaders.actions", actionsDesc, &ActionsToolHandler, nullptr);
+ 
+ 		static constexpr const char* shadercacheDesc =
+diff --git a/runtime/open-shaders/src/Features/Upscaling.cpp b/runtime/open-shaders/src/Features/Upscaling.cpp
+index f433c4f..c89900d 100644
+--- a/runtime/open-shaders/src/Features/Upscaling.cpp
++++ b/runtime/open-shaders/src/Features/Upscaling.cpp
+@@ -672,6 +672,42 @@ std::string Upscaling::GetProfilePreviewText(PerfProfile profile) const
+ 
+ void Upscaling::RegisterUxActions()
+ {
++	FEATURE_COMMAND("configureNeuralFeather",
++		"Experimental single-atlas exterior sampling. Optional enabled boolean; expansion [0,100] percent per axis, compression [1,20], curve [1,4], strength [0,2], fade [0.01,1]. Validated atomically. Disabled by default. Geometry changes settle through existing history handling.",
++		[](Feature*, const json& args) {
++			const auto read = [&args](const char* key, float current, float low, float high) {
++				if (!args.contains(key)) return current;
++				if (!args[key].is_number()) throw std::invalid_argument(std::string(key) + " must be numeric");
++				const float value = args[key].get<float>();
++				if (!std::isfinite(value) || value < low || value > high) throw std::invalid_argument(std::string(key) + " is outside its finite range");
++				return value;
++			};
++			if (args.contains("enabled") && !args["enabled"].is_boolean()) throw std::invalid_argument("enabled must be boolean");
++			auto& settings = foveatedRender.settings;
++			const bool enabled = args.value("enabled", settings.neuralFeatherEnabled);
++			const float expansion = read("expansion", settings.neuralFeatherExpansion, 0, 100);
++			const float compression = read("compression", settings.neuralFeatherCompression, 1, 20);
++			const float curve = read("curve", settings.neuralFeatherCurve, 1, 4);
++			const float strength = read("strength", settings.neuralFeatherStrength, 0, 2);
++			const float fade = read("fade", settings.neuralFeatherFade, 0.01f, 1);
++			settings.neuralFeatherEnabled = enabled;
++			settings.neuralFeatherExpansion = expansion;
++			settings.neuralFeatherCompression = compression;
++			settings.neuralFeatherCurve = curve;
++			settings.neuralFeatherStrength = strength;
++			settings.neuralFeatherFade = fade;
++		});
++	FEATURE_QUERY("neuralFeatherStatus",
++		"Read experimental sampling settings and active SR/core extents. Active is false in controller stage 6, full-eye selection, or NR bypass. GPU timings are available under FeatherDownsample, FeatherGuides, FeatherResolve.",
++		[](const Feature*, const json&) -> json {
++			const auto& settings = foveatedRender.settings;
++			const auto& core = FoveatedRenderImpl::Core::neuralCorePlan.eyes[0].output;
++			const auto& expanded = FoveatedRenderImpl::Core::neuralCropPlan.eyes[0].output;
++			return json({ { "enabled", settings.neuralFeatherEnabled }, { "active", FoveatedRenderImpl::Core::neuralFeatherActive },
++				{ "expansion", settings.neuralFeatherExpansion }, { "compression", settings.neuralFeatherCompression },
++				{ "curve", settings.neuralFeatherCurve }, { "strength", settings.neuralFeatherStrength }, { "fade", settings.neuralFeatherFade },
++				{ "coreSize", { core.width, core.height } }, { "srSize", { expanded.width, expanded.height } } });
++		});
+ 	FEATURE_COMMAND("configureNeuralBlackProtection",
+ 		"Inside-NR positive-edit protection after shaping. Optional strength [0,2], threshold [0.001,0.25] in source RGB-peak units, liftSoftness [0.00001,0.05]. 0 disables. Validated atomically; no native/history reset. Independent of result-shaping toggle.",
+ 		[](Feature*, const json& args) {
+diff --git a/runtime/open-shaders/src/Features/Upscaling/FoveatedRender.cpp b/runtime/open-shaders/src/Features/Upscaling/FoveatedRender.cpp
+index 081deba..669de97 100644
+--- a/runtime/open-shaders/src/Features/Upscaling/FoveatedRender.cpp
++++ b/runtime/open-shaders/src/Features/Upscaling/FoveatedRender.cpp
+@@ -119,6 +119,12 @@ void from_json(const BasicJsonType& json, FoveatedRender::SequentialPassSettings
+ 	X(neuralRenderingNearBlackThreshold) \
+ 	X(neuralRenderingNearBlackLiftSoftness) \
+ 	X(neuralRenderingStereoAtlasGuardPixels) \
++	X(neuralFeatherEnabled) \
++	X(neuralFeatherExpansion) \
++	X(neuralFeatherCompression) \
++	X(neuralFeatherCurve) \
++	X(neuralFeatherStrength) \
++	X(neuralFeatherFade) \
+ 	X(neuralRenderingAdaptiveEnabled) \
+ 	X(neuralRenderingAdaptiveSmoothingMs) \
+ 	X(neuralRenderingAdaptiveDecreaseHoldMs) \
+@@ -374,6 +380,12 @@ void FoveatedRender::ClampSettings()
+ 	settings.neuralRenderingResolveMode = std::min(settings.neuralRenderingResolveMode, 1u);
+ 	settings.neuralRenderingMultiPass = std::min(settings.neuralRenderingMultiPass, 2u);
+ 	settings.neuralRenderingStereoAtlasGuardPixels = std::clamp(settings.neuralRenderingStereoAtlasGuardPixels, 8u, 256u);
++	settings.neuralFeatherExpansion = clampFinite(settings.neuralFeatherExpansion, 50.0f, 0.0f, 100.0f);
++	settings.neuralFeatherCompression = clampFinite(settings.neuralFeatherCompression, 10.0f, 1.0f, 20.0f);
++	settings.neuralFeatherCurve = clampFinite(settings.neuralFeatherCurve, 2.0f, 1.0f, 4.0f);
++	settings.neuralFeatherStrength = clampFinite(settings.neuralFeatherStrength, 1.0f, 0.0f, 2.0f);
++	settings.neuralFeatherFade = clampFinite(settings.neuralFeatherFade, 0.25f, 0.01f, 1.0f);
++
+ 	settings.neuralRenderingAdaptiveSecondPassCostMs = clampFinite(settings.neuralRenderingAdaptiveSecondPassCostMs, 6.0f, 0.0f, 20.0f);
+ 	auto& pass2 = settings.neuralRenderingPass2;
+ 	switch (pass2.coveragePercent) {
+@@ -1333,6 +1345,17 @@ const char* FoveatedRender::SubrectMaskModeName(SubrectMaskMode mode)
+ 
+ 			ImGui::TextDisabled("Pipeline: SR → one stereo-atlas NR pass | Matched Residual");
+ 
++			if (ImGui::CollapsingHeader("Experimental neural feather")) {
++				ImGui::Checkbox("Expand SR and neural feather", &settings.neuralFeatherEnabled);
++				ImGui::SliderFloat("Exterior expansion per axis", &settings.neuralFeatherExpansion, 0.0f, 100.0f, "%.0f%%");
++				ImGui::SliderFloat("Edge compression per axis", &settings.neuralFeatherCompression, 1.0f, 20.0f, "%.1fx");
++				ImGui::SliderFloat("Compression curve", &settings.neuralFeatherCurve, 1.0f, 4.0f, "%.2f");
++				ImGui::SliderFloat("Exterior neural strength", &settings.neuralFeatherStrength, 0.0f, 2.0f, "%.2f");
++				ImGui::SliderFloat("Outer residual fade", &settings.neuralFeatherFade, 0.01f, 1.0f, "%.2f");
++				drawWrapped("Gradually reduces neural sampling outside the selected crop before the same stereo-atlas evaluation. Higher curve values preserve quality farther outward. The centre follows the controller's NR resolution. The larger SR region adds separate GPU cost; stage 6 bypasses this extension.");
++				drawWrapped("Default off. Close the menu and wait for transitions before comparing GPU frametime. Sampling changes can reset histories once; gaze movement uses mapped motion. Save Settings to persist.");
++			}
++
+ 			if (ImGui::CollapsingHeader("NR near-black protection")) {
+ 				ImGui::SliderFloat("Protection strength", &settings.neuralRenderingNearBlackProtection, 0.0f, 2.0f, "%.2f");
+ 				ImGui::SliderFloat("Dark threshold", &settings.neuralRenderingNearBlackThreshold, 0.001f, 0.25f, "%.3f");
+diff --git a/runtime/open-shaders/src/Features/Upscaling/FoveatedRender.h b/runtime/open-shaders/src/Features/Upscaling/FoveatedRender.h
+index fc2445e..ce1ef64 100644
+--- a/runtime/open-shaders/src/Features/Upscaling/FoveatedRender.h
++++ b/runtime/open-shaders/src/Features/Upscaling/FoveatedRender.h
+@@ -220,6 +220,13 @@ struct FoveatedRender
+ 		// to the normal independent-eye path.
+ 		bool neuralRenderingStereoAtlas = true;
+ 		uint neuralRenderingStereoAtlasGuardPixels = 50;
++		bool neuralFeatherEnabled = false;
++		float neuralFeatherExpansion = 50.0f;
++		float neuralFeatherCompression = 10.0f;
++		float neuralFeatherCurve = 2.0f;
++		float neuralFeatherStrength = 1.0f;
++		float neuralFeatherFade = 0.25f;
++
+ 		// Adaptive controller estimate used when deciding whether a two-pass route
+ 		// can fit the frame budget without oscillating simply because pass 2 toggles.
+ 		float neuralRenderingAdaptiveSecondPassCostMs = 6.0f;
+diff --git a/runtime/open-shaders/src/Features/Upscaling/FoveatedRender/Core.cpp b/runtime/open-shaders/src/Features/Upscaling/FoveatedRender/Core.cpp
+index 85827b5..54f6773 100644
+--- a/runtime/open-shaders/src/Features/Upscaling/FoveatedRender/Core.cpp
++++ b/runtime/open-shaders/src/Features/Upscaling/FoveatedRender/Core.cpp
+@@ -1737,6 +1737,7 @@ namespace FoveatedRenderImpl
+ 		activeSubrectUVHash = 0;
+ 		neuralGuidesFrame = UINT32_MAX;
+ 		neuralCropPlanFrame = UINT32_MAX;
++		neuralFeatherActive = false;
+ 		CropMotion::Clear();
+ 		ResetAdaptiveCropHandoff();
+ 	}
+@@ -1752,6 +1753,7 @@ namespace FoveatedRenderImpl
+ 		vrTemporalHistoryValid = false;
+ 		neuralGuidesFrame = UINT32_MAX;
+ 		neuralCropPlanFrame = UINT32_MAX;
++		neuralFeatherActive = false;
+ 		// Keep the displayed image only while the adaptive crop controller is in
+ 		// its short transition. Ordinary crop/menu/history resets must fail closed
+ 		// rather than blend against an unrelated frame.
+diff --git a/runtime/open-shaders/src/Features/Upscaling/FoveatedRender/Core.h b/runtime/open-shaders/src/Features/Upscaling/FoveatedRender/Core.h
+index cdf85f3..1750f67 100644
+--- a/runtime/open-shaders/src/Features/Upscaling/FoveatedRender/Core.h
++++ b/runtime/open-shaders/src/Features/Upscaling/FoveatedRender/Core.h
+@@ -180,6 +180,8 @@ namespace FoveatedRenderImpl
+ 		// Subrect UV hash for resource recreation detection
+ 		static inline uint64_t activeSubrectUVHash = 0;
+ 		static inline CropGeometry::FramePlan neuralCropPlan{};
++		static inline CropGeometry::FramePlan neuralCorePlan{};
++		static inline bool neuralFeatherActive = false;
+ 		static inline uint32_t neuralCropPlanFrame = UINT32_MAX;
+ 		static inline uint32_t neuralGuidesFrame = UINT32_MAX;
+ 
+diff --git a/runtime/open-shaders/src/Features/Upscaling/FoveatedRender/Modes.cpp b/runtime/open-shaders/src/Features/Upscaling/FoveatedRender/Modes.cpp
+index 72ae8ad..751c20c 100644
+--- a/runtime/open-shaders/src/Features/Upscaling/FoveatedRender/Modes.cpp
++++ b/runtime/open-shaders/src/Features/Upscaling/FoveatedRender/Modes.cpp
+@@ -9,6 +9,7 @@
+ 
+ #include "Bridge.h"
+ #include "Core.h"
++#include "../NeuralRendering/FeatherGeometry.h"
+ #include "Ops.h"
+ #include "Params.h"
+ #include "../CropMotion.h"
+@@ -58,6 +59,7 @@ namespace FoveatedRenderImpl
+ 		globals::features::upscaling.foveatedRender.UpdateAdaptiveState(frame, true);
+ 		auto p = VRDlssParams::Resolve(upscalingTexture, depthTexture, reactiveMask, transparencyMask, motionVectors);
+ 		Core::neuralCropPlanFrame = UINT32_MAX;
++		Core::neuralFeatherActive = false;
+ 		std::array<std::array<float, 2>, 2> motionScales{};
+ 		for (uint32_t eye = 0; eye < motionScales.size(); ++eye)
+ 			motionScales[eye] = CropGeometry::MotionVectorScale(p.eyeWidthIn, p.eyeHeightIn, p.cropPlan.eyes[eye].input);
+@@ -105,6 +107,8 @@ namespace FoveatedRenderImpl
+ 		Bridge::CommitCropFrame(result && Core::neuralGuidesFrame == frame && Bridge::cropFrame == frame);
+ 		if (result && Core::neuralGuidesFrame == frame) {
+ 			Core::neuralCropPlan = p.cropPlan;
++			Core::neuralCorePlan = p.neuralCorePlan;
++			Core::neuralFeatherActive = p.neuralFeatherActive;
+ 			Core::neuralCropPlanFrame = frame;
+ 		}
+ 		Bridge::foveatedEvaluating = false;
+@@ -176,7 +180,8 @@ namespace FoveatedRenderImpl
+ 		// current tier. This matters after a route/device reset while the controller
+ 		// is already at a reduced tier: restoration must not grow the backing set one
+ 		// tier at a time and recreate resources again.
+-		const auto selectedCrop = globals::features::upscaling.foveatedRender.subrectController.GetUV();
++		auto selectedCrop = globals::features::upscaling.foveatedRender.subrectController.GetUV();
++		if (p.neuralFeatherActive) selectedCrop = NeuralRendering::FeatherGeometry::Expand(selectedCrop, globals::features::upscaling.foveatedRender.settings.neuralFeatherExpansion);
+ 		const auto envelopePlan = CropGeometry::MakeEyePlan(selectedCrop.x, selectedCrop.y, selectedCrop.w, selectedCrop.h,
+ 			p.eyeWidthIn, p.eyeHeightIn, p.eyeWidthOut, p.eyeHeightOut);
+ 		const uint32_t envelopeSubInW = fixedEnvelopeCandidate ? std::max(allocSubInW, envelopePlan.input.width) : allocSubInW;
+diff --git a/runtime/open-shaders/src/Features/Upscaling/FoveatedRender/Params.cpp b/runtime/open-shaders/src/Features/Upscaling/FoveatedRender/Params.cpp
+index 18c2c96..b9847d8 100644
+--- a/runtime/open-shaders/src/Features/Upscaling/FoveatedRender/Params.cpp
++++ b/runtime/open-shaders/src/Features/Upscaling/FoveatedRender/Params.cpp
+@@ -1,4 +1,5 @@
+ #include "Params.h"
++#include "../NeuralRendering/FeatherGeometry.h"
+ 
+ #include "../../../State.h"
+ #include "../../../Utils/Game.h"
+@@ -74,6 +75,18 @@ namespace FoveatedRenderImpl
+ 		p.eyeTrackedGazeActive = gaze.dynamic;
+ 		p.eyeTrackedGazeConfigured = gazeRequested;
+ 		p.eyeTrackedGazeReset = gaze.historyReset;
++		p.neuralCorePlan = { p.eyeWidthIn, p.eyeHeightIn, p.eyeWidthOut, p.eyeHeightOut,
++			{ CropGeometry::MakeEyePlan(p.leftUV.x, p.leftUV.y, p.leftUV.w, p.leftUV.h, p.eyeWidthIn, p.eyeHeightIn, p.eyeWidthOut, p.eyeHeightOut),
++			  CropGeometry::MakeEyePlan(p.rightUV.x, p.rightUV.y, p.rightUV.w, p.rightUV.h, p.eyeWidthIn, p.eyeHeightIn, p.eyeWidthOut, p.eyeHeightOut) } };
++		p.neuralFeatherActive = enhancer.settings.neuralFeatherEnabled && enhancer.settings.neuralFeatherExpansion > 0.0f &&
++			enhancer.settings.neuralRenderingEnabled && p.mode == FoveatedRender::DlssMode::kDefault &&
++			upscaling.GetUpscaleMethod() == Upscaling::UpscaleMethod::kDLSS &&
++			(!enhancer.settings.neuralRenderingAdaptiveEnabled || !enhancer.adaptivePassInitialized || enhancer.adaptiveActivePasses > 0) &&
++			!(p.leftUV.IsFullEye() && p.rightUV.IsFullEye());
++		if (p.neuralFeatherActive) {
++			p.leftUV = NeuralRendering::FeatherGeometry::Expand(p.leftUV, enhancer.settings.neuralFeatherExpansion);
++			p.rightUV = NeuralRendering::FeatherGeometry::Expand(p.rightUV, enhancer.settings.neuralFeatherExpansion);
++		}
+ 		p.isFullEye = p.leftUV.IsFullEye() && p.rightUV.IsFullEye();
+ 
+ 		// Jitter — ConfigureUpscaling already computed correct DLSS jitter.
+diff --git a/runtime/open-shaders/src/Features/Upscaling/FoveatedRender/Params.h b/runtime/open-shaders/src/Features/Upscaling/FoveatedRender/Params.h
+index 94f9225..6a6f54f 100644
+--- a/runtime/open-shaders/src/Features/Upscaling/FoveatedRender/Params.h
++++ b/runtime/open-shaders/src/Features/Upscaling/FoveatedRender/Params.h
+@@ -15,6 +15,8 @@ namespace FoveatedRenderImpl
+ 	struct VRDlssParams
+ 	{
+ 		CropGeometry::FramePlan cropPlan{};
++		CropGeometry::FramePlan neuralCorePlan{};
++		bool neuralFeatherActive = false;
+ 		// Dimensions
+ 		uint32_t renderW;       // SBS render width  (after DRS)
+ 		uint32_t renderH;       // SBS render height (after DRS)
+diff --git a/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/FeatherGeometry.h b/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/FeatherGeometry.h
+new file mode 100644
+index 0000000..7bc3727
+--- /dev/null
++++ b/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/FeatherGeometry.h
+@@ -0,0 +1,84 @@
++#pragma once
++#include <algorithm>
++#include <array>
++#include <cmath>
++#include <cstdint>
++
++namespace NeuralRendering::FeatherGeometry
++{
++	struct Axis
++	{
++		float begin = 0, end = 0, extent = 0, packedBegin = 0;
++		float pitch = 1, compression = 1, power = 2, packedExtent = 0;
++	};
++	struct Mapping { Axis x, y; };
++	static_assert(sizeof(Mapping) == 64);
++
++	/** Expand around the current gaze centre without changing the selected crop. */
++	template<class Region> Region Expand(Region region, float percent)
++	{
++		const float factor = 1.0f + std::clamp(percent, 0.0f, 100.0f) * 0.01f;
++		const float width = std::min(1.0f, region.w * factor);
++		const float height = std::min(1.0f, region.h * factor);
++		region.x = std::clamp(region.x + (region.w - width) * 0.5f, 0.0f, 1.0f - width);
++		region.y = std::clamp(region.y + (region.h - height) * 0.5f, 0.0f, 1.0f - height);
++		region.w = width; region.h = height;
++		return region;
++	}
++
++	/** Keep the centre on the full-eye model lattice and compress only its exterior. */
++	inline Axis MakeAxis(float begin, float end, float extent, float origin, float pitch, float compression, float power)
++	{
++		Axis axis;
++		axis.pitch = std::clamp(pitch, 1.0f, 100.0f / 70.0f);
++		axis.compression = std::clamp(compression, 1.0f, 20.0f);
++		axis.power = std::clamp(power, 1.0f, 4.0f);
++		const float phase = std::floor((origin + begin) / axis.pitch) * axis.pitch - origin - begin;
++		axis.extent = extent;
++		axis.begin = std::clamp(begin + phase, 0.0f, extent);
++		axis.end = std::clamp(end + phase, axis.begin, extent);
++		const float divisor = 1.0f + (axis.compression - 1.0f) / (axis.power + 1.0f);
++		axis.packedBegin = std::ceil(axis.begin / (divisor * axis.pitch));
++		axis.packedExtent = std::ceil(axis.packedBegin + (axis.end - axis.begin) / axis.pitch +
++			(extent - axis.end) / (divisor * axis.pitch));
++		return axis;
++	}
++
++	inline float ExteriorToPhysical(float distance, float length, const Axis& axis)
++	{
++		if (length <= 0) return 0;
++		const float a = (axis.compression - 1.0f) / (axis.power + 1.0f);
++		const float q = distance * axis.pitch * (1.0f + a) / length;
++		return length * (q + a * std::pow(std::max(q, 0.0f), axis.power + 1.0f)) / (1.0f + a);
++	}
++	inline float ExteriorToModel(float distance, float length, const Axis& axis)
++	{
++		if (length <= 0) return 0;
++		const float a = (axis.compression - 1.0f) / (axis.power + 1.0f);
++		const float t = std::clamp(distance / length, 0.0f, 1.0f);
++		float q = t, low = 0, high = 1;
++		for (unsigned i = 0; i < 10; ++i) {
++			const float value = (q + a * std::pow(q, axis.power + 1.0f)) / (1.0f + a) - t;
++			if (std::abs(value) < 1e-7f) break;
++			if (value > 0) high = q; else low = q;
++			const float derivative = (1.0f + (axis.compression - 1.0f) * std::pow(q, axis.power)) / (1.0f + a);
++			const float candidate = q - value / derivative;
++			q = candidate >= low && candidate <= high ? candidate : (low + high) * 0.5f;
++		}
++		return length * q / ((1.0f + a) * axis.pitch);
++	}
++	inline float ToPhysical(float model, const Axis& axis)
++	{
++		const float end = axis.packedBegin + (axis.end - axis.begin) / axis.pitch;
++		if (model < axis.packedBegin) return axis.begin - ExteriorToPhysical(axis.packedBegin - model, axis.begin, axis);
++		if (model > end) return axis.end + ExteriorToPhysical(model - end, axis.extent - axis.end, axis);
++		return axis.begin + (model - axis.packedBegin) * axis.pitch;
++	}
++	inline float ToModel(float physical, const Axis& axis)
++	{
++		if (physical < axis.begin) return axis.packedBegin - ExteriorToModel(axis.begin - physical, axis.begin, axis);
++		if (physical > axis.end) return axis.packedBegin + (axis.end - axis.begin) / axis.pitch +
++			ExteriorToModel(physical - axis.end, axis.extent - axis.end, axis);
++		return axis.packedBegin + (physical - axis.begin) / axis.pitch;
++	}
++}
+diff --git a/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Integration.cpp b/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Integration.cpp
+index f6ea69b..d444f27 100644
+--- a/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Integration.cpp
++++ b/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Integration.cpp
+@@ -661,7 +661,13 @@ Tuning tuning{
+ 			return false;
+ 		const auto& leftUV = gaze.leftUV;
+ 		const auto& rightUV = gaze.rightUV;
+-		const bool fullEye = leftUV.IsFullEye() && rightUV.IsFullEye();
++		const bool featherActive = FoveatedRenderImpl::Core::neuralFeatherActive &&
++			FoveatedRenderImpl::Core::neuralCropPlanFrame == frame;
++		const auto& srPlan = FoveatedRenderImpl::Core::neuralCropPlan;
++		const bool fullEye = featherActive ?
++			(srPlan.eyes[0].output.width == totalDesc.Width / 2 && srPlan.eyes[0].output.height == totalDesc.Height &&
++			 srPlan.eyes[1].output.width == totalDesc.Width / 2 && srPlan.eyes[1].output.height == totalDesc.Height) :
++			leftUV.IsFullEye() && rightUV.IsFullEye();
+ 		const auto* depthLeft = fullEye ? FoveatedRenderImpl::Core::vrIntermediateDepth[0].get() : FoveatedRenderImpl::Core::vrSubrectDepth[0].get();
+ 		const auto* depthRight = fullEye ? FoveatedRenderImpl::Core::vrIntermediateDepth[1].get() : FoveatedRenderImpl::Core::vrSubrectDepth[1].get();
+ 		const auto* motionLeft = fullEye ? FoveatedRenderImpl::Core::vrIntermediateMotionVectors[0].get() : FoveatedRenderImpl::Core::vrSubrectMotionVectors[0].get();
+@@ -688,7 +694,7 @@ Tuning tuning{
+ 			std::uint32_t guideWidth = fullGuideWidth;
+ 			std::uint32_t guideHeight = fullGuideHeight;
+ 
+-		if (sharedCropPlan && !fullEye) {
++		if (sharedCropPlan && (!fullEye || featherActive)) {
+ 			outWidth = cropPlan.eyes[0].output.width;
+ 			outHeight = cropPlan.eyes[0].output.height;
+ 		}
+@@ -801,6 +807,19 @@ Tuning tuning{
+ 				.guideSourceY = coverageCrop ? coverageRect.guideY : 0u,
+ 			};
+ 			inputs[eye].sceneColorMotionScale = { float(eyeWidth), float(totalDesc.Height) };
++			if (featherActive && sharedCropPlan) {
++				const auto& core = FoveatedRenderImpl::Core::neuralCorePlan.eyes[eye].output;
++				const auto& expanded = cropPlan.eyes[eye].output;
++				const float pitch = 100.0f / (foveated.settings.neuralRenderingAdaptiveEnabled && foveated.adaptivePassInitialized ? foveated.adaptiveModelResolution : 100u);
++				const auto& settings = foveated.settings;
++				inputs[eye].featherEnabled = true;
++				inputs[eye].feather = {
++					FeatherGeometry::MakeAxis(float(core.x) - expanded.x, float(core.x + core.width) - expanded.x, float(outWidth), float(x), pitch, settings.neuralFeatherCompression, settings.neuralFeatherCurve),
++					FeatherGeometry::MakeAxis(float(core.y) - expanded.y, float(core.y + core.height) - expanded.y, float(outHeight), float(y), pitch, settings.neuralFeatherCompression, settings.neuralFeatherCurve) };
++				inputs[eye].featherStrength = settings.neuralFeatherStrength;
++				inputs[eye].featherFade = settings.neuralFeatherFade;
++			}
++
+ 			if (sharedCropPlan && !fullEye && foveated.GetDlssMode() == FoveatedRender::DlssMode::kDefault) {
+ 				const auto sampling = FoveatedRenderImpl::CropGeometry::GuideSampling(cropPlan, eye);
+ 				inputs[eye].guideScale = sampling.scale;
+@@ -808,6 +827,11 @@ Tuning tuning{
+ 			}
+ 		}
+ 		Tuning tuning = GetTuning(foveated, true);
++		if (featherActive) {
++			tuning.singlePassLadder = true;
++			tuning.multiPass = 0;
++			tuning.temporalReuseCadence = 0;
++		}
+ 		if (!fullEye && tuning.adaptiveResolution && !tuning.adaptiveHandoff && !adaptiveCropHandoffDisabledLogged) {
+ 			logger::info("[DLSSNR] adaptive NR history handoff disabled while adaptive crop is active; using current-frame crop feathering");
+ 			adaptiveCropHandoffDisabledLogged = true;
+diff --git a/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Renderer.cpp b/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Renderer.cpp
+index 14a1e38..84355fe 100644
+--- a/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Renderer.cpp
++++ b/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Renderer.cpp
+@@ -605,6 +605,9 @@ namespace NeuralRendering
+ 			SharedTexture color;
+ 			SharedTexture depth;
+ 			SharedTexture motionVectors;
++			bool featherEnabled = false;
++			FeatherGeometry::Mapping feather{};
++			float featherStrength = 1.0f, featherFade = 0.25f;
+ 			std::array<float, 4> modelSampling{ 1, 1, 0, 0 };
+ 			std::array<float, 2> sceneColorMotionScale{};
+ 			bool movingCrop = false;
+@@ -974,8 +977,9 @@ namespace NeuralRendering
+ 			if (!GetTextureDesc(color, colorDesc))
+ 				return false;
+ 			const std::uint32_t modelResolution = NormalizeModelResolution(tuning.modelResolutionPercent);
+-			const std::uint32_t modelWidth = ScaleDimension(colorWidth, modelResolution);
+-			const std::uint32_t modelHeight = ScaleDimension(colorHeight, modelResolution);
++			const bool featherEnabled = inputs[0].featherEnabled && inputs[1].featherEnabled;
++			const std::uint32_t modelWidth = featherEnabled ? static_cast<std::uint32_t>(std::max(inputs[0].feather.x.packedExtent, inputs[1].feather.x.packedExtent)) : ScaleDimension(colorWidth, modelResolution);
++			const std::uint32_t modelHeight = featherEnabled ? static_cast<std::uint32_t>(std::max(inputs[0].feather.y.packedExtent, inputs[1].feather.y.packedExtent)) : ScaleDimension(colorHeight, modelResolution);
+ 			const bool stableEnvelope = resourceEnvelope.IsValid();
+ 			const std::uint32_t stableColorWidth = stableEnvelope ? resourceEnvelope.colorWidth : colorWidth;
+ 			const std::uint32_t stableColorHeight = stableEnvelope ? resourceEnvelope.colorHeight : colorHeight;
+@@ -995,7 +999,7 @@ namespace NeuralRendering
+ 					return false;
+ 				if (!EnsureResources(device, eyeIndex, color, input.depth, input.motionVectors,
+ 						guideWidth, guideHeight, colorWidth, colorHeight, modelWidth, modelHeight, passCount, modelResolution, passCount > 1 ? tuning.secondPass.coveragePercent : 100u,
+-						tuning.adaptiveResolution, resourceEnvelope, tuning.adaptiveMemoryCeiling))
++						tuning.adaptiveResolution, resourceEnvelope, tuning.adaptiveMemoryCeiling, featherEnabled))
+ 					return LatchFailure("shared resource creation", interop.LastError());
+ 
+ 				D3D11_BOX sourceBox{
+@@ -1004,6 +1008,10 @@ namespace NeuralRendering
+ 				};
+ 				auto& eye = eyes[eyeIndex];
+ 				auto& tier = eye.tiers[tierIndex];
++				eye.featherEnabled = featherEnabled;
++				eye.feather = input.feather;
++				eye.featherStrength = input.featherStrength;
++				eye.featherFade = input.featherFade;
+ 				eye.movingCrop = input.compensateCropMotion;
+ 				eye.sceneColorMotionScale = input.sceneColorMotionScale;
+ 				eye.modelSampling = FoveatedRenderImpl::CropGeometry::ModelSampling(colorWidth, colorHeight,
+@@ -1237,7 +1245,7 @@ namespace NeuralRendering
+ 				captureInfo.style = tuning.style;
+ 				captureInfo.useAutoMask = tuning.useAutoMask;
+ 				captureInfo.uiCorrection = tuning.uiCorrection;
+-				captureInfo.route = cropTemporalLayout ? "feature18_crop" : "feature18_stereo";
++				captureInfo.route = featherEnabled ? "feature18_feather_packed" : cropTemporalLayout ? "feature18_crop" : "feature18_stereo";
+ 				#if defined(OPENNR_CAPTURE_ENABLED)
+ 				for (std::uint32_t eyeIndex = 0; eyeIndex < inputs.size(); ++eyeIndex)
+ 					AppendRendererConditioningAvailability(captureInfo, inputs[eyeIndex].sourceX, inputs[eyeIndex].sourceY,
+@@ -1584,6 +1592,8 @@ namespace NeuralRendering
+ 			alignGuidesCS.Reset();
+ 			alignGuidesCB.Reset();
+ 			modelResolutionCS.Reset();
++			featherModelCS.Reset();
++			featherGuidesCS.Reset();
+ 			temporalSnapshotCS.Reset();
+ 			temporalAccumulateCS.Reset();
+ 			temporalReprojectCS.Reset();
+@@ -1604,6 +1614,9 @@ namespace NeuralRendering
+ 			stereoAtlasActiveLogged = false;
+ 			stereoAtlasFallbackLogged = false;
+ 			modelResolutionCB.Reset();
++			featherModelCB.Reset();
++			featherInverseSRV.Reset();
++			featherGuideCB.Reset();
+ 			modelResolutionSampler.Reset();
+ 			temporalReuseCB.Reset();
+ 			temporalReuseSampler.Reset();
+@@ -1640,6 +1653,8 @@ namespace NeuralRendering
+ 			alignGuidesCS.Reset();
+ 			alignGuidesCB.Reset();
+ 			modelResolutionCS.Reset();
++			featherModelCS.Reset();
++			featherGuidesCS.Reset();
+ 			temporalSnapshotCS.Reset();
+ 			temporalAccumulateCS.Reset();
+ 			temporalReprojectCS.Reset();
+@@ -1676,7 +1691,7 @@ namespace NeuralRendering
+ 				const auto& eye = eyes[eyeIndex];
+ 				const auto& tier = eye.tiers[tierIndex];
+ 				if (!eye.sharedResourcesValid || tier.modelResolution != normalizedResolution ||
+-					tier.passCount != 1 || tier.reducedResolution != (normalizedResolution != 100) ||
++					tier.passCount != 1 || tier.reducedResolution != (normalizedResolution != 100 || eye.featherEnabled) ||
+ 					!tier.output.resource11 || !Runtime::Instance().HasFeature(FeatureSlot(eyeIndex, tierIndex, 0)))
+ 					return false;
+ 			}
+@@ -2545,11 +2560,85 @@ namespace NeuralRendering
+ 			return true;
+ 		}
+ 
++		struct FeatherModelConstants
++		{
++			std::array<std::uint32_t, 4> size{};
++			FeatherGeometry::Mapping mapping{};
++			std::array<float, 4> options{};
++		};
++		static_assert(sizeof(FeatherModelConstants) == 96);
++
++		bool EnsureFeatherBuffer(ID3D11Device* device, Microsoft::WRL::ComPtr<ID3D11Buffer>& buffer, UINT size, const char* name)
++		{
++			if (buffer) return true;
++			D3D11_BUFFER_DESC desc{};
++			desc.ByteWidth = size;
++			desc.Usage = D3D11_USAGE_DEFAULT;
++			desc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
++			if (FAILED(device->CreateBuffer(&desc, nullptr, buffer.GetAddressOf()))) return false;
++			Util::SetResourceName(buffer.Get(), name);
++			return true;
++		}
++
++		bool EnsureFeatherCurve(ID3D11Device* device, const FeatherGeometry::Mapping& mapping)
++		{
++			if (featherInverseSRV && featherCurve == std::array<float, 2>{ mapping.x.compression, mapping.x.power }) return true;
++			std::array<float, 4097> samples{};
++			auto axis = mapping.x;
++			axis.pitch = 1.0f;
++			const float divisor = 1.0f + (axis.compression - 1.0f) / (axis.power + 1.0f);
++			for (std::size_t i = 0; i < samples.size(); ++i)
++				samples[i] = FeatherGeometry::ExteriorToModel(float(i) / 4096.0f, 1.0f, axis) * divisor;
++			D3D11_TEXTURE1D_DESC desc{};
++			desc.Width = static_cast<UINT>(samples.size()); desc.MipLevels = 1; desc.ArraySize = 1;
++			desc.Format = DXGI_FORMAT_R32_FLOAT; desc.Usage = D3D11_USAGE_IMMUTABLE;
++			desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
++			D3D11_SUBRESOURCE_DATA data{ samples.data(), 0, 0 };
++			Microsoft::WRL::ComPtr<ID3D11Texture1D> texture;
++			Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> view;
++			if (FAILED(device->CreateTexture1D(&desc, &data, texture.GetAddressOf())) ||
++				FAILED(device->CreateShaderResourceView(texture.Get(), nullptr, view.GetAddressOf()))) return false;
++			Util::SetResourceName(texture.Get(), "NeuralRendering::FeatherInverse");
++			Util::SetResourceName(view.Get(), "NeuralRendering::FeatherInverseSRV");
++			featherInverseSRV = std::move(view);
++			featherCurve = { mapping.x.compression, mapping.x.power };
++			return true;
++		}
++
++		bool DispatchFeatherModel(ID3D11Device* device, ID3D11DeviceContext* context, const EyeResources& eye,
++			const TierResources& tier, std::uint32_t width, std::uint32_t height,
++			std::uint32_t sourceWidth, std::uint32_t sourceHeight, bool resolve, float maxRatio)
++		{
++			if (!context || !EnsureModelResolutionResources(device) || !EnsureFeatherCurve(device, eye.feather) ||
++				!featherModelCS.Get(L"Data\\Shaders\\Upscaling\\NeuralRendering\\FeatherModelCS.hlsl", {}, "cs_5_0", "main", "NeuralRendering::FeatherModel") ||
++				!EnsureFeatherBuffer(device, featherModelCB, sizeof(FeatherModelConstants), "NeuralRendering::FeatherModelCB")) return false;
++			const auto* target = resolve ? tier.resolvedUAV.Get() : tier.modelInput.uav11.Get();
++			if (!target || !eye.color.srv11 || (resolve && (!tier.modelInput.srv11 || !tier.output.srv11))) return false;
++			FeatherModelConstants data{ { width, height, sourceWidth, sourceHeight }, eye.feather,
++				{ resolve ? 1.0f : 0.0f, eye.featherStrength, eye.featherFade, maxRatio } };
++			context->UpdateSubresource(featherModelCB.Get(), 0, nullptr, &data, 0, 0);
++			ID3D11ShaderResourceView* sources[]{ resolve ? tier.modelInput.srv11.Get() : eye.color.srv11.Get(),
++				resolve ? tier.output.srv11.Get() : nullptr, resolve ? eye.color.srv11.Get() : nullptr, featherInverseSRV.Get() };
++			ID3D11UnorderedAccessView* uav = resolve ? tier.resolvedUAV.Get() : tier.modelInput.uav11.Get();
++			ID3D11Buffer* cb = featherModelCB.Get();
++			ID3D11SamplerState* sampler = modelResolutionSampler.Get();
++			CS_GPU_PASS_SELECT(resolve, "NeuralRendering::FeatherResolve", "NeuralRendering::FeatherDownsample");
++			context->CSSetShader(featherModelCS.get(), nullptr, 0);
++			context->CSSetConstantBuffers(0, 1, &cb);
++			context->CSSetShaderResources(0, 4, sources);
++			context->CSSetUnorderedAccessViews(0, 1, &uav, nullptr);
++			context->CSSetSamplers(0, 1, &sampler);
++			context->Dispatch((width+7)/8, (height+7)/8, 1);
++			ClearModelResolutionBindings(context, 4);
++			return true;
++		}
++
+ 		bool DispatchModelInput(ID3D11Device* device, ID3D11DeviceContext* context, const EyeResources& eye,
+ 			const TierResources& tier,
+ 			std::uint32_t sourceWidth, std::uint32_t sourceHeight,
+ 			std::uint32_t modelWidth, std::uint32_t modelHeight, bool exactArea)
+ 		{
++			if (eye.featherEnabled) return DispatchFeatherModel(device, context, eye, tier, modelWidth, modelHeight, sourceWidth, sourceHeight, false, 0.0f);
+ 			if (!EnsureModelResolutionResources(device) || !context || !eye.color.srv11 || !tier.modelInput.uav11)
+ 				return false;
+ 			CS_GPU_PASS("NeuralRendering::ModelDownsample");
+@@ -2582,6 +2671,10 @@ namespace NeuralRendering
+ 			std::uint32_t width, std::uint32_t height, const ModelResolveSettings& resolveSettings,
+ 			bool matchedResidual)
+ 		{
++			if (eye.featherEnabled) return DispatchFeatherModel(device, context, eye, tier, width, height,
++				static_cast<std::uint32_t>(std::max(eyes[0].feather.x.packedExtent, eyes[1].feather.x.packedExtent)),
++				static_cast<std::uint32_t>(std::max(eyes[0].feather.y.packedExtent, eyes[1].feather.y.packedExtent)), true,
++				tier.modelResolution == 100 ? 0.0f : resolveSettings.maxRatio);
+ 			if (!EnsureModelResolutionResources(device) || !context || !eye.color.srv11 || !tier.modelInput.srv11 ||
+ 				!tier.output.srv11 || !tier.resolvedUAV)
+ 				return false;
+@@ -3103,7 +3196,7 @@ namespace NeuralRendering
+ 		bool EnsureTierResources(ID3D11Device* device, std::uint32_t eyeIndex, EyeResources& eye,
+ 			std::uint32_t tierIndex, std::uint32_t modelWidth, std::uint32_t modelHeight,
+ 			std::uint32_t passCount, std::uint32_t modelResolution, std::uint32_t secondPassCoverage,
+-			std::uint32_t resourceColorWidth, std::uint32_t resourceColorHeight)
++			std::uint32_t resourceColorWidth, std::uint32_t resourceColorHeight, bool featherEnabled = false)
+ 		{
+ 			if (!device || eyeIndex >= eyes.size() || tierIndex >= kResolutionTierCount ||
+ 				modelWidth == 0 || modelHeight == 0 || passCount == 0 || passCount > kCascadePassCount ||
+@@ -3113,13 +3206,13 @@ namespace NeuralRendering
+ 			// The valid crop can be smaller than the stable backing resource even
+ 			// at the native NR tier. Tier identity, not the transient crop extent,
+ 			// decides whether a model-input resolve is required.
+-			const bool reducedResolution = modelResolution != 100;
++			const bool reducedResolution = modelResolution != 100 || featherEnabled;
+ 			const bool multiPass = passCount > 1;
+ 			const std::uint32_t pass2Coverage = multiPass ? std::clamp(secondPassCoverage, 50u, 100u) : 100u;
+ 			const bool croppedSecondPass = multiPass && pass2Coverage < 100;
+ 			const UINT sharedFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
+-			const auto resourceModelWidth = ScaleDimension(resourceColorWidth, modelResolution);
+-			const auto resourceModelHeight = ScaleDimension(resourceColorHeight, modelResolution);
++			const auto resourceModelWidth = featherEnabled ? resourceColorWidth + 2u : ScaleDimension(resourceColorWidth, modelResolution);
++			const auto resourceModelHeight = featherEnabled ? resourceColorHeight + 2u : ScaleDimension(resourceColorHeight, modelResolution);
+ 			const auto modelInputDesc = MakeSharedDesc(eye.color.desc, resourceModelWidth, resourceModelHeight, sharedFlags);
+ 			const auto outputDesc = MakeSharedDesc(eye.color.desc, resourceModelWidth, resourceModelHeight, sharedFlags);
+ 			const auto pass2OutputDesc = outputDesc;
+@@ -3197,7 +3290,7 @@ namespace NeuralRendering
+ 			std::uint32_t colorWidth, std::uint32_t colorHeight,
+ 			std::uint32_t modelWidth, std::uint32_t modelHeight, std::uint32_t passCount,
+ 			std::uint32_t modelResolution, std::uint32_t secondPassCoverage, bool prewarmAdaptive,
+-			const StereoResourceEnvelope& resourceEnvelope, std::uint32_t memoryCeiling)
++			const StereoResourceEnvelope& resourceEnvelope, std::uint32_t memoryCeiling, bool featherEnabled = false)
+ 		{
+ 			if (!device || eyeIndex >= eyes.size() || guideWidth == 0 || guideHeight == 0 ||
+ 				colorWidth == 0 || colorHeight == 0 || modelWidth == 0 || modelHeight == 0 ||
+@@ -3286,16 +3379,16 @@ namespace NeuralRendering
+ 				resetPending[eyeIndex][resident] = true;
+ 			}
+ 			if (!EnsureTierResources(device, eyeIndex, eye, tierIndex, modelWidth, modelHeight, passCount, modelResolution,
+-				secondPassCoverage, sharedColorWidth, sharedColorHeight))
++				secondPassCoverage, sharedColorWidth, sharedColorHeight, featherEnabled))
+ 				return false;
+ 			if (tierChanged)
+ 				resetPending[eyeIndex][tierIndex] = true;
+-			const std::uint32_t resourceModelWidth = useEnvelope ?
++			const std::uint32_t resourceModelWidth = featherEnabled ? eye.tiers[tierIndex].modelInput.desc.Width : useEnvelope ?
+ 				ScaleDimension(sharedColorWidth, modelResolution) : modelWidth;
+-			const std::uint32_t resourceModelHeight = useEnvelope ?
++			const std::uint32_t resourceModelHeight = featherEnabled ? eye.tiers[tierIndex].modelInput.desc.Height : useEnvelope ?
+ 				ScaleDimension(sharedColorHeight, modelResolution) : modelHeight;
+-			const std::uint32_t featureInputWidth = modelResolution == 100 ? sharedColorWidth : resourceModelWidth;
+-			const std::uint32_t featureInputHeight = modelResolution == 100 ? sharedColorHeight : resourceModelHeight;
++			const std::uint32_t featureInputWidth = modelResolution == 100 && !featherEnabled ? sharedColorWidth : resourceModelWidth;
++			const std::uint32_t featureInputHeight = modelResolution == 100 && !featherEnabled ? sharedColorHeight : resourceModelHeight;
+ 			const std::uint32_t pass2Coverage = passCount > 1 ? std::clamp(secondPassCoverage, 50u, 100u) : 100u;
+ 			for (std::uint32_t pass = 0; pass < passCount; ++pass) {
+ 				const bool croppedPass2 = pass == 1 && pass2Coverage < 100;
+@@ -3627,6 +3720,7 @@ namespace NeuralRendering
+ 			std::uint32_t modelWidth = 0, modelHeight = 0, colorWidth = 0, colorHeight = 0, guard = 0, frame = UINT32_MAX;
+ 			std::array<std::array<std::uint32_t, 2>, 2> origins{};
+ 			std::array<std::array<float, 4>, 2> sampling{};
++			std::array<FeatherGeometry::Mapping, 2> feather{};
+ 			bool valid = false;
+ 		};
+ 		struct LadderAtlasConstants
+@@ -3638,6 +3732,48 @@ namespace NeuralRendering
+ 		};
+ 		static_assert(sizeof(LadderAtlasConstants) == 160);
+ 
++		struct FeatherGuideConstants
++		{
++			LadderAtlasConstants ladder{};
++			std::array<FeatherGeometry::Mapping, 4> mappings{};
++		};
++		static_assert(sizeof(FeatherGuideConstants) == 416);
++
++		bool DispatchFeatherGuides(ID3D11Device* device, ID3D11DeviceContext* context, const LadderAtlasConstants& ladder)
++		{
++			if (!EnsureModelResolutionResources(device) || !EnsureFeatherCurve(device, eyes[0].feather) || !featherGuidesCS.Get(L"Data\\Shaders\\Upscaling\\NeuralRendering\\FeatherGuidesCS.hlsl", {}, "cs_5_0", "main", "NeuralRendering::FeatherGuides") ||
++				!EnsureFeatherBuffer(device, featherGuideCB, sizeof(FeatherGuideConstants), "NeuralRendering::FeatherGuideCB")) return false;
++			FeatherGuideConstants data{ ladder, { eyes[0].feather, eyes[1].feather,
++				ladderAtlasGeometry.feather[0], ladderAtlasGeometry.feather[1] } };
++			if (!data.ladder.flags[0]) {
++				data.mappings[2] = data.mappings[0];
++				data.mappings[3] = data.mappings[1];
++			}
++			context->UpdateSubresource(featherGuideCB.Get(), 0, nullptr, &data, 0, 0);
++			ID3D11ShaderResourceView* sources[]{ eyes[0].motionVectors.srv11.Get(), eyes[1].motionVectors.srv11.Get(),
++				eyes[0].depth.srv11.Get(), eyes[1].depth.srv11.Get(), featherInverseSRV.Get() };
++			ID3D11UnorderedAccessView* targets[]{ stereoAtlas.motionVectors.uav11.Get(), stereoAtlas.depth.uav11.Get() };
++			ID3D11Buffer* cb = featherGuideCB.Get();
++			CS_GPU_PASS("NeuralRendering::FeatherGuides");
++			ID3D11SamplerState* sampler = modelResolutionSampler.Get();
++			context->CSSetSamplers(0, 1, &sampler);
++			context->CSSetShader(featherGuidesCS.get(), nullptr, 0);
++			context->CSSetConstantBuffers(0, 1, &cb);
++			context->CSSetShaderResources(0, 5, sources);
++			context->CSSetUnorderedAccessViews(0, 2, targets, nullptr);
++			context->Dispatch((ladder.current[2]*2+ladder.flags[1]+7)/8, (ladder.current[3]+7)/8, 1);
++			ID3D11ShaderResourceView* nullSources[5]{};
++			ID3D11UnorderedAccessView* nullTargets[2]{};
++			context->CSSetShaderResources(0, 5, nullSources);
++			context->CSSetUnorderedAccessViews(0, 2, nullTargets, nullptr);
++			ID3D11Buffer* nullCB = nullptr;
++			context->CSSetConstantBuffers(0, 1, &nullCB);
++			ID3D11SamplerState* nullSampler = nullptr;
++			context->CSSetSamplers(0, 1, &nullSampler);
++			context->CSSetShader(nullptr, nullptr, 0);
++			return true;
++		}
++
+ 		bool PackLadderGuides(ID3D11Device* device, ID3D11DeviceContext* context,
+ 			const std::array<StereoEyeInput, 2>& inputs,
+ 			std::uint32_t colorWidth, std::uint32_t colorHeight,
+@@ -3682,6 +3818,7 @@ namespace NeuralRendering
+ 				std::abs(2.0f * stereoAtlas.colorEyeHeight / data.motionScale[3]) > 65504.0f)
+ 				return false;
+ 			data.flags = { previousValid ? 1u : 0u, guideGuard, stereoAtlas.colorEyeHeight, 0u };
++			if (eyes[0].featherEnabled) return DispatchFeatherGuides(device, context, data);
+ 			CS_GPU_PASS("NeuralRendering::LadderAtlasGuides");
+ 			context->UpdateSubresource(ladderAtlasCB.Get(), 0, nullptr, &data, 0, 0);
+ 			ID3D11ShaderResourceView* sources[]{ eyes[0].motionVectors.srv11.Get(), eyes[1].motionVectors.srv11.Get(),
+@@ -3722,6 +3859,14 @@ namespace NeuralRendering
+ 				ResetStereoAtlasFeatures();
+ 				stereoAtlasActiveLastFrame = false;
+ 			}
++			const bool featherMode = eyes[0].featherEnabled;
++			if (stereoAtlasFeatherMode != featherMode || (featherMode && ladderAtlasGeometry.valid &&
++				(eyes[0].feather.x.compression != ladderAtlasGeometry.feather[0].x.compression ||
++				 eyes[0].feather.x.power != ladderAtlasGeometry.feather[0].x.power))) {
++				stereoAtlasResetPending = true;
++				ladderAtlasGeometry.valid = false;
++			}
++			stereoAtlasFeatherMode = featherMode;
+ 			stereoAtlasModeObserved = true;
+ 			stereoAtlasSinglePassMode = tuning.singlePassLadder;
+ 			const bool scalesMatch = std::abs(inputs[0].motionVectorScaleX - inputs[1].motionVectorScaleX) < 1e-4f &&
+@@ -3744,9 +3889,9 @@ namespace NeuralRendering
+ 			const auto colorGuard = std::clamp(ScaleDimension(requestedGuard, modelResolution), 1u, modelWidth);
+ 			const auto guideGuard = std::clamp(static_cast<std::uint32_t>(std::lround(
+ 				static_cast<double>(colorGuard) * guideWidth / std::max(modelWidth, 1u))), 1u, guideWidth);
+-			const auto residentModelWidth = tuning.singlePassLadder ? eyes[0].color.desc.Width : eyes[0].tiers[tierIndex].reducedResolution ?
++			const auto residentModelWidth = eyes[0].featherEnabled ? eyes[0].tiers[tierIndex].modelInput.desc.Width : tuning.singlePassLadder ? eyes[0].color.desc.Width : eyes[0].tiers[tierIndex].reducedResolution ?
+ 				eyes[0].tiers[tierIndex].modelInput.desc.Width : eyes[0].color.desc.Width;
+-			const auto residentModelHeight = tuning.singlePassLadder ? eyes[0].color.desc.Height : eyes[0].tiers[tierIndex].reducedResolution ?
++			const auto residentModelHeight = eyes[0].featherEnabled ? eyes[0].tiers[tierIndex].modelInput.desc.Height : tuning.singlePassLadder ? eyes[0].color.desc.Height : eyes[0].tiers[tierIndex].reducedResolution ?
+ 				eyes[0].tiers[tierIndex].modelInput.desc.Height : eyes[0].color.desc.Height;
+ 			if (!EnsureStereoAtlasResources(device, residentModelWidth, residentModelHeight,
+ 				eyes[0].depth.desc.Width, eyes[0].depth.desc.Height,
+@@ -3847,7 +3992,7 @@ namespace NeuralRendering
+ 				ladderAtlasGeometry = { modelWidth, modelHeight, colorWidth, colorHeight, colorGuard,
+ 					globals::state->frameCount,
+ 					{{ { inputs[0].sourceX, inputs[0].sourceY }, { inputs[1].sourceX, inputs[1].sourceY } }},
+-					{ eyes[0].modelSampling, eyes[1].modelSampling }, true };
++					{ eyes[0].modelSampling, eyes[1].modelSampling }, { eyes[0].feather, eyes[1].feather }, true };
+ 			} else ladderAtlasGeometry.valid = false;
+ 			stereoAtlasResetPending = false;
+ 			stereoAtlasActiveLastFrame = true;
+@@ -3887,6 +4032,10 @@ namespace NeuralRendering
+ 		Util::LazyShader<ID3D11ComputeShader> stereoAtlasMotionPackCS;
+ 		Microsoft::WRL::ComPtr<ID3D11Buffer> sequentialCompositeCB;
+ 		Microsoft::WRL::ComPtr<ID3D11Buffer> stereoAtlasPackCB;
++		Util::LazyShader<ID3D11ComputeShader> featherModelCS, featherGuidesCS;
++		Microsoft::WRL::ComPtr<ID3D11Buffer> featherModelCB, featherGuideCB;
++		Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> featherInverseSRV;
++		std::array<float, 2> featherCurve{};
+ 		Microsoft::WRL::ComPtr<ID3D11Buffer> modelResolutionCB;
+ 		Microsoft::WRL::ComPtr<ID3D11SamplerState> modelResolutionSampler;
+ 		Microsoft::WRL::ComPtr<ID3D11Buffer> temporalReuseCB;
+@@ -3898,6 +4047,7 @@ namespace NeuralRendering
+ 		std::array<EyeResources, 2> eyes;
+ 		LadderAtlasGeometry ladderAtlasGeometry;
+ 		bool stereoAtlasModeObserved = false;
++		bool stereoAtlasFeatherMode = false;
+ 		bool stereoAtlasSinglePassMode = false;
+ 		Util::LazyShader<ID3D11ComputeShader> ladderAtlasGuidesCS;
+ 		Microsoft::WRL::ComPtr<ID3D11Buffer> ladderAtlasCB;
+diff --git a/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Renderer.h b/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Renderer.h
+index 22cbdd0..0e37cb5 100644
+--- a/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Renderer.h
++++ b/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/Renderer.h
+@@ -1,6 +1,7 @@
+ #pragma once
+ 
+ #include "Runtime.h"
++#include "FeatherGeometry.h"
+ 
+ #include <array>
+ #include <cstdint>
+@@ -33,6 +34,9 @@ namespace NeuralRendering
+ 			std::array<float, 2> guideScale{ 1.0f, 1.0f };
+ 			std::array<float, 2> guideOffset{};
+ 			std::array<float, 2> sceneColorMotionScale{};
++			bool featherEnabled = false;
++			FeatherGeometry::Mapping feather{};
++			float featherStrength = 1.0f, featherFade = 0.25f;
+ 			};
+ 
+ 			// Optional stable resource envelope for the adaptive regular-crop
