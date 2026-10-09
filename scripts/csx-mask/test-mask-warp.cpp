@@ -10,6 +10,7 @@
 #include <stdexcept>
 #include <vector>
 #include <string_view>
+#include <string>
 using Microsoft::WRL::ComPtr;
 void Check(HRESULT result) {if(FAILED(result)) throw std::runtime_error("D3D11 HRESULT " + std::to_string(static_cast<unsigned>(result)));}
 void Require(bool result,const char* reason) {if(!result) throw std::runtime_error(reason);}
