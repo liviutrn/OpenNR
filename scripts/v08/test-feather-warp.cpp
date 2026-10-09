@@ -61,8 +61,8 @@ int main() {
     D3D11_SAMPLER_DESC sd{};sd.Filter=D3D11_FILTER_MIN_MAG_MIP_LINEAR;sd.AddressU=sd.AddressV=sd.AddressW=D3D11_TEXTURE_ADDRESS_CLAMP;sd.MaxLOD=D3D11_FLOAT32_MAX;
     ComPtr<ID3D11SamplerState> sampler;Check(d->CreateSamplerState(&sd,sampler.GetAddressOf()));ID3D11SamplerState* sp=sampler.Get();c->CSSetSamplers(0,1,&sp);
     auto mb=Buffer(d.Get(),96),gb=Buffer(d.Get(),416);unsigned cases=0;
-    for(float compression:{1.f,3.f,10.f,20.f}) for(float power:{1.f,2.f,4.f}) for(float resolution:{100.f,85.f,70.f}) {
-        Mapping map{MakeAxis(12,52,64,17,100/resolution,compression,power),MakeAxis(10,38,48,31,100/resolution,compression,power)};
+    for(float compression:{1.f,3.f,10.f,20.f}) for(float power:{1.f,2.f,4.f}) for(float resolution:{100.f,85.f,70.f}) for(float inset:{0.f,12.f}) {
+        Mapping map{MakeAxis(inset,52,64,17,100/resolution,compression,power),MakeAxis(inset==0?0.f:10.f,38,48,31,100/resolution,compression,power)};
         const UINT mw=static_cast<UINT>(map.x.packedExtent),mh=static_cast<UINT>(map.y.packedExtent);
         auto original=Make(d.Get(),64,48),proxy=Make(d.Get(),mw,mh),nr=Make(d.Get(),mw,mh),out=Make(d.Get(),64,48);auto lut=LUT(d.Get(),compression,power);
         std::vector<float> source(64*48*4);

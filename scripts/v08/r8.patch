@@ -415,7 +415,7 @@ index 94f9225..6a6f54f 100644
  		uint32_t renderH;       // SBS render height (after DRS)
 diff --git a/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/FeatherGeometry.h b/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/FeatherGeometry.h
 new file mode 100644
-index 0000000..7bc3727
+index 0000000..300a863
 --- /dev/null
 +++ b/runtime/open-shaders/src/Features/Upscaling/NeuralRendering/FeatherGeometry.h
 @@ -0,0 +1,84 @@
@@ -456,10 +456,10 @@ index 0000000..7bc3727
 +		axis.power = std::clamp(power, 1.0f, 4.0f);
 +		const float phase = std::floor((origin + begin) / axis.pitch) * axis.pitch - origin - begin;
 +		axis.extent = extent;
-+		axis.begin = std::clamp(begin + phase, 0.0f, extent);
++		axis.begin = std::clamp(begin + phase, -axis.pitch, extent);
 +		axis.end = std::clamp(end + phase, axis.begin, extent);
 +		const float divisor = 1.0f + (axis.compression - 1.0f) / (axis.power + 1.0f);
-+		axis.packedBegin = std::ceil(axis.begin / (divisor * axis.pitch));
++		axis.packedBegin = std::ceil(std::max(axis.begin, 0.0f) / (divisor * axis.pitch));
 +		axis.packedExtent = std::ceil(axis.packedBegin + (axis.end - axis.begin) / axis.pitch +
 +			(extent - axis.end) / (divisor * axis.pitch));
 +		return axis;

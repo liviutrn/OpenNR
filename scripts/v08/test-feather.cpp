@@ -26,7 +26,7 @@ int main()
         const float mid=(a.begin+a.end)*.5f;
         Require(std::abs(ToPhysical(ToModel(mid,a)+1,a)-mid-pitch)<.001f,"Centre pitch changed");
         const float lattice=(origin+a.begin)/pitch;
-        if(a.begin>0) Require(std::abs(lattice-std::round(lattice))<.001f,"Centre phase not eye anchored");
+        Require(std::abs(lattice-std::round(lattice))<.001f,"Centre phase not eye anchored");
         // Independent derivative of the forward curve at both ends.
         const float length=a.extent-a.end;
         if(length>32.f) {
