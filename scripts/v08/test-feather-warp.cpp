@@ -97,15 +97,15 @@ int main() {
         auto leftMV=Make(d.Get(),32,24,2),rightMV=Make(d.Get(),32,24,2),leftDepth=Make(d.Get(),32,24,1),rightDepth=Make(d.Get(),32,24,1),motion=Make(d.Get(),68,24,2),depth=Make(d.Get(),68,24,1);
         std::vector<float> mv(32*24*2),z(32*24);for(UINT i=0;i<32*24;++i){mv[i*2]=.002f;mv[i*2+1]=-.001f;z[i]=float(i)*.0001f;}
         Upload(c.Get(),leftMV,mv);Upload(c.Get(),rightMV,mv);Upload(c.Get(),leftDepth,z);Upload(c.Get(),rightDepth,z);
-        GuideConstants gc{};gc.current={mw,mh,32,24};gc.previous={static_cast<UINT>(prev.x.packedExtent),static_cast<UINT>(prev.y.packedExtent),52,40};gc.layout={64,48,4,6};gc.left={17,31,20,29};gc.right={2017,31,2020,29};gc.scale={1000,1000,float(mw)/32,float(mh)/24};gc.flags={1,4,64,0};gc.mappings={map,map,prev,prev};
+        GuideConstants gc{};const UINT gw=std::min(32u,mw),gh=std::min(24u,mh);gc.current={mw,mh,gw,gh};gc.pitch={32,24,0,0};gc.previous={static_cast<UINT>(prev.x.packedExtent),static_cast<UINT>(prev.y.packedExtent),52,40};gc.layout={64,48,4,6};gc.left={17,31,20,29};gc.right={2017,31,2020,29};gc.scale={1000,1000,float(mw)/float(gw),float(mh)/float(gh)};gc.flags={1,4,64,0};gc.mappings={map,map,prev,prev};
         for(UINT valid:{0u,1u}) {
             gc.flags[0]=valid;c->UpdateSubresource(gb.Get(),0,nullptr,&gc,0,0);cb=gb.Get();c->CSSetConstantBuffers(0,1,&cb);
             ID3D11ShaderResourceView* s[]{leftMV.srv.Get(),rightMV.srv.Get(),leftDepth.srv.Get(),rightDepth.srv.Get(),lut.Get()};c->CSSetShaderResources(0,5,s);ID3D11UnorderedAccessView* u[]{motion.uav.Get(),depth.uav.Get()};c->CSSetUnorderedAccessViews(0,2,u,nullptr);c->CSSetShader(guidesShader.Get(),nullptr,0);c->Dispatch(9,3,1);Unbind(c.Get());auto vectors=Read(d.Get(),c.Get(),motion),depths=Read(d.Get(),c.Get(),depth);
-            for(UINT eye=0;eye<2;++eye) for(UINT y=0;y<24;++y) for(UINT x=0;x<32;++x) {
-                const float cx=(float(x)+.5f)*float(mw)/32,cy=(float(y)+.5f)*float(mh)/24,px=ToPhysical(cx,map.x),py=ToPhysical(cy,map.y);
+            for(UINT eye=0;eye<2;++eye) for(UINT y=0;y<gh;++y) for(UINT x=0;x<gw;++x) {
+                const float cx=(float(x)+.5f)*float(mw)/float(gw),cy=(float(y)+.5f)*float(mh)/float(gh),px=ToPhysical(cx,map.x),py=ToPhysical(cy,map.y);
                 const float ppx=px-3+2,ppy=py+2-1,pmx=ToModel(ppx,prev.x),pmy=ToModel(ppy,prev.y);
                 const bool ok=valid&&ppx>=0&&ppx<=52&&ppy>=0&&ppy<=40&&pmx>=.499f&&pmx<=float(gc.previous[0])-.499f&&pmy>=.499f&&pmy<=float(gc.previous[1])-.499f;
-                const UINT index=y*68+x+eye*36;const float ex=ok?(pmx-cx+(eye?float(gc.previous[0]+6)-float(mw+4):0))/gc.scale[2]:0,ey=ok?(pmy-cy)/gc.scale[3]:128/gc.scale[3];
+                const UINT index=y*68+x+eye*(gw+4);const float ex=ok?(pmx-cx+(eye?float(gc.previous[0]+6)-float(mw+4):0))/gc.scale[2]:0,ey=ok?(pmy-cy)/gc.scale[3]:128/gc.scale[3];
                 Require(std::abs(vectors[index*2]-ex)<.002f&&std::abs(vectors[index*2+1]-ey)<.002f,"Warped motion/rejection or stereo origin wrong");
                 const UINT dx=static_cast<UINT>(std::clamp(px*.5f,0.f,31.f)),dy=static_cast<UINT>(std::clamp(py*.5f,0.f,23.f));
                 Require(std::abs(depths[index]-z[dy*32+dx])<1e-6f,"Depth not sampled from physical position");

@@ -20,6 +20,9 @@ assert 'adaptiveActivePasses > 0' in params and 'neuralFeatherExpansion > 0.0f' 
 for token in ('tuning.stereoAtlas = true;', 'tuning.multiPass = 0;', 'tuning.stabilizeMode = 0;', 'tuning.temporalReuseCadence = 0;'): assert token in integration
 assert 'tuning.stereoAtlas && atlasResult != StereoAtlasResult::Applied' in renderer
 assert 'featherEnabled ? resourceColorWidth + 2u' in renderer and 'featherEnabled ? resourceColorHeight + 2u' in renderer
+assert 'guideWidth = std::min(guideWidth, modelWidth);' in renderer and 'guideHeight = std::min(guideHeight, modelHeight);' in renderer
+assert 'sourceGuideWidth, sourceGuideHeight' in renderer
+assert 'resolveSettings.residualStrength' in renderer
 assert 'FeatherGeometry::MakeAxis' in integration and 'neuralCorePlan' in params
 assert 'configureNeuralFeather' in read(base+'../Upscaling.cpp') and 'configureNeuralFeather' in read(base+'../RemoteControl/DevBenchBridge.cpp')
 shader=read('runtime/open-shaders/features/Upscaling/Shaders/Upscaling/NeuralRendering/FeatherGuidesCS.hlsl')
