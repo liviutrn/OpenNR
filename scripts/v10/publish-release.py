@@ -29,10 +29,10 @@ if lookup.returncode == 0:
  assert ref['object']['type']=='commit' and ref['object']['sha']==args.commit,'Release tag differs from audited build'
  subprocess.run(['gh','release','edit',tag,'--repo',repository,'--title','OpenNR 2.20.1-v06-r10 Stable','--notes-file',str(notes)],check=True)
  doc=Path('release-input/README.md')
- doc.write_text(Path('README.md').read_text(encoding='utf-8-sig'),encoding='utf-8')
+ doc.write_text(Path('README.md').read_text(encoding='utf-8-sig'),encoding='utf-8',newline=chr(10))
  subprocess.run(['gh','release','upload',tag,str(doc),'--repo',repository,'--clobber'],check=True)
  published=json.loads(subprocess.check_output(['gh','api',f'repos/{repository}/releases/tags/{tag}'],text=True,encoding='utf-8'))
- assert published['body'].replace('\\r\\n','\\n').strip()==notes.read_text(encoding='utf-8').strip(),'Published description does not match'
+ assert published['body'].strip().splitlines()==notes.read_text(encoding='utf-8').strip().splitlines(),'Published description does not match'
  current=[asset for asset in published['assets'] if asset['name']==archive.name]
  assert len(current)==1 and current[0]['id']==matches[0]['id'] and current[0]['digest']==matches[0]['digest'],'Runtime archive was changed'
  docs=[asset for asset in published['assets'] if asset['name']=='README.md']
