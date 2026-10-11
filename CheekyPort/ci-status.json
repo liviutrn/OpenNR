@@ -1,6 +1,7 @@
 {
-  "status": "not_started",
-  "note": "Waiting for first instrumented Windows Actions run",
-  "workflow": "cheeky-psvr2-r10.yml",
-  "branch": "experiments/cheeky-psvr2-r10"
+  "result": "running",
+  "run_id": "38177540706",
+  "run_url": "https://github.com/liviutrn/OpenNR/actions/runs/38177540706",
+  "source_sha": "59157a3cfb8b326770211e1cb82e2f37736aa6ef",
+  "created_at_utc": "2026-10-11T21:43:36.4838026Z"
 }
