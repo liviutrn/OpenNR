@@ -96,12 +96,15 @@ struct bridge {
     HMODULE module{};
     gaze_fn read{};
     bool initialized{};
-    bridge() {
-        module = find_library();
+    bridge() { try_initialize(); }
+    void try_initialize() {
+        if (initialized) return;
+        if (!module) module = find_library();
         if (!module) return;
         auto init = reinterpret_cast<initialize_fn>(GetProcAddress(module, "psvr2_toolkit_init"));
-        read = reinterpret_cast<gaze_fn>(GetProcAddress(module, "psvr2_toolkit_gaze_status"));
-        if (!init || !read || init() != 0) { read = nullptr; return; }
+        auto read_function = reinterpret_cast<gaze_fn>(GetProcAddress(module, "psvr2_toolkit_gaze_status"));
+        if (!init || !read_function || init() != 0) return;
+        read = read_function;
         initialized = true;
     }
     ~bridge() {
@@ -111,7 +114,6 @@ struct bridge {
 };
 inline bool read_orientation(XrQuaternionf& orientation) {
     static bridge api;
-    if (!api.initialized || !api.read) return false;
     // Non-blocking CAPI reads return false between new gaze frames and
     // do not copy a sample at all. Cache the last complete sample for at
     // most 50ms, in line with Cheeky's existing gaze-staleness policy.
@@ -120,6 +122,15 @@ inline bool read_orientation(XrQuaternionf& orientation) {
     static bool have_cached_sample = false;
     static ULONGLONG last_fresh_tick = 0;
     std::lock_guard lock(sample_mutex);
+    // UEVR can create its OpenXR instance before Toolkit finishes starting.
+    // A failed first discovery must not permanently disable eye tracking.
+    static ULONGLONG retry_at{};
+    const ULONGLONG tick = GetTickCount64();
+    if (!api.initialized && tick >= retry_at) {
+        api.try_initialize();
+        retry_at = tick + 1000ULL;
+    }
+    if (!api.initialized || !api.read) return false;
     status incoming{};
     // Toolkit getGazeStatus() does NOT write to the output argument when
     // there is no new frame. Its false return means "unchanged", not invalid.
