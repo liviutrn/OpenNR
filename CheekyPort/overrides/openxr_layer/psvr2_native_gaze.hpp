@@ -8,6 +8,9 @@
 #include <cmath>
 #include <cstdint>
 #include <string>
+#include <fstream>
+#include <filesystem>
+#include <mutex>
 #ifdef _MSC_VER
 #pragma comment(lib, "Advapi32.lib")
 #endif
@@ -66,6 +69,17 @@ inline HMODULE find_library() {
         if (auto mod = LoadLibraryExW(path, nullptr,
             LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_DEFAULT_DIRS)) return mod;
     }
+    // Use exactly the path discovered by PSVR2 Toolkit's own CAPI loader.
+    // Its driver publishes this directory in the system temp folder.
+    try {
+        std::ifstream path_file(std::filesystem::temp_directory_path() / "psvr2tk_capi_path.txt");
+        std::string directory;
+        if (path_file && std::getline(path_file, directory) && !directory.empty()) {
+            const auto candidate = std::filesystem::path(directory) / "psvr2_toolkit_capi.dll";
+            if (auto mod = LoadLibraryExW(candidate.c_str(), nullptr,
+                LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_DEFAULT_DIRS)) return mod;
+        }
+    } catch (...) {}
     wchar_t steam[32768]{};
     DWORD size = sizeof(steam);
     if (RegGetValueW(HKEY_CURRENT_USER, L"Software\\Valve\\Steam", L"SteamPath",
@@ -98,8 +112,22 @@ struct bridge {
 inline bool read_orientation(XrQuaternionf& orientation) {
     static bridge api;
     if (!api.initialized || !api.read) return false;
+    // Non-blocking CAPI reads return false between new gaze frames but
+    // still copy the latest sample. Keep it for at most 50ms, in line with
+    // Cheeky's existing gaze-staleness policy.
+    static std::mutex sample_mutex;
+    static std::uint32_t prior_frame = 0;
+    static ULONGLONG last_fresh_tick = 0;
+    std::lock_guard lock(sample_mutex);
     status sample{};
-    if (!api.read(&sample, 0) || sample.size != sizeof(sample) ||
+    const bool new_frame = api.read(&sample, 0);
+    const ULONGLONG now = GetTickCount64();
+    if (new_frame || sample.raw.frame_counter != prior_frame) {
+        prior_frame = sample.raw.frame_counter;
+        last_fresh_tick = now;
+    }
+    if (!last_fresh_tick || now - last_fresh_tick > 50 ||
+        sample.size != sizeof(sample) ||
         sample.magic[0] != 'G' || sample.magic[1] != 'S') return false;
     const auto& source = sample.raw;
     // Combined calibrated direction is in PSVR2 device coordinates.
