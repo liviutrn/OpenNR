@@ -259,4 +259,25 @@ patch("tests/gaze_tests.cpp",
     }
     if (argc == 2 && std::strcmp(argv[1], "--opennr-r10-gaze") == 0) {""")
 
+# SPIR-V assets are intentionally retained from pinned Cheeky 0.5.5.
+# They use the original 40-dword codec push constant layout. Our DX12-only
+# decode-shader extensions increase C++ CodecConstants to 60 dwords; Vulkan
+# must continue using just the first 40 for pipeline ranges and push commands.
+# Otherwise 240-byte pushes can exceed a device's minimum push-constant limit.
+patch("src/vulkan_nr.cpp",
+    """        !slot.encode_dispatch.create(a,pipelines.encode[index],sizeof(CodecConstants)) ||
+        !slot.decode_dispatch.create(a,pipelines.decode[index],sizeof(CodecConstants)) ||
+        !slot.border_dispatch.create(a,pipelines.border[index],sizeof(CodecConstants)) ||""",
+    """        !slot.encode_dispatch.create(a,pipelines.encode[index],40U*sizeof(std::uint32_t)) ||
+        !slot.decode_dispatch.create(a,pipelines.decode[index],40U*sizeof(std::uint32_t)) ||
+        !slot.border_dispatch.create(a,pipelines.border[index],40U*sizeof(std::uint32_t)) ||""")
+patch("src/vulkan_nr.cpp",
+    "slot.encode_dispatch.record(a,cmd,pipelines.encode[index],encode_inputs,encode_outputs,&codec,sizeof(codec),",
+    "slot.encode_dispatch.record(a,cmd,pipelines.encode[index],encode_inputs,encode_outputs,&codec,40U*sizeof(std::uint32_t),")
+patch("src/vulkan_nr.cpp",
+    "slot.decode_dispatch.record(a,cmd,pipelines.decode[index],inputs,outputs,&codec,sizeof(codec),",
+    "slot.decode_dispatch.record(a,cmd,pipelines.decode[index],inputs,outputs,&codec,40U*sizeof(std::uint32_t),")
+patch("src/vulkan_nr.cpp",
+    "slot.border_dispatch.record(a,cmd,pipelines.border[index],inputs,outputs,&codec,sizeof(codec),",
+    "slot.border_dispatch.record(a,cmd,pipelines.border[index],inputs,outputs,&codec,40U*sizeof(std::uint32_t),")
 print("NR result shaping and independent near-black protection applied")
