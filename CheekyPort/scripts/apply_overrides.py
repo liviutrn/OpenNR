@@ -219,4 +219,14 @@ replace_once("tests/gaze_tests.cpp",
     expect(result.reason == GazeResetReason::large_jump,
         "history resets only on non-overlapping gaze movement");''')
 
+# Expose a small, isolated CLI regression suite that cannot accidentally
+# hang in heavyweight graphics fixture tests on a headless CI runner.
+replace_once("tests/gaze_tests.cpp",
+    'int main(int argc, char** argv) {',
+    '''int main(int argc, char** argv) {
+    if (argc == 2 && std::strcmp(argv[1], "--opennr-r10-gaze") == 0) {
+        test_reset_policy();
+        test_temporal_policy();
+        return failures == 0 ? 0 : 1;
+    }''')
 print("Cheeky v0.5.5 PSVR2/OpenNR-r10 source port applied successfully")

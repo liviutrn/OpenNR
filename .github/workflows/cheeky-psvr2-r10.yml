@@ -35,8 +35,12 @@ jobs:
         working-directory: upstream-cheeky
         shell: pwsh
         run: |
-          ./bin/Release/CheekyTests.exe
-          if ($LASTEXITCODE -ne 0) { throw "Gaze tests failed" }
+          $suites = @('--opennr-r10-gaze', '--alignment-history', '--d3d12-history', '--openxr-input', '--nr-processing')
+          foreach ($suite in $suites) {
+            Write-Host "Running Cheeky regression suite: $suite"
+            ./bin/Release/CheekyTests.exe $suite
+            if ($LASTEXITCODE -ne 0) { throw "Cheeky $suite tests failed" }
+          }
       - name: Install Inno Setup if absent
         shell: pwsh
         run: |
