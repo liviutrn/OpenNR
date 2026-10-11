@@ -28,6 +28,9 @@ rep("tests/openxr_calibration_tests.cpp",
     """            gpu.copy(target.Get(), 0, 0, mono ? a.Get() : frame < 320 ? b.Get() : a.Get());
             gpu.copy(target.Get(), array ? 1 : 0, array ? 0 : 128, mono ? a.Get() : frame < 320 ? a.Get() : b.Get());""")
 rep("tests/openxr_calibration_tests.cpp",
+    '                require((ticket != 0) == sampling, "D3D12 capture must follow the frame sampling cadence");',
+    '                require(mono || (ticket != 0) == sampling, "Stereo D3D12 capture must follow the frame sampling cadence");')
+rep("tests/openxr_calibration_tests.cpp",
     "        if (frame == 319 && !ambiguous) {",
     "        if (frame == 319 && !ambiguous && !mono) {")
 rep("tests/openxr_calibration_tests.cpp",
