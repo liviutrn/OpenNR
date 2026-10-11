@@ -244,4 +244,17 @@ replace_once("src/eye_calibration.cpp",
     'const bool mono = f.pipelined && f.evaluations == 1 && (source_mask == 1 || source_mask == 2);',
     'const bool mono = (f.pipelined || f.collect_source_pair) && f.evaluations == 1 && (source_mask == 1 || source_mask == 2);')
 
+# Fix DX12 Mono end-to-end, not just its final classification. A single
+# game render is valid only when both submitted eye images contain the same
+# verified marker. Continue rejecting no-source samples and missing eyes.
+replace_once("src/eye_calibration.cpp",
+    'if (f.collect_source_pair && f.evaluations < 2) {',
+    'if (f.collect_source_pair && f.evaluations == 0) {')
+replace_once("src/eye_calibration.cpp",
+    'const auto result = calibration12_poll(*f.gpu12, mixed, mixed ? source_mask : 3U);',
+    'const auto result = calibration12_poll(*f.gpu12, mixed, (mixed || (f.collect_source_pair && f.evaluations == 1)) ? source_mask : 3U);')
+replace_once("src/eye_calibration_d3d12.cpp",
+    'if (source_only && !(source_mask & (1U << (i / 2)))) continue;',
+    'if (i < 4U && !(source_mask & (1U << (i / 2)))) continue;')
+
 print("Cheeky v0.5.5 PSVR2/OpenNR-r10 source port applied successfully")
