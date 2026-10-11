@@ -2,7 +2,7 @@ name: Cheeky PSVR2 OpenNR r10 experiment
 on:
   push:
     branches:
-      - experiments/cheeky-psvr2-r10
+      - experiments/cheeky-psvr2-r11
   workflow_dispatch:
 permissions:
   contents: write
@@ -54,6 +54,23 @@ jobs:
           python -m py_compile CheekyPort/scripts/apply_overrides.py
           python CheekyPort/scripts/apply_overrides.py upstream-cheeky --overrides CheekyPort/overrides
           if ($LASTEXITCODE -ne 0) { throw "Patch step failed" }
+          python CheekyPort/scripts/apply_adaptive.py upstream-cheeky
+          if ($LASTEXITCODE -ne 0) { throw "Adaptive port failed" }
+          python CheekyPort/scripts/apply_shaping.py upstream-cheeky
+          if ($LASTEXITCODE -ne 0) { throw "NR shaping port failed" }
+          python -m py_compile CheekyPort/scripts/apply_adaptive.py CheekyPort/scripts/apply_shaping.py
+      - name: Regenerate Direct3D NR shaders
+        id: shader
+        working-directory: upstream-cheeky
+        shell: pwsh
+        run: |
+          $sdkBin = Join-Path ${env:ProgramFiles(x86)} 'Windows Kits/10/bin'
+          $fxc = Get-ChildItem $sdkBin -Filter fxc.exe -Recurse |
+            Where-Object { $_.Directory.Name -eq 'x64' } |
+            Sort-Object FullName -Descending | Select-Object -First 1
+          if (-not $fxc) { throw "Windows SDK fxc shader compiler unavailable" }
+          python scripts/build-d3d-shaders.py --fxc $fxc.FullName
+          if ($LASTEXITCODE -ne 0) { throw "Shader bytecode regeneration failed" }
       - name: Compile Cheeky release
         id: compile
         working-directory: upstream-cheeky
@@ -101,18 +118,18 @@ jobs:
         working-directory: upstream-cheeky
         shell: pwsh
         run: |
-          ./scripts/package-standalone.ps1 -Configuration Release -Mode Standalone -Label psvr2-r10
+          ./scripts/package-standalone.ps1 -Configuration Release -Mode Standalone -Label psvr2-r11
           if (@(Get-ChildItem bin/Release/*-Standalone-psvr2-r10.zip).Count -ne 1) { throw "Standalone archive missing" }
-          ./scripts/package-uevr.ps1 -Configuration Release -Label psvr2-r10
+          ./scripts/package-uevr.ps1 -Configuration Release -Label psvr2-r11
           if (@(Get-ChildItem bin/Release/*-UEVR-psvr2-r10.zip).Count -ne 1) { throw "UEVR archive missing" }
-          Get-ChildItem bin/Release/*psvr2-r10*.zip | Get-FileHash -Algorithm SHA256 | Format-Table
+          Get-ChildItem bin/Release/*psvr2-r11*.zip | Get-FileHash -Algorithm SHA256 | Format-Table
       - name: Upload experimental install packages
         id: artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Cheeky-0.5.5-PSVR2-OpenNR-r10-experimental
+          name: Cheeky-0.5.5-PSVR2-OpenNR-r11-experimental
           path: |
-            upstream-cheeky/bin/Release/*psvr2-r10*.zip
+            upstream-cheeky/bin/Release/*psvr2-r11*.zip
             upstream-cheeky/bin/installer/CheekyOpenXRSetup.exe
           if-no-files-found: error
           retention-days: 15
@@ -124,6 +141,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           STEP_PATCH: ${{ steps.patch.outcome }}
           STEP_COMPILE: ${{ steps.compile.outcome }}
+          STEP_SHADER: ${{ steps.shader.outcome }}
           STEP_TESTS: ${{ steps.tests.outcome }}
           STEP_SETUP: ${{ steps.setup.outcome }}
           STEP_INSTALLER: ${{ steps.installer.outcome }}
@@ -134,6 +152,7 @@ jobs:
           $steps = [ordered]@{
             patch = $env:STEP_PATCH
             compile = $env:STEP_COMPILE
+            shader = $env:STEP_SHADER
             tests = $env:STEP_TESTS
             setup = $env:STEP_SETUP
             installer = $env:STEP_INSTALLER
