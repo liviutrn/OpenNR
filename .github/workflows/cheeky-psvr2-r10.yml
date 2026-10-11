@@ -13,6 +13,34 @@ jobs:
     steps:
       - name: Checkout port scripts and r10 reference
         uses: actions/checkout@v4
+      - name: Publish CI startup heartbeat
+        shell: pwsh
+        continue-on-error: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $api = "https://api.github.com/repos/$env:GITHUB_REPOSITORY/contents/CheekyPort/ci-status.json"
+          $headers = @{
+            Authorization = "Bearer $env:GITHUB_TOKEN"
+            Accept = 'application/vnd.github+json'
+            'X-GitHub-Api-Version' = '2022-11-28'
+          }
+          $existing = Invoke-RestMethod -Uri "${api}?ref=ci%2Fcheeky-psvr2-r10-status" -Headers $headers
+          $payload = [ordered]@{
+            result = 'running'
+            run_id = $env:GITHUB_RUN_ID
+            run_url = "https://github.com/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID"
+            source_sha = $env:GITHUB_SHA
+            created_at_utc = (Get-Date).ToUniversalTime().ToString('o')
+          } | ConvertTo-Json -Depth 4
+          $body = @{
+            branch = 'ci/cheeky-psvr2-r10-status'
+            message = "Start Cheeky CI run $env:GITHUB_RUN_ID"
+            sha = $existing.sha
+            content = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($payload))
+          } | ConvertTo-Json -Compress
+          Invoke-RestMethod -Method Put -Uri $api -Headers $headers -Body $body -ContentType 'application/json' | Out-Null
       - name: Checkout pinned Cheeky v0.5.5
         uses: actions/checkout@v4
         with:
