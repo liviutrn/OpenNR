@@ -112,9 +112,9 @@ struct bridge {
 inline bool read_orientation(XrQuaternionf& orientation) {
     static bridge api;
     if (!api.initialized || !api.read) return false;
-    // Non-blocking CAPI reads return false between new gaze frames but
-    // still copy the latest sample. Keep it for at most 50ms, in line with
-    // Cheeky's existing gaze-staleness policy.
+    // Non-blocking CAPI reads return false between new gaze frames and
+    // do not copy a sample at all. Cache the last complete sample for at
+    // most 50ms, in line with Cheeky's existing gaze-staleness policy.
     static std::mutex sample_mutex;
     static status cached_sample{};
     static bool have_cached_sample = false;
