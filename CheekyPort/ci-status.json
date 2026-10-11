@@ -1,9 +1,9 @@
 {
   "result": "success",
-  "run_id": "38177485480",
-  "run_url": "https://github.com/liviutrn/OpenNR/actions/runs/38177485480",
-  "source_sha": "b506ec509615a97fbbb76e1d47251266197051d4",
-  "created_at_utc": "2026-10-11T21:46:38.5135676Z",
+  "run_id": "38177540706",
+  "run_url": "https://github.com/liviutrn/OpenNR/actions/runs/38177540706",
+  "source_sha": "59157a3cfb8b326770211e1cb82e2f37736aa6ef",
+  "created_at_utc": "2026-10-11T21:47:38.9096023Z",
   "steps": {
     "patch": "success",
     "compile": "success",
@@ -13,5 +13,5 @@
     "packages": "success",
     "artifact": "success"
   },
-  "compile_log_tail": "**********************\r\nPowerShell transcript start\r\nStart time: 20261011214256\r\nUsername: runnervmtn0fv\\runneradmin\r\nRunAs User: runnervmtn0fv\\runneradmin\r\nConfiguration Name: \r\nMachine: runnervmtn0fv (Microsoft Windows NT 10.0.20348.0)\r\nHost Application: C:\\Program Files\\PowerShell\\7\\pwsh.dll -command . 'D:\\a\\_temp\\f64ae726-2a05-44a3-9a51-7ac5600a63c4.ps1'\r\nProcess ID: 4028\r\nPSVersion: 7.6.6\r\nPSEdition: Core\r\nGitCommitId: 7.6.6\r\nOS: Microsoft Windows 10.0.20348\r\nPlatform: Win32NT\r\nPSCompatibleVersions: 1.0, 2.0, 3.0, 4.0, 5.0, 5.1, 6.0, 7.0\r\nPSRemotingProtocolVersion: 2.4\r\nSerializationVersion: 1.1.0.1\r\nWSManStackVersion: 3.0\r\n**********************\r\n\r\nBuild completed. Test execution skipped.\r\n**********************\r\nPowerShell transcript end\r\nEnd time: 20261011214631\r\n**********************\r\n"
+  "compile_log_tail": "**********************\r\nPowerShell transcript start\r\nStart time: 20261011214341\r\nUsername: runnervmtn0fv\\runneradmin\r\nRunAs User: runnervmtn0fv\\runneradmin\r\nConfiguration Name: \r\nMachine: runnervmtn0fv (Microsoft Windows NT 10.0.20348.0)\r\nHost Application: C:\\Program Files\\PowerShell\\7\\pwsh.dll -command . 'D:\\a\\_temp\\c89b7f53-be62-473e-8a6b-c80ebaae6e88.ps1'\r\nProcess ID: 4948\r\nPSVersion: 7.6.6\r\nPSEdition: Core\r\nGitCommitId: 7.6.6\r\nOS: Microsoft Windows 10.0.20348\r\nPlatform: Win32NT\r\nPSCompatibleVersions: 1.0, 2.0, 3.0, 4.0, 5.0, 5.1, 6.0, 7.0\r\nPSRemotingProtocolVersion: 2.4\r\nSerializationVersion: 1.1.0.1\r\nWSManStackVersion: 3.0\r\n**********************\r\n\r\nBuild completed. Test execution skipped.\r\n**********************\r\nPowerShell transcript end\r\nEnd time: 20261011214732\r\n**********************\r\n"
 }
