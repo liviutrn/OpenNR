@@ -1,0 +1,70 @@
+name: Cheeky PSVR2 OpenNR r10 experiment
+on:
+  push:
+    branches:
+      - experiments/cheeky-psvr2-r10
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  windows-build:
+    runs-on: windows-2022
+    timeout-minutes: 85
+    steps:
+      - name: Checkout port scripts and r10 reference
+        uses: actions/checkout@v4
+      - name: Checkout pinned Cheeky v0.5.5
+        uses: actions/checkout@v4
+        with:
+          repository: ClarkCheekyKent/CheekyFoveatedDLSS
+          ref: 4e47eefe51a512dcaf76bbdc672dcdab5251fc71
+          path: upstream-cheeky
+      - name: Apply strict port patches
+        shell: pwsh
+        run: |
+          python -m py_compile CheekyPort/scripts/apply_overrides.py
+          python CheekyPort/scripts/apply_overrides.py upstream-cheeky --overrides CheekyPort/overrides
+          if ($LASTEXITCODE -ne 0) { throw "Patch step failed" }
+      - name: Compile Cheeky release
+        working-directory: upstream-cheeky
+        shell: pwsh
+        run: |
+          ./scripts/build.ps1 -Configuration Release -SkipTests
+          if ($LASTEXITCODE -ne 0) { throw "MSBuild failed" }
+      - name: Run gaze and XR smoke tests
+        working-directory: upstream-cheeky
+        shell: pwsh
+        run: |
+          ./bin/Release/CheekyTests.exe --gaze
+          if ($LASTEXITCODE -ne 0) { throw "Gaze tests failed" }
+      - name: Install Inno Setup if absent
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe")) {
+            choco install innosetup -y --no-progress
+            if ($LASTEXITCODE -ne 0) { throw "Inno Setup installation failed" }
+          }
+      - name: Build matching OpenXR installer
+        working-directory: upstream-cheeky
+        shell: pwsh
+        run: |
+          ./scripts/build-installer.ps1 -SkipBuild
+          if ($LASTEXITCODE -ne 0) { throw "Installer failed" }
+      - name: Package Standalone and UEVR
+        working-directory: upstream-cheeky
+        shell: pwsh
+        run: |
+          ./scripts/package-standalone.ps1 -Configuration Release -Mode Standalone -Label psvr2-r10
+          if ($LASTEXITCODE -ne 0) { throw "Standalone package failed" }
+          ./scripts/package-uevr.ps1 -Configuration Release -Label psvr2-r10
+          if ($LASTEXITCODE -ne 0) { throw "UEVR package failed" }
+          Get-ChildItem bin/Release/*psvr2-r10*.zip | Get-FileHash -Algorithm SHA256 | Format-Table
+      - name: Upload experimental install packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: Cheeky-0.5.5-PSVR2-OpenNR-r10-experimental
+          path: |
+            upstream-cheeky/bin/Release/*psvr2-r10*.zip
+            upstream-cheeky/bin/installer/CheekyOpenXRSetup.exe
+          if-no-files-found: error
+          retention-days: 15
