@@ -82,6 +82,9 @@ replace_once("openxr_layer/openxr_layer.cpp",
 
 # Fix B stage 1: exact r10 fixation noise policy. Bypass filter on deliberate
 # eye movement >2 px; this also removes delayed smoothing of saccades.
+replace_once("src/gaze_foveation.cpp",
+    '#include "gaze_foveation.hpp"',
+    '#include "gaze_foveation.hpp"\n#include "OpenNR_R10_GazeCropPolicy.h"')
 replace_once("src/gaze_policy.cpp",
     '#include "gaze_policy.hpp"',
     '#include "gaze_policy.hpp"\n#include "OpenNR_R10_GazeCropPolicy.h"')
