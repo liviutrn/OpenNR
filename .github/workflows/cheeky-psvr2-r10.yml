@@ -2,7 +2,7 @@ name: Cheeky PSVR2 OpenNR r10 experiment
 on:
   push:
     branches:
-      - experiments/cheeky-psvr2-r11
+      - experiments/cheeky-psvr2-r10
   workflow_dispatch:
 permissions:
   contents: write
@@ -119,9 +119,9 @@ jobs:
         shell: pwsh
         run: |
           ./scripts/package-standalone.ps1 -Configuration Release -Mode Standalone -Label psvr2-r11
-          if (@(Get-ChildItem bin/Release/*-Standalone-psvr2-r10.zip).Count -ne 1) { throw "Standalone archive missing" }
+          if (@(Get-ChildItem bin/Release/*-Standalone-psvr2-r11.zip).Count -ne 1) { throw "Standalone archive missing" }
           ./scripts/package-uevr.ps1 -Configuration Release -Label psvr2-r11
-          if (@(Get-ChildItem bin/Release/*-UEVR-psvr2-r10.zip).Count -ne 1) { throw "UEVR archive missing" }
+          if (@(Get-ChildItem bin/Release/*-UEVR-psvr2-r11.zip).Count -ne 1) { throw "UEVR archive missing" }
           Get-ChildItem bin/Release/*psvr2-r11*.zip | Get-FileHash -Algorithm SHA256 | Format-Table
       - name: Upload experimental install packages
         id: artifact
