@@ -35,7 +35,7 @@ jobs:
         working-directory: upstream-cheeky
         shell: pwsh
         run: |
-          ./bin/Release/CheekyTests.exe --gaze
+          ./bin/Release/CheekyTests.exe
           if ($LASTEXITCODE -ne 0) { throw "Gaze tests failed" }
       - name: Install Inno Setup if absent
         shell: pwsh

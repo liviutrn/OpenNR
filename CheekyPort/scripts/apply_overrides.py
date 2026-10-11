@@ -200,4 +200,20 @@ replace_once("src/gaze_policy.cpp",
         const auto threshold_x = current.width;
         const auto threshold_y = current.height;''')
 
+# Update Cheeky's old regression expectations to match overlap-based r10 policy.
+replace_once("tests/gaze_tests.cpp",
+    '''    expect(result.reason == GazeResetReason::large_jump,
+        "origin jump at the 64-pixel floor resets history");''',
+    '''    expect(result.reason == GazeResetReason::none,
+        "overlapping 64px gaze movement preserves history");''')
+replace_once("tests/gaze_tests.cpp",
+    '''    expect(result.reason == GazeResetReason::large_jump,
+        "origin jump above 64 pixels resets history");''',
+    '''    expect(result.reason == GazeResetReason::none,
+        "overlapping 80px gaze movement preserves history");
+    const GazeCropPolicyState no_overlap{520U, 100U, 400U, 300U, true};
+    result = evaluate_gaze_reset(first, no_overlap, true, false, false, 0.125F);
+    expect(result.reason == GazeResetReason::large_jump,
+        "history resets only on non-overlapping gaze movement");''')
+
 print("Cheeky v0.5.5 PSVR2/OpenNR-r10 source port applied successfully")
