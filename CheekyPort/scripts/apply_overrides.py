@@ -236,4 +236,12 @@ replace_once("tests/gaze_tests.cpp",
         test_temporal_policy();
         return failures == 0 ? 0 : 1;
     }''')
+# Native DX12 UEVR Mono renders exactly one game DLSS source and submits
+# its verified pixels to both XR eyes. The existing classifier requires two
+# submitted eyes and identical verified source markers. The previous gate
+# mistakenly required D3D11-style pipelined readback even for DX12.
+replace_once("src/eye_calibration.cpp",
+    'const bool mono = f.pipelined && f.evaluations == 1 && (source_mask == 1 || source_mask == 2);',
+    'const bool mono = (f.pipelined || f.collect_source_pair) && f.evaluations == 1 && (source_mask == 1 || source_mask == 2);')
+
 print("Cheeky v0.5.5 PSVR2/OpenNR-r10 source port applied successfully")
