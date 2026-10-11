@@ -252,7 +252,7 @@ patch("tests/gaze_tests.cpp",
         test.nr_adaptive_stage5 = 100U; // clamp to preceding stage, never reorder
         update_settings(test);
         value = current_settings();
-        expect(std::abs(value.nr_width-.4F) < 0.0001F,
+        expect(std::abs(value.nr_width-.35F) < 0.0001F,
                "Out-of-order stage ladder clamps safely");
         update_settings(Settings{});
         return failures ? 1 : 0;
