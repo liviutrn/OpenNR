@@ -1,7 +1,18 @@
 {
-  "result": "running",
-  "run_id": "38182553970",
-  "run_url": "https://github.com/liviutrn/OpenNR/actions/runs/38182553970",
-  "source_sha": "cb698dfa96cd6480f056e2d69dce89ebfd36990e",
-  "created_at_utc": "2026-10-11T22:59:34.9556751Z"
+  "result": "failure",
+  "run_id": "38182370839",
+  "run_url": "https://github.com/liviutrn/OpenNR/actions/runs/38182370839",
+  "source_sha": "0cec5e3165f54ef22df7eeaae726ce11f23b7a66",
+  "created_at_utc": "2026-10-11T22:59:51.0787583Z",
+  "steps": {
+    "patch": "success",
+    "compile": "success",
+    "shader": "success",
+    "tests": "failure",
+    "setup": "skipped",
+    "installer": "skipped",
+    "packages": "skipped",
+    "artifact": "skipped"
+  },
+  "compile_log_tail": "**********************\r\nPowerShell transcript start\r\nStart time: 20261011225633\r\nUsername: runnervmtn0fv\\runneradmin\r\nRunAs User: runnervmtn0fv\\runneradmin\r\nConfiguration Name: \r\nMachine: runnervmtn0fv (Microsoft Windows NT 10.0.20348.0)\r\nHost Application: C:\\Program Files\\PowerShell\\7\\pwsh.dll -command . 'D:\\a\\_temp\\60311145-2f38-4dbd-93f0-ad35eb65fa61.ps1'\r\nProcess ID: 5516\r\nPSVersion: 7.6.6\r\nPSEdition: Core\r\nGitCommitId: 7.6.6\r\nOS: Microsoft Windows 10.0.20348\r\nPlatform: Win32NT\r\nPSCompatibleVersions: 1.0, 2.0, 3.0, 4.0, 5.0, 5.1, 6.0, 7.0\r\nPSRemotingProtocolVersion: 2.4\r\nSerializationVersion: 1.1.0.1\r\nWSManStackVersion: 3.0\r\n**********************\r\n\r\nBuild completed. Test execution skipped.\r\n**********************\r\nPowerShell transcript end\r\nEnd time: 20261011225939\r\n**********************\r\n"
 }
