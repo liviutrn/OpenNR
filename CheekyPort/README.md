@@ -10,6 +10,14 @@ OpenNR stable release and Cheeky upstream are not modified.
 Fallback for missing OpenXR gaze, dynamically reading PSVR2 Toolkit psvr2_toolkit_capi.dll through its C API.
 OpenXR game controller action sets remain untouched. Automatic Steam install lookup or optional PSVR2TK_CAPI_PATH full path.
 The 0x148-byte SDK layout, gaze-valid flags, blink status, axis conversion and binocular projections must be checked on the headset.
+The PSVR2 Toolkit nonblocking CAPI does not write a sample on a false/no-new-frame return. The
+experimental bridge now caches the last complete, verified gaze sample for at most 50ms, rather
+than spuriously reverting to fixed center between eye-camera updates.
+
+**Regression check on headset:** In OpenXR, enable Runtime gaze, hold eyes still, and compare
+the red region border over several seconds. It should not momentarily revert to fixed on
+alternating render frames. Repeat for rapid saccades, blink/loss for >50ms, and restart of
+SteamVR/Toolkit. A later headset check must verify the gaze coordinate signs and eye mapping.
 
 ## Fix B
 OpenNR r10 GazeCropPolicy.h is copied without modifications.
