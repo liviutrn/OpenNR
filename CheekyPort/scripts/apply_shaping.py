@@ -80,7 +80,7 @@ patch("src/settings.cpp",
     "    settings.nr_adaptive_cooldown_ms = adaptive_configuration.nr_adaptive_cooldown_ms;\n"+get_lines)
 set_lines="\n".join(
     f"    adaptive_configuration.{f} = settings.{f};" if typ=="bool" else
-    f"    adaptive_configuration.{f}=finite(settings.{f},0.0F,{high:.6g}F,{0.03 if f=='nr_nearblack_threshold' else 0.08 if f=='nr_nearblack_onset' else 0.7 if f=='nr_result_highlight_threshold' else 0.2 if f=='nr_result_shadow_threshold' else 0 if f=='nr_nearblack_strength' else 1}.0F);"
+    f"    adaptive_configuration.{f}=finite(settings.{f},0.0F,{float(high)}F,{0.03 if f=='nr_nearblack_threshold' else 0.08 if f=='nr_nearblack_onset' else 0.7 if f=='nr_result_highlight_threshold' else 0.2 if f=='nr_result_shadow_threshold' else 0 if f=='nr_nearblack_strength' else 1}.0F);"
     for f,typ,high in fields
 )
 # Use unambiguous 1.0F default expressions for numerical fields.
@@ -128,8 +128,8 @@ float3 ShapeNeuralResult(float3 original, float3 edited) {
         float tone = luminance_delta * ShapeEdit * tonal_gain * directional * ShapeBroadTone;
         tone = clamp(tone, -ShapeDarkLimit, ShapeLiftLimit);
         float3 color = clamp(chroma_delta * ShapeEdit * ShapeColor * ShapeFineDetail,
-                             -ShapeColorLimit.xxx, ShapeColorLimit.xxx);
-        edited = max(original + tone.xxx + color, 0.0);
+                             -float3(ShapeColorLimit,ShapeColorLimit,ShapeColorLimit), float3(ShapeColorLimit,ShapeColorLimit,ShapeColorLimit));
+        edited = max(original + float3(tone,tone,tone) + color, 0.0);
     }
     if (NearBlackStrength > 0.0) {
         // Original pixel luminance controls protection, NOT the neural edit.
