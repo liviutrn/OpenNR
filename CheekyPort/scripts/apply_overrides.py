@@ -199,9 +199,13 @@ replace_once("src/gaze_policy.cpp",
     '''        // The original 12.5%-of-crop threshold resets on normal saccades.
         // Reuse overlapping history and let per-backend MV correction handle
         // movement. Do not reuse history when the two crops do not overlap.
-        (void)ratio;
-        const auto threshold_x = current.width;
-        const auto threshold_y = current.height;''')
+        // Fixed/automatic alignment is not a moving eye-tracked crop:
+        // keep Cheeky's original safety reset for substantial fallback jumps.
+        // For valid tracked gaze, reset only when overlap is exhausted.
+        const auto threshold_x = using_valid_sample ? current.width : (std::max)(
+            64U, static_cast<std::uint32_t>(std::lround(current.width * ratio)));
+        const auto threshold_y = using_valid_sample ? current.height : (std::max)(
+            64U, static_cast<std::uint32_t>(std::lround(current.height * ratio)));''')
 
 # Update Cheeky's old regression expectations to match overlap-based r10 policy.
 replace_once("tests/gaze_tests.cpp",
