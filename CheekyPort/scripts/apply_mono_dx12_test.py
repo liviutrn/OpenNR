@@ -38,6 +38,8 @@ rep("tests/openxr_calibration_tests.cpp",
         require(stats.valid == 0 && !stereo_eye_assignment(9101).calibrated &&""",
     """    if (mono) {
         const auto eye = stereo_eye_assignment(9101);
+        if (stats.valid == 0 || !eye.calibrated)
+            std::cerr << "Mono DX12 calibration diagnostics: " << eye_calibration_json() << '\\n';
         require(stats.valid > 0 && eye.calibrated && eye.shared_source &&
                 !has_multiple_stereo_views() && stats.left_view == 9101 &&
                 stats.right_view == 9101,
