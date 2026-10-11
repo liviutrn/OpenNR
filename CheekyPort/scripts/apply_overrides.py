@@ -22,6 +22,9 @@ def replace_once(file, needle, replacement):
     path.write_text(text.replace(needle, replacement), encoding="utf-8")
     print(f"PATCHED {file}: {needle[:65]!r}")
 
+# The public v0.5.5 tag retains a stale 0.5.4 version define.
+replace_once("shared/version.h", '#define CHEEKY_VERSION "0.5.4"', '#define CHEEKY_VERSION "0.5.5"')
+
 for rel in ["openxr_layer/psvr2_native_gaze.hpp", "src/OpenNR_R10_GazeCropPolicy.h"]:
     dest = root / rel
     dest.parent.mkdir(parents=True, exist_ok=True)
