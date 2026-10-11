@@ -58,7 +58,9 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "Adaptive port failed" }
           python CheekyPort/scripts/apply_shaping.py upstream-cheeky
           if ($LASTEXITCODE -ne 0) { throw "NR shaping port failed" }
-          python -m py_compile CheekyPort/scripts/apply_adaptive.py CheekyPort/scripts/apply_shaping.py
+          python -m py_compile CheekyPort/scripts/apply_adaptive.py CheekyPort/scripts/apply_shaping.py CheekyPort/scripts/apply_mono_dx12_test.py
+          python CheekyPort/scripts/apply_mono_dx12_test.py upstream-cheeky
+          if ($LASTEXITCODE -ne 0) { throw "Native DX12 Mono test patch failed" }
       - name: Regenerate Direct3D NR shaders
         id: shader
         working-directory: upstream-cheeky
@@ -92,7 +94,7 @@ jobs:
         working-directory: upstream-cheeky
         shell: pwsh
         run: |
-          $suites = @('--opennr-r10-gaze', '--alignment-history', '--d3d12-history', '--openxr-input', '--nr-processing', '--cheeky-r11-adaptive')
+          $suites = @('--opennr-r10-gaze', '--alignment-history', '--d3d12-history', '--openxr-input', '--nr-processing', '--cheeky-r11-adaptive', '--cheeky-mono-dx12')
           foreach ($suite in $suites) {
             Write-Host "Running Cheeky regression suite: $suite"
             ./bin/Release/CheekyTests.exe $suite
