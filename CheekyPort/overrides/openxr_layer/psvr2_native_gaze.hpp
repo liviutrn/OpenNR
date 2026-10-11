@@ -8,6 +8,9 @@
 #include <cmath>
 #include <cstdint>
 #include <string>
+#ifdef _MSC_VER
+#pragma comment(lib, "Advapi32.lib")
+#endif
 
 namespace cheeky_psvr2 {
 enum class gaze_bool : std::uint32_t { no, yes };
