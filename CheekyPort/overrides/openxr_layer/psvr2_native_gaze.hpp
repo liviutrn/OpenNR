@@ -116,19 +116,26 @@ inline bool read_orientation(XrQuaternionf& orientation) {
     // still copy the latest sample. Keep it for at most 50ms, in line with
     // Cheeky's existing gaze-staleness policy.
     static std::mutex sample_mutex;
-    static std::uint32_t prior_frame = 0;
+    static status cached_sample{};
+    static bool have_cached_sample = false;
     static ULONGLONG last_fresh_tick = 0;
     std::lock_guard lock(sample_mutex);
-    status sample{};
-    const bool new_frame = api.read(&sample, 0);
+    status incoming{};
+    // Toolkit getGazeStatus() does NOT write to the output argument when
+    // there is no new frame. Its false return means "unchanged", not invalid.
+    const bool new_frame = api.read(&incoming, 0);
     const ULONGLONG now = GetTickCount64();
-    if (new_frame || sample.raw.frame_counter != prior_frame) {
-        prior_frame = sample.raw.frame_counter;
+    if (new_frame &&
+        incoming.size == sizeof(incoming) &&
+        incoming.magic[0] == 'G' && incoming.magic[1] == 'S') {
+        cached_sample = incoming;
+        have_cached_sample = true;
         last_fresh_tick = now;
     }
-    if (!last_fresh_tick || now - last_fresh_tick > 50 ||
-        sample.size != sizeof(sample) ||
-        sample.magic[0] != 'G' || sample.magic[1] != 'S') return false;
+    // Keep the last complete valid sample across asynchronous gaze/frame
+    // cadence differences; never accept a sample older than 50 milliseconds.
+    if (!have_cached_sample || now - last_fresh_tick > 50) return false;
+    const auto& sample = cached_sample;
     const auto& source = sample.raw;
     // Combined calibrated direction is in PSVR2 device coordinates.
     // Monado's known PSVR2->OpenXR mapping negates X and Z.
