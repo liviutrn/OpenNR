@@ -216,4 +216,47 @@ patch("uevr/scripts/cheeky_foveated_dlss.lua",
                         text("Changes are applied AFTER NR; raw neural history is preserved.")
                         imgui.tree_pop()
                     end""")
+patch("tests/gaze_tests.cpp",
+    '    if (argc == 2 && std::strcmp(argv[1], "--opennr-r10-gaze") == 0) {',
+    """    // Verify adaptive stages and extra shaping controls against the actual
+    // configured/current-settings plumbing, not independent duplicated math.
+    if (argc == 2 && std::strcmp(argv[1], "--cheeky-r11-adaptive") == 0) {
+        using namespace cheeky::foveated_dlss;
+        set_processing_allowed(true);
+        Settings test{};
+        test.enabled = true;
+        test.nr_enabled = true;
+        test.nr_foveated = true;
+        test.nr_width = test.nr_height = .5F;
+        test.nr_working_scale = .4F;
+        test.nr_adaptive_enabled = true;
+        test.nr_adaptive_mode = 3U;
+        test.nr_adaptive_stage2 = 90U;
+        test.nr_adaptive_stage3 = 80U;
+        test.nr_result_shaping = true;
+        test.nr_nearblack_strength = 1.5F;
+        update_settings(test);
+        auto value = current_settings();
+        expect(std::abs(value.nr_width-.4F) < 0.0001F &&
+               std::abs(value.nr_height-.4F) < 0.0001F,
+               "Stage 3 scales relative to selected NR crop");
+        expect(value.nr_working_scale == 1.F, "Active adaptive stages use full-resolution NR");
+        expect(value.nr_result_shaping && value.nr_nearblack_strength == 1.5F,
+               "Result shaping settings round-trip without changing NR model history");
+        test.nr_adaptive_mode = 6U;
+        update_settings(test);
+        value = current_settings();
+        expect(!value.nr_enabled && value.nr_width == .5F,
+               "Stage 6 switches off NR without destroying selected crop");
+        test.nr_adaptive_mode = 5U;
+        test.nr_adaptive_stage5 = 100U; // clamp to preceding stage, never reorder
+        update_settings(test);
+        value = current_settings();
+        expect(std::abs(value.nr_width-.4F) < 0.0001F,
+               "Out-of-order stage ladder clamps safely");
+        update_settings(Settings{});
+        return failures ? 1 : 0;
+    }
+    if (argc == 2 && std::strcmp(argv[1], "--opennr-r10-gaze") == 0) {""")
+
 print("NR result shaping and independent near-black protection applied")
