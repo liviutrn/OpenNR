@@ -217,5 +217,110 @@ int main() try {
         throw std::runtime_error("WARP compositor: central, peripheral or feathered-edge pixels wrong");
     }
     std::cout<<"DuoView DX12 WARP dispatch + GPU fence + readback assertions PASSED\n";
+
+    // Stage 7: repeat the same layout using a BGRA8 source and *BGRA8 RTV*
+    // full-screen raster output. This verifies the actual UEVR Mono color
+    // format without assuming typed BGRA8 UAV support.
+    auto bgraInput=resource(device.Get(),texture(AW,AH,D3D12_RESOURCE_FLAG_NONE),
+                            D3D12_HEAP_TYPE_DEFAULT,D3D12_RESOURCE_STATE_COPY_DEST);
+    auto bgraOutput=resource(device.Get(),texture(W,H,D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET),
+                             D3D12_HEAP_TYPE_DEFAULT,D3D12_RESOURCE_STATE_RENDER_TARGET);
+    D3D12_DESCRIPTOR_HEAP_DESC rtvHeapDesc{};
+    rtvHeapDesc.NumDescriptors=1;rtvHeapDesc.Type=D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
+    ComPtr<ID3D12DescriptorHeap> rtvHeap;
+    check(device->CreateDescriptorHeap(&rtvHeapDesc,IID_PPV_ARGS(&rtvHeap)),"RTV heap");
+    D3D12_RENDER_TARGET_VIEW_DESC rtv{};
+    rtv.Format=DXGI_FORMAT_B8G8R8A8_UNORM;rtv.ViewDimension=D3D12_RTV_DIMENSION_TEXTURE2D;
+    device->CreateRenderTargetView(bgraOutput.Get(),&rtv,rtvHeap->GetCPUDescriptorHandleForHeapStart());
+    check(allocator->Reset(),"Reset allocator");
+    check(cmd->Reset(allocator.Get(),nullptr),"Reset commands");
+    check(upload->Map(0,&zero,reinterpret_cast<void**>(&ptr)),"Remap source upload");
+    for(uint32_t y=0;y<AH;++y)for(uint32_t x=0;x<AW;++x) {
+        auto* pixel=ptr+y*srcfoot.Footprint.RowPitch+x*4;
+        pixel[0]=x>=16&&x<24&&y<8?255:0; // B
+        pixel[1]=0;                             // G
+        pixel[2]=x<16&&y<16?255:0;        // R
+        pixel[3]=255;
+    }
+    upload->Unmap(0,nullptr);
+    srv.Format=DXGI_FORMAT_B8G8R8A8_UNORM;
+    device->CreateShaderResourceView(bgraInput.Get(),&srv,
+                                     descriptors->GetCPUDescriptorHandleForHeapStart());
+    D3D12_TEXTURE_COPY_LOCATION bgraDst{bgraInput.Get(),D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX};
+    bgraDst.SubresourceIndex=0;
+    cmd->CopyTextureRegion(&bgraDst,0,0,0,&src,nullptr);
+    barrier(cmd.Get(),bgraInput.Get(),D3D12_RESOURCE_STATE_COPY_DEST,
+            D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+
+    auto readShader=[](const char* path)->std::vector<char> {
+        std::ifstream file(path,std::ios::binary);
+        if(!file) throw std::runtime_error(std::string("Shader file missing: ")+path);
+        return std::vector<char>((std::istreambuf_iterator<char>(file)),{});
+    };
+    auto vsBytes=readShader("DuoViewCompositeRaster.vso");
+    auto psBytes=readShader("DuoViewCompositeRaster.pso");
+    D3D12_GRAPHICS_PIPELINE_STATE_DESC gpso{};
+    gpso.pRootSignature=rootsig.Get();
+    gpso.VS={vsBytes.data(),vsBytes.size()};
+    gpso.PS={psBytes.data(),psBytes.size()};
+    gpso.RasterizerState.FillMode=D3D12_FILL_MODE_SOLID;
+    gpso.RasterizerState.CullMode=D3D12_CULL_MODE_NONE;
+    gpso.RasterizerState.DepthClipEnable=TRUE;
+    gpso.BlendState.RenderTarget[0].RenderTargetWriteMask=D3D12_COLOR_WRITE_ENABLE_ALL;
+    gpso.DepthStencilState.DepthEnable=FALSE;
+    gpso.DepthStencilState.StencilEnable=FALSE;
+    gpso.SampleMask=UINT_MAX;
+    gpso.PrimitiveTopologyType=D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+    gpso.NumRenderTargets=1;gpso.RTVFormats[0]=DXGI_FORMAT_B8G8R8A8_UNORM;
+    gpso.SampleDesc.Count=1;
+    ComPtr<ID3D12PipelineState> rasterPSO;
+    check(device->CreateGraphicsPipelineState(&gpso,IID_PPV_ARGS(&rasterPSO)),"Raster PSO");
+    cmd->SetDescriptorHeaps(1,shaderheaps);
+    cmd->SetGraphicsRootSignature(rootsig.Get());
+    cmd->SetPipelineState(rasterPSO.Get());
+    cmd->SetGraphicsRootDescriptorTable(0,descriptors->GetGPUDescriptorHandleForHeapStart());
+    cmd->SetGraphicsRootConstantBufferView(2,constants->GetGPUVirtualAddress());
+    D3D12_VIEWPORT viewport{0.f,0.f,static_cast<float>(W),static_cast<float>(H),0.f,1.f};
+    D3D12_RECT scissor{0,0,static_cast<LONG>(W),static_cast<LONG>(H)};
+    cmd->RSSetViewports(1,&viewport);cmd->RSSetScissorRects(1,&scissor);
+    auto rtHandle=rtvHeap->GetCPUDescriptorHandleForHeapStart();
+    cmd->OMSetRenderTargets(1,&rtHandle,FALSE,nullptr);
+    cmd->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    cmd->DrawInstanced(3,1,0,0);
+    barrier(cmd.Get(),bgraOutput.Get(),D3D12_RESOURCE_STATE_RENDER_TARGET,
+            D3D12_RESOURCE_STATE_COPY_SOURCE);
+    D3D12_TEXTURE_COPY_LOCATION bgraFrom{bgraOutput.Get(),D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX};
+    bgraFrom.SubresourceIndex=0;
+    cmd->CopyTextureRegion(&to,0,0,0,&bgraFrom,nullptr);
+    check(cmd->Close(),"Close raster command list");
+    ID3D12CommandList* drawlists[]{cmd.Get()};
+    queue->ExecuteCommandLists(1,drawlists);
+    check(queue->Signal(fence.Get(),2),"Raster fence");
+    HANDLE drawEvent=CreateEventW(nullptr,FALSE,FALSE,nullptr);
+    if(!drawEvent)throw std::runtime_error("CreateEvent raster failed");
+    check(fence->SetEventOnCompletion(2,drawEvent),"Set raster fence event");
+    if(WaitForSingleObject(drawEvent,30000)!=WAIT_OBJECT_0) {
+        CloseHandle(drawEvent);throw std::runtime_error("Raster WARP timeout");
+    }
+    CloseHandle(drawEvent);
+    check(readback->Map(0,&read,reinterpret_cast<void**>(&result)),"Map BGRA readback");
+    auto sampleBgra=[&](uint32_t x,uint32_t y) {
+        std::array<int,3> rgb{};
+        auto* pixel=result+y*dstfoot.Footprint.RowPitch+x*4;
+        rgb[0]=pixel[2];rgb[1]=pixel[1];rgb[2]=pixel[0];
+        return rgb;
+    };
+    auto rasterCenter=sampleBgra(16,16),rasterCorner=sampleBgra(1,1),rasterSeam=sampleBgra(8,16);
+    std::cout<<"BGRA8 RTV WARP: center=["<<rasterCenter[0]<<","<<rasterCenter[1]<<","<<rasterCenter[2]
+             <<"] corner=["<<rasterCorner[0]<<","<<rasterCorner[1]<<","<<rasterCorner[2]
+             <<"] seam=["<<rasterSeam[0]<<","<<rasterSeam[1]<<","<<rasterSeam[2]<<"]\n";
+    readback->Unmap(0,nullptr);
+    if(!(rasterCenter[0]>230&&rasterCenter[2]<25&&
+         rasterCorner[0]<25&&rasterCorner[2]>230&&
+         rasterSeam[0]>5&&rasterSeam[0]<250&&
+         rasterSeam[2]>5&&rasterSeam[2]<250)) {
+        throw std::runtime_error("BGRA8 RTV raster composite pixels are wrong");
+    }
+    std::cout<<"DuoView BGRA8 source -> BGRA8 raster RTV + fence assertions PASSED\n";
     return 0;
 } catch(const std::exception& e) {std::cerr<<"DuoView WARP test FAILED: "<<e.what()<<"\n";return 1;}
