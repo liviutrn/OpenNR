@@ -10,6 +10,11 @@
 
 namespace uevr::duoview {
 
+constexpr int renderer_view_index(int raw, bool double_precision) {
+    if (double_precision) return raw >= 0 && raw <= 1 ? raw : -1;
+    return raw >= 1 && raw <= 2 ? raw - 1 : -1;
+}
+
 struct Rect {
     uint32_t x{}, y{}, width{}, height{};
 };

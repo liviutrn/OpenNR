@@ -2,7 +2,7 @@ name: DuoView public backend Windows injector
 on:
   push:
     branches: [experiments/duoview-uevr-v07-stalker-publicsdk]
-    paths: ['duoview/**', '.github/workflows/duoview-public-backend.yml']
+    paths: ['duoview/**', '!duoview/*.md', 'duoview/TESTING.md', '.github/workflows/duoview-public-backend.yml']
   workflow_dispatch:
 permissions:
   contents: read

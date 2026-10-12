@@ -1,3 +1,9 @@
+# Current continuation status (2026-10-13)
+
+The initial handoff below is retained as historical evidence. Continue from the active **public backend Windows injector** workflow and `duoview/WORK_LOG.md`, not the earlier private-SDK compile probe. Current source pins and render integration are documented in `duoview/UEVR_INTEGRATION.md`. Public Mono/DuoView patches, native Toolkit gaze, immutable camera/frame settings, real DX12 composition and matching injector packaging are implemented. Windows policy and production WARP tests have passed; consult the latest workflow for the full-DLL/injector result. No actual headset testing has been performed here.
+
+---
+
 # ChatGPT Work handoff — DuoView Mono for Joey UEVR / STALKER 2
 
 **Handoff date:** 2026-10-13 (Europe/Bucharest). **Project is ongoing, NOT game-ready.**

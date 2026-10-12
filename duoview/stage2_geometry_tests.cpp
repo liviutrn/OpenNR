@@ -10,6 +10,10 @@ static bool near(float a, float b, float tolerance = .0001f) {
 }
 
 int main() {
+    assert(d::renderer_view_index(-1,true) == -1 && d::renderer_view_index(2,true) == -1);
+    assert(d::renderer_view_index(0,true) == 0 && d::renderer_view_index(1,true) == 1);
+    assert(d::renderer_view_index(0,false) == -1 && d::renderer_view_index(3,false) == -1);
+    assert(d::renderer_view_index(1,false) == 0 && d::renderer_view_index(2,false) == 1);
     const auto a = d::make_layout(3000,3000,.50f,.50f);
     assert(a && a->fovea.width == 1500 && a->fovea.height == 1500);
     assert(a->periphery.x == 1500 && a->periphery.width == 600);

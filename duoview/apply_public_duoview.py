@@ -127,16 +127,39 @@ std::optional<uevr::duoview::ViewFrame> VR::duoview_begin_frame() {
     signature='void FFakeStereoRenderingHook::adjust_view_rect(FFakeStereoRendering* stereo, int32_t index, int* x, int* y, uint32_t* w, uint32_t* h) {'
     change(hook, signature, signature + """
     if (VR::get()->is_using_duoview_mono() &&
-        (index < 0 || index > (g_hook->m_has_double_precision ? 1 : 2))) return;""")
+        uevr::duoview::renderer_view_index(index, g_hook->m_has_double_precision) < 0) return;""")
     projection_signature='__forceinline Matrix4x4f* FFakeStereoRenderingHook::calculate_stereo_projection_matrix(FFakeStereoRendering* stereo, Matrix4x4f* out, const int32_t view_index) {'
     change(hook, projection_signature, projection_signature + """
     if (out == nullptr) return nullptr;
     if (VR::get()->is_using_duoview_mono() &&
-        (view_index < 0 || view_index > (g_hook->m_has_double_precision ? 1 : 2))) {
+        uevr::duoview::renderer_view_index(view_index, g_hook->m_has_double_precision) < 0) {
         if (g_hook->m_calculate_stereo_projection_matrix_hook)
             return g_hook->m_calculate_stereo_projection_matrix_hook.call<Matrix4x4f*>(stereo, out, view_index);
         return out;
     }""")
+    change(hook, '    const auto true_index = index_starts_from_one ? ((index + 1) % 2) : (index % 2);',
+        '    const auto true_index = VR::get()->is_using_duoview_mono() ? uevr::duoview::renderer_view_index(index, g_hook->m_has_double_precision)\n        : (index_starts_from_one ? ((index + 1) % 2) : (index % 2));')
+    change(hook, '    if (index_was_ever_two && view_index == 0) {\n        SPDLOG_INFO_ONCE("calculate stereo view offset called with view index 0 after 2, ignoring.");',
+        '    if (!vr->is_using_duoview_mono() && index_was_ever_two && view_index == 0) {\n        SPDLOG_INFO_ONCE("calculate stereo view offset called with view index 0 after 2, ignoring.");')
+    change(hook, '    auto true_index = index_starts_from_one ? ((view_index + 1) % 2) : (view_index % 2);\n    const auto has_double_precision = g_hook->m_has_double_precision;',
+        '    auto true_index = vr->is_using_duoview_mono() ? uevr::duoview::renderer_view_index(view_index, g_hook->m_has_double_precision)\n        : (index_starts_from_one ? ((view_index + 1) % 2) : (view_index % 2));\n    const auto has_double_precision = g_hook->m_has_double_precision;')
+    change(hook, '        auto true_index = index_starts_from_one ? ((view_index + 1) % 2) : (view_index % 2);',
+        '        auto true_index = vr->is_using_duoview_mono() ? uevr::duoview::renderer_view_index(view_index, g_hook->m_has_double_precision)\n            : (index_starts_from_one ? ((view_index + 1) % 2) : (view_index % 2));')
+    change(hook, 'bool FFakeStereoRenderingHook::hook_game_viewport_client() try {',
+        'bool FFakeStereoRenderingHook::hook_game_viewport_client() try {\n    m_has_game_viewport_client_draw_hook = false;')
+    change(hook, '    m_has_game_viewport_client_draw_hook = true;\n\n    if (!m_gameviewportclient_draw_hook) {',
+        '    if (!m_gameviewportclient_draw_hook) {')
+    change(hook, """    if (auto enable_result = m_gameviewportclient_draw_hook.enable(); !enable_result.has_value()) {
+        SPDLOG_ERROR("Failed to enable UGameViewportClient::Draw hook!");
+        return false;
+    }
+
+    return true;""", """    if (auto enable_result = m_gameviewportclient_draw_hook.enable(); !enable_result.has_value()) {
+        SPDLOG_ERROR("Failed to enable UGameViewportClient::Draw hook!");
+        return false;
+    }
+    m_has_game_viewport_client_draw_hook = true;
+    return true;""")
     change(hook,'    if (vr->is_using_mono()) { return 1; }','    if (vr->is_using_duoview_mono()) { return 2; }\n    if (vr->is_using_mono()) { return 1; }')
     change(hook,'    if (VR::get()->is_using_mono()) { *x = 0; *y = 0; return; }','''    if (VR::get()->is_using_duoview_mono()) {
         auto vr = VR::get();
@@ -149,6 +172,31 @@ std::optional<uevr::duoview::ViewFrame> VR::duoview_begin_frame() {
         return;
     }
     if (VR::get()->is_using_mono()) { *x = 0; *y = 0; return; }''')
+    change(hook, '    if (view_index == -1) {\n        index_was_ever_negative = true;', """    if (vr->is_using_duoview_mono() &&
+        uevr::duoview::renderer_view_index(view_index, g_hook->m_has_double_precision) < 0) return;
+    if (view_index == -1) {
+        index_was_ever_negative = true;""")
+    for block in [
+        """    if (index == 2) {
+        index_starts_from_one = true;
+    } else if (index == 0) {
+        index_starts_from_one = false;
+    }""",
+        """    if (view_index == 2) {
+        index_starts_from_one = true;
+        index_was_ever_two = true;
+    } else if (view_index == 0 && !index_was_ever_two) {
+        index_starts_from_one = false;
+    }""",
+        """    if (view_index == 2) {
+        index_starts_from_one = true;
+        index_was_ever_two = true;
+    } else if (view_index == 0) {
+        index_starts_from_one = false;
+    }"""]:
+        change(hook, block, '    if (!VR::get()->is_using_duoview_mono()) {\n' + '\n'.join('    '+line for line in block.splitlines()) + '\n    }')
+    change(hook, '    const auto is_full_pass = view_index == 0 && !index_was_ever_two && !index_was_ever_negative && !g_hook->m_has_double_precision;',
+        '    const auto is_full_pass = !vr->is_using_duoview_mono() && view_index == 0 && !index_was_ever_two && !index_was_ever_negative && !g_hook->m_has_double_precision;')
     change(hook,'    const bool mono = vr->is_using_mono();\n    if (mono && !is_full_pass) { true_index = 0; }','''    const auto duo_view = true_index;
     const auto duo_key = vr->duoview_key(vr->get_runtime()->internal_frame_count);
     if (vr->is_using_duoview_mono() && !is_full_pass && g_hook->is_in_viewport_client_draw()) {
@@ -244,6 +292,7 @@ std::optional<uevr::duoview::ViewFrame> VR::duoview_begin_frame() {
                     bool recorded = false;''')
     sdkh='dependencies/submodules/UESDK/src/sdk/FSceneView.hpp'
     sdkcpp='dependencies/submodules/UESDK/src/sdk/FSceneView.cpp'
+    change(sdkh, 'struct FSceneViewFamily;', 'class FSceneViewFamily;')
     change(sdkh, """    sdk::FSceneViewFamily* get_view_family() const {
         // FSceneView inherits FSceneViewFixLayout, which has a virtual destructor
         // in UE 5.6+, so the Family pointer follows the vtable.
