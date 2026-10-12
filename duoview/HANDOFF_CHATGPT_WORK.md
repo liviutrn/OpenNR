@@ -1,6 +1,6 @@
-# Current continuation status (2026-10-13)
+# Current continuation status (2026-10-13) — COMPLETE WINDOWS BUILD PASSED
 
-The initial handoff below is retained as historical evidence. Continue from the active **public backend Windows injector** workflow and `duoview/WORK_LOG.md`, not the earlier private-SDK compile probe. Current source pins and render integration are documented in `duoview/UEVR_INTEGRATION.md`. Public Mono/DuoView patches, native Toolkit gaze, immutable camera/frame settings, real DX12 composition and matching injector packaging are implemented. Windows policy and production WARP tests have passed; consult the latest workflow for the full-DLL/injector result. No actual headset testing has been performed here.
+The initial handoff below is **historical**. Continue from the active **public backend Windows injector** workflow and `duoview/WORK_LOG.md`, not the earlier private-SDK compile probe. The first complete public SDK UEVR DLL plus matching .NET injector was built and packaged successfully on [Actions run 38316421524](https://github.com/liviutrn/OpenNR/actions/runs/38316421524), source commit `bd74b21f46aa51c6d535680a005682e2572d6965`. Download **DuoView-Experimental-Windows-Injector-5**, artifact ID `11777567376` (not the build logs). Its downloaded ZIP passed integrity checks and contains `UEVRBackend.dll` and `UEVRInjector.exe`. Windows policy and production WARP tests passed. **No STALKER 2 or PSVR2 headset testing yet**; frame routing, rendering savings, and eye gaze remain runtime acceptance checks. Source pins and integration details are in `duoview/UEVR_INTEGRATION.md`. The older below-stated 'first action' and failed run status are not current.
 
 ---
 
