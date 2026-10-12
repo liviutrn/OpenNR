@@ -65,8 +65,9 @@ public:
         clear_locked();
         if (!next.key.frame || !next.key.generation || !next.pose_token ||
             !layout_valid(next.layout)) return false;
-        if (last_begin_.generation == next.key.generation &&
-            next.key.frame <= last_begin_.frame) return false;
+        if (next.key.generation < last_begin_.generation ||
+            (last_begin_.generation == next.key.generation &&
+             next.key.frame <= last_begin_.frame)) return false;
         last_begin_ = next.key;
         active_ = next;
         return true;
