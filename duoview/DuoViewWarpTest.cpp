@@ -221,9 +221,13 @@ int main() try {
     // Stage 7: repeat the same layout using a BGRA8 source and *BGRA8 RTV*
     // full-screen raster output. This verifies the actual UEVR Mono color
     // format without assuming typed BGRA8 UAV support.
-    auto bgraInput=resource(device.Get(),texture(AW,AH,D3D12_RESOURCE_FLAG_NONE),
+    auto bgraInputDesc=texture(AW,AH,D3D12_RESOURCE_FLAG_NONE);
+    bgraInputDesc.Format=DXGI_FORMAT_B8G8R8A8_UNORM;
+    auto bgraOutputDesc=texture(W,H,D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET);
+    bgraOutputDesc.Format=DXGI_FORMAT_B8G8R8A8_UNORM;
+    auto bgraInput=resource(device.Get(),bgraInputDesc,
                             D3D12_HEAP_TYPE_DEFAULT,D3D12_RESOURCE_STATE_COPY_DEST);
-    auto bgraOutput=resource(device.Get(),texture(W,H,D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET),
+    auto bgraOutput=resource(device.Get(),bgraOutputDesc,
                              D3D12_HEAP_TYPE_DEFAULT,D3D12_RESOURCE_STATE_RENDER_TARGET);
     D3D12_DESCRIPTOR_HEAP_DESC rtvHeapDesc{};
     rtvHeapDesc.NumDescriptors=1;rtvHeapDesc.Type=D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
