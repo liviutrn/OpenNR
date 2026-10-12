@@ -11,6 +11,9 @@
 #include <cstring>
 #include <fstream>
 #include <iostream>
+#include <string>
+#include <stdexcept>
+#include <iterator>
 #include <stdexcept>
 #include <vector>
 using Microsoft::WRL::ComPtr;
