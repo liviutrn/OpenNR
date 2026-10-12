@@ -20,7 +20,7 @@ index 5486555..3c6ee74 100644
      ImGui::Columns(2);
      ImGui::BeginGroup();
 diff --git a/src/mods/VR.cpp b/src/mods/VR.cpp
-index 0b5c53d..cc9d1fc 100644
+index 0b5c53d..c2593c8 100644
 --- a/src/mods/VR.cpp
 +++ b/src/mods/VR.cpp
 @@ -1365,6 +1365,7 @@ void VR::update_imgui_state_from_xinput_state(XINPUT_STATE& state, bool is_vr_co
@@ -31,7 +31,7 @@ index 0b5c53d..cc9d1fc 100644
      ZoneScopedN(__FUNCTION__);
  
      m_cvar_manager->on_pre_engine_tick(engine, delta);
-@@ -1508,9 +1509,77 @@ void VR::on_pre_calculate_stereo_view_offset(void* stereo_device, const int32_t
+@@ -1508,9 +1509,75 @@ void VR::on_pre_calculate_stereo_view_offset(void* stereo_device, const int32_t
      }
  }
  
@@ -68,8 +68,6 @@ index 0b5c53d..cc9d1fc 100644
 +        }
 +    }
 +    if (!selection.pending()) { return false; }
-+    // A previously requested Native Fix wait may still own the XR frame or
-+    // pre-acquire an array image. Do not acknowledge retirement underneath it.
 +    set_mono_status("Transition: waiting for GPU consumers / main viewport");
 +    const auto token = selection.request_token();
 +    const bool retired = g_framework->is_dx12() && m_d3d12.mono_consumers_retired();
@@ -109,7 +107,7 @@ index 0b5c53d..cc9d1fc 100644
      if (m_custom_z_near_enabled->value()) {
          SPDLOG_INFO_ONCE("Attempting to set custom z near");
          sdk::globals::get_near_clipping_plane() = m_custom_z_near->value();
-@@ -2084,6 +2153,8 @@ void VR::on_present() {
+@@ -2084,6 +2151,8 @@ void VR::on_present() {
  
      m_fake_stereo_hook->on_frame();
  
@@ -236,7 +234,7 @@ index 941840c..e94a9f8 100644
      const ModToggle::Ptr m_extreme_compat_mode{ ModToggle::create(generate_name("ExtremeCompatibilityMode"), false, true) };
      const ModToggle::Ptr m_uncap_framerate{ ModToggle::create(generate_name("UncapFramerate"), true) };
 diff --git a/src/mods/vr/D3D12Component.cpp b/src/mods/vr/D3D12Component.cpp
-index 11fdce5..29a1304 100644
+index 11fdce5..5533448 100644
 --- a/src/mods/vr/D3D12Component.cpp
 +++ b/src/mods/vr/D3D12Component.cpp
 @@ -17,6 +17,7 @@
@@ -310,10 +308,10 @@ index 11fdce5..29a1304 100644
  
      if (m_game_tex.texture.Get() == nullptr && backbuffer.Get() == real_backbuffer.Get()) {
          spdlog::info("[VR] Setting up game texture as copy of backbuffer");
-@@ -592,7 +632,17 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
-             }
- 
-             if (!is_afr) {
+@@ -550,13 +590,23 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
+                 }
+             } else {
+                 // Copy over the entire double wide instead
 -                if (m_scene_capture_tex.texture.Get() == nullptr) {
 +                if (vr->is_using_mono()) {
 +                    bool recorded = false;
@@ -326,9 +324,16 @@ index 11fdce5..29a1304 100644
 +                        }, std::nullopt, D3D12_RESOURCE_STATE_RENDER_TARGET, nullptr, backbuffer.Get());
 +                    vr->m_openxr->note_mono_copy(static_cast<uint32_t>(frame_count), submitted && recorded);
 +                } else if (m_scene_capture_tex.texture.Get() == nullptr) {
-                     m_openvr.copy_right(backbuffer.Get(), D3D12_RESOURCE_STATE_RENDER_TARGET);
+                     m_openxr.copy((uint32_t)runtimes::OpenXR::SwapchainIndex::DOUBLE_WIDE, backbuffer.Get(), D3D12_RESOURCE_STATE_RENDER_TARGET, nullptr);
                  } else {
-                     m_openvr.copy_left_to_right(m_scene_capture_tex.texture.Get(), D3D12_RESOURCE_STATE_RENDER_TARGET);
+                     m_openxr.copy((uint32_t)runtimes::OpenXR::SwapchainIndex::DOUBLE_WIDE, nullptr, pre_render, std::nullopt, D3D12_RESOURCE_STATE_RENDER_TARGET, nullptr);
+                 }
+ 
+-                if (scene_depth_tex != nullptr) {
++                if (!vr->is_using_mono() && scene_depth_tex != nullptr) {
+                     m_openxr.copy((uint32_t)runtimes::OpenXR::SwapchainIndex::DEPTH, scene_depth_tex.Get(), ENGINE_SRC_DEPTH, nullptr);
+                 }
+             }
 @@ -1019,6 +1069,7 @@ void D3D12Component::clear_backbuffer() {
  }
  
@@ -518,7 +523,7 @@ index 82bf8b9..326bbe3 100644
              std::vector<std::unique_ptr<d3d12::TextureContext>> texture_contexts{};
              uint32_t num_textures_acquired{0};
 diff --git a/src/mods/vr/FFakeStereoRenderingHook.cpp b/src/mods/vr/FFakeStereoRenderingHook.cpp
-index 148f143..c53bc9d 100644
+index 148f143..767fb39 100644
 --- a/src/mods/vr/FFakeStereoRenderingHook.cpp
 +++ b/src/mods/vr/FFakeStereoRenderingHook.cpp
 @@ -3466,6 +3466,11 @@ void FFakeStereoRenderingHook::begin_render_viewfamily(ISceneViewExtension* exte
@@ -608,6 +613,18 @@ index 148f143..c53bc9d 100644
          if (!g_hook->m_fixed_localplayer_view_count) {
              if (!g_hook->m_calculate_stereo_projection_matrix_post_hook) {
                  const auto return_address = (uintptr_t)_ReturnAddress();
+@@ -5125,9 +5139,9 @@ __forceinline Matrix4x4f* FFakeStereoRenderingHook::calculate_stereo_projection_
+         g_hook->m_calculate_stereo_projection_matrix_hook.call<Matrix4x4f*>(stereo, out, view_index);
+     } else {
+         if (g_hook->m_has_double_precision) {
+-            (*out)[3][2] = sdk::globals::get_near_clipping_plane();
++            (*(Matrix4x4d*)out)[3][2] = static_cast<double>(sdk::globals::get_near_clipping_plane());
+         } else {
+-            (*(Matrix4x4d*)out)[3][2] = (double)sdk::globals::get_near_clipping_plane();
++            (*out)[3][2] = sdk::globals::get_near_clipping_plane();
+         }
+     }
+ 
 @@ -5168,6 +5182,7 @@ __forceinline Matrix4x4f* FFakeStereoRenderingHook::calculate_stereo_projection_
          if (vr->is_using_afr()) {
              true_index = g_frame_count % 2;
@@ -1004,10 +1021,15 @@ index 2f77643..9a40c1e 100644
          this->waiting_for_fence = false;
          if (FAILED(this->cmd_allocator->Reset())) {
 diff --git a/src/mods/vr/runtimes/OpenXR.cpp b/src/mods/vr/runtimes/OpenXR.cpp
-index 2f4b3a9..33b804b 100644
+index 2f4b3a9..48b4826 100644
 --- a/src/mods/vr/runtimes/OpenXR.cpp
 +++ b/src/mods/vr/runtimes/OpenXR.cpp
-@@ -21,6 +21,7 @@
+@@ -17,10 +17,12 @@
+ 
+ #include "../../VR.hpp"
+ #include "OpenXR.hpp"
++#include "../../../utility/Logging.hpp"
+ 
  using namespace nlohmann;
  
  namespace runtimes {
@@ -1015,7 +1037,7 @@ index 2f4b3a9..33b804b 100644
  void OpenXR::on_draw_ui() {
      ImGui::SetNextItemOpen(true, ImGuiCond_Once);
      if (ImGui::TreeNode("OpenXR Options")) {
-@@ -219,6 +220,7 @@ VRRuntime::Error OpenXR::update_poses(bool from_view_extensions, uint32_t frame_
+@@ -219,6 +221,7 @@ VRRuntime::Error OpenXR::update_poses(bool from_view_extensions, uint32_t frame_
      }
  
      auto& pipeline_state = this->pipeline_states[frame_count % OpenXR::QUEUE_SIZE];
@@ -1023,7 +1045,7 @@ index 2f4b3a9..33b804b 100644
  
      if (pipeline_state.frame_state.predictedDisplayTime <= 1000) {
          pipeline_state.frame_state = this->frame_state;
-@@ -304,6 +306,19 @@ VRRuntime::Error OpenXR::update_poses(bool from_view_extensions, uint32_t frame_
+@@ -304,6 +307,19 @@ VRRuntime::Error OpenXR::update_poses(bool from_view_extensions, uint32_t frame_
      }
  
      pipeline_state.view_space_location = this->view_space_location;
@@ -1043,7 +1065,7 @@ index 2f4b3a9..33b804b 100644
  
      for (auto i = 0; i < this->hands.size(); ++i) {
          auto& hand = this->hands[i];
-@@ -462,6 +477,87 @@ VRRuntime::Error OpenXR::consume_events(std::function<void(void*)> callback) {
+@@ -462,6 +478,87 @@ VRRuntime::Error OpenXR::consume_events(std::function<void(void*)> callback) {
      return VRRuntime::Error::SUCCESS;
  }
  
@@ -1131,7 +1153,7 @@ index 2f4b3a9..33b804b 100644
  VRRuntime::Error OpenXR::update_matrices(float nearz, float farz) {
      // exit immediately if we've updated the eye matrices since the last frame sync, so we only do this
      // operation once per sync
-@@ -482,6 +578,40 @@ VRRuntime::Error OpenXR::update_matrices(float nearz, float farz) {
+@@ -482,6 +579,40 @@ VRRuntime::Error OpenXR::update_matrices(float nearz, float farz) {
      this->eyes[1] = Matrix4x4f{OpenXR::to_glm(right_pose.orientation)};
      this->eyes[1][3] = Vector4f{*(Vector3f*)&right_pose.position, 1.0f};
  
@@ -1172,7 +1194,7 @@ index 2f4b3a9..33b804b 100644
      auto get_mat = [&](int eye) {
          const auto& vr = VR::get();
          std::array<float, 4> tan_half_fov{};
-@@ -668,6 +798,7 @@ void OpenXR::destroy() {
+@@ -668,6 +799,7 @@ void OpenXR::destroy() {
      }
  
      std::scoped_lock _{sync_mtx};
@@ -1180,7 +1202,7 @@ index 2f4b3a9..33b804b 100644
  
      if (this->session != nullptr) {
          if (this->session_ready) {
-@@ -690,6 +821,23 @@ void OpenXR::destroy() {
+@@ -690,6 +822,23 @@ void OpenXR::destroy() {
  }
  
  OpenXR::PipelineState OpenXR::get_submit_state() {
@@ -1204,7 +1226,7 @@ index 2f4b3a9..33b804b 100644
      std::scoped_lock __{ this->sync_assignment_mtx };
  
      if (this->has_render_frame_count) {
-@@ -1712,6 +1860,9 @@ XrResult OpenXR::end_frame(const std::vector<XrCompositionLayerBaseHeader*>& qua
+@@ -1712,6 +1861,9 @@ XrResult OpenXR::end_frame(const std::vector<XrCompositionLayerBaseHeader*>& qua
      }
  
      const auto is_afr = VR::get()->is_using_afr();
@@ -1214,7 +1236,7 @@ index 2f4b3a9..33b804b 100644
  
      if (is_afr) {
          if (!this->swapchains.contains((uint32_t)OpenXR::SwapchainIndex::AFR_LEFT_EYE) || !this->swapchains.contains((uint32_t)OpenXR::SwapchainIndex::AFR_RIGHT_EYE)) {
-@@ -1742,6 +1893,7 @@ XrResult OpenXR::end_frame(const std::vector<XrCompositionLayerBaseHeader*>& qua
+@@ -1742,6 +1894,7 @@ XrResult OpenXR::end_frame(const std::vector<XrCompositionLayerBaseHeader*>& qua
      const auto submit_state = this->get_submit_state();
      const auto& pipelined_stage_views = submit_state.stage_views;
      const auto& pipelined_frame_state = submit_state.frame_state;
@@ -1222,7 +1244,7 @@ index 2f4b3a9..33b804b 100644
  
      if (pipelined_stage_views.empty()) {
          spdlog::warn("[VR] No stage views to submit");
-@@ -1789,7 +1941,7 @@ XrResult OpenXR::end_frame(const std::vector<XrCompositionLayerBaseHeader*>& qua
+@@ -1789,7 +1942,7 @@ XrResult OpenXR::end_frame(const std::vector<XrCompositionLayerBaseHeader*>& qua
  
      // we CANT push the layers every time, it cause some layer error
      // in xrEndFrame, so we must only do it when shouldRender is true
@@ -1231,7 +1253,7 @@ index 2f4b3a9..33b804b 100644
          projection_layer_views.resize(pipelined_stage_views.size(), {XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW});
          depth_layers.resize(projection_layer_views.size(), {XR_TYPE_COMPOSITION_LAYER_DEPTH_INFO_KHR});
  
-@@ -1808,6 +1960,12 @@ XrResult OpenXR::end_frame(const std::vector<XrCompositionLayerBaseHeader*>& qua
+@@ -1808,6 +1961,12 @@ XrResult OpenXR::end_frame(const std::vector<XrCompositionLayerBaseHeader*>& qua
  
              projection_layer_views[i].type = XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW;
              projection_layer_views[i].pose = pipelined_stage_views[i].pose;
@@ -1244,7 +1266,7 @@ index 2f4b3a9..33b804b 100644
              projection_layer_views[i].fov = pipelined_stage_views[i].fov;
              projection_layer_views[i].subImage.swapchain = swapchain->handle;
  
-@@ -1824,6 +1982,15 @@ XrResult OpenXR::end_frame(const std::vector<XrCompositionLayerBaseHeader*>& qua
+@@ -1824,6 +1983,15 @@ XrResult OpenXR::end_frame(const std::vector<XrCompositionLayerBaseHeader*>& qua
              }
              offset_y = view_bounds[i][2] * swapchain->height;
              extent_y = view_bounds[i][3] * swapchain->height - offset_y;

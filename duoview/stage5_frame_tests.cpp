@@ -11,7 +11,7 @@ int main() {
     assert(!c.begin({{0,0},*l,5000,340}));
     assert(c.begin(f));
     assert(!c.begin(f)); // reused render frame must not be accepted
-    // begin() invalidates the in-flight frame, callers must retry a NEW frame
+    assert(c.snapshot(k));
     assert(c.begin({future,*l,5001,355}));
     assert(!c.note_view(k,0,5000));
     assert(!c.note_view(future,0,5000)); // stale pose
@@ -36,8 +36,7 @@ int main() {
     // Once generation 11 begins, late generation-10 callbacks must never
     // displace generation 11 (even with arbitrarily high frame counters).
     assert(!c.begin({{10,9999},*l,5000,9999}));
-    assert(c.snapshot({11,1}) == std::nullopt);
-    // begin() fails closed and retires incomplete active frame; use next frame
+    assert(c.snapshot({11,1}));
     assert(c.begin({{11,2},*l,5002,410}));
     assert(!c.note_view(future,1,5001));
     assert(c.snapshot({11,2}));
@@ -45,6 +44,7 @@ int main() {
     auto invalid=*l; invalid.periphery.x=0;
     assert(!layout_valid(invalid));
     assert(!c.begin({{11,3},invalid,5002,440}));
+    assert(c.snapshot({11,2}));
     assert(!c.snapshot({11,1}));
     std::cout<<"DuoView immutable frame/fence policy tests passed\n";
 }

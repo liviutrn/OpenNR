@@ -38,6 +38,7 @@ inline std::optional<UV> ray_to_uv(Ray gaze, const Tans& full) {
 
 class GazeCache {
 public:
+    void invalidate() { sample_.reset(); }
     // Based on the already-tested PSVR2 Toolkit CAPI behavior: a false read
     // often means "no new frame", not "tracking invalid". Reuse a frame for
     // <= 50ms without extra temporal smoothing or spatial dead zones.

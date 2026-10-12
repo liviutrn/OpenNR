@@ -62,12 +62,12 @@ class FrameCoordinator {
 public:
     bool begin(RenderFrame next) {
         std::scoped_lock lock{mutex_};
-        clear_locked();
         if (!next.key.frame || !next.key.generation || !next.pose_token ||
             !layout_valid(next.layout)) return false;
         if (next.key.generation < last_begin_.generation ||
             (last_begin_.generation == next.key.generation &&
              next.key.frame <= last_begin_.frame)) return false;
+        clear_locked();
         last_begin_ = next.key;
         active_ = next;
         return true;

@@ -4,7 +4,7 @@ on:
   push:
     branches: [experiments/duoview-uevr-v07-stalker-publicsdk]
     paths:
-      - "duoview/**"
+      - "duoview/apply_stalker_publicsdk_abi.py"
       - ".github/workflows/duoview-stalker-publicsdk.yml"
   workflow_dispatch:
 

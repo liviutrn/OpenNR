@@ -17,6 +17,8 @@ struct Settings {
     float foveal_density{1.f};
     float feather_fraction{.08f};
     bool debug_border{};
+    bool eye_tracked{true};
+    uint32_t fovea_view{};
 };
 struct FrameConfig {
     FrameKey key{};
@@ -30,7 +32,8 @@ public:
     bool set_settings(Settings proposed) {
         std::scoped_lock lock{mutex_};
         if (!std::isfinite(proposed.feather_fraction) ||
-            proposed.feather_fraction < 0.f || proposed.feather_fraction > .45f)
+            proposed.feather_fraction < 0.f || proposed.feather_fraction > .45f ||
+            proposed.fovea_view > 1)
             return false;
         // Validate without trusting in-game UI, config files or Lua requests.
         if (!make_layout(1024,1024,proposed.crop_width,proposed.crop_height,
