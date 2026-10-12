@@ -58,6 +58,6 @@ int main() {
     assert(!d::make_layout(0,3000) && !d::make_layout(3000,0));
     assert(!d::make_layout(3000,3000,.0f,.50f));
     assert(!d::make_layout(3000,3000,.50f,.50f,2.0f));
-    assert(!d::make_layout(3000,3000,.50f,.50f,.20f,2.0f)); // vertical > output
+    assert(!d::make_layout(3000,3000,1.0f,1.0f,.20f,2.0f)); // vertical > output
     std::cout << "DuoView geometry/projection/blending tests passed\n";
 }
