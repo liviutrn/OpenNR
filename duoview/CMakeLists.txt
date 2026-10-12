@@ -1,0 +1,8 @@
+cmake_minimum_required(VERSION 3.20)
+project(DuoViewIndependentTests LANGUAGES CXX)
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+add_executable(DuoViewGeometryTests stage2_geometry_tests.cpp)
+add_executable(DuoViewProbe DuoViewProbe.cpp)
+enable_testing()
+add_test(NAME geometry COMMAND DuoViewGeometryTests)
