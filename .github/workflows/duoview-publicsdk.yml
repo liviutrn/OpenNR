@@ -1,0 +1,111 @@
+name: DuoView public UESDK build feasibility
+
+on:
+  push:
+    branches: [experiments/duoview-uevr-v06-publicsdk]
+    paths:
+      - "duoview/**"
+      - ".github/workflows/duoview-publicsdk.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  public-sdk-include-audit:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout experimental workspace
+        uses: actions/checkout@v4
+        with:
+          path: patch-workspace
+      - name: Checkout Joey pinned UEVR backend
+        uses: actions/checkout@v4
+        with:
+          repository: joeyhodge/UEVR
+          ref: db6729dd9f5745705b1cdec2ec6f51bdc9570983
+          submodules: false
+          path: uevr
+      - name: Checkout July 2026 public UESDK-RenderDoc (without submodules)
+        uses: actions/checkout@v4
+        with:
+          repository: elliotttate/UESDK-RenderDoc
+          ref: 418729025bad57b094bf6b2e2b55734454c97de6
+          submodules: false
+          path: sdk-public
+      - name: Apply existing two-view source patch
+        shell: bash
+        run: |
+          python3 patch-workspace/duoview/apply_stage1.py uevr
+          python3 patch-workspace/duoview/apply_stage2.py uevr
+          git -C uevr diff --check
+      - name: Enumerate unresolved SDK header dependencies
+        shell: bash
+        run: |
+          python3 patch-workspace/duoview/audit_public_sdk.py uevr sdk-public | tee sdk-compat-report.txt
+      - name: Upload factual SDK compatibility report
+        uses: actions/upload-artifact@v4
+        with:
+          name: DuoView-public-UESDK-compatibility-report
+          path: sdk-compat-report.txt
+          if-no-files-found: error
+          retention-days: 30
+
+  windows-build-probe:
+    runs-on: windows-2022
+    timeout-minutes: 75
+    steps:
+      - name: Checkout DuoView patch workspace
+        uses: actions/checkout@v4
+        with:
+          path: patch-workspace
+      - name: Checkout Joey UEVR without inaccessible private SDK
+        uses: actions/checkout@v4
+        with:
+          repository: joeyhodge/UEVR
+          ref: db6729dd9f5745705b1cdec2ec6f51bdc9570983
+          submodules: false
+          path: uevr
+      - name: Checkout public UESDK July 2026 as local build-only dependency
+        uses: actions/checkout@v4
+        with:
+          repository: elliotttate/UESDK-RenderDoc
+          ref: 418729025bad57b094bf6b2e2b55734454c97de6
+          submodules: false
+          path: uevr/dependencies/submodules/UESDK
+      - name: Checkout only public UEVR submodules
+        shell: pwsh
+        run: |
+          git -C uevr submodule update --init --depth 1 -- dependencies/submodules/glm dependencies/submodules/imgui dependencies/submodules/spdlog
+          if ($LASTEXITCODE -ne 0) { throw "Public glm/imgui/spdlog submodule checkout failed" }
+      - name: Apply Joey-specific DuoView patch
+        shell: pwsh
+        run: |
+          python patch-workspace/duoview/apply_stage1.py uevr
+          python patch-workspace/duoview/apply_stage2.py uevr
+          git -C uevr diff --check
+          if ($LASTEXITCODE -ne 0) { throw "Source patch validation failed" }
+      - name: Configure UEVR with public SDK candidate
+        shell: pwsh
+        run: |
+          cmake -S uevr -B uevr/build-publicsdk -G "Visual Studio 17 2022" -A x64 -DUEVR_BUILD_COMPATIBILITY_TESTS=ON *> configure-publicsdk.log
+          $code = $LASTEXITCODE
+          Get-Content configure-publicsdk.log | Select-Object -Last 120
+          if ($code -ne 0) { throw "UEVR CMake configure failed with public SDK ($code)" }
+      - name: Attempt real UEVRBackend.dll compilation
+        shell: pwsh
+        run: |
+          cmake --build uevr/build-publicsdk --config Release --target uevr --parallel 2 *> build-publicsdk.log
+          $code = $LASTEXITCODE
+          Get-Content build-publicsdk.log | Select-Object -Last 180
+          if ($code -ne 0) { throw "UEVR compilation failed with public SDK ($code)" }
+      - name: Upload build diagnostics (even if build is blocked)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: DuoView-public-UESDK-Windows-build-logs
+          path: |
+            configure-publicsdk.log
+            build-publicsdk.log
+          if-no-files-found: warn
+          retention-days: 14
