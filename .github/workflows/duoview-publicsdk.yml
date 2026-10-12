@@ -43,6 +43,14 @@ jobs:
         shell: bash
         run: |
           python3 patch-workspace/duoview/audit_public_sdk.py uevr sdk-public | tee sdk-compat-report.txt
+      - name: Independent DuoView geometry, gaze, frame and immutable-config tests
+        shell: bash
+        run: |
+          for pair in "stage2_geometry_tests geometry" "stage4_gaze_tests gaze" "stage5_frame_tests frame" "stage8_config_tests config"; do
+            set -- $pair
+            clang++ -std=c++20 -Wall -Wextra -Werror -pedantic -pthread -Ipatch-workspace/duoview patch-workspace/duoview/$1.cpp -o test-$2
+            ./test-$2
+          done
       - name: Upload factual SDK compatibility report
         uses: actions/upload-artifact@v4
         with:
