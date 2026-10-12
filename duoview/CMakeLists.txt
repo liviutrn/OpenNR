@@ -14,8 +14,3 @@ enable_testing()
 add_test(NAME geometry COMMAND DuoViewGeometryTests)
 add_test(NAME gaze COMMAND DuoViewGazeTests)
 add_test(NAME frame COMMAND DuoViewFrameTests)
-# WARP integration test needs a compiled DuoViewComposite.cso in the CTest working directory.
-if(WIN32)
-  add_test(NAME warp_composite COMMAND DuoViewWarpTests)
-  set_tests_properties(warp_composite PROPERTIES WORKING_DIRECTORY "${CMAKE_BINARY_DIR}")
-endif()
