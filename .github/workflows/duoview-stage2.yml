@@ -42,6 +42,42 @@ jobs:
           clang++ -std=c++20 -Wall -Wextra -Werror -pedantic -Ipatch-workspace/duoview patch-workspace/duoview/stage2_geometry_tests.cpp -o duoview-geometry-tests
           ./duoview-geometry-tests
 
+  shader-and-tools:
+    runs-on: windows-2022
+    timeout-minutes: 35
+    steps:
+      - name: Checkout standalone DuoView files
+        uses: actions/checkout@v4
+        with:
+          path: patch-workspace
+      - name: Compile standalone C++ diagnostics with MSVC
+        shell: pwsh
+        run: |
+          cmake -S patch-workspace/duoview -B duoview-test-build -G "Visual Studio 17 2022" -A x64
+          cmake --build duoview-test-build --config Release
+          ctest --test-dir duoview-test-build -C Release --output-on-failure --no-tests=error
+          Copy-Item duoview-test-build/Release/DuoViewProbe.exe DuoViewProbe.exe
+      - name: Compile DX12 compositor shader with Windows SDK
+        shell: pwsh
+        run: |
+          $sdk = Join-Path ([Environment]::GetFolderPath('ProgramFilesX86')) "Windows Kits\10\bin"
+          $fxc = Get-ChildItem -Path $sdk -Filter fxc.exe -Recurse -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -like "*\x64\fxc.exe" } |
+            Sort-Object FullName -Descending | Select-Object -First 1
+          if ($null -eq $fxc) { throw "Windows SDK FXC not found" }
+          & $fxc.FullName /nologo /T cs_5_0 /E CSMain /Fo DuoViewComposite.cso patch-workspace/duoview/DuoViewComposite.hlsl
+          if ($LASTEXITCODE -ne 0) { throw "DX12 compute shader compilation failed" }
+          if (-not (Test-Path DuoViewComposite.cso)) { throw "Shader output missing" }
+      - name: Publish standalone Windows diagnostics (not a UEVR injector)
+        uses: actions/upload-artifact@v4
+        with:
+          name: DuoView-Stage2-Standalone-Shader-and-Tools
+          path: |
+            DuoViewProbe.exe
+            DuoViewComposite.cso
+          if-no-files-found: error
+          retention-days: 30
+
   build-stage1:
     # joeyhodge/UESDK is a restricted submodule. Only enable after its exact
     # gitlink commit 2ad9fefa67eb69634b9a1252f4b99876f5333671 is accessible.
