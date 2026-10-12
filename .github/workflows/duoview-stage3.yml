@@ -59,6 +59,7 @@ jobs:
         run: |
           cmake -S patch-workspace/duoview -B duoview-test-build -G "Visual Studio 17 2022" -A x64
           cmake --build duoview-test-build --config Release
+          if ($LASTEXITCODE -ne 0) { throw 'MSVC build failed' }
           ctest --test-dir duoview-test-build -C Release --output-on-failure --no-tests=error
           Copy-Item duoview-test-build/Release/DuoViewProbe.exe DuoViewProbe.exe
       - name: Compile DX12 compositor shader with Windows SDK
@@ -72,7 +73,7 @@ jobs:
           & $fxc.FullName /nologo /T cs_5_0 /E CSMain /Fo DuoViewComposite.cso patch-workspace/duoview/DuoViewComposite.hlsl
           if ($LASTEXITCODE -ne 0) { throw "DX12 compute shader compilation failed" }
           if (-not (Test-Path DuoViewComposite.cso)) { throw "Shader output missing" }
-          & duoview-test-build/Release/DuoViewWarpTests.exe
+          & ./duoview-test-build/Release/DuoViewWarpTests.exe
           if ($LASTEXITCODE -ne 0) { throw "Real DX12 WARP compositor pixel test failed" }
       - name: Publish standalone Windows diagnostics (not a UEVR injector)
         uses: actions/upload-artifact@v4
