@@ -2,6 +2,7 @@
 // Standalone offscreen shader test, not an injected UEVR renderer.
 #define NOMINMAX
 #include <windows.h>
+#include "DuoViewMonoCopyD3D12.hpp"
 #include <d3d12.h>
 #include <d3dcompiler.h>
 #include <dxgi1_6.h>
@@ -332,5 +333,74 @@ int main() try {
         throw std::runtime_error("BGRA8 RTV raster composite pixels are wrong");
     }
     std::cout<<"DuoView BGRA8 source -> BGRA8 raster RTV + fence assertions PASSED\n";
+
+    // Stage 9: use a real BGRA8 stereo-sized OpenXR surrogate. The compositor
+    // output is only W wide; duplicate it to the two adjacent W-wide eye
+    // rectangles, preserving alpha, exact texels, and original source state.
+    auto stereoDesc=texture(AW,H,D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET);
+    stereoDesc.Format=DXGI_FORMAT_B8G8R8A8_UNORM;
+    auto stereo=resource(device.Get(),stereoDesc,D3D12_HEAP_TYPE_DEFAULT,
+                         D3D12_RESOURCE_STATE_RENDER_TARGET);
+    D3D12_PLACED_SUBRESOURCE_FOOTPRINT stereoFoot{};
+    uint64_t stereoBytes=0;
+    device->GetCopyableFootprints(&stereoDesc,0,1,0,&stereoFoot,nullptr,nullptr,&stereoBytes);
+    auto stereoReadback=resource(device.Get(),buffer(stereoBytes),D3D12_HEAP_TYPE_READBACK,
+                                 D3D12_RESOURCE_STATE_COPY_DEST);
+    check(allocator->Reset(),"Reset allocator for Mono OpenXR copy");
+    check(cmd->Reset(allocator.Get(),nullptr),"Reset command list for Mono OpenXR copy");
+    if(uevr::duoview::dx12::copy_composite_to_stereo(
+           cmd.Get(),device.Get(),bgraInput.Get(),stereo.Get(),
+           D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,D3D12_RESOURCE_STATE_RENDER_TARGET)) {
+        throw std::runtime_error("Accepted atlas-sized input rather than single-width composite");
+    }
+    if(uevr::duoview::dx12::copy_composite_to_stereo(
+           cmd.Get(),device.Get(),bgraOutput.Get(),bgraOutput.Get(),
+           D3D12_RESOURCE_STATE_COPY_SOURCE,D3D12_RESOURCE_STATE_RENDER_TARGET)) {
+        throw std::runtime_error("Accepted overlapping source and destination");
+    }
+    if(!uevr::duoview::dx12::copy_composite_to_stereo(
+           cmd.Get(),device.Get(),bgraOutput.Get(),stereo.Get(),
+           D3D12_RESOURCE_STATE_COPY_SOURCE,D3D12_RESOURCE_STATE_RENDER_TARGET)) {
+        throw std::runtime_error("Rejected valid BGRA8 single-eye to double-wide pair");
+    }
+    barrier(cmd.Get(),stereo.Get(),D3D12_RESOURCE_STATE_RENDER_TARGET,D3D12_RESOURCE_STATE_COPY_SOURCE);
+    D3D12_TEXTURE_COPY_LOCATION stereoFrom{stereo.Get(),D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX};
+    stereoFrom.SubresourceIndex=0;
+    D3D12_TEXTURE_COPY_LOCATION stereoTo{stereoReadback.Get(),D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT};
+    stereoTo.PlacedFootprint=stereoFoot;
+    cmd->CopyTextureRegion(&stereoTo,0,0,0,&stereoFrom,nullptr);
+    check(cmd->Close(),"Close OpenXR stereo copy command list");
+    ID3D12CommandList* stereoLists[]{cmd.Get()};
+    queue->ExecuteCommandLists(1,stereoLists);
+    check(queue->Signal(fence.Get(),3),"Signal stereo copy fence");
+    HANDLE stereoEvent=CreateEventW(nullptr,FALSE,FALSE,nullptr);
+    if(!stereoEvent)throw std::runtime_error("CreateEvent stereo failed");
+    check(fence->SetEventOnCompletion(3,stereoEvent),"Set stereo fence event");
+    if(WaitForSingleObject(stereoEvent,30000)!=WAIT_OBJECT_0) {
+        CloseHandle(stereoEvent);throw std::runtime_error("Stereo copy fence timed out");
+    }
+    CloseHandle(stereoEvent);
+    uint8_t* stereoPixels=nullptr;
+    D3D12_RANGE stereoRead{0,static_cast<size_t>(stereoBytes)};
+    check(stereoReadback->Map(0,&stereoRead,reinterpret_cast<void**>(&stereoPixels)),
+          "Map stereo readback");
+    size_t mismatches=0;
+    for(uint32_t y=0;y<H;++y)for(uint32_t x=0;x<W;++x) {
+        const auto* left=stereoPixels+y*stereoFoot.Footprint.RowPitch+x*4;
+        const auto* right=stereoPixels+y*stereoFoot.Footprint.RowPitch+(x+W)*4;
+        for(unsigned channel=0;channel<4;++channel) {
+            if(left[channel]!=right[channel]) ++mismatches;
+        }
+    }
+    auto* stereoCenter=stereoPixels+16*stereoFoot.Footprint.RowPitch+16*4;
+    auto* stereoRightCenter=stereoPixels+16*stereoFoot.Footprint.RowPitch+(16+W)*4;
+    const bool redCenters=stereoCenter[2]>230 && stereoCenter[0]<25 &&
+                          stereoRightCenter[2]>230 && stereoRightCenter[0]<25;
+    stereoReadback->Unmap(0,nullptr);
+    if(mismatches || !redCenters) {
+        throw std::runtime_error("OpenXR surrogate left/right pixel duplication failed");
+    }
+    std::cout<<"DuoView single BGRA8 -> double-wide BGRA8, all "<<
+               W*H<<" RGBA pixel pairs identical after real GPU fence: PASSED\n";
     return 0;
 } catch(const std::exception& e) {std::cerr<<"DuoView WARP test FAILED: "<<e.what()<<"\n";return 1;}
