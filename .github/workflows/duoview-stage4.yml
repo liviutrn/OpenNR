@@ -1,0 +1,183 @@
+name: DuoView UEVR Stage 7
+
+on:
+  push:
+    branches: [experiments/duoview-uevr-v04]
+    paths:
+      - "duoview/**"
+      - ".github/workflows/duoview-stage4.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  source-validation:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out isolated patch workspace
+        uses: actions/checkout@v4
+        with:
+          path: patch-workspace
+      - name: Check out pinned Joey UEVR source without restricted SDK
+        uses: actions/checkout@v4
+        with:
+          repository: joeyhodge/UEVR
+          ref: db6729dd9f5745705b1cdec2ec6f51bdc9570983
+          submodules: false
+          path: uevr
+      - name: Patch and statically validate source
+        shell: bash
+        run: |
+          test "$(git -C uevr rev-parse HEAD)" = "db6729dd9f5745705b1cdec2ec6f51bdc9570983"
+          python3 patch-workspace/duoview/apply_stage1.py uevr
+          python3 patch-workspace/duoview/apply_stage2.py uevr
+          git -C uevr diff --check
+          git -C uevr diff --stat
+      - name: Compile and execute standalone C++ mode tests
+        shell: bash
+        run: |
+          clang++ -std=c++20 -Wall -Wextra -pedantic -pthread -Iuevr/src patch-workspace/duoview/stage1_smoke.cpp -o duoview-smoke
+          ./duoview-smoke
+          clang++ -std=c++20 -Wall -Wextra -Werror -pedantic -Ipatch-workspace/duoview patch-workspace/duoview/stage2_geometry_tests.cpp -o duoview-geometry-tests
+          ./duoview-geometry-tests
+          clang++ -std=c++20 -Wall -Wextra -Werror -pedantic -Ipatch-workspace/duoview patch-workspace/duoview/stage4_gaze_tests.cpp -o duoview-gaze-tests
+          ./duoview-gaze-tests
+          clang++ -std=c++20 -Wall -Wextra -Werror -pedantic -pthread -Ipatch-workspace/duoview patch-workspace/duoview/stage5_frame_tests.cpp -o duoview-frame-tests
+          ./duoview-frame-tests
+
+  shader-and-tools:
+    runs-on: windows-2022
+    timeout-minutes: 35
+    steps:
+      - name: Checkout standalone DuoView files
+        uses: actions/checkout@v4
+        with:
+          path: patch-workspace
+      - name: Compile standalone C++ diagnostics with MSVC
+        shell: pwsh
+        run: |
+          cmake -S patch-workspace/duoview -B duoview-test-build -G "Visual Studio 17 2022" -A x64
+          cmake --build duoview-test-build --config Release
+          if ($LASTEXITCODE -ne 0) { throw 'MSVC build failed' }
+          ctest --test-dir duoview-test-build -C Release --output-on-failure --no-tests=error
+          Copy-Item duoview-test-build/Release/DuoViewProbe.exe DuoViewProbe.exe
+      - name: Compile DX12 compositor shader with Windows SDK
+        shell: pwsh
+        run: |
+          $sdk = Join-Path ([Environment]::GetFolderPath('ProgramFilesX86')) "Windows Kits\10\bin"
+          $fxc = Get-ChildItem -Path $sdk -Filter fxc.exe -Recurse -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -like "*\x64\fxc.exe" } |
+            Sort-Object FullName -Descending | Select-Object -First 1
+          if ($null -eq $fxc) { throw "Windows SDK FXC not found" }
+          & $fxc.FullName /nologo /T cs_5_0 /E CSMain /Fo DuoViewComposite.cso patch-workspace/duoview/DuoViewComposite.hlsl
+          if ($LASTEXITCODE -ne 0) { throw "DX12 compute shader compilation failed" }
+          if (-not (Test-Path DuoViewComposite.cso)) { throw "Shader output missing" }
+          & $fxc.FullName /nologo /I patch-workspace/duoview /T vs_5_0 /E VSMain /Fo DuoViewCompositeRaster.vso patch-workspace/duoview/DuoViewCompositeRaster.hlsl
+          if ($LASTEXITCODE -ne 0) { throw "DX12 raster vertex shader compilation failed" }
+          & $fxc.FullName /nologo /I patch-workspace/duoview /T ps_5_0 /E PSMain /Fo DuoViewCompositeRaster.pso patch-workspace/duoview/DuoViewCompositeRaster.hlsl
+          if ($LASTEXITCODE -ne 0) { throw "DX12 raster pixel shader compilation failed" }
+          & ./duoview-test-build/Release/DuoViewWarpTests.exe
+          if ($LASTEXITCODE -ne 0) { throw "Real DX12 WARP compositor pixel test failed" }
+      - name: Publish standalone Windows diagnostics (not a UEVR injector)
+        uses: actions/upload-artifact@v4
+        with:
+          name: DuoView-Stage7-Compute-and-BGRA8-RTV-WARP
+          path: |
+            DuoViewProbe.exe
+            DuoViewComposite.cso
+            DuoViewCompositeRaster.vso
+            DuoViewCompositeRaster.pso
+            duoview-test-build/Release/DuoViewWarpTests.exe
+          if-no-files-found: error
+          retention-days: 30
+
+  build-stage1:
+    # joeyhodge/UESDK is a restricted submodule. Only enable after its exact
+    # gitlink commit 2ad9fefa67eb69634b9a1252f4b99876f5333671 is accessible.
+    if: vars.DUOVIEW_FULL_BUILD == '1'
+    needs: source-validation
+    runs-on: windows-2022
+    timeout-minutes: 180
+    steps:
+      - name: Check out isolated DuoView patch workspace
+        uses: actions/checkout@v4
+        with:
+          path: patch-workspace
+
+      - name: Check out pinned Joey Mono/DIBR UEVR (with submodules)
+        uses: actions/checkout@v4
+        with:
+          repository: joeyhodge/UEVR
+          ref: db6729dd9f5745705b1cdec2ec6f51bdc9570983
+          token: ${{ secrets.UEVR_SOURCE_TOKEN || github.token }}
+          submodules: recursive
+          path: uevr
+
+      - name: Verify upstream revision and apply Stages 1 and 2
+        shell: pwsh
+        run: |
+          $sha = (git -C uevr rev-parse HEAD).Trim()
+          if ($sha -ne "db6729dd9f5745705b1cdec2ec6f51bdc9570983") {
+            throw "Wrong upstream SHA: $sha"
+          }
+          python patch-workspace/duoview/apply_stage1.py uevr
+          python patch-workspace/duoview/apply_stage2.py uevr
+          git -C uevr diff --check
+          git -C uevr diff --stat
+          git -C uevr diff -- src/mods/vr/MonoRenderingPolicy.hpp src/mods/VR.hpp tests/MonoRenderingTests.hpp
+
+      - name: Configure UEVR (VS2022 x64)
+        run: cmake -S uevr -B uevr/build -G "Visual Studio 17 2022" -A x64 -DUEVR_BUILD_COMPATIBILITY_TESTS=ON
+
+      - name: Compile regression tests
+        run: cmake --build uevr/build --config Release --target compatibility-policy-tests diagnostic-safety-tests hifi-hook-memory-tests nascar-hook-compatibility-tests input-hook-installation-tests mono-d3d11-tests mono-d3d12-tests
+
+      - name: Run regression tests
+        run: ctest --test-dir uevr/build -C Release --output-on-failure --no-tests=error
+
+      - name: Build patched UEVR
+        run: cmake --build uevr/build --config Release --target uevr
+
+      - name: Build auxiliary DLLs
+        run: |
+          cmake --build uevr/build --config Release --target vr-plugin-nullifier
+          cmake --build uevr/build --config Release --target LuaVR
+
+      - name: Check out pinned Joey frontend
+        uses: actions/checkout@v4
+        with:
+          repository: joeyhodge/uevr-frontend
+          ref: 60be4b0f9a646109fd9fdf448bacd41477234091
+          path: frontend
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "6.0.x"
+
+      - name: Build frontend (Stage 1 mode is selectable in-game)
+        shell: pwsh
+        run: |
+          dotnet run --project frontend/tests/RenderingModes --configuration Release
+          dotnet publish frontend --configuration Release --output uevr/build/bin/uevr
+
+      - name: Package Windows test build
+        shell: pwsh
+        run: |
+          Copy-Item uevr/build/bin/vr-plugin-nullifier/UEVRPluginNullifier.dll uevr/build/bin/uevr/
+          Copy-Item uevr/build/bin/LuaVR/LuaVR.dll uevr/build/bin/uevr/
+          "Joey UEVR: db6729dd9f5745705b1cdec2ec6f51bdc9570983" | Out-File uevr/build/bin/uevr/DUOVIEW_SOURCE.txt
+          "DuoView Stage 2: unequal-render-rect atlas probe, no compositor, NOT gameplay-ready" | Out-File -Append uevr/build/bin/uevr/DUOVIEW_SOURCE.txt
+          Compress-Archive -Path uevr/build/bin/uevr/* -DestinationPath DuoView-UEVR-Stage2.zip -Force
+          (Get-FileHash DuoView-UEVR-Stage2.zip -Algorithm SHA256).Hash | Out-File DuoView-UEVR-Stage2.zip.sha256
+
+      - name: Publish test build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: DuoView-UEVR-Stage2-Windows
+          path: |
+            DuoView-UEVR-Stage2.zip
+            DuoView-UEVR-Stage2.zip.sha256
+          if-no-files-found: error
+          retention-days: 30
