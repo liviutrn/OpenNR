@@ -252,7 +252,11 @@ int main() try {
                                      descriptors->GetCPUDescriptorHandleForHeapStart());
     D3D12_TEXTURE_COPY_LOCATION bgraDst{bgraInput.Get(),D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX};
     bgraDst.SubresourceIndex=0;
-    cmd->CopyTextureRegion(&bgraDst,0,0,0,&src,nullptr);
+    // D3D12 requires buffer footprint Format to be copy-compatible with
+    // the BGRA8 image, even though RGBA8 has the same byte stride.
+    auto bgraUploadCopy=src;
+    bgraUploadCopy.PlacedFootprint.Footprint.Format=DXGI_FORMAT_B8G8R8A8_UNORM;
+    cmd->CopyTextureRegion(&bgraDst,0,0,0,&bgraUploadCopy,nullptr);
     barrier(cmd.Get(),bgraInput.Get(),D3D12_RESOURCE_STATE_COPY_DEST,
             D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
 
@@ -295,7 +299,9 @@ int main() try {
             D3D12_RESOURCE_STATE_COPY_SOURCE);
     D3D12_TEXTURE_COPY_LOCATION bgraFrom{bgraOutput.Get(),D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX};
     bgraFrom.SubresourceIndex=0;
-    cmd->CopyTextureRegion(&to,0,0,0,&bgraFrom,nullptr);
+    auto bgraReadbackCopy=to;
+    bgraReadbackCopy.PlacedFootprint.Footprint.Format=DXGI_FORMAT_B8G8R8A8_UNORM;
+    cmd->CopyTextureRegion(&bgraReadbackCopy,0,0,0,&bgraFrom,nullptr);
     check(cmd->Close(),"Close raster command list");
     ID3D12CommandList* drawlists[]{cmd.Get()};
     queue->ExecuteCommandLists(1,drawlists);
