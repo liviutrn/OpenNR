@@ -33,12 +33,18 @@ int main() {
     c.retire();
     assert(!c.consume_for_submit(future));
     assert(c.begin({{11,1},*l,5002,400}));
+    // Once generation 11 begins, late generation-10 callbacks must never
+    // displace generation 11 (even with arbitrarily high frame counters).
+    assert(!c.begin({{10,9999},*l,5000,9999}));
+    assert(c.snapshot({11,1}) == std::nullopt);
+    // begin() fails closed and retires incomplete active frame; use next frame
+    assert(c.begin({{11,2},*l,5002,410}));
     assert(!c.note_view(future,1,5001));
-    assert(c.snapshot({11,1}));
+    assert(c.snapshot({11,2}));
     assert(!c.snapshot(future));
     auto invalid=*l; invalid.periphery.x=0;
     assert(!layout_valid(invalid));
-    assert(!c.begin({{11,2},invalid,5002,440}));
+    assert(!c.begin({{11,3},invalid,5002,440}));
     assert(!c.snapshot({11,1}));
     std::cout<<"DuoView immutable frame/fence policy tests passed\n";
 }
