@@ -85,10 +85,10 @@ jobs:
           python patch-workspace/duoview/apply_stage2.py uevr
           git -C uevr diff --check
           if ($LASTEXITCODE -ne 0) { throw "Source patch validation failed" }
-      - name: Configure UEVR with public SDK candidate
+      - name: Configure UEVR without private-SDK-only compatibility tests
         shell: pwsh
         run: |
-          cmake -S uevr -B uevr/build-publicsdk -G "Visual Studio 17 2022" -A x64 -DUEVR_BUILD_COMPATIBILITY_TESTS=ON *> configure-publicsdk.log
+          cmake -S uevr -B uevr/build-publicsdk -G "Visual Studio 17 2022" -A x64 -DUEVR_BUILD_COMPATIBILITY_TESTS=OFF *> configure-publicsdk.log
           $code = $LASTEXITCODE
           Get-Content configure-publicsdk.log | Select-Object -Last 120
           if ($code -ne 0) { throw "UEVR CMake configure failed with public SDK ($code)" }
