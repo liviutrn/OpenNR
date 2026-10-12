@@ -96,6 +96,7 @@ jobs:
         shell: pwsh
         run: |
           git -C backend diff --binary | Set-Content applied-source.patch
+          git -C backend/dependencies/submodules/UESDK diff --binary | Set-Content applied-sdk.patch
       - name: Upload diagnostics
         if: always()
         uses: actions/upload-artifact@v4
@@ -105,4 +106,5 @@ jobs:
             configure.log
             build.log
             applied-source.patch
+            applied-sdk.patch
           if-no-files-found: warn

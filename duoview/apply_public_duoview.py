@@ -37,9 +37,11 @@ constexpr bool is_mono_method(int32_t id) { return id == method_id || id == duov
     uevr::duoview::State& duoview_state() { return m_duoview; }
     uevr::duoview::FrameKey duoview_key(uint32_t frame) const { return {mono_generation(), static_cast<uint64_t>(frame) + 1}; }
     std::optional<uevr::duoview::ViewFrame> duoview_begin_frame();
-    void configure_duoview();''')
+    void configure_duoview();
+    void note_duoview_gpu_ms(float ms) { m_duo_gpu_ms.store(ms, std::memory_order_relaxed); }''')
     change(header,'(requested_rendering_method() != RenderingMethod::MONO || mono_unavailable_reason() == nullptr);','(!uevr::mono::is_mono_method(requested_rendering_method()) || mono_unavailable_reason() == nullptr);')
     controls='''    uevr::duoview::State m_duoview;
+    std::atomic<float> m_duo_gpu_ms{-1.f};
     const ModSlider::Ptr m_duo_width{ModSlider::create(generate_name("DuoViewCropWidth"), .1f, 1.f, .5f)};
     const ModSlider::Ptr m_duo_height{ModSlider::create(generate_name("DuoViewCropHeight"), .1f, 1.f, .5f)};
     const ModSlider::Ptr m_duo_periphery{ModSlider::create(generate_name("DuoViewPeripheralScale"), .05f, .5f, .2f)};
@@ -78,6 +80,8 @@ constexpr bool is_mono_method(int32_t id) { return id == method_id || id == duov
                     frame->gaze_valid ? "tracking" : "fixed center / unavailable", frame->config.gaze.u,
                     frame->config.gaze.v, uevr::duoview::rendered_pixels(l) / 1000000.0);
             }
+            if (const float ms = m_duo_gpu_ms.load(std::memory_order_relaxed); ms >= 0)
+                ImGui::Text("Composite + eye copies: %.3f ms GPU (last completed slot)", ms);
             ImGui::TextWrapped("Experimental: real game shading savings and temporal stability require headset testing.");
             ImGui::TreePop();
         }''')
@@ -95,8 +99,11 @@ std::optional<uevr::duoview::ViewFrame> VR::duoview_begin_frame() {
     auto runtime = get_runtime();
     const auto key = duoview_key(runtime->internal_frame_count);
     if (const auto existing = m_duoview.snapshot(key)) return existing;
-    runtime->update_matrices(m_nearz, 10000.f);
-    const auto projection = get_projection_matrix(VRRuntime::Eye::LEFT);
+    const float near_plane = sdk::globals::get_near_clipping_plane();
+    if (!std::isfinite(near_plane) || near_plane <= 0.f) return {};
+    runtime->update_matrices(near_plane, 10000.f);
+    auto projection = get_projection_matrix(VRRuntime::Eye::LEFT);
+    projection[3][2] = near_plane;
     std::array<float, 16> elements{};
     std::memcpy(elements.data(), &projection[0][0], sizeof(elements));
     return m_duoview.begin(key, get_hmd_width(), get_hmd_height(), elements, [&]() -> std::optional<uevr::duoview::UV> {
@@ -200,9 +207,12 @@ std::optional<uevr::duoview::ViewFrame> VR::duoview_begin_frame() {
                             [this, source = backbuffer, device, frame, &recorded](d3d12::CommandContext& commands, ID3D12Resource* destination) {
                                 auto& compositor = m_openxr.duoview_compositors[&commands];
                                 if (!compositor) compositor = std::make_unique<uevr::duoview::dx12::Compositor>();
+                                UINT64 frequency{};
+                                g_framework->get_d3d12_hook()->get_command_queue()->GetTimestampFrequency(&frequency);
                                 recorded = compositor->record(device, commands.cmd_list.Get(), source.Get(), destination,
-                                    D3D12_RESOURCE_STATE_RENDER_TARGET, frame->config);
-                                if (recorded) commands.has_commands = true;
+                                    D3D12_RESOURCE_STATE_RENDER_TARGET, frame->config, frequency);
+                                if (compositor->recorded_commands()) commands.has_commands = true;
+                                VR::get()->note_duoview_gpu_ms(compositor->gpu_milliseconds());
                             }, std::nullopt, D3D12_RESOURCE_STATE_RENDER_TARGET, nullptr, backbuffer.Get());
                         vr->m_openxr->note_mono_copy(static_cast<uint32_t>(frame_count), submitted && recorded);
                         if (submitted && recorded) {

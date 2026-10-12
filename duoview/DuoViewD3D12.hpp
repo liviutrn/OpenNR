@@ -25,7 +25,8 @@ public:
     // stay alive until that slot's GPU fence completes.
     bool record(ID3D12Device* device, ID3D12GraphicsCommandList* cmd,
                 ID3D12Resource* atlas, ID3D12Resource* destination,
-                D3D12_RESOURCE_STATES atlas_state, const FrameConfig& frame) {
+                D3D12_RESOURCE_STATES atlas_state, const FrameConfig& frame, UINT64 frequency = 0) {
+        recorded_commands_ = false;
         if (!device || !cmd || !atlas || !destination || atlas == destination ||
             cmd->GetType() != D3D12_COMMAND_LIST_TYPE_DIRECT ||
             FAILED(device->GetDeviceRemovedReason()) || !layout_valid(frame.layout)) return false;
@@ -51,6 +52,8 @@ public:
             sd.Get() != device || dd.Get() != device || cd.Get() != device) return false;
         const bool srgb = format == DXGI_FORMAT_B8G8R8A8_UNORM_SRGB || format == DXGI_FORMAT_R8G8B8A8_UNORM_SRGB;
         if (!prepare(device, l.atlas_width / 2, l.atlas_height, srgb)) return false;
+        read_timing();
+        setup_timing(device, frequency);
         ShaderConstants constants{
             {l.atlas_width / 2, l.atlas_height}, {l.atlas_width, l.atlas_height},
             {l.fovea.x, l.fovea.y, l.fovea.width, l.fovea.height},
@@ -65,6 +68,8 @@ public:
         device->CreateShaderResourceView(atlas, &view, srv_->GetCPUDescriptorHandleForHeapStart());
         source_ = atlas;
         transition(cmd, atlas, atlas_state, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+        recorded_commands_ = true;
+        if (queries_) cmd->EndQuery(queries_.Get(), D3D12_QUERY_TYPE_TIMESTAMP, 0);
         cmd->BeginEvent(0, "DuoView::Composite", 18);
         ID3D12DescriptorHeap* heaps[]{srv_.Get()};
         cmd->SetDescriptorHeaps(1, heaps);
@@ -82,11 +87,43 @@ public:
         cmd->DrawInstanced(3, 1, 0, 0);
         cmd->EndEvent();
         transition(cmd, atlas, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, atlas_state);
-        return copy_composite_to_stereo(cmd, device, output_.Get(), destination,
+        const auto copied = copy_composite_to_stereo(cmd, device, output_.Get(), destination,
             D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_RENDER_TARGET);
+        if (queries_) {
+            cmd->EndQuery(queries_.Get(), D3D12_QUERY_TYPE_TIMESTAMP, 1);
+            cmd->ResolveQueryData(queries_.Get(), D3D12_QUERY_TYPE_TIMESTAMP, 0, 2, timestamps_.Get(), 0);
+            timing_pending_ = true;
+        }
+        return copied;
     }
     const std::string& error() const { return error_; }
+    bool recorded_commands() const { return recorded_commands_; }
+    float gpu_milliseconds() const { return gpu_ms_; }
 private:
+    void read_timing() {
+        if (!timing_pending_ || !timestamps_ || !frequency_) return;
+        D3D12_RANGE range{0, sizeof(UINT64) * 2};
+        UINT64* data{};
+        if (SUCCEEDED(timestamps_->Map(0, &range, reinterpret_cast<void**>(&data)))) {
+            if (data[1] >= data[0]) gpu_ms_ = static_cast<float>((data[1] - data[0]) * 1000.0 / frequency_);
+            D3D12_RANGE no_write{0, 0}; timestamps_->Unmap(0, &no_write);
+        }
+        timing_pending_ = false;
+    }
+    void setup_timing(ID3D12Device* device, UINT64 frequency) {
+        if (!frequency || queries_) return;
+        D3D12_QUERY_HEAP_DESC q{}; q.Type = D3D12_QUERY_HEAP_TYPE_TIMESTAMP; q.Count = 2;
+        if (FAILED(device->CreateQueryHeap(&q, IID_PPV_ARGS(&queries_)))) return;
+        D3D12_HEAP_PROPERTIES heap{}; heap.Type = D3D12_HEAP_TYPE_READBACK;
+        heap.CreationNodeMask = heap.VisibleNodeMask = 1;
+        D3D12_RESOURCE_DESC buffer{}; buffer.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+        buffer.Width = sizeof(UINT64) * 2; buffer.Height = buffer.DepthOrArraySize = buffer.MipLevels = 1;
+        buffer.SampleDesc.Count = 1; buffer.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+        if (FAILED(device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &buffer,
+            D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&timestamps_)))) { queries_.Reset(); return; }
+        frequency_ = frequency;
+        queries_->SetName(L"DuoView::GPUQueries"); timestamps_->SetName(L"DuoView::GPUTimestamps");
+    }
     static DXGI_FORMAT srv_format(DXGI_FORMAT f) {
         switch (f) {
         case DXGI_FORMAT_B8G8R8A8_TYPELESS: return DXGI_FORMAT_B8G8R8A8_UNORM;
@@ -120,6 +157,7 @@ private:
     bool prepare(ID3D12Device* device, UINT width, UINT height, bool srgb) {
         if (device_.Get() == device && output_ && pipeline_ && root_ && srv_ && rtv_ && width == width_ && height == height_ && srgb == srgb_) return true;
         output_.Reset(); pipeline_.Reset(); root_.Reset(); srv_.Reset(); rtv_.Reset();
+        queries_.Reset(); timestamps_.Reset(); timing_pending_ = false; gpu_ms_ = -1.f;
         device_ = device; width_ = width; height_ = height; srgb_ = srgb;
         D3D12_DESCRIPTOR_RANGE range{};
         range.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
@@ -187,6 +225,11 @@ private:
     ComPtr<ID3D12RootSignature> root_;
     ComPtr<ID3D12PipelineState> pipeline_;
     ComPtr<ID3D12DescriptorHeap> srv_, rtv_;
+    ComPtr<ID3D12QueryHeap> queries_;
+    ComPtr<ID3D12Resource> timestamps_;
+    UINT64 frequency_{};
+    float gpu_ms_{-1.f};
+    bool timing_pending_{}, recorded_commands_{};
     UINT width_{}, height_{};
     bool srgb_{};
     std::string error_;
