@@ -34,20 +34,20 @@ inline std::optional<Layout> make_layout(
     float peripheral_scale = 0.20f, float foveal_density = 1.0f,
     float gaze_u = 0.50f, float gaze_v = 0.50f)
 {
-    if (!output_width || !output_height || output_width > 16384 || output_height > 16384 ||
+    if (!output_width || !output_height || output_width > 8192 || output_height > 16384 ||
         !std::isfinite(crop_width) || !std::isfinite(crop_height) ||
         !std::isfinite(peripheral_scale) || !std::isfinite(foveal_density) ||
         !std::isfinite(gaze_u) || !std::isfinite(gaze_v) ||
         crop_width < .05f || crop_height < .05f ||
         crop_width > 1.f || crop_height > 1.f ||
         peripheral_scale < .05f || peripheral_scale > .50f ||
-        foveal_density < .25f || foveal_density > 2.f ||
+        foveal_density < .25f || foveal_density > 4.f ||
         gaze_u < 0.f || gaze_u > 1.f || gaze_v < 0.f || gaze_v > 1.f)
     {
         return {};
     }
     const auto round_size = [](float x) -> uint32_t {
-        return static_cast<uint32_t>(std::max(1.0f, std::round(x)));
+        return static_cast<uint32_t>((std::max)(1.0f, std::round(x)));
     };
     const auto fw = round_size(output_width * crop_width * foveal_density);
     const auto fh = round_size(output_height * crop_height * foveal_density);
@@ -56,7 +56,7 @@ inline std::optional<Layout> make_layout(
     // Match Joey's existing 2*W by H scene allocation for the initial
     // diagnostic. A more compact atlas is possible after DX12 validation.
     if (static_cast<uint64_t>(fw) + pw > 2ull * output_width ||
-        std::max(fh, ph) > output_height) { return {}; }
+        (std::max)(fh, ph) > output_height) { return {}; }
     const float cu = std::clamp(gaze_u, crop_width * .5f, 1.f - crop_width * .5f);
     const float cv = std::clamp(gaze_v, crop_height * .5f, 1.f - crop_height * .5f);
     return Layout{
@@ -109,9 +109,9 @@ void apply_foveal_crop(Matrix& matrix, const Layout& l) {
 inline float foveal_blend(const Layout& l, float u, float v, float feather) {
     if (u < l.u0 || u > l.u1 || v < l.v0 || v > l.v1) return 0.f;
     if (feather <= 0.f) return 1.f;
-    const auto du = std::min((u - l.u0) / l.crop_width, (l.u1 - u) / l.crop_width);
-    const auto dv = std::min((v - l.v0) / l.crop_height, (l.v1 - v) / l.crop_height);
-    const float edge = std::clamp(std::min(du, dv) / feather, 0.f, 1.f);
+    const auto du = (std::min)((u - l.u0) / l.crop_width, (l.u1 - u) / l.crop_width);
+    const auto dv = (std::min)((v - l.v0) / l.crop_height, (l.v1 - v) / l.crop_height);
+    const float edge = std::clamp((std::min)(du, dv) / feather, 0.f, 1.f);
     return edge * edge * (3.f - 2.f * edge);
 }
 

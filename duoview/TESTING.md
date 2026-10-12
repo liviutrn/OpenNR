@@ -11,7 +11,7 @@ This build uses publicly accessible UEVR and UESDK sources with Joey Hodge's cal
 5. Select **DuoView Mono (Experimental)**. Open **VR → Unreal → DuoView Mono**.
 6. First disable **PSVR2 Toolkit gaze**, enable **Debug border**, and use crop width/height 0.50, peripheral scale 0.20, density 1.00. Confirm a sharp center over a continuous low-resolution full-FOV picture.
 7. Turn on gaze. Move your eyes, then your head, then translate your head. Both UE views should use the same pose; the crop should move without a smoothing/deadzone setting.
-8. Try width/height 0.30 and source view 1. Source-view swapping may change lighting quality; it is not a guaranteed Lumen fix.
+8. Try width/height 0.30 and source view 1. After validating density 1, density 3 with a 30% crop renders the fovea at 2700×2700 for a 3000×3000 output; it uses 7.65 million view pixels including the 600×600 periphery. This increases render sampling; the final output and headset still limit visible detail. Source-view swapping may change lighting quality; it is not a guaranteed Lumen fix.
 
 ## What to record
 

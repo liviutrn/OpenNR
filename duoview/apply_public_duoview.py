@@ -45,7 +45,7 @@ constexpr bool is_mono_method(int32_t id) { return id == method_id || id == duov
     const ModSlider::Ptr m_duo_width{ModSlider::create(generate_name("DuoViewCropWidth"), .1f, 1.f, .5f)};
     const ModSlider::Ptr m_duo_height{ModSlider::create(generate_name("DuoViewCropHeight"), .1f, 1.f, .5f)};
     const ModSlider::Ptr m_duo_periphery{ModSlider::create(generate_name("DuoViewPeripheralScale"), .05f, .5f, .2f)};
-    const ModSlider::Ptr m_duo_density{ModSlider::create(generate_name("DuoViewFovealDensity"), .25f, 2.f, 1.f)};
+    const ModSlider::Ptr m_duo_density{ModSlider::create(generate_name("DuoViewFovealDensity"), .25f, 4.f, 1.f)};
     const ModSlider::Ptr m_duo_feather{ModSlider::create(generate_name("DuoViewFeather"), 0.f, .45f, .08f)};
     const ModToggle::Ptr m_duo_gaze{ModToggle::create(generate_name("DuoViewEyeTracking"), true)};
     const ModToggle::Ptr m_duo_border{ModToggle::create(generate_name("DuoViewDebugBorder"), false)};
@@ -82,6 +82,10 @@ constexpr bool is_mono_method(int32_t id) { return id == method_id || id == duov
             }
             if (const float ms = m_duo_gpu_ms.load(std::memory_order_relaxed); ms >= 0)
                 ImGui::Text("Composite + eye copies: %.3f ms GPU (last completed slot)", ms);
+            const auto active_settings = m_duoview.settings();
+            if (active_settings.crop_width != m_duo_width->value() || active_settings.crop_height != m_duo_height->value() ||
+                active_settings.foveal_density != m_duo_density->value() || active_settings.peripheral_scale != m_duo_periphery->value())
+                ImGui::TextWrapped("Selected sizes exceed the current atlas; previous valid settings are active.");
             ImGui::TextWrapped("Experimental: real game shading savings and temporal stability require headset testing.");
             ImGui::TreePop();
         }''')
@@ -120,6 +124,19 @@ std::optional<uevr::duoview::ViewFrame> VR::duoview_begin_frame() {
 }
 '''
     hook='src/mods/vr/FFakeStereoRenderingHook.cpp'
+    signature='void FFakeStereoRenderingHook::adjust_view_rect(FFakeStereoRendering* stereo, int32_t index, int* x, int* y, uint32_t* w, uint32_t* h) {'
+    change(hook, signature, signature + """
+    if (VR::get()->is_using_duoview_mono() &&
+        (index < 0 || index > (g_hook->m_has_double_precision ? 1 : 2))) return;""")
+    projection_signature='__forceinline Matrix4x4f* FFakeStereoRenderingHook::calculate_stereo_projection_matrix(FFakeStereoRendering* stereo, Matrix4x4f* out, const int32_t view_index) {'
+    change(hook, projection_signature, projection_signature + """
+    if (out == nullptr) return nullptr;
+    if (VR::get()->is_using_duoview_mono() &&
+        (view_index < 0 || view_index > (g_hook->m_has_double_precision ? 1 : 2))) {
+        if (g_hook->m_calculate_stereo_projection_matrix_hook)
+            return g_hook->m_calculate_stereo_projection_matrix_hook.call<Matrix4x4f*>(stereo, out, view_index);
+        return out;
+    }""")
     change(hook,'    if (vr->is_using_mono()) { return 1; }','    if (vr->is_using_duoview_mono()) { return 2; }\n    if (vr->is_using_mono()) { return 1; }')
     change(hook,'    if (VR::get()->is_using_mono()) { *x = 0; *y = 0; return; }','''    if (VR::get()->is_using_duoview_mono()) {
         auto vr = VR::get();
@@ -134,7 +151,7 @@ std::optional<uevr::duoview::ViewFrame> VR::duoview_begin_frame() {
     if (VR::get()->is_using_mono()) { *x = 0; *y = 0; return; }''')
     change(hook,'    const bool mono = vr->is_using_mono();\n    if (mono && !is_full_pass) { true_index = 0; }','''    const auto duo_view = true_index;
     const auto duo_key = vr->duoview_key(vr->get_runtime()->internal_frame_count);
-    if (vr->is_using_duoview_mono() && !is_full_pass) {
+    if (vr->is_using_duoview_mono() && !is_full_pass && g_hook->is_in_viewport_client_draw()) {
         vr->duoview_begin_frame();
         if (const auto camera = vr->duoview_state().camera(duo_key, duo_view)) {
             if (has_double_precision) {
@@ -156,7 +173,7 @@ std::optional<uevr::duoview::ViewFrame> VR::duoview_begin_frame() {
     change(hook,'    SPDLOG_INFO_ONCE("Finished calculating stereo view offset!");','''    SPDLOG_INFO_ONCE("Finished calculating stereo view offset!");''')
     anchor='''#ifdef FFAKE_STEREO_RENDERING_LOG_ALL_CALLS
     SPDLOG_INFO("Finished calculating stereo view offset!");'''
-    change(hook,anchor,'''    if (vr->is_using_duoview_mono() && !is_full_pass) {
+    change(hook,anchor,'''    if (vr->is_using_duoview_mono() && !is_full_pass && g_hook->is_in_viewport_client_draw()) {
         const auto* p = reinterpret_cast<const Vector3d*>(view_location);
         const uevr::duoview::CameraPose camera = has_double_precision
             ? uevr::duoview::CameraPose{{rot_d->pitch, rot_d->yaw, rot_d->roll}, {p->x, p->y, p->z}}

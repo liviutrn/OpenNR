@@ -1,4 +1,3 @@
-#define NOMINMAX
 #include <windows.h>
 #include "DuoViewD3D12.hpp"
 #include <dxgi1_6.h>
@@ -59,7 +58,9 @@ int main() try {
     uevr::duoview::FrameConfig frame{{1,1},*layout,{.5f,.5f},{},1};frame.settings.feather_fraction=.12f;
     uevr::duoview::dx12::Compositor compositor;
     if (compositor.record(device.Get(),cmd.Get(),atlas.Get(),bad.Get(),D3D12_RESOURCE_STATE_RENDER_TARGET,frame)) throw std::runtime_error("Invalid destination accepted");
-    if (!compositor.record(device.Get(),cmd.Get(),atlas.Get(),stereo.Get(),D3D12_RESOURCE_STATE_RENDER_TARGET,frame)) throw std::runtime_error(compositor.error());
+    if (compositor.recorded_commands()) throw std::runtime_error("Rejected input recorded GPU commands");
+    UINT64 frequency{};check(queue->GetTimestampFrequency(&frequency));
+    if (!compositor.record(device.Get(),cmd.Get(),atlas.Get(),stereo.Get(),D3D12_RESOURCE_STATE_RENDER_TARGET,frame,frequency)) throw std::runtime_error(compositor.error());
     transition(cmd.Get(),stereo.Get(),D3D12_RESOURCE_STATE_RENDER_TARGET,D3D12_RESOURCE_STATE_COPY_SOURCE);
     from={stereo.Get(),D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX};to={readback.Get(),D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT};to.PlacedFootprint=foot;
     cmd->CopyTextureRegion(&to,0,0,0,&from,nullptr);check(cmd->Close());
@@ -73,5 +74,19 @@ int main() try {
     for(UINT y=0;y<32;++y) for(UINT x=0;x<32;++x)
         if(std::memcmp(sample(x,y),sample(x+32,y),4)) throw std::runtime_error("Mono stereo-copy mismatch");
     readback->Unmap(0,nullptr);
-    std::cout << "Production compositor shader compilation, BGRA8 raster, exact mono duplication: 1024 pixel pairs PASS\n";
+    check(allocator->Reset());check(cmd->Reset(allocator.Get(),nullptr));
+    transition(cmd.Get(),stereo.Get(),D3D12_RESOURCE_STATE_COPY_SOURCE,D3D12_RESOURCE_STATE_RENDER_TARGET);
+    frame.key.frame=2;frame.gaze={.75f,.5f};frame.layout=*uevr::duoview::make_layout(32,32,.5f,.5f,.25f,1.f,.75f,.5f);
+    if (!compositor.record(device.Get(),cmd.Get(),atlas.Get(),stereo.Get(),D3D12_RESOURCE_STATE_RENDER_TARGET,frame,frequency)) throw std::runtime_error(compositor.error());
+    if (compositor.gpu_milliseconds()<0.f) throw std::runtime_error("Completed GPU timestamps missing");
+    transition(cmd.Get(),stereo.Get(),D3D12_RESOURCE_STATE_RENDER_TARGET,D3D12_RESOURCE_STATE_COPY_SOURCE);
+    cmd->CopyTextureRegion(&to,0,0,0,&from,nullptr);check(cmd->Close());queue->ExecuteCommandLists(1,lists);check(queue->Signal(fence.Get(),2));
+    event=CreateEventW(nullptr,FALSE,FALSE,nullptr);check(fence->SetEventOnCompletion(2,event));
+    if(WaitForSingleObject(event,30000)!=WAIT_OBJECT_0)throw std::runtime_error("Second GPU timeout");CloseHandle(event);
+    check(readback->Map(0,&read,&mapped));
+    if(sample(24,16)[2]<240 || sample(8,16)[0]<240) throw std::runtime_error("Moved gaze crop pixels wrong");
+    for(UINT y=0;y<32;++y) for(UINT x=0;x<32;++x)
+        if(std::memcmp(sample(x,y),sample(x+32,y),4)) throw std::runtime_error("Reused mono copy mismatch");
+    readback->Unmap(0,nullptr);
+    std::cout << "Production shader, BGRA8 raster, moved gaze, retired-slot reuse, GPU timestamps: 2048 exact pixel pairs PASS\n";
 } catch(const std::exception& e) { std::cerr<<e.what()<<'\n';return 1; }

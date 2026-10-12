@@ -23,6 +23,11 @@ int main() {
     assert(b->periphery.x == 900 && d::rendered_pixels(*b) == 1170000ull);
     assert(near(b->u0,.35f) && near(b->u1,.65f));
 
+    const auto dense = d::make_layout(3000,3000,.30f,.30f,.20f,3.f);
+    assert(dense && dense->fovea.width == 2700 && dense->fovea.height == 2700);
+    assert(d::rendered_pixels(*dense) == 7650000ull);
+    assert(!d::make_layout(8193,3000));
+    assert(!d::make_layout(3000,3000,.30f,.30f,.20f,4.f));
     const auto gaze = d::make_layout(3000,3000,.50f,.50f,.20f,1.f,.90f,.85f);
     assert(gaze && near(gaze->u0,.50f) && near(gaze->u1,1.f));
     assert(near(gaze->v0,.50f) && near(gaze->v1,1.f));
