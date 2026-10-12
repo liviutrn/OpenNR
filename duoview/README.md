@@ -1,92 +1,88 @@
-# DuoView Mono — v02: unequal UE view rectangles + compositor shader
+# DuoView Mono — UEVR experimental implementation (v05)
 
-**Source-validation status:** PASS (pinned Joey UEVR; Stage 1 + Stage 2 strict-anchor
-patch; C++ policy and 50%/30% geometry/projection tests).
+This experimental branch adds a **second same-camera Unreal rendering view**,
+a high-density cropped fovea plus lower-density full-FOV periphery, and
+independently validated color-compositing code for monoscopic OpenXR output.
 
-**Standalone Windows status:** PASS (MSVC compiles and runs DuoView geometry
-tests, Windows SDK FXC compiles `DuoViewComposite.hlsl` for DX12 compute).
+**Current status: SDK-independent C++/DX12 WARP tests PASS. Full Joey UEVR
+backend NOT compiled, and the real UEVR DX12 compositor dispatch is NOT YET
+integrated. Do NOT install this artifact in STALKER 2 as a working DuoView
+injector. No verified gameplay FPS or PPD improvement is claimed.**
 
-**Full UEVR Windows backend:** NOT BUILT — source checkout requires the
-restricted `joeyhodge/UESDK` submodule. A compilable shader is not a working
-headset renderer. Composition is NOT YET called from UEVR.
+## Code
 
-**Headset and performance:** NOT VALIDATED. No FPS or image-quality improvement
-has yet been demonstrated.
+| Stage | Component | Result |
+|---|---|---|
+| 1 | `apply_stage1.py` | Method 6 and guarded Mono transitions, pinned-source patch tests PASS |
+| 2 | `apply_stage2.py`, `DuoViewGeometry.hpp` | Two Unreal view rectangles + off-axis crop, source tests PASS |
+| 3 | `DuoViewComposite.hlsl` | Compute compositor, shader compile + DX12 WARP dispatch PASS |
+| 4 | `DuoViewGaze.hpp` | Optical gaze coordinates + 50ms stale-frame cache, unit tests PASS |
+| 5 | `DuoViewFrame.hpp` | Pose/view-generation + GPU-fence validity coordinator, unit tests PASS |
+| 6 | `DuoViewWarpTest.cpp` | True GPU composite/readback, red fovea/blue periphery/seam PASS |
+| 7 | `DuoViewCompositeRaster.hlsl` | BGRA8 RTV full-screen raster alternative, GPU readback PASS |
+| 8 | `DuoViewConfig.hpp` | Per-frame immutable settings/gaze snapshot, unit tests PASS |
+| 9 | `DuoViewMonoCopyD3D12.hpp` | Single BGRA8 composite -> double-wide BGRA8 eye copies, GPU pixels PASS |
 
-## Pinned sources
+## Stage 9 WARP evidence
 
-- Joey backend: `joeyhodge/UEVR`, commit
-  `db6729dd9f5745705b1cdec2ec6f51bdc9570983`
-- Joey frontend: `joeyhodge/uevr-frontend`, commit
-  `60be4b0f9a646109fd9fdf448bacd41477234091`
-- UESDK gitlink: `2ad9fefa67eb69634b9a1252f4b99876f5333671`
-- Intended runtime: STALKER 2, DX12, PSVR2, SteamVR OpenXR.
+Windows runner compiled with Visual Studio 2022 and the Windows SDK. The
+shader and GPU command list executed on DirectX 12 WARP, not a fake CPU
+simulation:
 
-## What's implemented
+- Compute center RGB **255,0,0**, periphery **0,0,255**, feather **43,0,212**.
+- BGRA8 render-target raster path outputs exactly the same sample colors.
+- Full stereo copy duplicates **1,024 source pixels**, all four color
+  channels, to two adjacent OpenXR-surrogate eye regions; **0 mismatches**.
+- Cross-frame, missing-view, stale-pose, GPU fence and inconsistent settings
+  checks pass independently.
 
-- Retains historical rendering IDs, original Mono ID 5 and all other original
-  fallback modes; diagnostic DuoView ID 6.
-- Keeps Joey's retirement-safe mode transition for new mode 6.
-- In mode 6, Unreal is requested to create two native scene views.
-- Both UE views are passed the same centered Mono camera pose, no IPD offset.
-- Actual UE **viewport rectangles** are unequal, packed into the original
-  double-wide allocation:
-  - Foveal: default 50% of output each axis, baseline-equivalent sampling.
-  - Peripheral: default 20% of output each axis, full-FOV projection.
-  - 3000² example: 1500×1500 + 600×600 = 2.61M render-view pixels.
-  - 30% geometry path: 900×900 + 600×600 = 1.17M pixels.
-- Computes gaze-centered off-axis projection crop in clip space, independent of
-  reversed-Z depth convention; default currently center fixed.
-- Includes portable math to produce 30% and 50% gaze positions and UV
-  feathering, with tests for both.
-- Includes a DX12 compute shader composing high-resolution ROI into the low-res
-  full-FOV frame, with per-viewport texture-coordinate clamping.
-- Includes Stage 4 independent calibrated-optical-ray to Mono-frustum UV mapping
-  and a 50ms stale-frame cache with no spatial dead zone or gaze smoothing.
-  This is geometry/validity groundwork only: the PSVR2 Toolkit CAPI reader and
-  shared per-render-frame snapshot are **not** yet connected to UEVR.
-- Existing Mono OpenXR submission and auxiliary modes retain their source
-  behavior. **The compositor shader is built but NOT integrated with them.**
+Successful test workflow:
+https://github.com/liviutrn/OpenNR/actions/runs/38307862007
 
-## What remains before a useful headset build
+## Crop budgets (scene-view pixels only, not proven GPU timings)
 
-1. Gain legitimate access to Joey's exact pinned UESDK gitlink commit.
-2. Compile Joey's full backend with both source patches; fix any SDK/API drifts.
-3. Dispatch the DX12 composite shader with a valid per-frame descriptor set,
-   resource transitions, correctly separated source/output resources and
-   GPU fence retirement, *before* existing Mono eye copies.
-4. Verify that UE shading/G-buffer/Lumen actually processes the smaller view
-   rectangles (rather than full-size intermediate render passes).
-5. Hook PSVR2 gaze, map the **combined calibrated** direction into the shared
-   Mono optic frame, use one per-render-frame sample for both projections and
-   both rectangles, handle 50ms gaze staleness without resetting history.
-6. Stable temporal states: TAA/TSR, Lumen, exposure, object motion vectors,
-   depth and source-view selection. Profile equivalent frames on headset.
+At baseline 3000x3000 Mono, periphery 20% width/height and foveal density 1:
 
-The uncomposited DuoView mode is explicitly named "Atlas Diagnostic -
-Uncomposited" in-game: rendering into a packed atlas is *not* the final
-headset image. Keep using original Mono until actual compositing is connected.
+- **50% crop:** 1500x1500 fovea + 600x600 periphery = 2.61M view pixels,
+  71.0% fewer than baseline.
+- **30% crop:** 900x900 fovea + 600x600 periphery = 1.17M view pixels,
+  87.0% fewer than baseline.
 
-## Current CI workflows
+The original renderer can still incur full-screen UE passes, shadows, Lumen,
+frame scheduling, and extra second-view CPU costs. These are **not FPS gains**.
 
-`.github/workflows/duoview-stage2.yml`:
+## Still outstanding
 
-- `source-validation`: checks pinned repo out **without** private UESDK,
-  applies patches with verified anchors, runs portable C++ mode, 50/30%
-  geometry/projection, and gaze-mapping/stale-frame policy tests.
-- `shader-and-tools`: compiles both standalone C++ diagnostics and
-  `DuoViewComposite.hlsl` with MSVC/Windows SDK, uploads an Actions artifact.
-  This artifact is **not the UEVR injector**.
-- `build-stage1`: complete UEVR/aux DLLs/frontend packaging, intentionally
-  gated with `DUOVIEW_FULL_BUILD=1` until exact UESDK access works.
+1. Access the exact UESDK gitlink required by Joey's pinned backend commit
+   `db6729dd9f5745705b1cdec2ec6f51bdc9570983`. Current connected
+   GitHub account receives 404 for `joeyhodge/UESDK`.
+2. Compile full UEVR with the source patches and resolve any interface/ABI
+   problems. The disabled full backend CI only builds the current
+   **uncomposited atlas diagnostic**, not a game-ready DuoView.
+3. Wire frame snapshot, actual completion of both UE rendering views,
+   DX12 raster compositor/RTV and single-width-to-double-wide OpenXR
+   copy inside `D3D12Component.cpp`. Respect GPU states and fences.
+4. Integrate tested PSVR2 Toolkit CAPI gaze reader with correct coordinate
+   mapping to Joey's Mono optic basis and zero smoothing/deadzone.
+5. Add in-game foveal/peripheral density and crop controls; preserve the
+   original Mono mode and all other legacy rendering methods.
+6. Test on STALKER 2 DX12 with PSVR2: view alignment, TAA/TSR/Lumen,
+   seam quality, gaze movement, frame-pacing, actual GPU costs.
 
-To authorize the full build, use GitHub account access approved by Epic/Joey
-for `joeyhodge/UESDK` and set a repository Actions secret called
-`UEVR_SOURCE_TOKEN` to an appropriately scoped read-only PAT. Only after
-verifying the authenticated account can read the exact pinned source, set the
-repository Actions variable `DUOVIEW_FULL_BUILD` to `1`, and start the
-workflow. Never commit credentials into this public branch.
+Read **UEVR_INTEGRATION.md** for exact UEVR renderer and OpenXR insertion
+points, resource states, contract checks and transition requirements.
 
-We evaluated publicly available `Aeyth8/UESDK` (last updated in 2024);
-the main renderer source from Joey's September 2026 commit references at least
-10 missing SDK headers. Treat it as unsuitable for direct substitution.
+## Build/test instructions
+
+Full available test workflow:
+`.github/workflows/duoview-stage5.yml` (source + Windows DX12 WARP).
+
+The SDK-dependent full backend is gated by
+`DUOVIEW_FULL_BUILD=1` and requires a read-only, **authorized** credential
+stored as the GitHub Actions secret `UEVR_SOURCE_TOKEN`. Never place tokens
+in the repository or in this conversation.
+
+This development workspace lives in a separate OpenNR branch only because
+Joey's UEVR repository is read-only for the connected GitHub account. The
+OpenNR main branch and the user's existing working UEVR installation have
+not been modified.
