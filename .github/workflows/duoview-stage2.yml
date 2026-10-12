@@ -5,7 +5,7 @@ on:
     branches: [experiments/duoview-uevr-v02]
     paths:
       - "duoview/**"
-      - ".github/workflows/duoview-stage1.yml"
+      - ".github/workflows/duoview-stage2.yml"
   workflow_dispatch:
 
 permissions:
@@ -64,7 +64,7 @@ jobs:
           submodules: recursive
           path: uevr
 
-      - name: Verify upstream revision and apply Stage 1 patch
+      - name: Verify upstream revision and apply Stages 1 and 2
         shell: pwsh
         run: |
           $sha = (git -C uevr rev-parse HEAD).Trim()
