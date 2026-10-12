@@ -1,18 +1,7 @@
 {
-  "result": "failure",
-  "run_id": "38289840061",
-  "run_url": "https://github.com/liviutrn/OpenNR/actions/runs/38289840061",
-  "source_sha": "4d43f8d5e87565755034c28a881dd86a05d7df6f",
-  "created_at_utc": "2026-10-12T18:17:08.3318177Z",
-  "steps": {
-    "patch": "failure",
-    "compile": "skipped",
-    "shader": "skipped",
-    "tests": "skipped",
-    "setup": "skipped",
-    "installer": "skipped",
-    "packages": "skipped",
-    "artifact": "skipped"
-  },
-  "compile_log_tail": "No compile transcript produced; inspect first failing workflow step."
+  "result": "running",
+  "run_id": "38290027151",
+  "run_url": "https://github.com/liviutrn/OpenNR/actions/runs/38290027151",
+  "source_sha": "0236dfb76be2bd1e0c7342c919ec5c26e04cc833",
+  "created_at_utc": "2026-10-12T18:18:43.7647355Z"
 }
