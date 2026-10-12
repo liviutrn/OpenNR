@@ -12,7 +12,38 @@ permissions:
   contents: read
 
 jobs:
+  source-validation:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out isolated patch workspace
+        uses: actions/checkout@v4
+        with:
+          path: patch-workspace
+      - name: Check out pinned Joey UEVR source without restricted SDK
+        uses: actions/checkout@v4
+        with:
+          repository: joeyhodge/UEVR
+          ref: db6729dd9f5745705b1cdec2ec6f51bdc9570983
+          submodules: false
+          path: uevr
+      - name: Patch and statically validate source
+        shell: bash
+        run: |
+          test "$(git -C uevr rev-parse HEAD)" = "db6729dd9f5745705b1cdec2ec6f51bdc9570983"
+          python3 patch-workspace/duoview/apply_stage1.py uevr
+          git -C uevr diff --check
+          git -C uevr diff --stat
+      - name: Compile and execute standalone C++ mode tests
+        shell: bash
+        run: |
+          clang++ -std=c++20 -Wall -Wextra -pedantic -pthread -Iuevr/src patch-workspace/duoview/stage1_smoke.cpp -o duoview-smoke
+          ./duoview-smoke
+
   build-stage1:
+    # joeyhodge/UESDK is a restricted submodule. Only enable after its exact
+    # gitlink commit 2ad9fefa67eb69634b9a1252f4b99876f5333671 is accessible.
+    if: vars.DUOVIEW_FULL_BUILD == '1'
+    needs: source-validation
     runs-on: windows-2022
     timeout-minutes: 180
     steps:
@@ -26,6 +57,7 @@ jobs:
         with:
           repository: joeyhodge/UEVR
           ref: db6729dd9f5745705b1cdec2ec6f51bdc9570983
+          token: ${{ secrets.UEVR_SOURCE_TOKEN || github.token }}
           submodules: recursive
           path: uevr
 
