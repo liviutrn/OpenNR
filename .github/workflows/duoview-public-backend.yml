@@ -1,0 +1,97 @@
+name: DuoView public backend Windows injector
+on:
+  push:
+    branches: [experiments/duoview-uevr-v07-stalker-publicsdk]
+    paths: ['duoview/**', '.github/workflows/duoview-public-backend.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: duoview-public-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  windows-injector:
+    runs-on: windows-2022
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: workspace
+      - uses: actions/checkout@v4
+        with:
+          repository: praydog/UEVR
+          ref: 4ee5c6b6162dee2291fc75f9dfc57667f6d45a2d
+          path: backend
+      - uses: actions/checkout@v4
+        with:
+          repository: elliotttate/UESDK-RenderDoc
+          ref: 418729025bad57b094bf6b2e2b55734454c97de6
+          path: backend/dependencies/submodules/UESDK
+      - name: Public submodules and calibrated Mono port
+        shell: pwsh
+        run: |
+          git -C backend submodule update --init --depth 1 -- dependencies/submodules/glm dependencies/submodules/imgui dependencies/submodules/spdlog
+          if ($LASTEXITCODE -ne 0) { throw 'Public submodule checkout failed' }
+          python workspace/duoview/apply_public_mono.py backend
+          if ($LASTEXITCODE -ne 0) { throw 'Mono port failed' }
+          if (Test-Path workspace/duoview/apply_public_duoview.py) {
+            python workspace/duoview/apply_public_duoview.py backend
+            if ($LASTEXITCODE -ne 0) { throw 'DuoView integration failed' }
+          }
+          git -C backend diff --check
+          if ($LASTEXITCODE -ne 0) { throw 'Patch whitespace check failed' }
+      - name: Configure full Windows backend
+        shell: pwsh
+        run: |
+          cmake -S backend -B backend/build -G 'Visual Studio 17 2022' -A x64 -DCMAKE_BUILD_TYPE=Release *> configure.log
+          $code = $LASTEXITCODE
+          Get-Content configure.log | Select-Object -Last 80
+          if ($code -ne 0) { throw "Configure failed ($code)" }
+      - name: Compile full DLL and support libraries
+        shell: pwsh
+        run: |
+          cmake --build backend/build --config Release --target uevr vr-plugin-nullifier LuaVR --parallel 2 *> build.log
+          $code = $LASTEXITCODE
+          Get-Content build.log | Select-Object -Last 160
+          if ($code -ne 0) { throw "Full Windows backend compilation failed ($code)" }
+      - uses: actions/checkout@v4
+        with:
+          repository: joeyhodge/uevr-frontend
+          ref: UEVRMono+DIBR+UEVR
+          path: frontend
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '6.0.x'
+      - name: Build matching Mono injector
+        shell: pwsh
+        run: |
+          dotnet publish frontend/UEVR/UEVR.csproj --output package --configuration Release
+          if ($LASTEXITCODE -ne 0) { throw 'Frontend compilation failed' }
+          Copy-Item backend/build/bin/uevr/* package/
+          Copy-Item backend/build/bin/vr-plugin-nullifier/UEVRPluginNullifier.dll package/
+          Copy-Item backend/build/bin/LuaVR/LuaVR.dll package/
+          'Source: https://github.com/liviutrn/OpenNR/tree/${{ github.sha }}' | Set-Content package/BUILD_SOURCE.txt
+          if (Test-Path workspace/duoview/TESTING.md) { Copy-Item workspace/duoview/TESTING.md package/ }
+          Copy-Item backend/LICENSE package/UEVR-LICENSE.txt
+      - name: Upload complete experimental injector
+        uses: actions/upload-artifact@v4
+        with:
+          name: DuoView-Experimental-Windows-Injector-${{ github.run_number }}
+          path: package/
+          if-no-files-found: error
+          retention-days: 30
+      - name: Diagnostics and applied source
+        if: always()
+        shell: pwsh
+        run: |
+          git -C backend diff --binary | Set-Content applied-source.patch
+      - name: Upload diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: DuoView-public-backend-build-logs-${{ github.run_number }}
+          path: |
+            configure.log
+            build.log
+            applied-source.patch
+          if-no-files-found: warn

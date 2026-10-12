@@ -1,0 +1,1298 @@
+diff --git a/src/Framework.cpp b/src/Framework.cpp
+index 5486555..3c6ee74 100644
+--- a/src/Framework.cpp
++++ b/src/Framework.cpp
+@@ -1207,6 +1207,16 @@ void Framework::draw_ui() {
+     ImGui::SetNextWindowSize(ImVec2(window_w, window_h), ImGuiCond_::ImGuiCond_Once);
+     ImGui::Begin(UEVR_NAME.c_str(), &m_draw_ui);
+ 
++    if (m_mods_fully_initialized) {
++        const auto vr = VR::get();
++        if (vr->has_unsupported_rendering_method()) {
++            ImGui::TextWrapped("Unsupported rendering method ID %d; select a supported method in VR / Unreal.", vr->requested_rendering_method());
++        }
++        if (vr->is_using_mono() || vr->requested_rendering_method() == VR::MONO || vr->is_mono_transition_pending()) {
++            ImGui::TextWrapped("Mono (Experimental): %s", vr->mono_status());
++        }
++    }
++
+     ImGui::BeginGroup();
+     ImGui::Columns(2);
+     ImGui::BeginGroup();
+diff --git a/src/mods/VR.cpp b/src/mods/VR.cpp
+index 0b5c53d..cc9d1fc 100644
+--- a/src/mods/VR.cpp
++++ b/src/mods/VR.cpp
+@@ -1365,6 +1365,7 @@ void VR::update_imgui_state_from_xinput_state(XINPUT_STATE& state, bool is_vr_co
+ }
+ 
+ void VR::on_pre_engine_tick(sdk::UGameEngine* engine, float delta) {
++    service_mono_transition_game_thread();
+     ZoneScopedN(__FUNCTION__);
+ 
+     m_cvar_manager->on_pre_engine_tick(engine, delta);
+@@ -1508,9 +1509,77 @@ void VR::on_pre_calculate_stereo_view_offset(void* stereo_device, const int32_t
+     }
+ }
+ 
++const char* VR::mono_unavailable_reason() const {
++    const auto runtime = get_runtime();
++    return uevr::mono::unavailable_reason({
++        .dx11 = false,
++        .dx12 = g_framework != nullptr && g_framework->is_dx12(),
++        .openxr = runtime != nullptr && runtime->is_openxr(),
++        .restricted_title = false,
++        .extreme = m_extreme_compat_mode->value(),
++        .split_screen = m_splitscreen_compatibility_mode->value(),
++        .screen_2d = m_2d_screen_mode->value(),
++        .sceneview_compat = m_sceneview_compatibility_mode->value(),
++        .stereo_emulation = m_stereo_emulation_mode,
++    });
++}
++
++bool VR::service_mono_transition_present() {
++    auto& selection = m_rendering_method->selection();
++    if (!m_rendering_method->is_available(selection.active()) && !selection.pending()) {
++        set_mono_status("Unsupported rendering method ID; preserved in profile, select a supported method");
++        return true;
++    }
++    const bool entering = selection.requested() == RenderingMethod::MONO;
++    if (is_using_mono() || entering) {
++        if (const auto reason = mono_unavailable_reason()) {
++            set_mono_status(reason);
++            // Rejected startup/live requests leave the previous method running.
++            // An invalidated active Mono remains blocked until a safe exit.
++            if (!is_using_mono()) { return false; }
++            if (get_runtime()->is_openxr()) { m_openxr->end_mono_transition_frame(); }
++            if (!selection.pending()) { return true; }
++        }
++    }
++    if (!selection.pending()) { return false; }
++    // A previously requested Native Fix wait may still own the XR frame or
++    // pre-acquire an array image. Do not acknowledge retirement underneath it.
++    set_mono_status("Transition: waiting for GPU consumers / main viewport");
++    const auto token = selection.request_token();
++    const bool retired = g_framework->is_dx12() && m_d3d12.mono_consumers_retired();
++    if (retired) { selection.consumers_retired(token); }
++    m_openxr->end_mono_transition_frame();
++    return true;
++}
++
++void VR::service_mono_transition_game_thread() {
++    auto& selection = m_rendering_method->selection();
++    if (!selection.pending()) { return; }
++    if (selection.requested() == RenderingMethod::MONO && mono_unavailable_reason() != nullptr) { return; }
++    if (!selection.commit_at_game_frame_boundary()) { return; }
++    m_mono_main_view_token = 0;
++    m_mono_attachment_token = 0;
++    m_openxr->reset_mono_projection_history();
++    set_mono_status("Waiting for a current main-view projection and scene");
++    spdlog::info("[Mono] Committed rendering method {} at viewport boundary, generation={}",
++        selection.active(), selection.generation());
++}
++
++bool VR::take_mono_main_view_update(uint32_t frame) {
++    const auto token = (mono_generation() << 32) | frame;
++    return m_mono_main_view_token.exchange(token, std::memory_order_acq_rel) != token;
++}
++
++bool VR::take_mono_attachment_update(uint32_t frame) {
++    const auto token = (mono_generation() << 32) | frame;
++    return m_mono_attachment_token.exchange(token, std::memory_order_acq_rel) != token;
++}
++
+ void VR::on_pre_viewport_client_draw(void* viewport_client, void* viewport, void* canvas){
+     ZoneScopedN(__FUNCTION__);
+ 
++    service_mono_transition_game_thread();
++
+     if (m_custom_z_near_enabled->value()) {
+         SPDLOG_INFO_ONCE("Attempting to set custom z near");
+         sdk::globals::get_near_clipping_plane() = m_custom_z_near->value();
+@@ -2084,6 +2153,8 @@ void VR::on_present() {
+ 
+     m_fake_stereo_hook->on_frame();
+ 
++    if (service_mono_transition_present()) { return; }
++
+     auto openvr = get_runtime<runtimes::OpenVR>();
+ 
+     if (runtime->is_openvr()) {
+diff --git a/src/mods/VR.hpp b/src/mods/VR.hpp
+index 941840c..e94a9f8 100644
+--- a/src/mods/VR.hpp
++++ b/src/mods/VR.hpp
+@@ -19,6 +19,7 @@
+ #include "vr/CVarManager.hpp"
+ 
+ #include "Mod.hpp"
++#include "vr/RenderingMethodSetting.hpp"
+ 
+ #undef max
+ #include <tracy/Tracy.hpp>
+@@ -29,6 +30,7 @@ public:
+         NATIVE_STEREO = 0,
+         SYNCHRONIZED = 1,
+         ALTERNATING = 2,
++        MONO = uevr::mono::method_id,
+     };
+ 
+     enum SynchronizeStage {
+@@ -405,7 +407,34 @@ public:
+         return m_openvr_mtx;
+     }
+ 
++    bool is_using_mono() const { return m_rendering_method->value() == RenderingMethod::MONO; }
++    bool is_mono_transition_pending() const { return m_rendering_method->selection().pending(); }
++    bool is_mono_transition_waiting() const {
++        return m_mono_ready_generation.load(std::memory_order_acquire) != mono_generation();
++    }
++    bool is_mono_transition_quiescing() const {
++        return is_mono_transition_pending() &&
++            (requested_rendering_method() != RenderingMethod::MONO || mono_unavailable_reason() == nullptr);
++    }
++    uint64_t mono_generation() const { return m_rendering_method->selection().generation(); }
++    uint64_t mono_request_token() const { return m_rendering_method->selection().request_token(); }
++    int32_t requested_rendering_method() const { return m_rendering_method->requested_value(); }
++    bool has_unsupported_rendering_method() const { return !m_rendering_method->is_available(requested_rendering_method()); }
++    const char* mono_unavailable_reason() const;
++    bool service_mono_transition_present();
++    void service_mono_transition_game_thread();
++    bool mono_frame_gate_required() const {
++        const auto state = m_rendering_method->selection().snapshot();
++        return uevr::mono::needs_frame_gate(state.method, state.generation, m_mono_ready_generation.load(std::memory_order_acquire));
++    }
++    void note_mono_frame_ready(uint64_t generation) { m_mono_ready_generation.store(generation, std::memory_order_release); }
++    bool take_mono_main_view_update(uint32_t frame);
++    bool take_mono_attachment_update(uint32_t frame);
++    const char* mono_status() const { return m_mono_status.load(std::memory_order_acquire); }
++    void set_mono_status(const char* status) { m_mono_status.store(status, std::memory_order_release); }
++
+     bool is_using_afr() const {
++        if (is_using_mono()) { return false; }
+         return m_rendering_method->value() == RenderingMethod::ALTERNATING || 
+                m_rendering_method->value() == RenderingMethod::SYNCHRONIZED ||
+                m_extreme_compat_mode->value() == true;
+@@ -445,7 +474,7 @@ public:
+     }
+ 
+     bool is_depth_enabled() const {
+-        return m_enable_depth->value();
++        return !is_using_mono() && m_enable_depth->value();
+     }
+ 
+     bool is_decoupled_pitch_enabled() const {
+@@ -531,6 +560,7 @@ public:
+     }
+ 
+     bool is_splitscreen_compatibility_enabled() const {
++        if (is_using_mono() || is_mono_transition_quiescing()) { return false; }
+         return m_splitscreen_compatibility_mode->value();
+     }
+ 
+@@ -539,10 +569,12 @@ public:
+     }
+ 
+     bool is_sceneview_compatibility_enabled() const {
++        if (is_using_mono() || is_mono_transition_quiescing()) { return false; }
+         return m_sceneview_compatibility_mode->value();
+     }
+ 
+     bool is_native_stereo_fix_enabled() const {
++        if (is_using_mono() || is_mono_transition_quiescing()) { return false; }
+         return m_native_stereo_fix->value() && !is_using_afr();
+     }
+ 
+@@ -555,6 +587,7 @@ public:
+     }
+ 
+     bool is_ghosting_fix_enabled() const {
++        if (is_using_mono() || is_mono_transition_quiescing()) { return false; }
+         return m_ghosting_fix->value();
+     }
+ 
+@@ -625,10 +658,12 @@ public:
+     }
+ 
+     auto get_horizontal_projection_override() const {
++        if (is_using_mono()) { return static_cast<int32_t>(HORIZONTAL_PROJECTION_OVERRIDE::HORIZONTAL_SYMMETRIC); }
+         return m_horizontal_projection_override->value();
+     }
+ 
+     auto get_vertical_projection_override() const {
++        if (is_using_mono()) { return static_cast<int32_t>(VERTICAL_PROJECTION_OVERRIDE::VERTICAL_SYMMETRIC); }
+         return m_vertical_projection_override->value();
+     }
+ 
+@@ -880,7 +915,9 @@ private:
+         "Matched",
+     };
+ 
+-    const ModCombo::Ptr m_rendering_method{ ModCombo::create(generate_name("RenderingMethod"), s_rendering_method_names) };
++    const std::unique_ptr<RenderingMethodSetting> m_rendering_method{std::make_unique<RenderingMethodSetting>(generate_name("RenderingMethod"), uevr::mono::non_dibr_choices)};
++    std::atomic<const char*> m_mono_status{"Not selected"};
++    std::atomic<uint64_t> m_mono_ready_generation{}, m_mono_main_view_token{}, m_mono_attachment_token{};
+     const ModCombo::Ptr m_synced_afr_method{ ModCombo::create(generate_name("SyncedSequentialMethod"), s_synced_afr_method_names, 1) };
+     const ModToggle::Ptr m_extreme_compat_mode{ ModToggle::create(generate_name("ExtremeCompatibilityMode"), false, true) };
+     const ModToggle::Ptr m_uncap_framerate{ ModToggle::create(generate_name("UncapFramerate"), true) };
+diff --git a/src/mods/vr/D3D12Component.cpp b/src/mods/vr/D3D12Component.cpp
+index 11fdce5..29a1304 100644
+--- a/src/mods/vr/D3D12Component.cpp
++++ b/src/mods/vr/D3D12Component.cpp
+@@ -17,6 +17,7 @@
+ #include "d3d12/DirectXTK.hpp"
+ 
+ #include "D3D12Component.hpp"
++#include "MonoD3D12.hpp"
+ 
+ //#define AFR_DEPTH_TEMP_DISABLED
+ 
+@@ -24,7 +25,39 @@ constexpr auto ENGINE_SRC_DEPTH = D3D12_RESOURCE_STATE_DEPTH_READ | D3D12_RESOUR
+ constexpr auto ENGINE_SRC_COLOR = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE | D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+ 
+ namespace vrmod {
++bool D3D12Component::mono_consumers_retired() {
++    const auto retired = [](d3d12::CommandContext& c) {
++        std::scoped_lock lock{c.mtx};
++        if (!c.waiting_for_fence) { return true; }
++        if (!c.fence) { return false; }
++        const auto value = c.fence->GetCompletedValue();
++        return value != UINT64_MAX && value >= c.fence_value;
++    };
++    for (auto& c : m_generic_commands) { if (!retired(c)) { return false; } }
++    for (auto& c : m_game_tex_commands) { if (!retired(c)) { return false; } }
++    for (auto& t : m_backbuffer_textures) { if (t && !retired(t->commands)) { return false; } }
++    for (auto& t : m_2d_screen_tex) { if (!retired(t.commands)) { return false; } }
++    if (!retired(m_backbuffer_copy.commands) || !retired(m_game_ui_tex.commands) || !retired(m_game_tex.commands) || !retired(m_scene_capture_tex.commands)) { return false; }
++    std::scoped_lock lock{m_openxr.mtx};
++    for (auto& [index, context] : m_openxr.contexts) {
++        if (context.num_textures_acquired) { return false; }
++        for (auto& t : context.texture_contexts) { if (!retired(t->commands)) { return false; } }
++    }
++    return true;
++}
++
+ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
++    m_mono_block_post_present = vr->mono_generation() != 0;
++    if (m_mono_generation != vr->mono_generation()) {
++        if (!mono_consumers_retired()) { vr->m_openxr->end_mono_transition_frame(); return vr::VRCompositorError_None; }
++        m_mono_generation = vr->mono_generation();
++        m_last_rendered_frame = 0;
++        m_submitted_left_eye = false;
++        m_force_reset = true;
++    }
++    if (m_force_reset && vr->mono_generation() && !mono_consumers_retired()) {
++        vr->m_openxr->end_mono_transition_frame(); return vr::VRCompositorError_None;
++    }
+     if (m_force_reset || m_last_afr_state != vr->is_using_afr()) {
+         if (!setup()) {
+             SPDLOG_ERROR_EVERY_N_SEC(1, "[D3D12 VR] Could not set up, trying again next frame");
+@@ -35,6 +68,13 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
+         m_last_afr_state = vr->is_using_afr();
+     }
+ 
++    if (vr->mono_frame_gate_required()) {
++        if (!vr->m_openxr->has_mono_frame(static_cast<uint32_t>(vr->m_frame_count))) {
++            vr->m_openxr->end_mono_transition_frame(); return vr::VRCompositorError_None;
++        }
++        vr->note_mono_frame_ready(m_mono_generation);
++    }
++    m_mono_block_post_present = false;
+     auto& hook = g_framework->get_d3d12_hook();
+ 
+     hook->set_next_present_interval(0); // disable vsync for vr
+@@ -93,7 +133,7 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
+     const auto& ffsr = VR::get()->m_fake_stereo_hook;
+     const auto ui_target = ffsr->get_render_target_manager()->get_ui_target();
+ 
+-    const auto frame_count = vr->m_render_frame_count;
++    const auto frame_count = vr->is_using_mono() ? vr->m_frame_count : vr->m_render_frame_count;
+ 
+     if (m_game_tex.texture.Get() == nullptr && backbuffer.Get() == real_backbuffer.Get()) {
+         spdlog::info("[VR] Setting up game texture as copy of backbuffer");
+@@ -592,7 +632,17 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
+             }
+ 
+             if (!is_afr) {
+-                if (m_scene_capture_tex.texture.Get() == nullptr) {
++                if (vr->is_using_mono()) {
++                    bool recorded = false;
++                    vr->m_openxr->note_mono_copy(static_cast<uint32_t>(frame_count), false);
++                    const bool submitted = m_openxr.copy(static_cast<uint32_t>(runtimes::OpenXR::SwapchainIndex::DOUBLE_WIDE), nullptr,
++                        [source = backbuffer, device, &recorded](d3d12::CommandContext& commands, ID3D12Resource* destination) {
++                            recorded = uevr::mono::dx12::copy_scene(commands.cmd_list.Get(), device, source.Get(), destination,
++                                D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_RENDER_TARGET);
++                            if (recorded) { commands.has_commands = true; }
++                        }, std::nullopt, D3D12_RESOURCE_STATE_RENDER_TARGET, nullptr, backbuffer.Get());
++                    vr->m_openxr->note_mono_copy(static_cast<uint32_t>(frame_count), submitted && recorded);
++                } else if (m_scene_capture_tex.texture.Get() == nullptr) {
+                     m_openvr.copy_right(backbuffer.Get(), D3D12_RESOURCE_STATE_RENDER_TARGET);
+                 } else {
+                     m_openvr.copy_left_to_right(m_scene_capture_tex.texture.Get(), D3D12_RESOURCE_STATE_RENDER_TARGET);
+@@ -1019,6 +1069,7 @@ void D3D12Component::clear_backbuffer() {
+ }
+ 
+ void D3D12Component::on_post_present(VR* vr) {
++    if (vr->is_mono_transition_quiescing() || vr->is_mono_transition_waiting() || m_mono_block_post_present) { return; }
+     if (m_graphics_memory != nullptr) {
+         auto& hook = g_framework->get_d3d12_hook();
+ 
+@@ -1034,7 +1085,8 @@ void D3D12Component::on_post_present(VR* vr) {
+     }
+ }
+ 
+-void D3D12Component::on_reset(VR* vr) {
++void D3D12Component::on_reset(VR* vr, bool mono_retired) {
++    if (vr->mono_generation() && !mono_retired) { m_force_reset = true; m_mono_block_post_present = true; return; }
+     m_force_reset = true;
+ 
+     auto runtime = vr->get_runtime();
+@@ -1115,7 +1167,8 @@ bool D3D12Component::setup() {
+     SPDLOG_INFO_EVERY_N_SEC(1, "[VR] Setting up d3d12 textures...");
+ 
+     auto vr = VR::get();
+-    on_reset(vr.get());
++    if (vr->mono_generation() != 0 && !mono_consumers_retired()) { return false; }
++    on_reset(vr.get(), true);
+     
+     m_prev_backbuffer.Reset();
+ 
+@@ -1676,37 +1729,37 @@ void D3D12Component::OpenXR::destroy_swapchains() {
+     vr->m_openxr->swapchains.clear();
+ }
+ 
+-void D3D12Component::OpenXR::copy(
++bool D3D12Component::OpenXR::copy(
+     uint32_t swapchain_idx, 
+     ID3D12Resource* resource, 
+     std::optional<std::function<void(d3d12::CommandContext&, ID3D12Resource*)>> pre_commands, 
+     std::optional<std::function<void(d3d12::CommandContext&)>> additional_commands, 
+     D3D12_RESOURCE_STATES src_state, 
+-    D3D12_BOX* src_box) 
++    D3D12_BOX* src_box, ID3D12Resource* retained_mono_source)
+ {
+     std::scoped_lock _{this->mtx};
+ 
+     auto vr = VR::get();
+ 
+     if (vr->m_openxr->frame_state.shouldRender != XR_TRUE) {
+-        return;
++        return false;
+     }
+ 
+     if (!vr->m_openxr->frame_began) {
+         if (vr->get_synchronize_stage() != VR::SynchronizeStage::VERY_LATE) {
+             spdlog::error("[VR] OpenXR: Frame not begun when trying to copy.");
+-            return;
++            return false;
+         }
+     }
+ 
+     if (!this->contexts.contains(swapchain_idx)) {
+         spdlog::error("[VR] OpenXR: Trying to copy to swapchain {} but it doesn't exist.", swapchain_idx);
+-        return;
++        return false;
+     }
+ 
+     if (!vr->m_openxr->swapchains.contains(swapchain_idx)) {
+         spdlog::error("[VR] OpenXR: Trying to copy to swapchain {} but it doesn't exist.", swapchain_idx);
+-        return;
++        return false;
+     }
+ 
+     if (this->contexts[swapchain_idx].num_textures_acquired > 0) {
+@@ -1721,7 +1774,7 @@ void D3D12Component::OpenXR::copy(
+     uint32_t texture_index{};
+     auto result = xrAcquireSwapchainImage(swapchain.handle, &acquire_info, &texture_index);
+ 
+-    if (result == XR_ERROR_RUNTIME_FAILURE) {
++    if (result == XR_ERROR_RUNTIME_FAILURE && !retained_mono_source) {
+         spdlog::error("[VR] xrAcquireSwapchainImage failed: {}", vr->m_openxr->get_result_string(result));
+         spdlog::info("[VR] Attempting to correct...");
+ 
+@@ -1748,7 +1801,16 @@ void D3D12Component::OpenXR::copy(
+             spdlog::error("[VR] xrWaitSwapchainImage failed: {}", vr->m_openxr->get_result_string(result));
+         } else {
+             auto& texture_ctx = ctx.texture_contexts[texture_index];
+-            texture_ctx->commands.wait(INFINITE);
++            texture_ctx->commands.wait(retained_mono_source ? 0 : INFINITE);
++            if (texture_ctx->commands.waiting_for_fence || !texture_ctx->commands.ready()) {
++                XrSwapchainImageReleaseInfo release{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
++                if (XR_SUCCEEDED(xrReleaseSwapchainImage(swapchain.handle, &release))) { --ctx.num_textures_acquired; }
++                return false;
++            }
++            if (retained_mono_source) {
++                ctx.mono_sources.resize(ctx.textures.size());
++                ctx.mono_sources[texture_index] = retained_mono_source;
++            }
+ 
+             if (pre_commands) {
+                 (*pre_commands)(texture_ctx->commands, ctx.textures[texture_index].texture);
+@@ -1786,32 +1848,16 @@ void D3D12Component::OpenXR::copy(
+             XrSwapchainImageReleaseInfo release_info{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
+             auto result = xrReleaseSwapchainImage(swapchain.handle, &release_info);
+ 
+-            // SteamVR shenanigans.
+-            if (result == XR_ERROR_RUNTIME_FAILURE) {
+-                spdlog::error("[VR] xrReleaseSwapchainImage failed: {}", vr->m_openxr->get_result_string(result));
+-                spdlog::info("[VR] Attempting to correct...");
+-
+-                result = xrWaitSwapchainImage(swapchain.handle, &wait_info);
+-
+-                if (result != XR_SUCCESS) {
+-                    spdlog::error("[VR] xrWaitSwapchainImage failed: {}", vr->m_openxr->get_result_string(result));
+-                }
+-
+-                for (auto& texture_ctx : ctx.texture_contexts) {
+-                    texture_ctx->commands.wait(INFINITE);
+-                }
+-
+-                result = xrReleaseSwapchainImage(swapchain.handle, &release_info);
+-            }
+-
+             if (result != XR_SUCCESS) {
+                 spdlog::error("[VR] xrReleaseSwapchainImage failed: {}", vr->m_openxr->get_result_string(result));
+-                return;
++                return false;
+             }
+ 
+             ctx.num_textures_acquired--;
+             ctx.ever_acquired = true;
++            return texture_ctx->commands.waiting_for_fence;
+         }
+     }
++    return false;
+ }
+ } // namespace vrmod
+\ No newline at end of file
+diff --git a/src/mods/vr/D3D12Component.hpp b/src/mods/vr/D3D12Component.hpp
+index 82bf8b9..326bbe3 100644
+--- a/src/mods/vr/D3D12Component.hpp
++++ b/src/mods/vr/D3D12Component.hpp
+@@ -33,7 +33,8 @@ public:
+ 
+     vr::EVRCompositorError on_frame(VR* vr);
+     void on_post_present(VR* vr);
+-    void on_reset(VR* vr);
++    void on_reset(VR* vr, bool mono_retired = false);
++    bool mono_consumers_retired();
+ 
+     void force_reset() { m_force_reset = true; }
+ 
+@@ -45,6 +46,8 @@ public:
+     auto& get_openvr_ui_tex() { return m_openvr.ui_tex; }
+ 
+ private:
++    uint64_t m_mono_generation{};
++    bool m_mono_block_post_present{};
+     bool setup();
+     std::unique_ptr<DirectX::DX12::SpriteBatch> setup_sprite_batch_pso(
+         DXGI_FORMAT output_format, 
+@@ -165,15 +168,15 @@ private:
+         void initialize(XrSessionCreateInfo& session_info);
+         std::optional<std::string> create_swapchains();
+         void destroy_swapchains();
+-        void copy(uint32_t swapchain_idx, ID3D12Resource* src,
++        bool copy(uint32_t swapchain_idx, ID3D12Resource* src,
+             std::optional<std::function<void(d3d12::CommandContext&, ID3D12Resource*)>> pre_commands = std::nullopt,
+             std::optional<std::function<void(d3d12::CommandContext&)>> additional_commands = std::nullopt,
+-            D3D12_RESOURCE_STATES src_state = D3D12_RESOURCE_STATE_PRESENT, D3D12_BOX* src_box = nullptr);
++            D3D12_RESOURCE_STATES src_state = D3D12_RESOURCE_STATE_PRESENT, D3D12_BOX* src_box = nullptr, ID3D12Resource* retained_mono_source = nullptr);
+ 
+-        void copy(uint32_t swapchain_idx, ID3D12Resource* src,
++        bool copy(uint32_t swapchain_idx, ID3D12Resource* src,
+             D3D12_RESOURCE_STATES src_state = D3D12_RESOURCE_STATE_PRESENT, D3D12_BOX* src_box = nullptr)
+         {
+-            this->copy(swapchain_idx, src, std::nullopt, std::nullopt, src_state, src_box);
++            return this->copy(swapchain_idx, src, std::nullopt, std::nullopt, src_state, src_box);
+         }
+         void wait_for_all_copies() {
+             std::scoped_lock _{this->mtx};
+@@ -199,6 +202,8 @@ private:
+         XrGraphicsBindingD3D12KHR binding{XR_TYPE_GRAPHICS_BINDING_D3D12_KHR};
+ 
+         struct SwapchainContext {
++            // Declared first so command contexts retire before these references are destroyed.
++            std::vector<ComPtr<ID3D12Resource>> mono_sources{};
+             std::vector<XrSwapchainImageD3D12KHR> textures{};
+             std::vector<std::unique_ptr<d3d12::TextureContext>> texture_contexts{};
+             uint32_t num_textures_acquired{0};
+diff --git a/src/mods/vr/FFakeStereoRenderingHook.cpp b/src/mods/vr/FFakeStereoRenderingHook.cpp
+index 148f143..c53bc9d 100644
+--- a/src/mods/vr/FFakeStereoRenderingHook.cpp
++++ b/src/mods/vr/FFakeStereoRenderingHook.cpp
+@@ -3466,6 +3466,11 @@ void FFakeStereoRenderingHook::begin_render_viewfamily(ISceneViewExtension* exte
+     auto runtime = vr->get_runtime();
+     runtime->internal_frame_count = frame_count;
+     runtime->on_pre_render_game_thread(frame_count);
++    if (vr->mono_frame_gate_required() && runtime->is_openxr()) {
++        const bool main_family = view_family.get_render_target() != nullptr && view_family.get_render_target() == reinterpret_cast<sdk::FRenderTarget*>(g_hook->get_render_target_manager()->get_viewport());
++        vr->get_openxr_runtime()->note_mono_main_family(frame_count, main_family && views_ptr != nullptr && views_ptr->count == 1);
++    }
++
+ 
+     // This is a HACKHACKHACK to get splitscreen working on around 4.20 to 4.27 something
+     // This is completely borked on UE5
+@@ -4737,6 +4742,7 @@ void FFakeStereoRenderingHook::adjust_view_rect(FFakeStereoRendering* stereo, in
+ 
+     const auto true_index = index_starts_from_one ? ((index + 1) % 2) : (index % 2);
+ 
++    if (VR::get()->is_using_mono()) { *x = 0; *y = 0; return; }
+     if (!VR::get()->is_native_stereo_fix_enabled()) {
+         *x += *w * true_index;
+     }
+@@ -4790,6 +4796,8 @@ __forceinline void FFakeStereoRenderingHook::calculate_stereo_view_offset(
+     const auto has_double_precision = g_hook->m_has_double_precision;
+     const auto rot_d = (Rotator<double>*)view_rotation;
+ 
++    const bool mono = vr->is_using_mono();
++    if (mono && !is_full_pass) { true_index = 0; }
+     if (vr->is_using_afr() && !is_full_pass) {
+         true_index = g_frame_count % 2;
+ 
+@@ -4841,6 +4849,9 @@ __forceinline void FFakeStereoRenderingHook::calculate_stereo_view_offset(
+     }
+ 
+     const auto& mods = g_framework->get_mods()->get_mods();
++    const bool last_eye_update = mono
++        ? (!is_full_pass && vr->take_mono_main_view_update(vr->get_runtime()->internal_frame_count))
++        : true_index == 1;
+ 
+     if (!is_full_pass) {
+         for (auto& mod : mods) {
+@@ -4927,7 +4938,9 @@ __forceinline void FFakeStereoRenderingHook::calculate_stereo_view_offset(
+         const auto current_eye_rotation_offset = glm::normalize(glm::quat{vr->get_eye_transform(true_index)});
+ 
+         const auto new_rotation = glm::normalize(vqi_norm * current_hmd_rotation * current_eye_rotation_offset);
+-        const auto eye_offset = glm::vec3{vr->get_eye_offset((VRRuntime::Eye)(true_index))};
++        const auto eye_offset = mono
++            ? (glm::vec3{vr->get_eye_offset(VRRuntime::Eye::LEFT)} + glm::vec3{vr->get_eye_offset(VRRuntime::Eye::RIGHT)}) * 0.5f
++            : glm::vec3{vr->get_eye_offset((VRRuntime::Eye)(true_index))};
+ 
+ 
+         const auto standing_delta = vr->get_position(0) - vr->get_standing_origin();
+@@ -4938,7 +4951,8 @@ __forceinline void FFakeStereoRenderingHook::calculate_stereo_view_offset(
+ 
+         const auto head_offset = quat_converter * (vqi_norm * (pos * world_scale));
+         const auto head_offset_flat = quat_converter * (vqi_norm * (pos_flat * world_scale));
+-        const auto eye_separation = quat_converter * (glm::normalize(new_rotation) * (eye_offset * world_scale));
++        const auto eye_translation_rotation = mono ? glm::normalize(vqi_norm * current_hmd_rotation) : glm::normalize(new_rotation);
++        const auto eye_separation = quat_converter * (eye_translation_rotation * (eye_offset * world_scale));
+ 
+         if (!has_double_precision) {
+             if (!is_2d_screen) {
+@@ -4971,7 +4985,7 @@ __forceinline void FFakeStereoRenderingHook::calculate_stereo_view_offset(
+         // Roomscale movement
+         // only do it on the right eye pass
+         // if we did it on the left, there would be eye desyncs when the right eye is rendered
+-        if (true_index == 1 && (vr->is_roomscale_enabled() || vr->is_aim_pawn_control_rotation_enabled())) {
++        if (last_eye_update && (vr->is_roomscale_enabled() || vr->is_aim_pawn_control_rotation_enabled())) {
+             const auto world = sdk::UEngine::get()->get_world();
+ 
+             if (const auto controller = sdk::UGameplayStatics::get()->get_player_controller(world, 0); controller != nullptr) {
+@@ -5040,7 +5054,7 @@ __forceinline void FFakeStereoRenderingHook::calculate_stereo_view_offset(
+         }
+ 
+         // Modify Player Control Rotation
+-        if (true_index == 1 && vr->is_aim_modify_player_control_rotation_enabled() && vr->is_any_aim_method_active()) {
++        if (last_eye_update && vr->is_aim_modify_player_control_rotation_enabled() && vr->is_any_aim_method_active()) {
+             if (g_hook->m_tracking_system_hook != nullptr) {
+                 g_hook->m_tracking_system_hook->manual_update_control_rotation();
+             }
+@@ -5066,7 +5080,7 @@ __forceinline Matrix4x4f* FFakeStereoRenderingHook::calculate_stereo_projection_
+     // Only call PostInitProperties if ghosting fix enabled or native stereo is being used.
+     // Also, if we don't have a hook on GetDesiredNumberOfViews, we need to call PostInitProperties
+     //if (!vr->is_using_afr() || vr->is_ghosting_fix_enabled() || !g_hook->m_get_desired_number_of_views_hook) {
+-    if (!vr->should_skip_post_init_properties()) {
++    if (!vr->is_using_mono() && !vr->should_skip_post_init_properties()) {
+         if (!g_hook->m_fixed_localplayer_view_count) {
+             if (!g_hook->m_calculate_stereo_projection_matrix_post_hook) {
+                 const auto return_address = (uintptr_t)_ReturnAddress();
+@@ -5168,6 +5182,7 @@ __forceinline Matrix4x4f* FFakeStereoRenderingHook::calculate_stereo_projection_
+         if (vr->is_using_afr()) {
+             true_index = g_frame_count % 2;
+         }
++        if (vr->is_using_mono()) { true_index = 0; }
+ 
+         auto& double_matrix = *(Matrix4x4d*)out;
+ 
+@@ -5187,6 +5202,9 @@ __forceinline Matrix4x4f* FFakeStereoRenderingHook::calculate_stereo_projection_
+             const auto fmat = VR::get()->get_projection_matrix((VRRuntime::Eye)(true_index));
+             double_matrix = fmat;
+         }
++        if (vr->mono_frame_gate_required() && vr->get_runtime()->is_openxr()) {
++            vr->get_openxr_runtime()->note_mono_projection();
++        }
+     } else {
+         SPDLOG_ERROR("CalculateStereoProjectionMatrix returned nullptr!");
+     }
+@@ -5344,6 +5362,7 @@ uint32_t FFakeStereoRenderingHook::get_desired_number_of_views_hook(FFakeStereoR
+ #endif
+ 
+     auto& vr = VR::get();
++    if (vr->is_using_mono()) { return 1; }
+ 
+     if (g_hook->m_sceneview_data.inside_post_init_properties) {
+         return 2;
+diff --git a/src/mods/vr/MonoD3D12.hpp b/src/mods/vr/MonoD3D12.hpp
+new file mode 100644
+index 0000000..6f1f757
+--- /dev/null
++++ b/src/mods/vr/MonoD3D12.hpp
+@@ -0,0 +1,61 @@
++#pragma once
++
++#include <d3d12.h>
++#include <wrl/client.h>
++
++#include "MonoRenderingPolicy.hpp"
++
++namespace uevr::mono::dx12 {
++inline bool bgra8(DXGI_FORMAT format) {
++    return format == DXGI_FORMAT_B8G8R8A8_UNORM || format == DXGI_FORMAT_B8G8R8A8_UNORM_SRGB ||
++        format == DXGI_FORMAT_B8G8R8A8_TYPELESS;
++}
++
++// The caller owns the source until its submission fence retires, and provides
++// the established scene/swapchain states. No engine resource state is guessed.
++inline bool copy_scene(ID3D12GraphicsCommandList* commands, ID3D12Device* device,
++    ID3D12Resource* source, ID3D12Resource* destination,
++    D3D12_RESOURCE_STATES source_state, D3D12_RESOURCE_STATES destination_state) {
++    if (commands == nullptr || device == nullptr || source == nullptr || destination == nullptr ||
++        source == destination || commands->GetType() != D3D12_COMMAND_LIST_TYPE_DIRECT ||
++        FAILED(device->GetDeviceRemovedReason())) { return false; }
++    const auto src = source->GetDesc();
++    const auto dst = destination->GetDesc();
++    const auto regions = copy_regions(src.Width, src.Height, dst.Width, dst.Height);
++    Microsoft::WRL::ComPtr<ID3D12Device> src_device, dst_device, command_device;
++    if (!regions || src.Dimension != D3D12_RESOURCE_DIMENSION_TEXTURE2D ||
++        dst.Dimension != D3D12_RESOURCE_DIMENSION_TEXTURE2D ||
++        src.DepthOrArraySize != 1 || dst.DepthOrArraySize != 1 || src.MipLevels != 1 || dst.MipLevels != 1 ||
++        src.SampleDesc.Count != 1 || dst.SampleDesc.Count != 1 ||
++        src.SampleDesc.Quality != 0 || dst.SampleDesc.Quality != 0 || !bgra8(src.Format) || !bgra8(dst.Format) ||
++        !(src.Flags & D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET) ||
++        !(dst.Flags & D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET) ||
++        FAILED(source->GetDevice(IID_PPV_ARGS(&src_device))) ||
++        FAILED(destination->GetDevice(IID_PPV_ARGS(&dst_device))) ||
++        FAILED(commands->GetDevice(IID_PPV_ARGS(&command_device))) ||
++        src_device.Get() != device || dst_device.Get() != device || command_device.Get() != device) { return false; }
++
++    D3D12_RESOURCE_BARRIER barriers[2]{};
++    UINT count = 0;
++    if (source_state != D3D12_RESOURCE_STATE_COPY_SOURCE) {
++        auto& b = barriers[count++];
++        b.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
++        b.Transition = {source, D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES, source_state, D3D12_RESOURCE_STATE_COPY_SOURCE};
++    }
++    if (destination_state != D3D12_RESOURCE_STATE_COPY_DEST) {
++        auto& b = barriers[count++];
++        b.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
++        b.Transition = {destination, D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES, destination_state, D3D12_RESOURCE_STATE_COPY_DEST};
++    }
++    if (count != 0) { commands->ResourceBarrier(count, barriers); }
++    const D3D12_TEXTURE_COPY_LOCATION from{source, D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX, {0}};
++    const D3D12_TEXTURE_COPY_LOCATION to{destination, D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX, {0}};
++    for (const auto& region : *regions) {
++        const D3D12_BOX box{region.left, region.top, 0, region.right, region.bottom, 1};
++        commands->CopyTextureRegion(&to, region.destination_x, 0, 0, &from, &box);
++    }
++    for (UINT i = 0; i != count; ++i) { std::swap(barriers[i].Transition.StateBefore, barriers[i].Transition.StateAfter); }
++    if (count != 0) { commands->ResourceBarrier(count, barriers); }
++    return true;
++}
++} // namespace uevr::mono::dx12
+diff --git a/src/mods/vr/MonoRenderingPolicy.hpp b/src/mods/vr/MonoRenderingPolicy.hpp
+new file mode 100644
+index 0000000..78942fb
+--- /dev/null
++++ b/src/mods/vr/MonoRenderingPolicy.hpp
+@@ -0,0 +1,226 @@
++#pragma once
++
++#include <algorithm>
++#include <array>
++#include <atomic>
++#include <cmath>
++#include <cstdint>
++#include <mutex>
++#include <optional>
++#include <span>
++#include <string_view>
++
++namespace uevr::mono {
++
++// Serialized IDs are shared by the backend and injector, including non-DIBR builds.
++inline constexpr int32_t method_id = 5;
++struct Choice { int32_t id; const char* label; };
++inline constexpr std::array choices {
++    Choice{0, "Native Stereo"}, Choice{1, "Synchronized Sequential"}, Choice{2, "Alternating/AFR"},
++    Choice{3, "Synthetic Stereo (DIBR, Experimental)"},
++    Choice{4, "Synthetic Stereo (DIBR Single View, Experimental)"},
++    Choice{method_id, "Mono (Experimental)"},
++};
++inline constexpr std::array non_dibr_choices {choices[0], choices[1], choices[2], choices[5]};
++
++constexpr const char* label(int32_t id, std::span<const Choice> available = choices) {
++    for (const auto& choice : available) { if (choice.id == id) { return choice.label; } }
++    return "Unsupported rendering method (preserved)";
++}
++constexpr bool available(int32_t id, std::span<const Choice> options = choices) {
++    for (const auto& choice : options) { if (choice.id == id) { return true; } }
++    return false;
++}
++
++struct Capabilities {
++    bool dx11{}, dx12{}, openxr{}, restricted_title{}, extreme{}, split_screen{}, screen_2d{},
++        sceneview_compat{}, stereo_emulation{};
++};
++constexpr const char* unavailable_reason(const Capabilities& c) {
++    if ((!c.dx11 && !c.dx12) || !c.openxr) { return "Mono requires DX11 or DX12 with OpenXR"; }
++    if (c.restricted_title) { return "Mono is unavailable for this title's restricted rendering path"; }
++    if (c.extreme || c.split_screen || c.screen_2d || c.sceneview_compat || c.stereo_emulation) {
++        return "Mono requires Extreme Compatibility, split-screen, 2D Screen, SceneView compatibility and Stereo Emulation OFF";
++    }
++    return nullptr;
++}
++
++// Requests from config, Lua/API and ImGui all use this transaction. Only Mono
++// transitions are deferred; existing mode-to-mode selection remains unchanged.
++class Selection {
++public:
++    struct State { int32_t method; uint32_t generation; };
++    State snapshot() const {
++        const auto packed = m_active.load(std::memory_order_acquire);
++        return {static_cast<int32_t>(packed), static_cast<uint32_t>(packed >> 32)};
++    }
++    uint64_t request_token() const { return m_requested.load(std::memory_order_acquire); }
++    int32_t requested() const { return static_cast<int32_t>(request_token()); }
++    int32_t active() const { return snapshot().method; }
++    uint64_t generation() const { return snapshot().generation; }
++    bool pending() const { return requested() != active(); }
++    void initialize(int32_t value) {
++        std::scoped_lock lock{m_mutex};
++        if (m_initialized) { request_locked(value); return; }
++        m_initialized = true;
++        m_requested = pack(value, 1);
++        // Even a startup profile enters through the same retired, game-frame
++        // transaction. This also leaves unsupported startup requests escapable.
++        m_active = pack(value == method_id ? 0 : value, 0);
++    }
++    void request(int32_t value) {
++        std::scoped_lock lock{m_mutex};
++        request_locked(value);
++    }
++    void consumers_retired(uint64_t token) {
++        std::scoped_lock lock{m_mutex};
++        if (request_token() == token && pending()) { m_retired_request = token; }
++    }
++    bool commit_at_game_frame_boundary() {
++        std::scoped_lock lock{m_mutex};
++        if (!pending() || m_retired_request != request_token()) { return false; }
++        m_retired_request = 0;
++        m_active.store(pack(requested(), snapshot().generation + 1), std::memory_order_release);
++        return true;
++    }
++private:
++    static uint64_t pack(int32_t method, uint32_t serial) {
++        return (uint64_t{serial} << 32) | static_cast<uint32_t>(method);
++    }
++    void request_locked(int32_t value) {
++        if (value == requested()) { return; }
++        m_retired_request = 0;
++        m_requested = pack(value, static_cast<uint32_t>(request_token() >> 32) + 1);
++        // A later old-mode request cancels an uncommitted entry into Mono.
++        if (active() != method_id && value != method_id) {
++            m_active = pack(value, snapshot().generation);
++        }
++    }
++    mutable std::mutex m_mutex;
++    std::atomic<uint64_t> m_requested{}, m_active{};
++    uint64_t m_retired_request{};
++    bool m_initialized{};
++};
++
++struct Eye {
++    std::array<float, 4> orientation{0, 0, 0, 1};
++    std::array<float, 3> position{};
++    // Tangents: left, right, up, down.
++    std::array<float, 4> fov{};
++};
++struct Geometry {
++    std::array<float, 4> orientation{};
++    std::array<float, 3> center{};
++    float horizontal{}, vertical{};
++    std::array<std::array<float, 4>, 2> bounds{}; // left, right, top, bottom
++};
++
++inline std::optional<Geometry> geometry(const std::array<Eye, 2>& eyes) {
++    std::array<std::array<double, 4>, 2> orientations{};
++    for (size_t eye = 0; eye != 2; ++eye) {
++        double norm = 0;
++        for (float v : eyes[eye].orientation) { if (!std::isfinite(v)) { return {}; } norm += static_cast<double>(v) * v; }
++        if (std::abs(norm - 1.0f) > 0.001f) { return {}; }
++        const auto length = std::sqrt(norm);
++        for (size_t i = 0; i != 4; ++i) { orientations[eye][i] = eyes[eye].orientation[i] / length; }
++        for (float v : eyes[eye].position) { if (!std::isfinite(v)) { return {}; } }
++        for (float v : eyes[eye].fov) { if (!std::isfinite(v) || std::abs(v) > 100.f) { return {}; } }
++        const auto& f = eyes[eye].fov;
++        if (!(f[0] < -0.001f && f[1] > 0.001f && f[2] > 0.001f && f[3] < -0.001f)) { return {}; }
++    }
++    Geometry g{};
++    for (size_t i = 0; i != 4; ++i) { g.orientation[i] = static_cast<float>(orientations[0][i]); }
++    for (size_t i = 0; i != 3; ++i) { g.center[i] = eyes[0].position[i] * 0.5f + eyes[1].position[i] * 0.5f; }
++    std::array<std::array<float, 4>, 2> common_fov{};
++    common_fov[0] = eyes[0].fov;
++
++    // The engine's one view uses the left optical orientation. Rotate the
++    // right frustum into that same basis, including calibration yaw/pitch/roll.
++    // Ignoring even a small eye rotation makes the submitted rays incorrect.
++    const auto& a = orientations[0];
++    const auto& b = orientations[1];
++    const std::array<double, 4> q{ // conjugate(left) * right
++        a[3]*b[0] - a[0]*b[3] - a[1]*b[2] + a[2]*b[1],
++        a[3]*b[1] + a[0]*b[2] - a[1]*b[3] - a[2]*b[0],
++        a[3]*b[2] - a[0]*b[1] + a[1]*b[0] - a[2]*b[3],
++        a[3]*b[3] + a[0]*b[0] + a[1]*b[1] + a[2]*b[2]};
++    common_fov[1] = {100.f, -100.f, -100.f, 100.f};
++    for (float x : {eyes[1].fov[0], eyes[1].fov[1]}) {
++        for (float y : {eyes[1].fov[2], eyes[1].fov[3]}) {
++            const std::array<double, 3> t{2 * (-q[1] - q[2]*y),
++                2 * (q[2]*x + q[0]), 2 * (q[0]*y - q[1]*x)};
++            const auto rx = x + q[3]*t[0] + q[1]*t[2] - q[2]*t[1];
++            const auto ry = y + q[3]*t[1] + q[2]*t[0] - q[0]*t[2];
++            const auto rz = -1 + q[3]*t[2] + q[0]*t[1] - q[1]*t[0];
++            // A single perspective image cannot cover rays crossing its horizon.
++            if (!std::isfinite(rz) || rz >= -0.00001) { return {}; }
++            const float tx = static_cast<float>(rx / -rz), ty = static_cast<float>(ry / -rz);
++            if (!std::isfinite(tx) || !std::isfinite(ty) || std::abs(tx) > 100.f || std::abs(ty) > 100.f) { return {}; }
++            auto& f = common_fov[1];
++            f[0] = (std::min)(f[0], tx); f[1] = (std::max)(f[1], tx);
++            f[2] = (std::max)(f[2], ty); f[3] = (std::min)(f[3], ty);
++        }
++    }
++    for (const auto& f : common_fov) {
++        if (!(f[0] < f[1] && f[3] < f[2])) { return {}; }
++        g.horizontal = (std::max)({g.horizontal, std::abs(f[0]), std::abs(f[1])});
++        g.vertical = (std::max)({g.vertical, std::abs(f[2]), std::abs(f[3])});
++    }
++    for (size_t i = 0; i != 2; ++i) {
++        const auto& f = common_fov[i];
++        g.bounds[i] = {0.5f + 0.5f * f[0] / g.horizontal, 0.5f + 0.5f * f[1] / g.horizontal,
++                       0.5f - 0.5f * f[2] / g.vertical, 0.5f - 0.5f * f[3] / g.vertical};
++    }
++    return g;
++}
++
++struct ProjectionCrop {
++    uint32_t x{}, y{}, width{}, height{};
++    std::array<float, 4> fov{}; // tangents in the common rendered basis
++};
++
++inline std::optional<ProjectionCrop> projection_crop(const Geometry& g, size_t eye, uint32_t width, uint32_t height) {
++    if (eye >= 2 || width == 0 || height == 0 || width > 32768 || height > 32768 ||
++        !std::isfinite(g.horizontal) || !std::isfinite(g.vertical) ||
++        g.horizontal <= 0 || g.horizontal > 100 || g.vertical <= 0 || g.vertical > 100) { return {}; }
++    const auto& b = g.bounds[eye];
++    for (float v : b) { if (!std::isfinite(v) || v < 0 || v > 1) { return {}; } }
++    if (!(b[0] < b[1] && b[2] < b[3])) { return {}; }
++    const auto left = static_cast<uint32_t>(std::floor(static_cast<double>(b[0]) * width));
++    const auto right = static_cast<uint32_t>(std::ceil(static_cast<double>(b[1]) * width));
++    const auto top = static_cast<uint32_t>(std::floor(static_cast<double>(b[2]) * height));
++    const auto bottom = static_cast<uint32_t>(std::ceil(static_cast<double>(b[3]) * height));
++    // Describe the actual integer-pixel crop, not the unrounded runtime FOV.
++    // OpenXR maps these common-pose rays into each display's optical geometry.
++    return ProjectionCrop{left, top, right - left, bottom - top, {
++        (2.f * left / width - 1.f) * g.horizontal, (2.f * right / width - 1.f) * g.horizontal,
++        (1.f - 2.f * top / height) * g.vertical, (1.f - 2.f * bottom / height) * g.vertical}};
++}
++
++constexpr bool clear_waiting_backbuffer(bool mono, bool quiescing, bool resources_ready,
++    uint64_t resource_generation, uint64_t current_generation) {
++    return mono && !quiescing && resources_ready && current_generation != 0 && resource_generation == current_generation;
++}
++
++constexpr bool frame_matches(uint64_t generation, uint64_t produced_generation,
++    uint32_t render_frame, uint32_t pose_frame, uint32_t projection_frame, bool main_family) {
++    return generation != 0 && produced_generation == generation && main_family &&
++        render_frame == pose_frame && render_frame == projection_frame;
++}
++
++constexpr bool needs_frame_gate(int32_t method, uint64_t generation, uint64_t ready_generation) {
++    return method == method_id || generation != ready_generation;
++}
++
++struct CopyRegion { uint32_t left{}, top{}, right{}, bottom{}, destination_x{}; };
++// Keep the established double-wide allocation: one engine view in its left
++// region, copied to both halves. No AFR timing, new target lifetime or shader.
++inline std::optional<std::array<CopyRegion, 2>> copy_regions(
++    uint64_t source_width, uint32_t source_height, uint64_t destination_width, uint32_t destination_height) {
++    if (source_width == 0 || (source_width & 1) || source_width > 32768 || source_height == 0 ||
++        source_width != destination_width || source_height != destination_height) { return {}; }
++    const auto eye_width = static_cast<uint32_t>(source_width / 2);
++    return std::array{CopyRegion{0, 0, eye_width, source_height, 0},
++                      CopyRegion{0, 0, eye_width, source_height, eye_width}};
++}
++} // namespace uevr::mono
+diff --git a/src/mods/vr/RenderingMethodSetting.hpp b/src/mods/vr/RenderingMethodSetting.hpp
+new file mode 100644
+index 0000000..06a63cd
+--- /dev/null
++++ b/src/mods/vr/RenderingMethodSetting.hpp
+@@ -0,0 +1,51 @@
++#pragma once
++
++#include "Mod.hpp"
++#include "MonoRenderingPolicy.hpp"
++
++// Unlike ModCombo, serialized values are IDs, not indices into a branch's labels.
++class RenderingMethodSetting final : public IModValue {
++public:
++    RenderingMethodSetting(std::string name, std::span<const uevr::mono::Choice> options)
++        : m_name{std::move(name)}, m_options{options} {}
++    int32_t value() const { return m_selection.active(); }
++    int32_t requested_value() const { return m_selection.requested(); }
++    bool is_available(int32_t id) const { return uevr::mono::available(id, m_options); }
++    auto& selection() { return m_selection; }
++    const auto& selection() const { return m_selection; }
++    void request(int32_t value) { m_selection.request(value); }
++    bool draw(std::string_view name) override {
++        bool changed = false;
++        ImGui::PushID(this);
++        if (ImGui::BeginCombo(name.data(), uevr::mono::label(requested_value(), m_options))) {
++            for (const auto& option : m_options) {
++                if (ImGui::Selectable(option.label, requested_value() == option.id)) {
++                    request(option.id);
++                    changed = true;
++                }
++            }
++            ImGui::EndCombo();
++        }
++        if (ImGui::BeginPopupContextItem()) {
++            if (ImGui::Button("Reset to default")) { request(0); changed = true; }
++            ImGui::EndPopup();
++        }
++        ImGui::PopID();
++        return changed;
++    }
++    void draw_value(std::string_view name) override {
++        ImGui::Text("%s: %s (%d)", name.data(), uevr::mono::label(requested_value(), m_options), requested_value());
++    }
++    void config_load(const utility::Config& cfg, bool defaults) override {
++        m_selection.initialize(defaults ? 0 : cfg.get<int32_t>(m_name).value_or(requested_value()));
++    }
++    void config_save(utility::Config& cfg) override { cfg.set<int32_t>(m_name, requested_value()); }
++    void set(const std::string& value) override { request(std::stoi(value)); }
++    std::string get() const override { return std::to_string(requested_value()); }
++    std::string get_config_name() const override { return m_name; }
++    std::string_view get_config_name_view() const { return m_name; }
++private:
++    const std::string m_name;
++    const std::span<const uevr::mono::Choice> m_options;
++    uevr::mono::Selection m_selection;
++};
+diff --git a/src/mods/vr/d3d12/CommandContext.cpp b/src/mods/vr/d3d12/CommandContext.cpp
+index 2f77643..9a40c1e 100644
+--- a/src/mods/vr/d3d12/CommandContext.cpp
++++ b/src/mods/vr/d3d12/CommandContext.cpp
+@@ -63,7 +63,7 @@ void CommandContext::wait(uint32_t ms) {
+     std::scoped_lock _{this->mtx};
+ 
+ 	if (this->fence_event && this->waiting_for_fence) {
+-        WaitForSingleObject(this->fence_event, ms);
++        if (WaitForSingleObject(this->fence_event, ms) != WAIT_OBJECT_0) { return; }
+         ResetEvent(this->fence_event);
+         this->waiting_for_fence = false;
+         if (FAILED(this->cmd_allocator->Reset())) {
+diff --git a/src/mods/vr/runtimes/OpenXR.cpp b/src/mods/vr/runtimes/OpenXR.cpp
+index 2f4b3a9..33b804b 100644
+--- a/src/mods/vr/runtimes/OpenXR.cpp
++++ b/src/mods/vr/runtimes/OpenXR.cpp
+@@ -21,6 +21,7 @@
+ using namespace nlohmann;
+ 
+ namespace runtimes {
++static std::optional<uevr::mono::Geometry> mono_geometry(const std::vector<XrView>& views);
+ void OpenXR::on_draw_ui() {
+     ImGui::SetNextItemOpen(true, ImGuiCond_Once);
+     if (ImGui::TreeNode("OpenXR Options")) {
+@@ -219,6 +220,7 @@ VRRuntime::Error OpenXR::update_poses(bool from_view_extensions, uint32_t frame_
+     }
+ 
+     auto& pipeline_state = this->pipeline_states[frame_count % OpenXR::QUEUE_SIZE];
++    if (vr->mono_frame_gate_required()) { mono_frames[frame_count % QUEUE_SIZE] = {}; }
+ 
+     if (pipeline_state.frame_state.predictedDisplayTime <= 1000) {
+         pipeline_state.frame_state = this->frame_state;
+@@ -304,6 +306,19 @@ VRRuntime::Error OpenXR::update_poses(bool from_view_extensions, uint32_t frame_
+     }
+ 
+     pipeline_state.view_space_location = this->view_space_location;
++    if (vr->mono_frame_gate_required()) {
++        auto& mono = mono_frames[frame_count % QUEUE_SIZE];
++        mono.generation = vr->mono_generation();
++        mono.pose_frame = frame_count;
++        const auto flags = XR_VIEW_STATE_ORIENTATION_VALID_BIT | XR_VIEW_STATE_POSITION_VALID_BIT;
++        mono.pose_valid = (this->stage_view_state.viewStateFlags & flags) == flags &&
++            (this->view_state.viewStateFlags & flags) == flags && view_count == 2;
++        if (vr->is_using_mono()) {
++            mono.geometry = mono_geometry(this->stage_views);
++            if (!mono_geometry(this->views)) { mono.geometry.reset(); }
++        }
++    }
++
+ 
+     for (auto i = 0; i < this->hands.size(); ++i) {
+         auto& hand = this->hands[i];
+@@ -462,6 +477,87 @@ VRRuntime::Error OpenXR::consume_events(std::function<void(void*)> callback) {
+     return VRRuntime::Error::SUCCESS;
+ }
+ 
++static std::optional<uevr::mono::Geometry> mono_geometry(const std::vector<XrView>& views) {
++    if (views.size() != 2) { return {}; }
++    std::array<uevr::mono::Eye, 2> eyes{};
++    for (size_t i = 0; i != 2; ++i) {
++        const auto& p = views[i].pose;
++        const auto& f = views[i].fov;
++        eyes[i] = {{p.orientation.x, p.orientation.y, p.orientation.z, p.orientation.w},
++                   {p.position.x, p.position.y, p.position.z},
++                   {std::tan(f.angleLeft), std::tan(f.angleRight), std::tan(f.angleUp), std::tan(f.angleDown)}};
++    }
++    return uevr::mono::geometry(eyes);
++}
++
++void OpenXR::reset_mono_projection_history() {
++    std::scoped_lock lock{this->sync_assignment_mtx, this->pose_mtx};
++    mono_frames = {};
++    mono_copied_frame.reset();
++    this->should_recalculate_eye_projections = true;
++    this->should_update_eye_matrices = true;
++}
++
++void OpenXR::note_mono_projection() {
++    std::scoped_lock lock{this->sync_assignment_mtx, this->pose_mtx};
++    const auto vr = VR::get();
++    auto& frame = mono_frames[this->internal_frame_count % QUEUE_SIZE];
++    if (frame.pose_frame != this->internal_frame_count || !frame.pose_valid) { return; }
++    if (vr->is_using_mono()) {
++        if (!frame.geometry ||
++            std::abs(this->projections[0][0][0] - 1.f / frame.geometry->horizontal) > 0.0001f ||
++            std::abs(this->projections[0][1][1] - 1.f / frame.geometry->vertical) > 0.0001f ||
++            std::abs(this->projections[0][2][0]) > 0.0001f || std::abs(this->projections[0][2][1]) > 0.0001f) { return; }
++    }
++    frame.projection_frame = this->internal_frame_count;
++    frame.generation = vr->mono_generation();
++}
++
++void OpenXR::note_mono_main_family(uint32_t frame, bool main_family) {
++    if (!main_family) { return; }
++    std::scoped_lock lock{this->sync_assignment_mtx};
++    auto& entry = mono_frames[frame % QUEUE_SIZE];
++    entry.main_family = entry.pose_frame == frame && entry.projection_frame == frame &&
++        entry.generation == VR::get()->mono_generation();
++}
++
++bool OpenXR::has_mono_frame(uint32_t frame) {
++    std::scoped_lock lock{this->sync_assignment_mtx};
++    const auto& entry = mono_frames[frame % QUEUE_SIZE];
++    return entry.pose_valid && uevr::mono::frame_matches(VR::get()->mono_generation(), entry.generation,
++        frame, entry.pose_frame, entry.projection_frame, entry.main_family) &&
++        (!VR::get()->is_using_mono() || entry.geometry.has_value());
++}
++
++bool OpenXR::has_mono_pose(uint32_t frame) {
++    std::scoped_lock lock{this->sync_assignment_mtx};
++    const auto& entry = mono_frames[frame % QUEUE_SIZE];
++    return entry.pose_valid && entry.pose_frame == frame && entry.generation == VR::get()->mono_generation();
++}
++
++void OpenXR::note_mono_copy(uint32_t frame, bool success) {
++    std::scoped_lock lock{this->sync_assignment_mtx};
++    auto& entry = mono_frames[frame % QUEUE_SIZE];
++    entry.copied = success && has_mono_frame(frame);
++    mono_copied_frame = entry.copied ? std::optional<uint32_t>{frame} : std::nullopt;
++}
++
++void OpenXR::end_mono_transition_frame() {
++    std::scoped_lock lock{this->sync_mtx};
++    if (!this->ready() || !this->frame_synced) { return; }
++    if (!this->frame_began) { this->begin_frame(); }
++    if (!this->frame_began) { return; }
++    XrFrameEndInfo info{XR_TYPE_FRAME_END_INFO};
++    info.displayTime = this->frame_state.predictedDisplayTime;
++    info.environmentBlendMode = this->blend_mode;
++    const auto result = xrEndFrame(this->session, &info);
++    if (XR_FAILED(result)) {
++        SPDLOG_WARNING_EVERY_N_SEC(2, "[Mono] Empty transition frame failed: {}", this->get_result_string(result));
++    }
++    this->frame_began = false;
++    this->frame_synced = false;
++}
++
+ VRRuntime::Error OpenXR::update_matrices(float nearz, float farz) {
+     // exit immediately if we've updated the eye matrices since the last frame sync, so we only do this
+     // operation once per sync
+@@ -482,6 +578,40 @@ VRRuntime::Error OpenXR::update_matrices(float nearz, float farz) {
+     this->eyes[1] = Matrix4x4f{OpenXR::to_glm(right_pose.orientation)};
+     this->eyes[1][3] = Vector4f{*(Vector3f*)&right_pose.position, 1.0f};
+ 
++    if (const auto vr = VR::get(); vr->is_using_mono()) {
++        const auto g = mono_geometry(this->views);
++        if (g && std::isfinite(nearz)) {
++            std::unique_lock eyes_lock{this->eyes_mtx};
++            for (size_t i = 0; i != 2; ++i) {
++                const auto& f = this->views[i].fov;
++                this->raw_projections[i] = {std::tan(f.angleLeft), std::tan(f.angleRight),
++                    std::tan(f.angleUp), std::tan(f.angleDown)};
++                std::copy(g->bounds[i].begin(), g->bounds[i].end(), this->view_bounds[i]);
++                // Both copies come from this one common optical basis, not
++                // from an unrotated union of the runtime's two eye FOVs.
++                this->projections[i] = Matrix4x4f{
++                    1.f / g->horizontal, 0, 0, 0,
++                    0, 1.f / g->vertical, 0, 0,
++                    0, 0, 0, 1,
++                    0, 0, nearz, 0};
++            }
++            if (this->should_recalculate_eye_projections) {
++                // Keep allocation scaling stable until a projection/settings
++                // reset, just like the ordinary path. Calibration noise must
++                // not resize GPU resources each frame.
++                eye_width_adjustment = vr->should_grow_rectangle_for_projection_cropping()
++                    ? 1.f / std::max(g->bounds[0][1] - g->bounds[0][0], g->bounds[1][1] - g->bounds[1][0]) : 1.f;
++                eye_height_adjustment = vr->should_grow_rectangle_for_projection_cropping()
++                    ? 1.f / std::max(g->bounds[0][3] - g->bounds[0][2], g->bounds[1][3] - g->bounds[1][2]) : 1.f;
++                SPDLOG_INFO("[Mono] Initialized common optical projection: tan_half_fov={} x {}, texture_scale={} x {}",
++                    g->horizontal, g->vertical, eye_width_adjustment, eye_height_adjustment);
++            }
++            this->should_recalculate_eye_projections = false;
++        }
++        this->should_update_eye_matrices = false;
++        return VRRuntime::Error::SUCCESS;
++    }
++
+     auto get_mat = [&](int eye) {
+         const auto& vr = VR::get();
+         std::array<float, 4> tan_half_fov{};
+@@ -668,6 +798,7 @@ void OpenXR::destroy() {
+     }
+ 
+     std::scoped_lock _{sync_mtx};
++    if (VR::get()->mono_generation() != 0) { reset_mono_projection_history(); }
+ 
+     if (this->session != nullptr) {
+         if (this->session_ready) {
+@@ -690,6 +821,23 @@ void OpenXR::destroy() {
+ }
+ 
+ OpenXR::PipelineState OpenXR::get_submit_state() {
++    if (VR::get()->is_using_mono()) {
++        // Do not relabel the latest pose as the rendered pose. Mono's two eyes
++        // share one exact scene/pose/projection generation, never an AFR hold.
++        std::scoped_lock lock{this->sync_assignment_mtx};
++        const auto frame = mono_copied_frame.value_or(this->internal_render_frame_count);
++        const auto& mono = mono_frames[frame % QUEUE_SIZE];
++        auto selected = this->pipeline_states[frame % QUEUE_SIZE];
++        if (!mono_copied_frame || !has_mono_frame(frame) || !mono.copied || selected.frame_count != frame) {
++            selected = {};
++            selected.frame_state = this->frame_state;
++        }
++        this->has_render_frame_count = false;
++        this->last_submit_state = selected;
++        mono_copied_frame.reset();
++        return selected;
++    }
++
+     std::scoped_lock __{ this->sync_assignment_mtx };
+ 
+     if (this->has_render_frame_count) {
+@@ -1712,6 +1860,9 @@ XrResult OpenXR::end_frame(const std::vector<XrCompositionLayerBaseHeader*>& qua
+     }
+ 
+     const auto is_afr = VR::get()->is_using_afr();
++    auto vr = VR::get();
++    const bool mono = vr->is_using_mono();
++    if (mono) { has_depth = false; }
+ 
+     if (is_afr) {
+         if (!this->swapchains.contains((uint32_t)OpenXR::SwapchainIndex::AFR_LEFT_EYE) || !this->swapchains.contains((uint32_t)OpenXR::SwapchainIndex::AFR_RIGHT_EYE)) {
+@@ -1742,6 +1893,7 @@ XrResult OpenXR::end_frame(const std::vector<XrCompositionLayerBaseHeader*>& qua
+     const auto submit_state = this->get_submit_state();
+     const auto& pipelined_stage_views = submit_state.stage_views;
+     const auto& pipelined_frame_state = submit_state.frame_state;
++    const auto mono_projection = mono ? mono_geometry(pipelined_stage_views) : std::nullopt;
+ 
+     if (pipelined_stage_views.empty()) {
+         spdlog::warn("[VR] No stage views to submit");
+@@ -1789,7 +1941,7 @@ XrResult OpenXR::end_frame(const std::vector<XrCompositionLayerBaseHeader*>& qua
+ 
+     // we CANT push the layers every time, it cause some layer error
+     // in xrEndFrame, so we must only do it when shouldRender is true
+-    if (pipelined_frame_state.shouldRender == XR_TRUE && !pipelined_stage_views.empty()) {
++    if (pipelined_frame_state.shouldRender == XR_TRUE && !pipelined_stage_views.empty() && (!mono || mono_projection.has_value())) {
+         projection_layer_views.resize(pipelined_stage_views.size(), {XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW});
+         depth_layers.resize(projection_layer_views.size(), {XR_TYPE_COMPOSITION_LAYER_DEPTH_INFO_KHR});
+ 
+@@ -1808,6 +1960,12 @@ XrResult OpenXR::end_frame(const std::vector<XrCompositionLayerBaseHeader*>& qua
+ 
+             projection_layer_views[i].type = XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW;
+             projection_layer_views[i].pose = pipelined_stage_views[i].pose;
++            if (mono_projection) {
++                const auto& g = *mono_projection;
++                projection_layer_views[i].pose.position = {g.center[0], g.center[1], g.center[2]};
++                projection_layer_views[i].pose.orientation = {g.orientation[0], g.orientation[1], g.orientation[2], g.orientation[3]};
++            }
++
+             projection_layer_views[i].fov = pipelined_stage_views[i].fov;
+             projection_layer_views[i].subImage.swapchain = swapchain->handle;
+ 
+@@ -1824,6 +1982,15 @@ XrResult OpenXR::end_frame(const std::vector<XrCompositionLayerBaseHeader*>& qua
+             }
+             offset_y = view_bounds[i][2] * swapchain->height;
+             extent_y = view_bounds[i][3] * swapchain->height - offset_y;
++            if (mono_projection) {
++                const auto crop = uevr::mono::projection_crop(*mono_projection, i, swapchain->width / 2, swapchain->height);
++                if (!crop) { return XR_ERROR_VALIDATION_FAILURE; }
++                offset_x = static_cast<int32_t>(crop->x + i * (swapchain->width / 2));
++                offset_y = static_cast<int32_t>(crop->y);
++                extent_x = static_cast<int32_t>(crop->width);
++                extent_y = static_cast<int32_t>(crop->height);
++                projection_layer_views[i].fov = {std::atan(crop->fov[0]), std::atan(crop->fov[1]), std::atan(crop->fov[2]), std::atan(crop->fov[3])};
++            }
+             
+             // SPDLOG_INFO("image calc for eye {} {}, {}, {}, {}", i, offset_x, extent_x, offset_y, extent_y);
+             projection_layer_views[i].subImage.imageRect.offset = {offset_x, offset_y};
+diff --git a/src/mods/vr/runtimes/OpenXR.hpp b/src/mods/vr/runtimes/OpenXR.hpp
+index bb9256a..eb0215e 100644
+--- a/src/mods/vr/runtimes/OpenXR.hpp
++++ b/src/mods/vr/runtimes/OpenXR.hpp
+@@ -18,6 +18,9 @@
+ #include <sdk/Math.hpp>
+ 
+ #include "Mod.hpp"
++#include "../MonoRenderingPolicy.hpp"
++#include <optional>
++#include <array>
+ 
+ #include "VRRuntime.hpp"
+ 
+@@ -309,6 +312,21 @@ public:
+     }
+ 
+     PipelineState last_submit_state{};
++    void end_mono_transition_frame();
++    void reset_mono_projection_history();
++    void note_mono_projection();
++    void note_mono_main_family(uint32_t frame, bool main_family);
++    bool has_mono_pose(uint32_t frame);
++    bool has_mono_frame(uint32_t frame);
++    void note_mono_copy(uint32_t frame, bool success);
++    struct MonoFrame {
++        uint64_t generation{};
++        uint32_t pose_frame{}, projection_frame{};
++        bool pose_valid{}, main_family{}, copied{};
++        std::optional<uevr::mono::Geometry> geometry;
++    };
++    std::array<MonoFrame, QUEUE_SIZE> mono_frames{}; // protected by sync_assignment_mtx
++    std::optional<uint32_t> mono_copied_frame; // exact copy producer, not a later render callback
+     PipelineState get_submit_state();
+     
+     const ModSlider::Ptr resolution_scale{ ModSlider::create("OpenXR_ResolutionScale", 0.1f, 3.0f, 1.0f) };
