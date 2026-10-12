@@ -1,4 +1,4 @@
-name: DuoView UEVR Stage 7
+name: DuoView UEVR Stage 7-8
 
 on:
   push:
@@ -45,6 +45,8 @@ jobs:
           ./duoview-gaze-tests
           clang++ -std=c++20 -Wall -Wextra -Werror -pedantic -pthread -Ipatch-workspace/duoview patch-workspace/duoview/stage5_frame_tests.cpp -o duoview-frame-tests
           ./duoview-frame-tests
+          clang++ -std=c++20 -Wall -Wextra -Werror -pedantic -pthread -Ipatch-workspace/duoview patch-workspace/duoview/stage8_config_tests.cpp -o duoview-config-tests
+          ./duoview-config-tests
 
   shader-and-tools:
     runs-on: windows-2022
