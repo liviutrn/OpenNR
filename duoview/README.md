@@ -1,72 +1,87 @@
-# DuoView Mono — UEVR Stage 1 source prototype
+# DuoView Mono — v02: unequal UE view rectangles + compositor shader
 
-**Status:** Source patch and standalone C++ policy/transition smoke tests pass.
-**Not yet a compiled or headset-validated UEVR build.**
-**Not yet foveated. No performance or PPD improvement is claimed.**
+**Source-validation status:** PASS (pinned Joey UEVR; Stage 1 + Stage 2 strict-anchor
+patch; C++ policy and 50%/30% geometry/projection tests).
 
-This temporary CI workspace lives on an isolated branch of `liviutrn/OpenNR`;
-the OpenNR `main` branch is unchanged. It fetches the real Joey Mono/DIBR
-backend rather than replacing the user's working injector.
+**Standalone Windows status:** PASS (MSVC compiles and runs DuoView geometry
+tests, Windows SDK FXC compiles `DuoViewComposite.hlsl` for DX12 compute).
 
-## Pinned inputs
+**Full UEVR Windows backend:** NOT BUILT — source checkout requires the
+restricted `joeyhodge/UESDK` submodule. A compilable shader is not a working
+headset renderer. Composition is NOT YET called from UEVR.
 
-- UEVR backend: `joeyhodge/UEVR`, commit `db6729dd9f5745705b1cdec2ec6f51bdc9570983`
-- UEVR frontend: `joeyhodge/uevr-frontend`, commit `60be4b0f9a646109fd9fdf448bacd41477234091`
-- UESDK gitlink: `2ad9fefa67eb69634b9a1252f4b99876f5333671` (restricted)
-- Target: STALKER 2 / DX12 / PSVR2 / SteamVR OpenXR.
+**Headset and performance:** NOT VALIDATED. No FPS or image-quality improvement
+has yet been demonstrated.
 
-## Changes in the source patch
+## Pinned sources
 
-- Rendering method **6 = DuoView Mono (Stage 1 Diagnostic)**.
-- Preserve original Mono **5** and all historical rendering IDs.
-- Include mode 6 in the guarded Mono GPU-retirement / generation transition,
-  startup, availability and frame-validation policies.
-- Request **two Unreal scene views** instead of one in mode 6.
-- Keep the two views in separate side-by-side view rectangles of identical
-  size in the existing double-wide render target.
-- Reuse the current Mono camera offset and common projection for *both*
-  Unreal views, intentionally creating zero inter-view IPD.
-- Preserve the current Mono OpenXR copy/submission to both headset eyes.
-- Accept **two-view** main families for DuoView frame validation.
-- Add smoke tests for ID 6 and transitions mode 6 → 5 → 0.
+- Joey backend: `joeyhodge/UEVR`, commit
+  `db6729dd9f5745705b1cdec2ec6f51bdc9570983`
+- Joey frontend: `joeyhodge/uevr-frontend`, commit
+  `60be4b0f9a646109fd9fdf448bacd41477234091`
+- UESDK gitlink: `2ad9fefa67eb69634b9a1252f4b99876f5333671`
+- Intended runtime: STALKER 2, DX12, PSVR2, SteamVR OpenXR.
 
-## Outstanding stages
+## What's implemented
 
-1. **UEVR full Windows compile:** pending access to the exact matching restricted UESDK.
-2. **Actual Unreal rendering proof:** headset tests and GPU capture must verify
-   two scene-renderer view passes, same pose, same projection, correct view states,
-   stable Lumen/shadows, and no stale OpenXR frames.
-3. **Real independent view sizes:** foveal view and peripheral view must receive
-   different rendering resolutions *before material/G-buffer/Lumen shading*.
-4. **Correct compositor:** combine two view textures into one mono frame, with
-   off-axis perspective mapping, stable color, and feathering.
-5. **PSVR2 gaze:** reuse working OpenXR gaze, stabilize temporal histories.
-6. **Profiling:** compare identical STALKER 2 scenes at 3000×3000 mono and
-   DuoView 50%/30%, capturing total GPU cost and individual render passes.
+- Retains historical rendering IDs, original Mono ID 5 and all other original
+  fallback modes; diagnostic DuoView ID 6.
+- Keeps Joey's retirement-safe mode transition for new mode 6.
+- In mode 6, Unreal is requested to create two native scene views.
+- Both UE views are passed the same centered Mono camera pose, no IPD offset.
+- Actual UE **viewport rectangles** are unequal, packed into the original
+  double-wide allocation:
+  - Foveal: default 50% of output each axis, baseline-equivalent sampling.
+  - Peripheral: default 20% of output each axis, full-FOV projection.
+  - 3000² example: 1500×1500 + 600×600 = 2.61M render-view pixels.
+  - 30% geometry path: 900×900 + 600×600 = 1.17M pixels.
+- Computes gaze-centered off-axis projection crop in clip space, independent of
+  reversed-Z depth convention; default currently center fixed.
+- Includes portable math to produce 30% and 50% gaze positions and UV
+  feathering, with tests for both.
+- Includes a DX12 compute shader composing high-resolution ROI into the low-res
+  full-FOV frame, with per-viewport texture-coordinate clamping.
+- Existing Mono OpenXR submission and auxiliary modes retain their source
+  behavior. **The compositor shader is built but NOT integrated with them.**
 
-At Stage 1, both engine views render at full per-view resolution. **Frame time
-may be worse than ordinary Mono. Do not use this diagnostic for gameplay FPS.**
+## What remains before a useful headset build
 
-## CI
+1. Gain legitimate access to Joey's exact pinned UESDK gitlink commit.
+2. Compile Joey's full backend with both source patches; fix any SDK/API drifts.
+3. Dispatch the DX12 composite shader with a valid per-frame descriptor set,
+   resource transitions, correctly separated source/output resources and
+   GPU fence retirement, *before* existing Mono eye copies.
+4. Verify that UE shading/G-buffer/Lumen actually processes the smaller view
+   rectangles (rather than full-size intermediate render passes).
+5. Hook PSVR2 gaze, map the **combined calibrated** direction into the shared
+   Mono optic frame, use one per-render-frame sample for both projections and
+   both rectangles, handle 50ms gaze staleness without resetting history.
+6. Stable temporal states: TAA/TSR, Lumen, exposure, object motion vectors,
+   depth and source-view selection. Profile equivalent frames on headset.
 
-Workflow: `.github/workflows/duoview-stage1.yml`
+The uncomposited DuoView mode is explicitly named "Atlas Diagnostic -
+Uncomposited" in-game: rendering into a packed atlas is *not* the final
+headset image. Keep using original Mono until actual compositing is connected.
 
-The **source-validation** job does not need the Epic-licensed SDK. It checks out
-the pinned backend, applies strict exact-anchor edits, compiles the isolated
-`MonoRenderingPolicy.hpp` C++ smoke test, and executes it.
+## Current CI workflows
 
-The **build-stage1** job is intentionally gated behind the repository variable
-`DUOVIEW_FULL_BUILD=1`. The pinned upstream UEVR backend's
-`dependencies/submodules/UESDK` points to `joeyhodge/UESDK`, whose exact
-commit is inaccessible through the current GitHub account. A normal checkout
-without authorization fails with *Repository not found* before compilation.
+`.github/workflows/duoview-stage2.yml`:
 
-Once access to that exact submodule is legitimately available, configure the
-GitHub Actions secret `UEVR_SOURCE_TOKEN` with read access, set
-`DUOVIEW_FULL_BUILD=1`, and run the workflow. Do not paste tokens into code,
-the issue tracker or chat. The full-build CI will only publish the Windows ZIP
-after compiling UEVR, compiling auxiliaries, building the frontend, and passing
-the existing offline tests. A successful CI ZIP still requires PSVR2 headset
-testing.
+- `source-validation`: checks pinned repo out **without** private UESDK,
+  applies patches with verified anchors, runs portable C++ tests.
+- `shader-and-tools`: compiles both standalone C++ diagnostics and
+  `DuoViewComposite.hlsl` with MSVC/Windows SDK, uploads an Actions artifact.
+  This artifact is **not the UEVR injector**.
+- `build-stage1`: complete UEVR/aux DLLs/frontend packaging, intentionally
+  gated with `DUOVIEW_FULL_BUILD=1` until exact UESDK access works.
 
-No user profiles or settings in an existing UEVR installation have been changed.
+To authorize the full build, use GitHub account access approved by Epic/Joey
+for `joeyhodge/UESDK` and set a repository Actions secret called
+`UEVR_SOURCE_TOKEN` to an appropriately scoped read-only PAT. Only after
+verifying the authenticated account can read the exact pinned source, set the
+repository Actions variable `DUOVIEW_FULL_BUILD` to `1`, and start the
+workflow. Never commit credentials into this public branch.
+
+We evaluated publicly available `Aeyth8/UESDK` (last updated in 2024);
+the main renderer source from Joey's September 2026 commit references at least
+10 missing SDK headers. Treat it as unsuitable for direct substitution.
