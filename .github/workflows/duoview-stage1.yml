@@ -1,0 +1,97 @@
+name: DuoView UEVR Stage 1
+
+on:
+  push:
+    branches: [experiments/duoview-uevr-v01]
+    paths:
+      - "duoview/**"
+      - ".github/workflows/duoview-stage1.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-stage1:
+    runs-on: windows-2022
+    timeout-minutes: 180
+    steps:
+      - name: Check out isolated DuoView patch workspace
+        uses: actions/checkout@v4
+        with:
+          path: patch-workspace
+
+      - name: Check out pinned Joey Mono/DIBR UEVR (with submodules)
+        uses: actions/checkout@v4
+        with:
+          repository: joeyhodge/UEVR
+          ref: db6729dd9f5745705b1cdec2ec6f51bdc9570983
+          submodules: recursive
+          path: uevr
+
+      - name: Verify upstream revision and apply Stage 1 patch
+        shell: pwsh
+        run: |
+          $sha = (git -C uevr rev-parse HEAD).Trim()
+          if ($sha -ne "db6729dd9f5745705b1cdec2ec6f51bdc9570983") {
+            throw "Wrong upstream SHA: $sha"
+          }
+          python patch-workspace/duoview/apply_stage1.py uevr
+          git -C uevr diff --check
+          git -C uevr diff --stat
+          git -C uevr diff -- src/mods/vr/MonoRenderingPolicy.hpp src/mods/VR.hpp tests/MonoRenderingTests.hpp
+
+      - name: Configure UEVR (VS2022 x64)
+        run: cmake -S uevr -B uevr/build -G "Visual Studio 17 2022" -A x64 -DUEVR_BUILD_COMPATIBILITY_TESTS=ON
+
+      - name: Compile regression tests
+        run: cmake --build uevr/build --config Release --target compatibility-policy-tests diagnostic-safety-tests hifi-hook-memory-tests nascar-hook-compatibility-tests input-hook-installation-tests mono-d3d11-tests mono-d3d12-tests
+
+      - name: Run regression tests
+        run: ctest --test-dir uevr/build -C Release --output-on-failure --no-tests=error
+
+      - name: Build patched UEVR
+        run: cmake --build uevr/build --config Release --target uevr
+
+      - name: Build auxiliary DLLs
+        run: |
+          cmake --build uevr/build --config Release --target vr-plugin-nullifier
+          cmake --build uevr/build --config Release --target LuaVR
+
+      - name: Check out pinned Joey frontend
+        uses: actions/checkout@v4
+        with:
+          repository: joeyhodge/uevr-frontend
+          ref: 60be4b0f9a646109fd9fdf448bacd41477234091
+          path: frontend
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "6.0.x"
+
+      - name: Build frontend (Stage 1 mode is selectable in-game)
+        shell: pwsh
+        run: |
+          dotnet run --project frontend/tests/RenderingModes --configuration Release
+          dotnet publish frontend --configuration Release --output uevr/build/bin/uevr
+
+      - name: Package Windows test build
+        shell: pwsh
+        run: |
+          Copy-Item uevr/build/bin/vr-plugin-nullifier/UEVRPluginNullifier.dll uevr/build/bin/uevr/
+          Copy-Item uevr/build/bin/LuaVR/LuaVR.dll uevr/build/bin/uevr/
+          "Joey UEVR: db6729dd9f5745705b1cdec2ec6f51bdc9570983" | Out-File uevr/build/bin/uevr/DUOVIEW_SOURCE.txt
+          "DuoView Stage 1: diagnostic two-view same-pose path, not yet foveated" | Out-File -Append uevr/build/bin/uevr/DUOVIEW_SOURCE.txt
+          Compress-Archive -Path uevr/build/bin/uevr/* -DestinationPath DuoView-UEVR-Stage1.zip -Force
+          (Get-FileHash DuoView-UEVR-Stage1.zip -Algorithm SHA256).Hash | Out-File DuoView-UEVR-Stage1.zip.sha256
+
+      - name: Publish test build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: DuoView-UEVR-Stage1-Windows
+          path: |
+            DuoView-UEVR-Stage1.zip
+            DuoView-UEVR-Stage1.zip.sha256
+          if-no-files-found: error
+          retention-days: 30
