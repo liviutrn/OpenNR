@@ -41,6 +41,10 @@ has yet been demonstrated.
   feathering, with tests for both.
 - Includes a DX12 compute shader composing high-resolution ROI into the low-res
   full-FOV frame, with per-viewport texture-coordinate clamping.
+- Includes Stage 4 independent calibrated-optical-ray to Mono-frustum UV mapping
+  and a 50ms stale-frame cache with no spatial dead zone or gaze smoothing.
+  This is geometry/validity groundwork only: the PSVR2 Toolkit CAPI reader and
+  shared per-render-frame snapshot are **not** yet connected to UEVR.
 - Existing Mono OpenXR submission and auxiliary modes retain their source
   behavior. **The compositor shader is built but NOT integrated with them.**
 
@@ -68,7 +72,8 @@ headset image. Keep using original Mono until actual compositing is connected.
 `.github/workflows/duoview-stage2.yml`:
 
 - `source-validation`: checks pinned repo out **without** private UESDK,
-  applies patches with verified anchors, runs portable C++ tests.
+  applies patches with verified anchors, runs portable C++ mode, 50/30%
+  geometry/projection, and gaze-mapping/stale-frame policy tests.
 - `shader-and-tools`: compiles both standalone C++ diagnostics and
   `DuoViewComposite.hlsl` with MSVC/Windows SDK, uploads an Actions artifact.
   This artifact is **not the UEVR injector**.
