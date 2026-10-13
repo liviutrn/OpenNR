@@ -1,6 +1,6 @@
 -- Glamarye Sharpen: minimal UEVR LuaLoader panel.
 -- This file is only UI; every GPU operation runs in the native DLL.
-local state = {enabled=false,small=0.0,bigStrength=0.4,extra=0.0,ultra=0.0,thin=0.75,edges=true,split=false,debug=false,timing=false,gpuUs=0,gpuSamples=0,limit=0.1,bias=0.02,xrHook=0,xrResolved=0,xrFrames=0,xrAcquire=0,xrRelease=0,xrEnd=0,xrProj=0,xrSize=0,xrEligible=0,xrEnumError=0}
+local state = {enabled=false,small=0.0,bigStrength=0.4,extra=0.0,ultra=0.0,thin=0.0,edges=true,split=false,debug=false,timing=false,gpuUs=0,gpuSamples=0,limit=0.1,bias=0.02,xrHook=0,xrResolved=0,xrFrames=0,xrAcquire=0,xrRelease=0,xrEnd=0,xrProj=0,xrSize=0,xrEligible=0,xrEnumError=0}
 local received = false
 local pending = {}
 
@@ -62,11 +62,11 @@ uevr.lua.add_script_panel("Glamarye Sharpen", function()
     slider("Extra Big sharpen (2.5 px)", "extra", 0.0, 5.0)
     slider("Ultra Big sharpen (5.0 px)", "ultra", 0.0, 5.0)
     checkbox("Sharpen jagged edges less (original Glamarye FXAA detection)", "edges")
-    slider("Thin-line protection (wires, foliage, small edges)", "thin", 0.0, 1.0)
+    slider("Thin-line protection (optional; 0 = original Glamarye behavior)", "thin", 0.0, 1.0)
     slider("Maximum sharpen change", "limit", 0.01, 0.5)
     slider("FXAA edge detection bias", "bias", 0.0, 0.2)
     if imgui.tree_node("Diagnostics") then
-        checkbox("Measure GPU sharpening time (opt-in)", "timing")
+        checkbox("Measure GPU sharpening time (opt-in, resets when game restarts)", "timing")
         if state.timing then
             if (state.gpuSamples or 0) > 0 then
                 imgui.text(string.format("Sharpen GPU cost: %.3f ms (averaged, %d samples)",
