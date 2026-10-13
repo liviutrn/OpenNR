@@ -39,6 +39,7 @@ int main(int argc, char** argv) {
     bool srgb = argc > 1 && std::strcmp(argv[1], "srgb") == 0;
     bool typeless = argc > 1 && std::strcmp(argv[1], "typeless") == 0;
     bool encoded = srgb || typeless;
+    bool debug = argc > 1 && std::strcmp(argv[1], "debug") == 0;
     wchar_t path[MAX_PATH]{};
     GetModuleFileNameW(nullptr, path, MAX_PATH);
     wchar_t* sep = wcsrchr(path, L'\\');
@@ -138,6 +139,7 @@ int main(int argc, char** argv) {
     g_custom("glamayre_sharpen.set", "limit=0.25");
     g_custom("glamayre_sharpen.set", "big=1");
     g_custom("glamayre_sharpen.set", "edges=1");
+    if (debug) g_custom("glamayre_sharpen.set", "debug=1");
     if (!record(cmd.Get(), rt.Get(), &rtv, true)) { fprintf(stderr, "GPU render record refused.\n"); return 2; }
 
     D3D12_RESOURCE_BARRIER b{};
@@ -182,20 +184,22 @@ int main(int argc, char** argv) {
     }
     unsigned char* mapped=nullptr;
     CHECK(buffer->Map(0,nullptr,reinterpret_cast<void**>(&mapped)), "Readback Map");
-    unsigned differing=0, crossEyeChanged=0;
+    unsigned differing=0, crossEyeChanged=0, redGridPixels=0;
     for (UINT y=0;y<H;++y) for(UINT x=0;x<W;++x) {
         const auto red = mapped[footprint.Offset + y*footprint.Footprint.RowPitch + x*4];
         // Unsharpened clear colors are approximately 51 and 102.
         const int baseline = encoded
             ? ((x>=9 && x<13 && y>=9 && y<13) ? 149 : (x < W/2 ? 124 : 170))
             : ((x>=9 && x<13 && y>=9 && y<13) ? 77 : (x < W/2 ? 51 : 102));
+        if (debug && x==0 && y==0 && red > 240) ++redGridPixels;
         if (abs(int(red)-baseline)>2) {
             ++differing;
             if (x >= W/2) ++crossEyeChanged;
         }
     }
     buffer->Unmap(0,nullptr);
-    if (crossEyeChanged) {
+    if (debug && redGridPixels == 0) { fprintf(stderr,"Debug grid did not reach pixel output.\n"); return 2; }
+    if (!debug && crossEyeChanged) {
         fprintf(stderr,"Eye-boundary bleed detected: %u right-eye pixels changed.\n",crossEyeChanged);
         return 2;
     }
