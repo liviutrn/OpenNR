@@ -34,11 +34,14 @@ extern "C" unsigned long long glamayre_xr_projection_count();
 extern "C" unsigned long long glamayre_xr_dimension_count();
 extern "C" unsigned long long glamayre_xr_eligible_count();
 extern "C" unsigned long long glamayre_xr_enum_failed();
+extern "C" unsigned long long glamayre_xr_gpu_us();
+extern "C" unsigned long long glamayre_xr_gpu_samples();
 
 namespace {
 const UEVR_PluginInitializeParam* g_api = nullptr;
-std::atomic<bool> g_enabled{false}, g_big{true}, g_edges{true}, g_split{false}, g_debug{false};
-std::atomic<float> g_strength{0.4f}, g_maxChange{0.10f}, g_bias{0.020f};
+std::atomic<bool> g_enabled{false}, g_edges{true}, g_split{false}, g_debug{false}, g_timing{false};
+std::atomic<float> g_smallStrength{0.0f}, g_bigStrength{0.4f}, g_extraStrength{0.0f};
+std::atomic<float> g_maxChange{0.10f}, g_bias{0.020f};
 std::wstring g_ini;
 std::mutex g_gpuMutex;
 ID3D12Device* g_device = nullptr;
@@ -85,11 +88,29 @@ void readConfig() {
         return end != s ? bound(v, lo, hi) : def;
     };
     g_enabled = getInt(L"Enabled", 0);
-    g_big = getInt(L"Bigger", 1);
     g_edges = getInt(L"ProtectEdges", 1);
     g_split = getInt(L"SideBySide", 0);
     g_debug = getInt(L"DebugOverlay", 0);
-    g_strength = getFloat(L"Strength", 0.4f, 0, 2);
+    // Preserve v0.1 settings automatically for users upgrading from the
+    // known-working single-radius OpenXR layer.
+    wchar_t found[40]{};
+    GetPrivateProfileStringW(L"Sharpen", L"SmallStrength", L"__missing__", found, 40, g_ini.c_str());
+    const bool upgraded = wcscmp(found, L"__missing__") == 0;
+    GetPrivateProfileStringW(L"Sharpen", L"BigStrength", L"__missing__", found, 40, g_ini.c_str());
+    const bool missingBig = wcscmp(found, L"__missing__") == 0;
+    GetPrivateProfileStringW(L"Sharpen", L"ExtraStrength", L"__missing__", found, 40, g_ini.c_str());
+    const bool missingExtra = wcscmp(found, L"__missing__") == 0;
+    if (upgraded && missingBig && missingExtra) {
+        const float old = getFloat(L"Strength", 0.4f, 0, 5);
+        if (getInt(L"Bigger",1)) { g_smallStrength = 0; g_bigStrength = old; }
+        else { g_smallStrength = old; g_bigStrength = 0; }
+        g_extraStrength = 0;
+    } else {
+        g_smallStrength = getFloat(L"SmallStrength", 0.0f, 0, 5);
+        g_bigStrength = getFloat(L"BigStrength", 0.4f, 0, 5);
+        g_extraStrength = getFloat(L"ExtraStrength", 0.0f, 0, 5);
+    }
+    g_timing = getInt(L"GpuTiming", 0);
     g_maxChange = getFloat(L"MaxChange", 0.10f, 0.01f, 0.5f);
     g_bias = getFloat(L"FXAABias", 0.02f, 0, 0.2f);
 }
@@ -99,18 +120,21 @@ void setSetting(const char* name, float number) {
     wchar_t buffer[64]{};
     const wchar_t* iniKey = nullptr;
     if (_stricmp(name, "enabled") == 0) { g_enabled = number != 0; iniKey = L"Enabled"; swprintf_s(buffer, L"%u", unsigned(g_enabled.load())); }
-    else if (_stricmp(name, "big") == 0) { g_big = number != 0; iniKey = L"Bigger"; swprintf_s(buffer, L"%u", unsigned(g_big.load())); }
+    else if (_stricmp(name, "small") == 0) { number = bound(number, 0, 5); g_smallStrength = number; iniKey = L"SmallStrength"; swprintf_s(buffer, L"%.4f", double(number)); }
+    else if (_stricmp(name, "bigStrength") == 0) { number = bound(number, 0, 5); g_bigStrength = number; iniKey = L"BigStrength"; swprintf_s(buffer, L"%.4f", double(number)); }
+    else if (_stricmp(name, "extra") == 0) { number = bound(number, 0, 5); g_extraStrength = number; iniKey = L"ExtraStrength"; swprintf_s(buffer, L"%.4f", double(number)); }
+    else if (_stricmp(name, "timing") == 0) { g_timing = number != 0; iniKey = L"GpuTiming"; swprintf_s(buffer, L"%u", unsigned(g_timing.load())); }
     else if (_stricmp(name, "edges") == 0) { g_edges = number != 0; iniKey = L"ProtectEdges"; swprintf_s(buffer, L"%u", unsigned(g_edges.load())); }
     else if (_stricmp(name, "split") == 0) { g_split = number != 0; iniKey = L"SideBySide"; swprintf_s(buffer, L"%u", unsigned(g_split.load())); }
     else if (_stricmp(name, "debug") == 0) { g_debug = number != 0; iniKey = L"DebugOverlay"; swprintf_s(buffer, L"%u", unsigned(g_debug.load())); }
-    else if (_stricmp(name, "strength") == 0) { number = bound(number, 0, 2); g_strength = number; iniKey = L"Strength"; swprintf_s(buffer, L"%.4f", double(number)); }
+    else if (_stricmp(name, "strength") == 0) { number = bound(number, 0, 5); g_bigStrength = number; iniKey = L"BigStrength"; swprintf_s(buffer, L"%.4f", double(number)); } // backward command compatibility
     else if (_stricmp(name, "limit") == 0) { number = bound(number, 0.01f, 0.5f); g_maxChange = number; iniKey = L"MaxChange"; swprintf_s(buffer, L"%.4f", double(number)); }
     else if (_stricmp(name, "bias") == 0) { number = bound(number, 0, 0.2f); g_bias = number; iniKey = L"FXAABias"; swprintf_s(buffer, L"%.4f", double(number)); }
     else matched = false;
     if (matched) {
         const auto received = ++g_settingEvents;
         if (g_api && g_api->functions && g_api->functions->log_info && received <= 16)
-            g_api->functions->log_info("[Glamarye v04] UI setting: %s=%s", name, "updated");
+            g_api->functions->log_info("[Glamarye multi] UI setting: %s=%s", name, "updated");
         if (!g_ini.empty()) WritePrivateProfileStringW(L"Sharpen", iniKey, buffer, g_ini.c_str());
     }
 }
@@ -131,11 +155,15 @@ void onPresent() {
     unsigned long long now = GetTickCount64();
     if (now - g_lastReport < 400) return;
     g_lastReport = now;
-    char data[600];
+    char data[1000];
     snprintf(data, sizeof(data),
-        "enabled=%d;big=%d;edges=%d;split=%d;strength=%.3f;limit=%.3f;bias=%.3f;gpuError=%d;debug=%d;settings=%llu;xrHook=%d;xrResolved=%d;xrFrames=%llu;xrAcquire=%llu;xrRelease=%llu;xrEnd=%llu;xrProj=%llu;xrSize=%llu;xrEligible=%llu;xrEnumError=%llu",
-        int(g_enabled.load()), int(g_big.load()), int(g_edges.load()), int(g_split.load()),
-        double(g_strength.load()), double(g_maxChange.load()), double(g_bias.load()),
+        "enabled=%d;small=%.3f;bigStrength=%.3f;extra=%.3f;timing=%d;gpuUs=%llu;gpuSamples=%llu;edges=%d;split=%d;limit=%.3f;bias=%.3f;gpuError=%d;debug=%d;settings=%llu;xrHook=%d;xrResolved=%d;xrFrames=%llu;xrAcquire=%llu;xrRelease=%llu;xrEnd=%llu;xrProj=%llu;xrSize=%llu;xrEligible=%llu;xrEnumError=%llu",
+        int(g_enabled.load()), double(g_smallStrength.load()), double(g_bigStrength.load()),
+        double(g_extraStrength.load()), int(g_timing.load()),
+        g_timing.load() ? glamayre_xr_gpu_us() : 0ULL,
+        g_timing.load() ? glamayre_xr_gpu_samples() : 0ULL,
+        int(g_edges.load()), int(g_split.load()),
+        double(g_maxChange.load()), double(g_bias.load()),
         int(g_gpuError.load()), int(g_debug.load()), g_settingEvents.load(), int(glamayre_xr_hooks_ready()), int(glamayre_xr_resolved_hooks_ready()), glamayre_xr_processed_count(),
         glamayre_xr_acquire_count(), glamayre_xr_release_count(),
         glamayre_xr_endframe_count(), glamayre_xr_projection_count(),
@@ -145,7 +173,7 @@ void onPresent() {
     static unsigned long long lastLog = 0;
     if (now - lastLog >= 10000 && g_api->functions->log_info) {
         lastLog = now;
-        g_api->functions->log_info("[Glamarye v04] %s", data);
+        g_api->functions->log_info("[Glamarye multi] %s", data);
     }
 }
 struct Pass {
@@ -210,7 +238,7 @@ bool setupRootAndShaders(ID3D12Device* device) {
     range.BaseShaderRegister = 0; range.OffsetInDescriptorsFromTableStart = 0;
     D3D12_ROOT_PARAMETER params[2]{};
     params[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
-    params[0].Constants.ShaderRegister = 0; params[0].Constants.Num32BitValues = 9;
+    params[0].Constants.ShaderRegister = 0; params[0].Constants.Num32BitValues = 11;
     params[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
     params[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
     params[1].DescriptorTable.NumDescriptorRanges = 1;
@@ -275,10 +303,10 @@ bool makePass(ID3D12Device* device, const D3D12_RESOURCE_DESC& d, DXGI_FORMAT fo
                      "Create pipeline state");
 }
 struct Constants {
-    float width, height, strength, maxChange, fxaaBias, maximumColour;
+    float width, height, smallStrength, bigStrength, extraStrength, maxChange, fxaaBias, maximumColour;
     uint32_t flags, layer, colourMode;
 };
-static_assert(sizeof(Constants) == 36);
+static_assert(sizeof(Constants) == 44);
 void barrier(ID3D12GraphicsCommandList* cmd, ID3D12Resource* res,
              D3D12_RESOURCE_STATES before, D3D12_RESOURCE_STATES after) {
     D3D12_RESOURCE_BARRIER b{};
@@ -288,7 +316,8 @@ void barrier(ID3D12GraphicsCommandList* cmd, ID3D12Resource* res,
     cmd->ResourceBarrier(1, &b);
 }
 bool recordSharpenDX12(void* list, void* resource, void* rtvHandle, bool autoSplit) {
-    if (!g_enabled || g_strength.load() <= 0 || !list || !resource || g_gpuError) return false;
+    if (!g_enabled || (g_smallStrength.load() <= 0 && g_bigStrength.load() <= 0 &&
+                    g_extraStrength.load() <= 0) || !list || !resource || g_gpuError) return false;
     auto* cmd = static_cast<ID3D12GraphicsCommandList*>(list);
     auto* target = static_cast<ID3D12Resource*>(resource);
     D3D12_RESOURCE_DESC desc = target->GetDesc();
@@ -373,15 +402,16 @@ bool recordSharpenDX12(void* list, void* resource, void* rtvHandle, bool autoSpl
         output = views->heap->GetCPUDescriptorHandleForHeapStart();
     }
     Constants constants{float(desc.Width), float(desc.Height),
-        g_strength.load(), g_maxChange.load(), g_bias.load(),
+        g_smallStrength.load(), g_bigStrength.load(), g_extraStrength.load(),
+        g_maxChange.load(), g_bias.load(),
         (format == DXGI_FORMAT_R16G16B16A16_FLOAT || format == DXGI_FORMAT_R11G11B10_FLOAT
             || format == DXGI_FORMAT_R32G32B32A32_FLOAT) ? (10000.0f / 203.0f) : 1.0f,
-        (g_edges ? 1u : 0u) | (g_big ? 2u : 0u) | ((g_split || autoSplit) && desc.DepthOrArraySize == 1 ? 4u : 0u) | (g_debug ? 8u : 0u), 0u,
+        (g_edges ? 1u : 0u) | ((g_split || autoSplit) && desc.DepthOrArraySize == 1 ? 4u : 0u) | (g_debug ? 8u : 0u), 0u,
         (format == DXGI_FORMAT_R16G16B16A16_FLOAT || format == DXGI_FORMAT_R11G11B10_FLOAT || format == DXGI_FORMAT_R32G32B32A32_FLOAT) ? 2u :
         (format == DXGI_FORMAT_B8G8R8A8_UNORM_SRGB || format == DXGI_FORMAT_R8G8B8A8_UNORM_SRGB) ? 0u : 1u};
     for (uint32_t eye = 0; eye < desc.DepthOrArraySize; ++eye) {
         constants.layer = eye;
-        cmd->SetGraphicsRoot32BitConstants(0, 9, &constants, 0);
+        cmd->SetGraphicsRoot32BitConstants(0, 11, &constants, 0);
         D3D12_CPU_DESCRIPTOR_HANDLE out{output.ptr + SIZE_T(step) * eye};
         cmd->OMSetRenderTargets(1, &out, FALSE, nullptr);
         cmd->DrawInstanced(3, 1, 0, 0);
@@ -393,8 +423,12 @@ extern "C" __declspec(dllexport) bool glamayre_sharpen_gpu_record(
     void* list, void* resource, void* rtvHandle, bool autoSplit) {
     return recordSharpenDX12(list, resource, rtvHandle, autoSplit);
 }
+extern "C" __declspec(dllexport) bool glamayre_sharpen_timing_enabled() {
+    return g_timing.load(std::memory_order_relaxed);
+}
 extern "C" __declspec(dllexport) bool glamayre_sharpen_processing_enabled() {
-    return g_enabled.load() && g_strength.load() > 0 && !g_gpuError.load();
+    return g_enabled.load() && (g_smallStrength.load() > 0 ||
+           g_bigStrength.load() > 0 || g_extraStrength.load() > 0) && !g_gpuError.load();
 }
 
 
