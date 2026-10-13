@@ -11,6 +11,7 @@
 #include "DuoViewState.hpp"
 #include "DuoViewSubmission.hpp"
 #include "DuoViewActivation.hpp"
+#include "OpticalCalibration.hpp"
 #include "DuoViewD3D12.hpp"
 #include "PSVR2NativeGaze.hpp"
 #include "MonoRenderingPolicy.hpp"
@@ -347,11 +348,10 @@ XrResult XRAPI_CALL locate_hook(XrSession session,const XrViewLocateInfo* info,X
             // orientations so common head rotations cancel exactly.
             const glm::quat left{views[0].pose.orientation.w,views[0].pose.orientation.x,views[0].pose.orientation.y,views[0].pose.orientation.z};
             const glm::quat right{views[1].pose.orientation.w,views[1].pose.orientation.x,views[1].pose.orientation.y,views[1].pose.orientation.z};
-            if (!std::isfinite(left.w) || !std::isfinite(right.w)) return result;
-            const auto approximate_head=glm::normalize(glm::slerp(glm::normalize(left),glm::normalize(right),.5f));
-            const auto optical_offset=glm::normalize(glm::inverse(approximate_head)*glm::normalize(left));
+            const auto optical_offset=dv::synchronized_left_eye_offset(left,right);
+            if (!optical_offset) return result;
             std::scoped_lock lock(optics_mutex);
-            optics=Optics{*geometry,info->displayTime,optical_offset};
+            optics=Optics{*geometry,info->displayTime,*optical_offset};
         }
     }
     return result;
