@@ -40,7 +40,7 @@ extern "C" unsigned long long glamayre_xr_gpu_samples();
 namespace {
 const UEVR_PluginInitializeParam* g_api = nullptr;
 std::atomic<bool> g_enabled{false}, g_edges{true}, g_split{false}, g_debug{false}, g_timing{false};
-std::atomic<float> g_smallStrength{0.0f}, g_bigStrength{0.4f}, g_extraStrength{0.0f};
+std::atomic<float> g_smallStrength{0.0f}, g_bigStrength{0.4f}, g_extraStrength{0.0f}, g_ultraStrength{0.0f};
 std::atomic<float> g_maxChange{0.10f}, g_bias{0.020f};
 std::wstring g_ini;
 std::mutex g_gpuMutex;
@@ -110,6 +110,7 @@ void readConfig() {
         g_bigStrength = getFloat(L"BigStrength", 0.4f, 0, 5);
         g_extraStrength = getFloat(L"ExtraStrength", 0.0f, 0, 5);
     }
+    g_ultraStrength = getFloat(L"UltraStrength", 0.0f, 0, 5);
     g_timing = getInt(L"GpuTiming", 0);
     g_maxChange = getFloat(L"MaxChange", 0.10f, 0.01f, 0.5f);
     g_bias = getFloat(L"FXAABias", 0.02f, 0, 0.2f);
@@ -123,6 +124,7 @@ void setSetting(const char* name, float number) {
     else if (_stricmp(name, "small") == 0) { number = bound(number, 0, 5); g_smallStrength = number; iniKey = L"SmallStrength"; swprintf_s(buffer, L"%.4f", double(number)); }
     else if (_stricmp(name, "bigStrength") == 0) { number = bound(number, 0, 5); g_bigStrength = number; iniKey = L"BigStrength"; swprintf_s(buffer, L"%.4f", double(number)); }
     else if (_stricmp(name, "extra") == 0) { number = bound(number, 0, 5); g_extraStrength = number; iniKey = L"ExtraStrength"; swprintf_s(buffer, L"%.4f", double(number)); }
+    else if (_stricmp(name, "ultra") == 0) { number = bound(number, 0, 5); g_ultraStrength = number; iniKey = L"UltraStrength"; swprintf_s(buffer, L"%.4f", double(number)); }
     else if (_stricmp(name, "timing") == 0) { g_timing = number != 0; iniKey = L"GpuTiming"; swprintf_s(buffer, L"%u", unsigned(g_timing.load())); }
     else if (_stricmp(name, "edges") == 0) { g_edges = number != 0; iniKey = L"ProtectEdges"; swprintf_s(buffer, L"%u", unsigned(g_edges.load())); }
     else if (_stricmp(name, "split") == 0) { g_split = number != 0; iniKey = L"SideBySide"; swprintf_s(buffer, L"%u", unsigned(g_split.load())); }
@@ -157,9 +159,9 @@ void onPresent() {
     g_lastReport = now;
     char data[1000];
     snprintf(data, sizeof(data),
-        "enabled=%d;small=%.3f;bigStrength=%.3f;extra=%.3f;timing=%d;gpuUs=%llu;gpuSamples=%llu;edges=%d;split=%d;limit=%.3f;bias=%.3f;gpuError=%d;debug=%d;settings=%llu;xrHook=%d;xrResolved=%d;xrFrames=%llu;xrAcquire=%llu;xrRelease=%llu;xrEnd=%llu;xrProj=%llu;xrSize=%llu;xrEligible=%llu;xrEnumError=%llu",
+        "enabled=%d;small=%.3f;bigStrength=%.3f;extra=%.3f;ultra=%.3f;timing=%d;gpuUs=%llu;gpuSamples=%llu;edges=%d;split=%d;limit=%.3f;bias=%.3f;gpuError=%d;debug=%d;settings=%llu;xrHook=%d;xrResolved=%d;xrFrames=%llu;xrAcquire=%llu;xrRelease=%llu;xrEnd=%llu;xrProj=%llu;xrSize=%llu;xrEligible=%llu;xrEnumError=%llu",
         int(g_enabled.load()), double(g_smallStrength.load()), double(g_bigStrength.load()),
-        double(g_extraStrength.load()), int(g_timing.load()),
+        double(g_extraStrength.load()), double(g_ultraStrength.load()), int(g_timing.load()),
         g_timing.load() ? glamayre_xr_gpu_us() : 0ULL,
         g_timing.load() ? glamayre_xr_gpu_samples() : 0ULL,
         int(g_edges.load()), int(g_split.load()),
@@ -238,7 +240,7 @@ bool setupRootAndShaders(ID3D12Device* device) {
     range.BaseShaderRegister = 0; range.OffsetInDescriptorsFromTableStart = 0;
     D3D12_ROOT_PARAMETER params[2]{};
     params[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
-    params[0].Constants.ShaderRegister = 0; params[0].Constants.Num32BitValues = 11;
+    params[0].Constants.ShaderRegister = 0; params[0].Constants.Num32BitValues = 12;
     params[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
     params[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
     params[1].DescriptorTable.NumDescriptorRanges = 1;
@@ -303,10 +305,10 @@ bool makePass(ID3D12Device* device, const D3D12_RESOURCE_DESC& d, DXGI_FORMAT fo
                      "Create pipeline state");
 }
 struct Constants {
-    float width, height, smallStrength, bigStrength, extraStrength, maxChange, fxaaBias, maximumColour;
+    float width, height, smallStrength, bigStrength, extraStrength, ultraStrength, maxChange, fxaaBias, maximumColour;
     uint32_t flags, layer, colourMode;
 };
-static_assert(sizeof(Constants) == 44);
+static_assert(sizeof(Constants) == 48);
 void barrier(ID3D12GraphicsCommandList* cmd, ID3D12Resource* res,
              D3D12_RESOURCE_STATES before, D3D12_RESOURCE_STATES after) {
     D3D12_RESOURCE_BARRIER b{};
@@ -317,7 +319,7 @@ void barrier(ID3D12GraphicsCommandList* cmd, ID3D12Resource* res,
 }
 bool recordSharpenDX12(void* list, void* resource, void* rtvHandle, bool autoSplit) {
     if (!g_enabled || (g_smallStrength.load() <= 0 && g_bigStrength.load() <= 0 &&
-                    g_extraStrength.load() <= 0) || !list || !resource || g_gpuError) return false;
+                    g_extraStrength.load() <= 0 && g_ultraStrength.load() <= 0) || !list || !resource || g_gpuError) return false;
     auto* cmd = static_cast<ID3D12GraphicsCommandList*>(list);
     auto* target = static_cast<ID3D12Resource*>(resource);
     D3D12_RESOURCE_DESC desc = target->GetDesc();
@@ -402,7 +404,7 @@ bool recordSharpenDX12(void* list, void* resource, void* rtvHandle, bool autoSpl
         output = views->heap->GetCPUDescriptorHandleForHeapStart();
     }
     Constants constants{float(desc.Width), float(desc.Height),
-        g_smallStrength.load(), g_bigStrength.load(), g_extraStrength.load(),
+        g_smallStrength.load(), g_bigStrength.load(), g_extraStrength.load(), g_ultraStrength.load(),
         g_maxChange.load(), g_bias.load(),
         (format == DXGI_FORMAT_R16G16B16A16_FLOAT || format == DXGI_FORMAT_R11G11B10_FLOAT
             || format == DXGI_FORMAT_R32G32B32A32_FLOAT) ? (10000.0f / 203.0f) : 1.0f,
@@ -411,7 +413,7 @@ bool recordSharpenDX12(void* list, void* resource, void* rtvHandle, bool autoSpl
         (format == DXGI_FORMAT_B8G8R8A8_UNORM_SRGB || format == DXGI_FORMAT_R8G8B8A8_UNORM_SRGB) ? 0u : 1u};
     for (uint32_t eye = 0; eye < desc.DepthOrArraySize; ++eye) {
         constants.layer = eye;
-        cmd->SetGraphicsRoot32BitConstants(0, 11, &constants, 0);
+        cmd->SetGraphicsRoot32BitConstants(0, 12, &constants, 0);
         D3D12_CPU_DESCRIPTOR_HANDLE out{output.ptr + SIZE_T(step) * eye};
         cmd->OMSetRenderTargets(1, &out, FALSE, nullptr);
         cmd->DrawInstanced(3, 1, 0, 0);
@@ -428,7 +430,7 @@ extern "C" __declspec(dllexport) bool glamayre_sharpen_timing_enabled() {
 }
 extern "C" __declspec(dllexport) bool glamayre_sharpen_processing_enabled() {
     return g_enabled.load() && (g_smallStrength.load() > 0 ||
-           g_bigStrength.load() > 0 || g_extraStrength.load() > 0) && !g_gpuError.load();
+           g_bigStrength.load() > 0 || g_extraStrength.load() > 0 || g_ultraStrength.load() > 0) && !g_gpuError.load();
 }
 
 
