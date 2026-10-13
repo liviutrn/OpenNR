@@ -1,0 +1,84 @@
+{
+  "backend_commit": "5ac7edc207866569334175e4ed8a7517971547f6",
+  "required_sdk_commit": "3cffbc82429b6165ceec2714f0f0d9ae48f55596",
+  "actual_sdk_commit": "418729025bad57b094bf6b2e2b55734454c97de6",
+  "sdk_matches_original": false,
+  "backend_tracked_source_unmodified": true,
+  "sdk_tracked_source_unmodified": true,
+  "missing_direct_sdk_headers": {
+    "sdk/BoundedDiscovery.hpp": [
+      "src/mods/vr/HalloweenRenderTargets.hpp",
+      "src/mods/vr/KtjLOpenXRFactory.hpp",
+      "src/mods/vr/SatisfactoryModular.hpp"
+    ],
+    "sdk/DiscoveryMemory.hpp": [
+      "src/mods/PluginLoader.cpp",
+      "src/mods/UObjectHook.cpp",
+      "src/mods/vr/FFakeStereoRenderingHook.cpp",
+      "src/mods/vr/KtjLOpenXRFactory.cpp",
+      "src/mods/vr/SatisfactoryRuntime.cpp",
+      "tests/KtjLMeshResourceTests.cpp"
+    ],
+    "sdk/FSceneViewLayoutPolicy.hpp": [
+      "tests/CompatibilityPolicyTests.cpp"
+    ],
+    "sdk/GalacticRacerRuntime.hpp": [
+      "src/mods/VR.cpp",
+      "src/mods/vr/FFakeStereoRenderingHook.hpp",
+      "src/mods/vr/GalacticRacerNativeFix.hpp",
+      "src/mods/vr/GalacticRacerOwnedTexture.hpp",
+      "src/mods/vr/GalacticRacerRenderTargets.hpp"
+    ],
+    "sdk/KingdomHearts3Runtime.hpp": [
+      "src/mods/UObjectHook.cpp",
+      "src/mods/vr/FFakeStereoRenderingHook.cpp"
+    ],
+    "sdk/KtjLObjectLayout.hpp": [
+      "src/mods/vr/KtjLHookContracts.hpp",
+      "src/mods/vr/KtjLOpenXRFactory.cpp",
+      "src/mods/vr/KtjLRendererEntry.hpp"
+    ],
+    "sdk/KtjLSceneViewLayout.hpp": [
+      "tests/KtjLCloudResourcesTests.hpp"
+    ],
+    "sdk/KtjLStereoBootstrap.hpp": [
+      "src/mods/vr/FFakeStereoRenderingHook.cpp",
+      "src/mods/vr/KtjLFogResources.hpp"
+    ],
+    "sdk/MafiaDiscovery.hpp": [
+      "src/mods/vr/CVarManager.cpp",
+      "src/mods/vr/FFakeStereoRenderingHook.cpp",
+      "tests/CachedCVarReadTests.cpp",
+      "tests/CompatibilityPolicyTests.cpp"
+    ],
+    "sdk/ObjectIdentity.hpp": [
+      "src/mods/UObjectHook.hpp",
+      "src/mods/vr/ProSpiCameraProbe.hpp"
+    ],
+    "sdk/ObjectLivenessPolicy.hpp": [
+      "src/mods/vr/FFakeStereoRenderingHook.cpp"
+    ],
+    "sdk/ReflectedNameCall.hpp": [
+      "src/mods/UObjectHook.cpp",
+      "src/mods/VR.cpp"
+    ],
+    "sdk/RtmDiscovery.hpp": [
+      "src/mods/vr/FFakeStereoRenderingHook.cpp"
+    ],
+    "sdk/SceneDiscoveryState.hpp": [
+      "src/mods/vr/KtjLRendererEntry.hpp",
+      "src/mods/vr/SifuRendererEntry.hpp"
+    ],
+    "sdk/TownfallConsoleDiscovery.hpp": [
+      "tests/CachedCVarReadTests.cpp"
+    ]
+  },
+  "missing_sdk_test_sources": [
+    "tests/DiscoveryValidationTests.cpp",
+    "tests/LayoutSafetyTests.cpp"
+  ],
+  "original_mono_method_id": 5,
+  "direct_sdk_header_count": 71,
+  "full_backend_compatibility_verified": false,
+  "headset_stability_verified": false
+}

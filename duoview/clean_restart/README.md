@@ -71,6 +71,12 @@ the full diagnostic backend configure uses the production default
 `UEVR_BUILD_COMPATIBILITY_TESTS=OFF` to reach actual backend compilation.
 This switches off test target generation only, not runtime compatibility.
 
+The separate CPU-only driver invokes Joey's unchanged Mono policy tests:
+4,769 assertions passed with zero failures locally. See
+`SDK_GAP_AUDIT.md` for exact gaps, original frame behavior, test scope and
+reproduction instructions. This is not a complete source rebuild or a
+headset test.
+
 ## Frozen historical evidence
 
 - v14 run `38426715379`: completed successfully; headset result unknown.
