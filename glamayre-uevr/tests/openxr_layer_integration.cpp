@@ -228,16 +228,26 @@ int main(){
     uint64_t timing[2]{};
     gpuStatus(timing,2);
     TEST(timing[1]==0,"Timer initially disabled and has no samples");
+    // First drain previously submitted diagnostic-red pass, otherwise the
+    // real layer correctly skips an in-flight XR image instead of stalling.
+    ComPtr<ID3D12Fence> timingFence;
+    HR(device->CreateFence(0,D3D12_FENCE_FLAG_NONE,IID_PPV_ARGS(&timingFence)),"Timestamp fence");
+    HANDLE timingEvent=CreateEventW(nullptr,FALSE,FALSE,nullptr);
+    TEST(timingEvent!=nullptr,"Timestamp event");
+    HR(queue->Signal(timingFence.Get(),1),"Complete first projection pass");
+    HR(timingFence->SetEventOnCompletion(1,timingEvent),"Initial timestamp wait");
+    auto timingWait=WaitForSingleObject(timingEvent,10000);
+    TEST(timingWait==WAIT_OBJECT_0,"Previous projection work has finished");
     custom("glamayre_sharpen.set","timing=1");
     TEST(acquire(color,&ai,&index)==XR_SUCCESS,"Timed image acquisition");
     TEST(release(color,&ri)==XR_SUCCESS,"Timed image release");
-    ComPtr<ID3D12Fence> timingFence;
-    HR(device->CreateFence(0,D3D12_FENCE_FLAG_NONE,IID_PPV_ARGS(&timingFence)),"Timestamp fence");
-    HR(queue->Signal(timingFence.Get(),1),"Timestamp wait signal");
-    HANDLE timingEvent=CreateEventW(nullptr,FALSE,FALSE,nullptr);
-    TEST(timingEvent!=nullptr,"Timestamp event");
-    HR(timingFence->SetEventOnCompletion(1,timingEvent),"Timestamp wait");
-    auto timingWait=WaitForSingleObject(timingEvent,10000);CloseHandle(timingEvent);
+    uint64_t timedStats[8]{};
+    status(timedStats,8);
+    TEST(timedStats[5]>=2,"Timed pass must have been enqueued on same XR image");
+    HR(queue->Signal(timingFence.Get(),2),"Timestamp wait signal");
+    HR(timingFence->SetEventOnCompletion(2,timingEvent),"Timestamp wait");
+    timingWait=WaitForSingleObject(timingEvent,10000);
+    CloseHandle(timingEvent);
     TEST(timingWait==WAIT_OBJECT_0,"Asynchronous timestamp GPU work completed");
     TEST(acquire(color,&ai,&index)==XR_SUCCESS,"Reuse timestamped image");
     TEST(release(color,&ri)==XR_SUCCESS,"Harvest completed timestamp without blocking");
