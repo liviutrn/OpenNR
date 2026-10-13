@@ -56,3 +56,13 @@ target_include_directories(GlamaryeOpenXRLayer PRIVATE
     "${glam_xr_headers_SOURCE_DIR}/src/common")
 target_link_libraries(GlamaryeOpenXRLayer PRIVATE d3d12)
 target_compile_options(GlamaryeOpenXRLayer PRIVATE /W4 /EHsc)
+
+add_executable(GlamaryeLayerIntegration tests/openxr_layer_integration.cpp)
+target_compile_features(GlamaryeLayerIntegration PRIVATE cxx_std_20)
+target_include_directories(GlamaryeLayerIntegration PRIVATE
+    vendor
+    "${glam_xr_headers_SOURCE_DIR}/include"
+    "${glam_xr_headers_SOURCE_DIR}/src/common")
+target_link_libraries(GlamaryeLayerIntegration PRIVATE d3d12 dxgi)
+add_dependencies(GlamaryeLayerIntegration GlamaryeSharpenUEVR GlamaryeOpenXRLayer)
+add_test(NAME Khronos_OpenXR_Layer_And_GPU_Integration COMMAND GlamaryeLayerIntegration)
