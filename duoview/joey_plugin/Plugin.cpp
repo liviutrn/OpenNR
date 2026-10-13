@@ -34,7 +34,7 @@ std::atomic<bool> installed{};
 std::atomic<uint64_t> generation{1}, draw_serial{};
 dv::State state;
 std::mutex packets_mutex, optics_mutex, gpu_mutex;
-std::atomic<bool> armed{false}, faulted{false};
+std::atomic<bool> armed{false}, faulted{false}, any_modified_draw{false};
 struct Slot;
 struct Optics { uevr::mono::Geometry geometry; XrTime time{}; glm::quat eye_rotation{1,0,0,0}; };
 std::optional<Optics> optics;
@@ -47,6 +47,8 @@ dv::ActivationGate activation_gate;
 std::atomic<int> selected_mode{};
 std::atomic<uint64_t> last_report{}, last_success{}, last_status_write{}, last_status_check{}, last_wait_report{}, present_callbacks{};
 std::atomic<uint64_t> engine_ticks{}, locate_calls{}, producer_pairs{}, render_callbacks{}, matched_packets{}, composite_queued{}, end_calls{}, submitted_layers{}, rejected_layers{}, xr_accepted{}, xr_failed{};
+std::atomic<uint64_t> modified_draws{}, missing_producer_frames{}, native_passthroughs{}, native_snapshots{}, missing_producer_holds{}, copy_proof_failures{};
+std::atomic<int32_t> last_xr_result{0};
 std::atomic<uint32_t> output_width{}, output_height{};
 std::mutex status_mutex;
 std::string status_reason{"Not initialized"};
@@ -90,7 +92,14 @@ void publish_status(bool force=false) {
         << "SubmittedLayers=" << submitted_layers.load() << "\n"
         << "RejectedLayers=" << rejected_layers.load() << "\n"
         << "XRSubmitAccepted=" << xr_accepted.load() << "\n"
-        << "XRSubmitFailed=" << xr_failed.load() << "\n";
+        << "XRSubmitFailed=" << xr_failed.load() << "\n"
+        << "ModifiedDraws=" << modified_draws.load() << "\n"
+        << "MissingProducerFrames=" << missing_producer_frames.load() << "\n"
+        << "NativePassthroughs=" << native_passthroughs.load() << "\n"
+        << "NativeSnapshots=" << native_snapshots.load() << "\n"
+        << "MissingProducerHolds=" << missing_producer_holds.load() << "\n"
+        << "CopyProofFailures=" << copy_proof_failures.load() << "\n"
+        << "LastXrEndResult=" << last_xr_result.load() << "\n";
     out.close();
     if (out) MoveFileExW(temp.c_str(),status_path.c_str(),MOVEFILE_REPLACE_EXISTING);
 }
@@ -253,7 +262,10 @@ struct Scope {
 };
 thread_local Scope* copy_scope{};
 void stop(const char* reason) {
-    armed=false; faulted=true; set_reason(reason); report(reason);
+    armed=false;
+    // Preserve the FIRST fault; a follow-up xrEndFrame rejection must never
+    // mask the original condition that caused the fault.
+    if (!faulted.exchange(true)) {set_reason(reason);report(reason);}
 }
 bool fence_drained(const std::shared_ptr<Slot>& slot) {
     return !slot || !slot->fence || slot->fence->GetCompletedValue()>=slot->fence_value;
@@ -391,10 +403,12 @@ bool copy_hook(void* self,uint32_t index,ID3D12Resource* source,
     const bool direct=source && !pre && !extra && !post && !box && !pair;
     std::optional<Image> hold;
     { std::scoped_lock lock(gpu_mutex); hold=held_image; }
-    bool native=scope.producer && !scope.producer->modified;
-    // At initial observation no producer may have passed our newly-installed
-    // hooks yet. No cropped view can exist until a copied baseline is accepted.
-    if(!scope.producer && !hold && !armed) native=true;
+    if(!scope.producer) ++missing_producer_frames;
+    const bool native=LiveFrameSafety::native_copy(bool(scope.producer),
+        scope.producer && scope.producer->modified,any_modified_draw.load());
+    // Missing packets BEFORE the first cropped view was issued are native
+    // cadence gaps, even after the first copy armed DuoView. Build 69
+    // incorrectly treated these as Hold, permanently faulting the renderer.
     if(!direct && native) {
         stop("Joey selected a callback/native-fix copy path; restore Native Stereo with Native Fix off");
         return original_copy(self,index,source,std::move(pre),std::move(extra),src_state,box,
@@ -407,7 +421,14 @@ bool copy_hook(void* self,uint32_t index,ID3D12Resource* source,
         !scope.producer || scope.producer->epoch==generation.load()});
     std::shared_ptr<Slot> slot;
     if(action==CopyAction::Compose) slot=scope.producer->slot;
-    else if(action==CopyAction::Hold) { slot=hold->slot; stop("Frame copy mismatch: coherent held image; subsequent producers restored"); }
+    else if(action==CopyAction::Hold) {
+        slot=hold->slot;
+        if(!scope.producer) {
+            ++missing_producer_holds; // A cadence gap is not a fatal error.
+        } else if(LiveFrameSafety::hold_requires_quiesce(true,scope.producer->modified)) {
+            stop("Incomplete or mismatched cropped producer: retire active mode");
+        }
+    }
     else if(action==CopyAction::Native && supported && !armed && (!hold || !faulted)) {
         slot=reserve_slot();
         if(slot && !slot->destination) {
@@ -423,6 +444,7 @@ bool copy_hook(void* self,uint32_t index,ID3D12Resource* source,
         }
     }
     if(action==CopyAction::Native && !slot) {
+        ++native_passthroughs;
         // Passive original rendering: record the real acquired destination,
         // without altering scene pixels or optional callback ownership.
         CopyCallback observer=std::function<void(d3d12::CommandContext&,ID3D12Resource*)>(
@@ -478,6 +500,7 @@ bool copy_hook(void* self,uint32_t index,ID3D12Resource* source,
         } else if(proof.recorded || slot->compositor.recorded_commands()) slot->quarantined=true;
     }
     if(!proof.queued()) {
+        ++copy_proof_failures;
         scope.failed=true; stop("Actual Joey copy/fence proof failed; restoring native producers");
         // Hardware/command-context failure cannot be cured by relabeling a
         // stale swapchain image. Do not publish this source as copied.
@@ -513,6 +536,7 @@ bool copy_hook(void* self,uint32_t index,ID3D12Resource* source,
     if(action==CopyAction::Hold) scope.image=*hold;
     else scope.image=Image{slot,action==CopyAction::Compose ? scope.producer : std::nullopt,{},XR_NULL_HANDLE,generation.load()};
     if(action==CopyAction::Compose) ++composite_queued;
+    if(action==CopyAction::Native) ++native_snapshots;
     return true;
 }
 XrResult XRAPI_CALL locate_hook(XrSession session,const XrViewLocateInfo* info,XrViewState* view_state,uint32_t capacity,uint32_t* count,XrView* views) {
@@ -620,6 +644,7 @@ XrResult XRAPI_CALL end_hook(XrSession session,const XrFrameEndInfo* info) {
     // from the exact copied producer (including an intentional coherent hold),
     // not from a comparison with xrLocateViews pose sample time.
     const auto result=original_end(session,&end);
+    last_xr_result.store(result);
     if(duoview_joey::LiveFrameSafety::accept_image(scene,scope.verified,
             XR_SUCCEEDED(result),scope.image && scope.image->epoch==generation.load())) {
         ++xr_accepted;
@@ -803,6 +828,12 @@ public:
         auto slot=armed && !faulted ? reserve_slot() : std::shared_ptr<Slot>{};
         draw=Draw{{generation.load(),serial},*optical,
             duoview_joey::LiveFrameSafety::may_crop(true,armed.load(),faulted.load(),true,bool(slot)),false,slot};
+        if(draw->modified) {
+            // Set BEFORE any view rectangles can be cropped. A missing
+            // producer in this generation is no longer safe to pass through.
+            any_modified_draw=true;
+            ++modified_draws;
+        }
         if(!slot) return; // Busy slots leave this producer fully unmodified.
         slot->destination.Reset(); // Retired native snapshot; active frames retain only the owned Mono image.
         std::array<float,16> projection{};
@@ -842,7 +873,7 @@ public:
         state.camera(draw->key,static_cast<unsigned>(index),dv::CameraPose{{r->pitch,r->yaw,r->roll},{p->x,p->y,p->z}});
     }
     void on_device_reset() override {
-        armed=false; faulted=false;
+        armed=false; faulted=false; any_modified_draw=false;
         ++generation;
         activation_gate.reset(generation.load());
         set_reason(installed ? "OpenXR/DX12 reset; retired active generation" : "Device reset; awaiting verified scene-copy contract");
