@@ -215,3 +215,12 @@ Install candidate into an **entirely separate folder**, keep original Build 3. T
 - Required complete Windows checks: pinned contracts + pinned CAPI test + pinned WARP; independent 6/6; original Joey 41/41; backend/aux DLL compile; frontend ID6 label consistency/publish; source whitelist/hash check; package manifests; actual artifact digest, completeness. Fix the *first* failure precisely and rerun.
 - Runtime NOT VERIFIED: actual gaze-to-headset alignment, two UE views on same GPU source frame, Lumen/TAA seam quality, potential first-use PSO spikes, possible corrupt emergency fault atlas. Therefore never call the source 'stable' or ready to play based solely on CI. A green CI would allow a **controlled first headset test only**, keeping Build3 untouched.
 - Avoid new architectures, full quadviews, mixing old Joey UEVR/SDK, or advancing to cosmetic settings now. Focus on one usable experimental binary and one strict rollback procedure.
+
+
+### Stage5 final-candidate CI queued (after latest audit)
+- Code changes through `95b038bfe4288e0f6ac9b88503b5274aec083f3b`, followed by CI-only commit `9ae1a97a90b522ab6d20575f3c1db505d8063c03` changing `cancel-in-progress` from false to true. No additional renderer source change.
+- **Authoritative latest Windows CI** https://github.com/liviutrn/OpenNR/actions/runs/38477236745 ; source SHA `9ae1a97a90b522ab6d20575f3c1db505d8063c03`.
+- At checkpoint run `38477236745` **PENDING**, with **ZERO artifacts** and no completed Stage5 compilation/test evidence. Earlier run `38476778406` got cancelled as obsolete; run `38476528278` on uncorrected gaze projection was still in progress.
+- Nothing should be distributed as a validated Stage5 package until the latest CI job is COMPLETED success, all pinned PSVR2-gaze+WARP tests and original 41 tests pass, and downloadable artifact ID + sha256 exist. The older successful run #11 is fixed-center **without** eye tracking and does not satisfy the request.
+- A specifically targeted hourly condition-check task was configured to inspect this run and later runs, inspect complete build logs, publish a grounded result and update the handoff only upon meaningful new events. Whether platform notifications are shown depends on notification settings.
+- A source-only CAPI test/CI is NOT a real eye-tracking, frame synchronization, or STALKER2 VR test. Only a user headset run can establish those.
