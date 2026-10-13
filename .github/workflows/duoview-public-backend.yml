@@ -1,7 +1,7 @@
-name: DuoView v09 stability Windows injector
+name: DuoView v10 shared-frame diagnostics Windows injector
 on:
   push:
-    branches: [experiments/duoview-uevr-v07-stalker-publicsdk, experiments/duoview-uevr-v09-stability]
+    branches: [experiments/duoview-uevr-v07-stalker-publicsdk, experiments/duoview-uevr-v09-stability, experiments/duoview-uevr-v10-frame-trace]
     paths: ['duoview/**', '!duoview/*.md', 'duoview/TESTING.md', '.github/workflows/duoview-public-backend.yml']
   workflow_dispatch:
 permissions:
@@ -38,6 +38,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'DuoView integration failed' }
           python workspace/duoview/apply_stability_v09.py backend
           if ($LASTEXITCODE -ne 0) { throw 'Stability overlay failed' }
+          python workspace/duoview/apply_instrumentation_v10.py backend
+          if ($LASTEXITCODE -ne 0) { throw 'Shared-frame instrumentation failed' }
           git -C backend diff --check
           if ($LASTEXITCODE -ne 0) { throw 'Patch whitespace check failed' }
       - name: Portable policies and production DX12 WARP compositor
@@ -89,7 +91,7 @@ jobs:
       - name: Upload complete experimental injector
         uses: actions/upload-artifact@v4
         with:
-          name: DuoView-v09-Stability-Windows-Injector-${{ github.run_number }}
+          name: DuoView-v10-FrameTrace-Windows-Injector-${{ github.run_number }}
           path: package/
           if-no-files-found: error
           retention-days: 30
