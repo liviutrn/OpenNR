@@ -1,0 +1,13 @@
+{
+  "file_format_version": "1.0.0",
+  "api_layer": {
+    "name": "XR_APILAYER_Glamarye_sharpen",
+    "library_path": "GlamaryeOpenXRLayer.dll",
+    "api_version": "1.0",
+    "implementation_version": "1",
+    "description": "Glamarye Intelligent Sharpen OpenXR projection-only Direct3D12 layer",
+    "functions": {
+      "xrNegotiateLoaderApiLayerInterface": "xrNegotiateLoaderApiLayerInterface"
+    }
+  }
+}
