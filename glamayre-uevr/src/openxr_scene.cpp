@@ -296,22 +296,37 @@ extern "C" void glamayre_xr_tick(const UEVR_PluginInitializeParam* api) {
     auto en = GetProcAddress(loader,"xrEnumerateSwapchainImages");
     if (!acq || !rel || !end || !dst || !en) return;
     g_enumerate = reinterpret_cast<EnumerateFn>(en);
+    // Roll back the complete transaction on any failed hook. A partial hook
+    // installation could otherwise duplicate callbacks or leave broken state.
+    const auto rollback = [&]() {
+        auto unreg = api->functions->unregister_inline_hook;
+        if (unreg) {
+            if (g_hookDestroy >= 0) unreg(g_hookDestroy);
+            if (g_hookEnd >= 0) unreg(g_hookEnd);
+            if (g_hookRelease >= 0) unreg(g_hookRelease);
+            if (g_hookAcquire >= 0) unreg(g_hookAcquire);
+        }
+        g_hookAcquire = g_hookRelease = g_hookEnd = g_hookDestroy = -1;
+        g_acquire = nullptr; g_release = nullptr;
+        g_endframe = nullptr; g_destroy = nullptr;
+    };
+    if (!api->functions->unregister_inline_hook) return;
     g_hookAcquire = api->functions->register_inline_hook(
         reinterpret_cast<void*>(acq),reinterpret_cast<void*>(&onAcquire),
         reinterpret_cast<void**>(&g_acquire));
-    if (g_hookAcquire < 0 || !g_acquire) return;
+    if (g_hookAcquire < 0 || !g_acquire) { rollback(); return; }
     g_hookRelease = api->functions->register_inline_hook(
         reinterpret_cast<void*>(rel),reinterpret_cast<void*>(&onRelease),
         reinterpret_cast<void**>(&g_release));
-    if (g_hookRelease < 0 || !g_release) return;
+    if (g_hookRelease < 0 || !g_release) { rollback(); return; }
     g_hookEnd = api->functions->register_inline_hook(
         reinterpret_cast<void*>(end),reinterpret_cast<void*>(&onEndFrame),
         reinterpret_cast<void**>(&g_endframe));
-    if (g_hookEnd < 0 || !g_endframe) return;
+    if (g_hookEnd < 0 || !g_endframe) { rollback(); return; }
     g_hookDestroy = api->functions->register_inline_hook(
         reinterpret_cast<void*>(dst),reinterpret_cast<void*>(&onDestroy),
         reinterpret_cast<void**>(&g_destroy));
-    if (g_hookDestroy < 0 || !g_destroy) return;
+    if (g_hookDestroy < 0 || !g_destroy) { rollback(); return; }
     g_hooked.store(true,std::memory_order_release);
     log("OpenXR projection hooks active. Awaiting the first xrEndFrame to identify scene.");
 }
