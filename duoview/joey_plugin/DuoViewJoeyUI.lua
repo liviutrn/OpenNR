@@ -63,6 +63,10 @@ uevr.sdk.callbacks.on_draw_ui(function()
     if now ~= last_poll then
         last_poll = now
         status = read_pairs(status_file)
+        -- Native plugin polls this request at most four times per second.
+        -- Without this UI open, it performs no periodic status file writes.
+        local request = io.open(status_file .. ".request", "w")
+        if request then request:write(tostring(now)); request:close() end
     end
 
     imgui.text("Backend: Joey 101226HELLRAISERp1 (unchanged)")
