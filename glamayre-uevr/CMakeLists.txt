@@ -4,7 +4,7 @@ if(NOT WIN32)
   message(FATAL_ERROR "UEVR DX12 plugin requires Windows")
 endif()
 add_library(GlamaryeSharpenUEVR SHARED
-    src/plugin.cpp src/shader.hpp vendor/uevr/API.h)
+    src/plugin.cpp src/openxr_scene.cpp src/shader.hpp vendor/uevr/API.h)
 target_compile_features(GlamaryeSharpenUEVR PRIVATE cxx_std_20)
 target_include_directories(GlamaryeSharpenUEVR PRIVATE vendor src)
 target_compile_definitions(GlamaryeSharpenUEVR PRIVATE UNICODE _UNICODE NOMINMAX)
