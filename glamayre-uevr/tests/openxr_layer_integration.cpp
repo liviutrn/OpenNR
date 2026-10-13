@@ -221,6 +221,37 @@ int main(){
     TEST(stats[0]==1&&stats[1]==3&&stats[2]==3&&stats[3]==1&&stats[4]==1&&stats[5]>=1,
          "Real OpenXR dispatch processed one projection color and excluded UI");
 
+    // Only capture and map GPU timestamps when user opts in.
+    using GpuSnapshot=void(__cdecl*)(uint64_t*,uint32_t);
+    auto gpuStatus=symbol<GpuSnapshot>(layer,"glamayre_layer_get_gpu_timing");
+    TEST(gpuStatus,"GPU timer export");
+    uint64_t timing[2]{};
+    gpuStatus(timing,2);
+    TEST(timing[1]==0,"Timer initially disabled and has no samples");
+    custom("glamayre_sharpen.set","timing=1");
+    TEST(acquire(color,&ai,&index)==XR_SUCCESS,"Timed image acquisition");
+    TEST(release(color,&ri)==XR_SUCCESS,"Timed image release");
+    ComPtr<ID3D12Fence> timingFence;
+    HR(device->CreateFence(0,D3D12_FENCE_FLAG_NONE,IID_PPV_ARGS(&timingFence)),"Timestamp fence");
+    HR(queue->Signal(timingFence.Get(),1),"Timestamp wait signal");
+    HANDLE timingEvent=CreateEventW(nullptr,FALSE,FALSE,nullptr);
+    TEST(timingEvent!=nullptr,"Timestamp event");
+    HR(timingFence->SetEventOnCompletion(1,timingEvent),"Timestamp wait");
+    auto timingWait=WaitForSingleObject(timingEvent,10000);CloseHandle(timingEvent);
+    TEST(timingWait==WAIT_OBJECT_0,"Asynchronous timestamp GPU work completed");
+    TEST(acquire(color,&ai,&index)==XR_SUCCESS,"Reuse timestamped image");
+    TEST(release(color,&ri)==XR_SUCCESS,"Harvest completed timestamp without blocking");
+    gpuStatus(timing,2);
+    TEST(timing[1]>0,"Timestamp counter increments when diagnostic on");
+    printf("Opt-in GPU cost: %llu microseconds over %llu samples\n",
+        (unsigned long long)timing[0],(unsigned long long)timing[1]);
+    const uint64_t sampleCount=timing[1];
+    custom("glamayre_sharpen.set","timing=0");
+    TEST(acquire(color,&ai,&index)==XR_SUCCESS,"Acquire with disabled timing");
+    TEST(release(color,&ri)==XR_SUCCESS,"Render with no timestamp queries");
+    gpuStatus(timing,2);
+    TEST(timing[1]==sampleCount,"No GPU timing samples while disabled");
+
     // Copy rendered headset pixel back after all prior queue work, checking debug red grid.
     ComPtr<ID3D12CommandAllocator> alloc;
     HR(device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT,IID_PPV_ARGS(&alloc)),"Readback allocator");
