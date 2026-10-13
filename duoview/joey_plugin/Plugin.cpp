@@ -19,7 +19,7 @@ using Microsoft::WRL::ComPtr;
 namespace {
 const UEVR_PluginInitializeParam* api{};
 uintptr_t backend{};
-int mode{};
+std::atomic<int> mode{0};
 std::atomic<bool> installed{};
 std::atomic<uint64_t> generation{1}, draw_serial{};
 dv::State state;
@@ -31,7 +31,41 @@ std::map<uint32_t, Packet> packets;
 struct Draw { dv::FrameKey key; Optics optical; };
 thread_local std::optional<Draw> draw;
 dv::SubmissionMailbox<Packet> submissions;
-std::atomic<uint64_t> last_report{}, last_success{};
+std::atomic<uint64_t> last_report{}, last_success{}, last_status_write{};
+std::atomic<uint64_t> engine_ticks{}, locate_calls{}, producer_pairs{}, render_callbacks{}, matched_packets{}, composite_queued{}, end_calls{}, submitted_layers{}, rejected_layers{};
+std::mutex status_mutex;
+std::string status_reason{"Not initialized"};
+std::filesystem::path status_path;
+void set_reason(const char* reason) {
+    std::scoped_lock lock(status_mutex);
+    status_reason = reason;
+}
+void publish_status(bool force=false) {
+    if (status_path.empty()) return;
+    const auto now=GetTickCount64();
+    const auto previous=last_status_write.load();
+    if (!force && (now-previous<1000 || !last_status_write.compare_exchange_strong(const_cast<uint64_t&>(previous),now))) return;
+    if (force) last_status_write.store(now);
+    std::string reason;
+    { std::scoped_lock lock(status_mutex); reason=status_reason; }
+    auto temp=status_path; temp+=L".tmp";
+    std::ofstream out(temp,std::ios::binary|std::ios::trunc);
+    if (!out) return;
+    out << "Mode=" << mode.load() << "\n"
+        << "Hooks=" << (installed.load() ? "active" : "inactive") << "\n"
+        << "Reason=" << reason << "\n"
+        << "EngineTicks=" << engine_ticks.load() << "\n"
+        << "LocateViews=" << locate_calls.load() << "\n"
+        << "ProducerPairs=" << producer_pairs.load() << "\n"
+        << "RenderCallbacks=" << render_callbacks.load() << "\n"
+        << "MatchedPackets=" << matched_packets.load() << "\n"
+        << "CompositesQueued=" << composite_queued.load() << "\n"
+        << "EndFrames=" << end_calls.load() << "\n"
+        << "SubmittedLayers=" << submitted_layers.load() << "\n"
+        << "RejectedLayers=" << rejected_layers.load() << "\n";
+    out.close();
+    if (out) MoveFileExW(temp.c_str(),status_path.c_str(),MOVEFILE_REPLACE_EXISTING);
+}
 
 bool readable(uintptr_t address, size_t size) {
     MEMORY_BASIC_INFORMATION info{};
@@ -157,9 +191,11 @@ void begin_hook(void* extension,void* family) {
     std::scoped_lock lock(packets_mutex);
     if (packets.size() >= 32) packets.erase(packets.begin());
     packets.insert_or_assign(*producer,Packet{*complete,draw->optical,*producer});
+    ++producer_pairs;
 }
 void pre_render_hook(void* extension,void* commands,void* family) {
     original_pre_render(extension,commands,family);
+    ++render_callbacks;
     if (!native_mode() || !two_views(family)) return;
     const auto producer = family_frame(family);
     if (!producer) return;
@@ -238,6 +274,7 @@ bool compose(const Packet& packet,ID3D12Resource* source) {
     ID3D12CommandList* lists[]{slot.commands.Get()}; queue->ExecuteCommandLists(1,lists);
     slot.fence=++gpu->signal;
     if (FAILED(queue->Signal(gpu->fence.Get(),slot.fence))) { report("DuoView queue fence signal failed"); return false; }
+    ++composite_queued;
     const auto now=GetTickCount64(); auto previous=last_success.load();
     if (now-previous>=3000 && last_success.compare_exchange_strong(previous,now)) {
         const auto& l=packet.frame.config.layout;
@@ -261,6 +298,7 @@ int frame_hook(void* component,void* vr) {
             }
         }
         if (packet) {
+            ++matched_packets;
             auto* rhi=uevr::API::StereoHook::get_scene_render_target();
             auto* source=rhi ? static_cast<ID3D12Resource*>(rhi->get_native_resource()) : nullptr;
             if (mode==1 || compose(*packet,source)) {
@@ -276,6 +314,7 @@ int frame_hook(void* component,void* vr) {
 }
 XrResult XRAPI_CALL locate_hook(XrSession session,const XrViewLocateInfo* info,XrViewState* view_state,uint32_t capacity,uint32_t* count,XrView* views) {
     const auto result=original_locate(session,info,view_state,capacity,count,views);
+    ++locate_calls;
     const auto valid=XR_VIEW_STATE_ORIENTATION_VALID_BIT|XR_VIEW_STATE_POSITION_VALID_BIT;
     if (XR_SUCCEEDED(result) && info && view_state && (view_state->viewStateFlags&valid)==valid && info->space==reinterpret_cast<XrSpace>(api->openxr->get_stage_space()) && count && *count==2 && capacity>=2 && views) {
         std::array<uevr::mono::Eye,2> eyes;
@@ -293,6 +332,7 @@ XrResult XRAPI_CALL locate_hook(XrSession session,const XrViewLocateInfo* info,X
     return result;
 }
 XrResult XRAPI_CALL end_hook(XrSession session,const XrFrameEndInfo* info) {
+    ++end_calls;
     if (!native_mode() || !info || info->layerCount>64 || (info->layerCount && !info->layers))
         return original_end(session,info);
     // Consume exactly one producer whose LocateViews prediction matches
@@ -306,7 +346,7 @@ XrResult XRAPI_CALL end_hook(XrSession session,const XrFrameEndInfo* info) {
         const auto* layer=info->layers[i];
         if (!layer || layer->type!=XR_TYPE_COMPOSITION_LAYER_PROJECTION) { layers.push_back(layer); continue; }
         const auto* projection=reinterpret_cast<const XrCompositionLayerProjection*>(layer);
-        if (!submitted || projection->viewCount!=2) { report("Withholding unpaired OpenXR scene layer"); continue; }
+        if (!submitted || projection->viewCount!=2) { ++rejected_layers; report("Withholding unpaired OpenXR scene layer"); continue; }
         auto pair=std::array{projection->views[0],projection->views[1]};
         std::array<uevr::mono::Eye,2> eyes;
         for (size_t eye=0;eye<2;++eye) {
@@ -316,7 +356,7 @@ XrResult XRAPI_CALL end_hook(XrSession session,const XrFrameEndInfo* info) {
         }
         const auto geometry=uevr::mono::geometry(eyes);
         if (!geometry || std::abs(geometry->horizontal-submitted->optical.geometry.horizontal)>0.0001f ||
-            std::abs(geometry->vertical-submitted->optical.geometry.vertical)>0.0001f) { report("Optical geometry changed between producer and submit"); continue; }
+            std::abs(geometry->vertical-submitted->optical.geometry.vertical)>0.0001f) { ++rejected_layers; report("Optical geometry changed between producer and submit"); continue; }
         const auto& g=*geometry;
         const auto width=submitted->frame.config.layout.atlas_width/2, height=submitted->frame.config.layout.atlas_height;
         bool valid_pair=true;
@@ -328,7 +368,8 @@ XrResult XRAPI_CALL end_hook(XrSession session,const XrFrameEndInfo* info) {
             pair[eye].fov={std::atan(crop->fov[0]),std::atan(crop->fov[1]),std::atan(crop->fov[2]),std::atan(crop->fov[3])};
             pair[eye].subImage.imageRect={{static_cast<int32_t>(eye*width+crop->x),static_cast<int32_t>(crop->y)},{static_cast<int32_t>(crop->width),static_cast<int32_t>(crop->height)}};
         }
-        if (!valid_pair) continue;
+        if (!valid_pair) { ++rejected_layers; continue; }
+        ++submitted_layers;
         pairs.push_back(pair); projections.push_back(*projection); projections.back().views=pairs.back().data();
         layers.push_back(reinterpret_cast<const XrCompositionLayerBaseHeader*>(&projections.back()));
     }
@@ -357,21 +398,23 @@ public:
         api->functions->log_info("[DuoViewJoey] Released-backend SHA256=%s commit=%s",hash.c_str(),api->functions->get_commit_hash());
         wchar_t directory[32768]{}; api->functions->get_persistent_dir(directory,32768);
         config_=std::filesystem::path(directory)/L"DuoViewJoey.ini";
+        status_path=std::filesystem::path(directory)/L"DuoViewJoey.status";
         mode=static_cast<int>(GetPrivateProfileIntW(L"DuoView",L"Mode",0,config_.c_str()));
+        api->functions->log_info("[DuoViewJoey] Config path=%ls Mode=%d",config_.c_str(),mode.load());
         if (mode<0 || mode>3) mode=0;
-        if (!mode) { api->functions->log_info("[DuoViewJoey] Diagnostics mode: released Joey rendering is unchanged"); return; }
-        if (hash!="19e91cc8c22a02e2a97996e1523604ab202b4540d954ebc95e07e6b233970966") { mode=0; api->functions->log_error("[DuoViewJoey] Unsupported backend: renderer hooks refused; use the pinned official Mono release"); return; }
+        if (!mode) { set_reason("Disabled in configuration; Joey is unchanged"); publish_status(true); api->functions->log_info("[DuoViewJoey] Disabled mode 0: released Joey rendering is unchanged"); return; }
+        if (hash!="19e91cc8c22a02e2a97996e1523604ab202b4540d954ebc95e07e6b233970966") { mode=0; set_reason("Unsupported backend hash; hooks refused"); publish_status(true); api->functions->log_error("[DuoViewJoey] Unsupported backend: renderer hooks refused; use the pinned official Mono release"); return; }
         wchar_t game[32768]{}; GetModuleFileNameW(nullptr,game,32768);
-        if (std::filesystem::path(game).filename()!=L"Stalker2-Win64-Shipping.exe") { mode=0; api->functions->log_error("[DuoViewJoey] Renderer adapter is restricted to STALKER 2"); return; }
+        if (std::filesystem::path(game).filename()!=L"Stalker2-Win64-Shipping.exe") { mode=0; set_reason("Not STALKER 2 Shipping executable"); publish_status(true); api->functions->log_error("[DuoViewJoey] Renderer adapter is restricted to STALKER 2"); return; }
         for(const auto* module : {L"CheekyFoveatedDLSS.dll",L"CheekyFoveatedDLSSRuntime.dll",L"CheekyOpenXRLayer.dll",L"ReShade64.dll"}) {
-            if (GetModuleHandleW(module)) { mode=0; api->functions->log_error("[DuoViewJoey] Disable Cheeky/ReShade for the isolated recovery test; renderer hooks refused"); return; }
+            if (GetModuleHandleW(module)) { mode=0; set_reason("Incompatible Cheeky/ReShade module loaded; hooks refused"); publish_status(true); api->functions->log_error("[DuoViewJoey] Conflicting module loaded: %ls",module); return; }
         }
         dv::Settings settings;
         settings.crop_width=number(L"CropWidth",.5f); settings.crop_height=number(L"CropHeight",.5f);
         settings.peripheral_scale=number(L"PeripheralScale",.2f); settings.foveal_density=number(L"FovealDensity",1.f);
         settings.feather_fraction=number(L"Feather",.08f); settings.eye_tracked=mode==3;
         settings.debug_border=GetPrivateProfileIntW(L"DuoView",L"DebugBorder",1,config_.c_str())!=0;
-        if (!state.configure(settings)) { mode=0; api->functions->log_error("[DuoViewJoey] Invalid layout settings; renderer hooks refused"); return; }
+        if (!state.configure(settings)) { mode=0; set_reason("Invalid crop/periphery/density settings"); publish_status(true); api->functions->log_error("[DuoViewJoey] Invalid layout settings; renderer hooks refused"); return; }
         const std::array<std::pair<uintptr_t,std::array<uint8_t,16>>,6> contracts{{
             {0x2969b0,{0x4c,0x89,0x4c,0x24,0x20,0x89,0x54,0x24,0x10,0x55,0x53,0x57,0x41,0x54,0x41,0x55}},
             {0x2bf2f0,{0x48,0x8b,0xc4,0x44,0x89,0x40,0x18,0x48,0x89,0x50,0x10,0x48,0x89,0x48,0x08,0x55}},
@@ -382,19 +425,33 @@ public:
         }};
         for (const auto& [rva,bytes] : contracts) {
             if (!readable(backend+rva,bytes.size()) || std::memcmp(reinterpret_cast<void*>(backend+rva),bytes.data(),bytes.size())!=0) {
-                mode=0; api->functions->log_error("[DuoViewJoey] Loaded hook prologue differs from the exact release; no renderer hooks installed"); return;
+                mode=0; set_reason("Loaded hook signature mismatch; hooks refused"); publish_status(true); api->functions->log_error("[DuoViewJoey] Loaded hook prologue differs from the exact release; no renderer hooks installed"); return;
             }
         }
         pending_=true;
+        set_reason("Validated binary; waiting for engine tick / OpenXR readiness");
+        publish_status(true);
     }
-    void on_present() override {
-        if (!pending_ || !api->vr->is_openxr() || !api->vr->is_runtime_ready()) return;
+    void on_pre_engine_tick(uevr::API::UGameEngine*, float) override {
+        ++engine_ticks;
+        if (!pending_) {
+            publish_status();
+            return;
+        }
+        if (!api->vr->is_openxr() || !api->vr->is_runtime_ready()) {
+            publish_status();
+            return;
+        }
         auto instance=reinterpret_cast<XrInstance>(api->openxr->get_xr_instance());
         if (!instance) return;
         const auto loader=GetModuleHandleW(L"openxr_loader.dll");
         const auto get_proc=loader ? reinterpret_cast<PFN_xrGetInstanceProcAddr>(GetProcAddress(loader,"xrGetInstanceProcAddr")) : nullptr;
         PFN_xrVoidFunction locate{},end{};
-        if (!get_proc || XR_FAILED(get_proc(instance,"xrLocateViews",&locate)) || XR_FAILED(get_proc(instance,"xrEndFrame",&end))) return;
+        if (!get_proc || XR_FAILED(get_proc(instance,"xrLocateViews",&locate)) || XR_FAILED(get_proc(instance,"xrEndFrame",&end))) {
+            set_reason("OpenXR loader functions unavailable; hooks pending");
+            publish_status();
+            return;
+        }
         pending_=false;
         const bool ok=hook(backend+0x2969b0,&rect_hook,original_rect) &&
             hook(backend+0x2bf2f0,&projection_hook,original_projection) &&
@@ -404,9 +461,11 @@ public:
             hook(backend+0x1f0f50,&frame_hook,original_frame) &&
             hook(reinterpret_cast<uintptr_t>(locate),&locate_hook,original_locate) &&
             hook(reinterpret_cast<uintptr_t>(end),&end_hook,original_end);
-        if (!ok) { rollback_hooks(); mode=0; api->functions->log_error("[DuoViewJoey] Hook transaction failed and was rolled back"); return; }
+        if (!ok) { rollback_hooks(); mode=0; set_reason("Hook registration failed; rolled back, Joey untouched"); publish_status(true); api->functions->log_error("[DuoViewJoey] Hook transaction failed and was rolled back"); return; }
         installed=true;
-        api->functions->log_info("[DuoViewJoey] Mode=%d installed on unchanged official Joey Mono backend; select Native Stereo",mode);
+        set_reason("Hooks active; waiting for paired UE scene frames");
+        publish_status(true);
+        api->functions->log_info("[DuoViewJoey] Mode=%d installed on unchanged official Joey Mono backend; select Native Stereo",mode.load());
     }
     void on_pre_viewport_client_draw(UEVR_UGameViewportClientHandle,UEVR_FViewportHandle,UEVR_FCanvasHandle) override {
         draw.reset();
@@ -450,6 +509,8 @@ public:
     }
     void on_device_reset() override {
         ++generation;
+        set_reason(installed ? "OpenXR/DX12 reset; awaiting fresh scene frames" : "Device reset; waiting for hooks");
+        publish_status(true);
         state.retire();
         { std::scoped_lock lock(packets_mutex); packets.clear(); }
         submissions.retire();
