@@ -98,6 +98,8 @@ bool makeContext(ImageContext& ctx, ID3D12Resource* tex, ID3D12Device* device) {
     if (d.Dimension != D3D12_RESOURCE_DIMENSION_TEXTURE2D ||
         d.SampleDesc.Count != 1 || d.DepthOrArraySize != 1 ||
         (d.Format != DXGI_FORMAT_B8G8R8A8_UNORM_SRGB &&
+         d.Format != DXGI_FORMAT_B8G8R8A8_TYPELESS &&
+         d.Format != DXGI_FORMAT_R8G8B8A8_TYPELESS &&
          d.Format != DXGI_FORMAT_R8G8B8A8_UNORM_SRGB &&
          d.Format != DXGI_FORMAT_B8G8R8A8_UNORM &&
          d.Format != DXGI_FORMAT_R8G8B8A8_UNORM &&
@@ -114,7 +116,8 @@ bool makeContext(ImageContext& ctx, ID3D12Resource* tex, ID3D12Device* device) {
     heap.NumDescriptors = 1;
     if (FAILED(device->CreateDescriptorHeap(&heap,IID_PPV_ARGS(&ctx.rtvHeap)))) return false;
     D3D12_RENDER_TARGET_VIEW_DESC rtv{};
-    rtv.Format = d.Format;
+    rtv.Format = (d.Format == DXGI_FORMAT_B8G8R8A8_TYPELESS) ? DXGI_FORMAT_B8G8R8A8_UNORM_SRGB :
+                 (d.Format == DXGI_FORMAT_R8G8B8A8_TYPELESS) ? DXGI_FORMAT_R8G8B8A8_UNORM_SRGB : d.Format;
     rtv.ViewDimension = D3D12_RTV_DIMENSION_TEXTURE2D;
     rtv.Texture2D.MipSlice = 0;
     device->CreateRenderTargetView(tex, &rtv, ctx.rtvHeap->GetCPUDescriptorHandleForHeapStart());
