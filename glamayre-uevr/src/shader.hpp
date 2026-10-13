@@ -12,10 +12,28 @@ cbuffer C : register(b0) {
     float maximumColour;
     uint flags;    // bit0: edge protection; bit1: bigger sharpen; bit2: side-by-side
     uint layer;
+    uint colourMode; // 0=hardware sRGB/linear; 1=manual SDR sRGB; 2=scRGB (203 nit reference)
 };
 Texture2DArray<float4> src : register(t0);
 SamplerState linearClamp : register(s0);
 static const float3 luma = float3(0.2126, 0.7152, 0.0722);
+// Glamarye's explicit color-space transformation, where required.
+// When the SRV and RTV use DXGI_FORMAT_*_SRGB, hardware handles the two
+// conversions automatically and mode 0 avoids processing the transfer twice.
+float3 DecodeColour(float3 c) {
+    if (colourMode == 1u) {
+        return (c <= 0.04045) ? c / 12.92 : pow(abs(c + 0.055) / 1.055, 2.4);
+    }
+    if (colourMode == 2u) return c * (80.0 / 203.0);
+    return c;
+}
+float3 EncodeColour(float3 c) {
+    if (colourMode == 1u) {
+        return (c <= 0.0031308) ? c * 12.92 : 1.055 * pow(abs(c), 1.0 / 2.4) - 0.055;
+    }
+    if (colourMode == 2u) return c * (203.0 / 80.0);
+    return c;
+}
 
 struct VSOut { float4 pos : SV_Position; };
 VSOut VSMain(uint id : SV_VertexID) {
@@ -34,14 +52,14 @@ float3 ReadAt(float2 uv, float2 offset, float2 centerUV) {
         if (centerUV.x < halfWidth / imageSize.x) hi.x = (halfWidth - 0.5) / imageSize.x;
         else lo.x = (halfWidth + 0.5) / imageSize.x;
     }
-    return src.SampleLevel(linearClamp, float3(clamp(p, lo, hi), float(layer)), 0).rgb;
+    return DecodeColour(src.SampleLevel(linearClamp, float3(clamp(p, lo, hi), float(layer)), 0).rgb);
 }
 float4 PSMain(VSOut input) : SV_Target {
     float2 uv = input.pos.xy / imageSize;
     float4 original = src.SampleLevel(linearClamp, float3(uv, float(layer)), 0);
     if (strength <= 0.00001) return original;
 
-    float3 c = original.rgb;
+    float3 c = DecodeColour(original.rgb);
     float radius = (flags & 2u) != 0u ? 1.4 : 0.5;
     float3 ne = ReadAt(uv, float2( radius,  radius), uv);
     float3 sw = ReadAt(uv, float2(-radius, -radius), uv);
@@ -72,7 +90,7 @@ float4 PSMain(VSOut input) : SV_Target {
         float3 totalDiff = d1 + d2 + 0.00004;
         float3 maxDiff = max(d1, d2) + 0.00001 - fxaaBias * sqrt(max(smoothed, 0.0));
         float score = dot(luma, maxDiff / totalDiff);
-        edgeRatio = saturate(max(2.0 * score - 1.0, 0.0));
+        edgeRatio = max(2.0 * score - 1.0, 0.0);
     }
 
     // Retains the original median/outlier detail term from Glamarye.
@@ -84,6 +102,6 @@ float4 PSMain(VSOut input) : SV_Target {
     possible = clamp(possible, 0.00001, maxChange);
     float3 change = diff / (1.0 / max(strength, 0.00001) + abs(diff) / possible);
     if ((flags & 1u) != 0u) change *= (1.0 - edgeRatio);
-    return float4(max(0.0, c + change), original.a);
+    return float4(EncodeColour(c + change), original.a);
 }
 )HLSL";
