@@ -127,3 +127,30 @@ unchanged.
    Mono stability testing. Only after that passes can DuoView integration begin.
 
 There is no new installable baseline or DuoView build at this checkpoint.
+
+## Source download route to check before reconstruction
+
+The pinned Joey source's own [COMPILING.md](https://github.com/joeyhodge/UEVR/blob/5ac7edc207866569334175e4ed8a7517971547f6/COMPILING.md)
+says UESDK is part of the restricted EpicGames/UnrealEngine fork network
+and requires EpicGames GitHub organization access. That inherited guide
+links the Praydog SDK; the pinned `.gitmodules` selects Joey's SDK fork.
+Consequently, a 404 from public Git or this repository connector does not
+establish that an Epic-authorized browser cannot download the real SDK.
+The user's Epic organization membership and authenticated SDK access have
+not been verified. Joey's particular fork may have additional restrictions.
+
+Before extending the reconstructed SDK, check the normal authorized route:
+
+1. Follow Epic's [official GitHub source-access steps](https://www.unrealengine.com/en-US/ue-on-github),
+   linking the intended GitHub account and accepting the organization invite.
+2. Confirm that the authenticated account can open `EpicGames/UnrealEngine`.
+3. Open [Joey SDK at the exact required commit](https://github.com/joeyhodge/UESDK/tree/3cffbc82429b6165ceec2714f0f0d9ae48f55596).
+4. If accessible, download that revision and validate its provenance before
+   running the unchanged latest Joey baseline build. Do not replace it with
+   the latest default branch or a different SDK revision.
+
+No matching public source archive was found in the expanded searches. The
+matching PDB's named source streams embed a JSON Natvis file, not the SDK
+source. The two successful official runs upload runtime binaries and PDBs;
+neither advertises an SDK source package. These observations do not rule
+out the normal authenticated source-download route.
