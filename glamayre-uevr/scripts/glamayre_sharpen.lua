@@ -1,6 +1,6 @@
 -- Glamarye Sharpen: minimal UEVR LuaLoader panel.
 -- This file is only UI; every GPU operation runs in the native DLL.
-local state = {enabled=false,big=true,edges=true,split=false,strength=0.4,limit=0.1,bias=0.02,xrHook=0,xrFrames=0}
+local state = {enabled=false,big=true,edges=true,split=false,strength=0.4,limit=0.1,bias=0.02,xrHook=0,xrResolved=0,xrFrames=0,xrAcquire=0,xrRelease=0,xrEnd=0,xrProj=0,xrSize=0,xrEligible=0,xrEnumError=0}
 local received = false
 local pending = {}
 
@@ -72,7 +72,22 @@ uevr.lua.add_script_panel("Glamarye Sharpen", function()
     if state.xrHook ~= 1 then
         imgui.text("OpenXR loader hook not active (check OpenXR mode and logs).")
     else
-        imgui.text("OpenXR hook active. Processed scene images: " .. tostring(state.xrFrames or 0))
+        imgui.text("OpenXR hooks: loader=" .. tostring(state.xrHook or 0)
+            .. " runtime=" .. tostring(state.xrResolved or 0))
+        imgui.text("Processed scene images: " .. tostring(state.xrFrames or 0))
+        if imgui.tree_node("Frame path diagnostics") then
+            imgui.text("Acquired: " .. tostring(state.xrAcquire or 0))
+            imgui.text("Released: " .. tostring(state.xrRelease or 0))
+            imgui.text("EndFrame: " .. tostring(state.xrEnd or 0))
+            imgui.text("Projection matched: " .. tostring(state.xrProj or 0))
+            imgui.text("HMD size matched: " .. tostring(state.xrSize or 0))
+            imgui.text("Eligible submissions: " .. tostring(state.xrEligible or 0))
+            imgui.text("Enumerate errors: " .. tostring(state.xrEnumError or 0))
+            imgui.tree_pop()
+        end
+        if (state.xrFrames or 0) == 0 then
+            imgui.text("No headset scene image processed; effect is not active.")
+        end
     end
     imgui.text("Sharpening applies to projection-layer scene images only.")
     imgui.text("DLSS and Joey native stereo/mono renderers are unchanged.")
