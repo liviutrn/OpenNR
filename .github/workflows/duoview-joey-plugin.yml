@@ -39,7 +39,7 @@ jobs:
           Invoke-WebRequest 'https://github.com/joeyhodge/UEVR/releases/download/101226HELLRAISERp1/DIBRMONOUEVR.zip' -OutFile joey.zip
           if ((Get-FileHash joey.zip -Algorithm SHA256).Hash.ToLower() -ne 'd078f6e8c3c36f6877d0c6eafcb1d0344111d4f4992838c1a5ec4b91c553fade') { throw 'Official package digest mismatch' }
           Expand-Archive joey.zip -DestinationPath package/JoeyOriginal
-          python -m pip install pefile capstone
+          python -m pip install pefile capstone luaparser
           if ($LASTEXITCODE -ne 0) { throw 'Binary inspection dependencies failed' }
           python workspace/duoview/joey_plugin/verify_release.py package/JoeyOriginal/UEVRBackend.dll
           if ($LASTEXITCODE -ne 0) { throw 'Exact binary hook contract failed' }
@@ -72,6 +72,82 @@ jobs:
           Copy-Item headers/LICENSE package/UEVR-LICENSE.txt
           'Source: https://github.com/liviutrn/OpenNR/tree/${{ github.sha }}' | Set-Content package/BUILD_SOURCE.txt
           Get-ChildItem package -Recurse -File | Get-FileHash -Algorithm SHA256 | Format-Table -AutoSize | Out-String -Width 300 | Set-Content package/HASHES.txt
+      - name: Verify packaged UI and profile installer integration
+        shell: pwsh
+        run: |
+          # Do not touch any user's actual UEVR profile on a CI runner.
+          $env:APPDATA=Join-Path $pwd 'isolated-appdata'
+          & package/Install-DuoView.ps1 -Mode 2
+          if ($LASTEXITCODE -ne 0) { throw 'Profile installation failed' }
+          $profile=Join-Path $env:APPDATA 'UnrealVRMod/Stalker2-Win64-Shipping'
+          if (!(Test-Path (Join-Path $profile 'plugins/DuoViewJoey.dll'))) { throw 'Native plugin missing' }
+          if (!(Test-Path (Join-Path $profile 'scripts/DuoViewJoeyUI.lua'))) { throw 'UEVR Lua UI missing' }
+          if ((Get-Content (Join-Path $profile 'DuoViewJoey.ini') -Raw) -notmatch '(?m)^Mode=2\\s*
+        shell: pwsh
+        run: |
+          Add-Type -TypeDefinition @'
+          using System;
+          using System.Runtime.InteropServices;
+          public static class PluginLoaderCheck {
+            [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)] public static extern IntPtr LoadLibraryW(string path);
+            [DllImport("kernel32.dll", CharSet=CharSet.Ansi)] public static extern IntPtr GetProcAddress(IntPtr module, string name);
+            [DllImport("kernel32.dll")] public static extern bool FreeLibrary(IntPtr module);
+          }
+          '@
+          $module=[PluginLoaderCheck]::LoadLibraryW((Resolve-Path package/Plugin/DuoViewJoey.dll).Path)
+          if ($module -eq [IntPtr]::Zero) { throw "Plugin LoadLibrary failed: $([Runtime.InteropServices.Marshal]::GetLastWin32Error())" }
+          try {
+            foreach ($name in @('uevr_plugin_initialize','uevr_plugin_required_version')) {
+              if ([PluginLoaderCheck]::GetProcAddress($module,$name) -eq [IntPtr]::Zero) { throw "Missing plugin ABI export: $name" }
+            }
+          } finally { [PluginLoaderCheck]::FreeLibrary($module) | Out-Null }
+          Write-Host 'Windows DLL loadability and public UEVR ABI exports passed'
+      - uses: actions/upload-artifact@v4
+        if: success()
+        with:
+          name: DuoView-Joey-Preserved-Plugin-${{ github.run_number }}
+          path: package/
+          if-no-files-found: error
+          retention-days: 30
+      - name: Publish experimental recovery download
+        if: success()
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          Compress-Archive -Path package/* -DestinationPath DuoView-Joey-Preserved-Plugin.zip
+          $tag='duoview-joey-plugin-v11-build-${{ github.run_number }}'
+          @'
+          Experimental v11 Joey-first DuoView Mono plugin for STALKER 2 DX12/OpenXR.
+
+          Preserves the official Joey Mono injector/backend byte for byte.
+          Includes staged diagnostics, shared-pose views, fixed fovea and PSVR2 gaze modes.
+          Exact binary contracts, seven Windows policy/WARP tests, in-place atlas pixel
+          readback, Windows DLL loading and plugin ABI exports passed for this build.
+
+          Cross-thread display-time frame handoff and nonblocking GPU slot selection added.\n\n          STALKER 2 injection, headset behavior, eye tracking and performance remain
+          unverified. Start with Mode 0 and follow the included README. Disable
+          Cheeky and ReShade layers for the isolated test. This is a prerelease,
+          not a claim that the reported injection crash has been fixed in-game.
+
+          Source commit: ${{ github.sha }}
+          Build: https://github.com/liviutrn/OpenNR/actions/runs/${{ github.run_id }}
+          '@ | Set-Content release-notes.md
+          gh release create $tag DuoView-Joey-Preserved-Plugin.zip --repo '${{ github.repository }}' --target '${{ github.sha }}' --title "DuoView Mono — Joey preserved, test build ${{ github.run_number }}" --prerelease --notes-file release-notes.md
+          if ($LASTEXITCODE -ne 0) { throw 'Experimental release publication failed; use the successful Actions artifact' }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: DuoView-Joey-plugin-build-logs-${{ github.run_number }}
+          path: |
+            plugin-configure.log
+            plugin-build.log
+          retention-days: 30
+) { throw 'Mode 2 config not applied' }
+          if (!(Test-Path package/JoeyOriginal/UEVRBackend.dll)) { throw 'Joey original backend missing' }
+          python -c "from pathlib import Path; from luaparser import ast; ast.parse(Path('package/Plugin/DuoViewJoeyUI.lua').read_text(encoding='utf-8')); print('Lua UI syntax parsed')"
+          if ($LASTEXITCODE -ne 0) { throw 'UI Lua syntax invalid' }
+          Write-Host 'Isolated install + UEVR Lua UI syntax + unchanged Joey package PASS'
       - name: Check plugin loadability and ABI exports
         shell: pwsh
         run: |
