@@ -27,6 +27,15 @@ def main():
         s=changed.get(path)
         if s is None: s=(root/path).read_text(encoding="utf-8-sig")
         changed[path]=replace(s,before,after,path)
+    edit("src/mods/vr/MonoRenderingPolicy.hpp",
+        'DuoView Mono (Stage 1 - safe Mono fallback)',
+        'DuoView Mono (Fixed Center - Experimental)')
+    edit("UEVR/RenderingModeOptions.cs",
+        'DuoView Mono (Stage 1 - safe Mono fallback)',
+        'DuoView Mono (Fixed Center - Experimental)')
+    edit("tests/RenderingModes/Program.cs",
+        'DuoView Mono (Stage 1 - safe Mono fallback)',
+        'DuoView Mono (Fixed Center - Experimental)')
     header="src/mods/VR.hpp"
     edit(header,'#include "vr/RenderingMethodSetting.hpp"',
         '#include "vr/RenderingMethodSetting.hpp"\n#include "vr/DuoViewState.hpp"')
@@ -117,7 +126,7 @@ void VR::duoview_abort(const char* reason) {
                 return;
             }
         }
-        vr->duoview_abort("invalid rectangle or frame snapshot");
+        // No transaction here: stay on original Mono rectangle for this frame.
     }
     if (VR::get()->is_using_mono()) {
         *x = 0;
@@ -137,7 +146,7 @@ void VR::duoview_abort(const char* reason) {
             pos->x = pose->position[0]; pos->y = pose->position[1]; pos->z = pose->position[2];
             if (vr->duoview_state().camera(key, 1, *pose)) return;
         }
-        vr->duoview_abort("second scene camera could not reuse current-frame Mono pose");
+        // A missing pose remains incomplete; the render submission gate will fall back.
     }
     //std::scoped_lock _{vr->get_vr_mutex()};''')
     edit(hook,'''        // Modify Player Control Rotation
@@ -149,7 +158,7 @@ void VR::duoview_abort(const char* reason) {
             const uevr::duoview::CameraPose pose{{r->pitch,r->yaw,r->roll},{p->x,p->y,p->z}};
             vr->duoview_begin_frame();
             if (!vr->duoview_state().camera(key, 0, pose))
-                vr->duoview_abort("first scene camera not captured for this frame");
+                SPDLOG_WARNING_EVERY_N_SEC(2, "[DuoView] First scene pose not captured");
         }
 
         // Modify Player Control Rotation
@@ -170,7 +179,7 @@ void VR::duoview_abort(const char* reason) {
                 if (duo_fovea) uevr::duoview::apply_foveal_crop(double_matrix, frame->config.layout);
                 vr->duoview_state().projection(frame->config.key, duo_fovea ? 1u : 0u);
             } else {
-                vr->duoview_abort("missing current-frame projection snapshot");
+                SPDLOG_WARNING_EVERY_N_SEC(2, "[DuoView] Missing projection snapshot");
             }
         }
         if (vr->mono_frame_gate_required() && vr->get_runtime()->is_openxr()) {
@@ -199,6 +208,7 @@ void VR::duoview_abort(const char* reason) {
     '''                    if (vr->is_duoview_renderer_active()) {
                         bool recorded = false;
                         bool duo_recorded = false;
+                        bool duo_failed = false;
                         const auto frame = vr->duoview_state().consume(
                             vr->duoview_key(static_cast<uint32_t>(frame_count)));
                         vr->m_openxr->note_mono_copy(static_cast<uint32_t>(frame_count), false);
@@ -208,7 +218,7 @@ void VR::duoview_abort(const char* reason) {
                         const bool submitted = m_openxr.copy(
                             (uint32_t)runtimes::OpenXR::SwapchainIndex::DOUBLE_WIDE, nullptr,
                             [this, source=backbuffer, scene_source_state, device, frame,
-                             &recorded, &duo_recorded, vr, frame_count](
+                             &recorded, &duo_recorded, &duo_failed](
                                 d3d12::CommandContext& commands, ID3D12Resource* destination) {
                                 if (!commands.ready()) return;
                                 if (frame) {
@@ -223,15 +233,15 @@ void VR::duoview_abort(const char* reason) {
                                         commands.cmd_list.Get(), device, source.Get(), destination,
                                         scene_source_state, D3D12_RESOURCE_STATE_RENDER_TARGET);
                                     if (recorded) commands.has_commands = true;
-                                    vr->duoview_abort("incomplete pair or compositor GPU recording failure");
+                                    duo_failed = true; // handle after OpenXR copy returns
                                 } else {
                                     recorded = true;
                                 }
                             }, std::nullopt, scene_source_state, nullptr,
                             std::nullopt, backbuffer.Get());
                         vr->m_openxr->note_mono_copy(static_cast<uint32_t>(frame_count), submitted && recorded);
-                        if (!submitted || !recorded)
-                            vr->duoview_abort("XR copy rejected; requested original Mono");
+                        if (duo_failed || !submitted || !recorded)
+                            vr->duoview_abort("XR copy/composite fault; safe original Mono requested");
                     } else if (vr->is_using_mono()) {
                         bool recorded = false;''')
     # Copy reference modules into exact checked-out Joey tree. No private SDK
@@ -246,6 +256,10 @@ void VR::duoview_abort(const char* reason) {
             # Put the full-FOV peripheral view first in atlas/camera order.
             text=replace(text,'.fovea = {0, 0, fw, fh},','.fovea = {pw, 0, fw, fh},',name)
             text=replace(text,'.periphery = {fw, 0, pw, ph},','.periphery = {0, 0, pw, ph},',name)
+        if name=="DuoViewConfig.hpp":
+            text=replace(text,
+                '        cached_.reset();\n    }',
+                '        cached_.reset();\n        last_key_ = {};\n    }',name)
         if name=="DuoViewD3D12.hpp":
             # No timestamp work by default; note that initial PSO creation still
             # needs prewarming before a production release.
