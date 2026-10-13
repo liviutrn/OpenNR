@@ -169,7 +169,7 @@ jobs:
           Stage5 gaze requires the installed PSVR2 Toolkit CAPI. Headset calibration/sign must be confirmed in game.
           The eye-tracked source/compositor and first-use pacing are NOT headset verified.
           '@ | Set-Content package/READ_FIRST.txt
-          $needed=@('uevr.dll','UEVRPluginNullifier.dll','LuaVR.dll','READ_FIRST.txt','duoview-stage234-hashes.json','exact-baseline-source.json')
+          $needed=@('UEVRBackend.dll','UEVRPluginNullifier.dll','LuaVR.dll','READ_FIRST.txt','duoview-stage234-hashes.json','exact-baseline-source.json')
           foreach ($name in $needed) { if (!(Test-Path ("package/" + $name))) { throw "Missing critical package file: $name" } }
           if (@(Get-ChildItem package -File -Filter *.exe).Count -lt 1) { throw "Missing Joey frontend executable" }
           if ((Get-Content package/READ_FIRST.txt -Raw) -notmatch 'QUARANTINED internally') { throw 'Stale fallback instructions' }
