@@ -35,7 +35,10 @@ static void luaEvent(const char*, const char*) {}
     fprintf(stderr, "%s failed: 0x%08X\n", WHAT, unsigned(check_hr)); return 2; \
 } } while(0)
 
-int main() {
+int main(int argc, char** argv) {
+    bool srgb = argc > 1 && std::strcmp(argv[1], "srgb") == 0;
+    bool typeless = argc > 1 && std::strcmp(argv[1], "typeless") == 0;
+    bool encoded = srgb || typeless;
     wchar_t path[MAX_PATH]{};
     GetModuleFileNameW(nullptr, path, MAX_PATH);
     wchar_t* sep = wcsrchr(path, L'\\');
@@ -98,11 +101,12 @@ int main() {
     D3D12_RESOURCE_DESC d{};
     d.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
     d.Width = W; d.Height = H; d.DepthOrArraySize = 1; d.MipLevels = 1;
-    d.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    d.Format = typeless ? DXGI_FORMAT_B8G8R8A8_TYPELESS :
+        srgb ? DXGI_FORMAT_B8G8R8A8_UNORM_SRGB : DXGI_FORMAT_R8G8B8A8_UNORM;
     d.SampleDesc.Count = 1;
     d.Flags = D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
     D3D12_CLEAR_VALUE clear{};
-    clear.Format = d.Format; clear.Color[0] = 0.2f; clear.Color[1] = 0.2f;
+    clear.Format = typeless ? DXGI_FORMAT_B8G8R8A8_UNORM_SRGB : d.Format; clear.Color[0] = 0.2f; clear.Color[1] = 0.2f;
     clear.Color[2] = 0.2f; clear.Color[3] = 1.0f;
     ComPtr<ID3D12Resource> rt;
     CHECK(device->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &d,
@@ -113,7 +117,10 @@ int main() {
     ComPtr<ID3D12DescriptorHeap> rtvHeap;
     CHECK(device->CreateDescriptorHeap(&h, IID_PPV_ARGS(&rtvHeap)), "RTV");
     auto rtv = rtvHeap->GetCPUDescriptorHandleForHeapStart();
-    device->CreateRenderTargetView(rt.Get(), nullptr, rtv);
+    D3D12_RENDER_TARGET_VIEW_DESC view{};
+    view.Format = typeless ? DXGI_FORMAT_B8G8R8A8_UNORM_SRGB : d.Format;
+    view.ViewDimension = D3D12_RTV_DIMENSION_TEXTURE2D;
+    device->CreateRenderTargetView(rt.Get(), &view, rtv);
     float left[4]{0.2f, 0.2f, 0.2f, 1.0f};
     float right[4]{0.4f, 0.4f, 0.4f, 1.0f};
     D3D12_RECT whole{0, 0, LONG(W), LONG(H)};
@@ -179,7 +186,9 @@ int main() {
     for (UINT y=0;y<H;++y) for(UINT x=0;x<W;++x) {
         const auto red = mapped[footprint.Offset + y*footprint.Footprint.RowPitch + x*4];
         // Unsharpened clear colors are approximately 51 and 102.
-        const int baseline = (x>=9 && x<13 && y>=9 && y<13) ? 77 : (x < W/2 ? 51 : 102);
+        const int baseline = encoded
+            ? ((x>=9 && x<13 && y>=9 && y<13) ? 149 : (x < W/2 ? 124 : 170))
+            : ((x>=9 && x<13 && y>=9 && y<13) ? 77 : (x < W/2 ? 51 : 102));
         if (abs(int(red)-baseline)>2) {
             ++differing;
             if (x >= W/2) ++crossEyeChanged;
