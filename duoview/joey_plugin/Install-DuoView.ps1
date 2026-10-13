@@ -35,7 +35,7 @@ $text=Get-Content (Join-Path $PSScriptRoot 'Plugin\DuoViewJoey.ini') -Raw
 $text=$text -replace '(?m)^Mode=\d+$',"Mode=$Mode"
 Set-Content $config $text -Encoding ASCII
 Write-Host "Installed configuration mode $Mode (requested, not necessarily active)." 
-Write-Warning 'STOP-SHIP engineering checkpoint: DuoView GPU view modifications are disabled until exact Joey copy/swapchain contracts are proven. Original Joey remains active.'
+Write-Host 'Owned-copy DuoView candidate: active views wait for an accepted native baseline copy. Headset validation is pending.'
 Write-Host 'Use JoeyOriginal\UEVRInjector.exe from the extracted package.'
 Write-Host 'UEVR Scripts menu: DuoView Mono - Joey original backend. The Lua UI uses UEVR game/data for settings and status.'
 Write-Host 'Conflicting Cheeky/ReShade modules must be disabled for active DuoView modes; this installer DOES NOT change them.'
