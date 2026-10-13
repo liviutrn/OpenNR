@@ -27,12 +27,21 @@ jobs:
           fetch-depth: 0
           path: backend
           persist-credentials: false
+      - name: Require the SDK source credential
+        shell: pwsh
+        env:
+          SDK_SOURCE_TOKEN: ${{ secrets.UEVR_SOURCE_TOKEN || secrets.PAT_TOKEN }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:SDK_SOURCE_TOKEN)) {
+            throw 'Add the repository Actions secret UEVR_SOURCE_TOKEN using a token from your Epic-authorized GitHub account; the default repository token cannot access this SDK.'
+          }
+          'Configured SDK source credential detected; access will be checked against the exact original repository.'
       - name: Check out the original restricted SDK at the exact gitlink
         uses: actions/checkout@v4
         with:
           repository: joeyhodge/UESDK
           ref: 3cffbc82429b6165ceec2714f0f0d9ae48f55596
-          token: ${{ secrets.UEVR_SOURCE_TOKEN || secrets.PAT_TOKEN || github.token }}
+          token: ${{ secrets.UEVR_SOURCE_TOKEN || secrets.PAT_TOKEN }}
           path: backend/dependencies/submodules/UESDK
           persist-credentials: false
       - uses: actions/checkout@v4
@@ -82,7 +91,7 @@ jobs:
           dotnet run --project frontend/tests/RenderingModes --configuration Release *> evidence/frontend-tests.log
           $code=$LASTEXITCODE; Get-Content evidence/frontend-tests.log
           if ($code -ne 0) { throw 'Original rendering-ID tests failed' }
-          dotnet publish frontend/UEVR/UEVR.csproj --output package --configuration Release --self-contained true *> evidence/frontend-build.log
+          dotnet publish frontend/UEVR/UEVR.csproj --output package --configuration Release *> evidence/frontend-build.log
           $code=$LASTEXITCODE; Get-Content evidence/frontend-build.log | Select-Object -Last 60
           if ($code -ne 0) { throw 'Matching original frontend failed to compile' }
       - name: Verify final source and package clean baseline

@@ -1,6 +1,7 @@
 """Require the original pinned SDK and unchanged Joey sources before packaging."""
 
 import argparse
+import hashlib
 import json
 from pathlib import Path
 
@@ -21,13 +22,23 @@ def verify(lock_path, backend, frontend, output):
     actual_frontend = git(frontend, "rev-parse", "HEAD")
     if actual_frontend != lock["frontend"]["commit"]:
         raise ValueError("Unexpected matching frontend source")
-    git(frontend, "diff", "--exit-code", "HEAD")
+    generated = "UEVR/FilteredExecutables.json"
+    changed = git(frontend, "diff", "--name-only", "HEAD").splitlines()
+    if set(changed) - {generated}:
+        raise ValueError("Original frontend source was modified")
+    git(frontend, "diff", "--exit-code", "HEAD", "--", ".", f":(exclude){generated}")
+    if generated in changed:
+        inputs = json.loads((frontend / "UEVR/PlainTextFilteredExecutables.json").read_text(encoding="utf-8"))
+        expected = json.dumps([hashlib.sha256(name.encode()).hexdigest().upper() for name in inputs], indent=4)
+        if (frontend / generated).read_text(encoding="utf-8") != expected:
+            raise ValueError("Frontend generated resource differs from its original build script")
     for source in (backend, sdk, frontend):
         if git(source, "ls-files", "--others", "--exclude-standard"):
             raise ValueError(f"Untracked files could affect source identity: {source.name}")
     report.update(frontend_commit=actual_frontend, exact_original_sdk=True,
                   sdk_tree="c958569565e435c8670caec726eece63ac7c317b",
-                  duoview_integrated=False, reconstructed_sdk_integrated=False)
+                  duoview_integrated=False, reconstructed_sdk_integrated=False,
+                  frontend_generated_resource_verified=generated in changed)
     (output / "exact-baseline-source.json").write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     print("Exact original Joey backend, SDK, frontend and source completeness verified")
     return report

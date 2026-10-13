@@ -11,6 +11,13 @@ compatibility suite and packages only after all source/build gates pass.
 Its restricted SDK checkout uses the existing Actions secret
 `UEVR_SOURCE_TOKEN` (or `PAT_TOKEN`) when configured.
 
+The first exact-source run `38448199737` stopped at SDK checkout: its CI
+credential could not read the restricted SDK, before any compilation.
+The user's authenticated connection has already retrieved and verified the
+complete source. Configure `UEVR_SOURCE_TOKEN` from the Epic-authorized
+account, then run the latest exact-source workflow revision. This is a CI
+authentication gate, not a remaining SDK source incompatibility.
+
 This branch starts the source restart using the exact official Joey DIBR
 backend the user reported smooth. No new DuoView renderer is enabled here.
 The existing old `duoview/` implementation is historical reference only; this
