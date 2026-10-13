@@ -102,6 +102,15 @@ SDK, a rebuilt backend, or a headset-ready baseline. `[sdk-only]` commits
 skip unrelated baseline jobs without changing their previously recorded
 failed full-build result.
 
+The first Windows run completed successfully: [38442752728](https://github.com/liviutrn/OpenNR/actions/runs/38442752728),
+job `115453241336`, source commit `5296d0d70cc2d2335d41c4f4c625c48c793439b3`.
+MSVC compiled with `/W4 /WX`; the differential executable passed **52 checks
+with zero failures**. Evidence artifact `11837855571` has SHA-256
+`14e465539bc1dcfb40377f18c6195da433ed7c54da4b73554afbf63bdab62986`.
+The extractor also rejected the same-source, different-DLL first artifact
+before reading its symbols, and the exact Joey backend working tree remained
+unchanged.
+
 ## Remaining work, in dependency order
 
 1. Recover bounded instruction discovery and render-target-manager selection

@@ -128,3 +128,18 @@ STALKER 2 scene without SteamVR takeovers may DuoView integration start.
 Preserve original XR lifecycle and modes; integrate two same-pose UE views
 internally, first with a fixed fovea, then add PSVR2 gaze. This branch does
 not request another experimental foveation headset test.
+
+## SDK recovery checkpoint
+
+The exact official DLL's matching PDB was recovered from Joey's successful
+run `38150970046`, artifact `11707171949`. Both the release DLL SHA-256 and
+the PDB GUID/age were verified. This provides authentic current SDK type
+contracts and machine-code locations; it does not recover the original source.
+
+The first isolated memory module has been reconstructed from that evidence.
+Windows run `38442752728` passed 52 checks with zero failures, including
+differential tests against the original compiled helpers. It is not integrated
+into the backend, and no full SDK/full backend build is available yet.
+
+See [exact SDK recovery](sdk_reconstruction/README.md) for the original
+artifact identities, implementation, test scope and remaining dependency gates.

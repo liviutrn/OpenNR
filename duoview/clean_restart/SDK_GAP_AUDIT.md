@@ -114,3 +114,21 @@ rebuilt runtime have not received a new headset test in this session.
 
 No SDK stubs, invented vtables, compatibility removals, binary hooks or
 renderer modifications have been introduced in this restart.
+
+## Matching-symbol recovery
+
+The exact official baseline PDB is now available through public Joey build
+artifact `11707171949`, from run `38150970046`. The archived backend DLL is
+byte-identical to the pinned official DIBR+Mono DLL; its GUID and age match
+the PDB. This yields 357 defined SDK types and current SDK procedure records,
+including the missing immutable snapshots and registration identities.
+
+The first standalone memory module passed Windows differential CI in run
+`38442752728` (52 checks, zero failures). No reconstructed module has been
+linked into the backend. Production rendering and title compatibility remain
+unchanged. The original full-build failure remains unresolved.
+
+The next route is evidence-based SDK reconstruction using those exact symbols
+and compiled functions, then the complete original compatibility suite and
+baseline build. See `sdk_reconstruction/README.md`; recovered debug symbols
+must not be reported as recovered SDK source or full behavioral equivalence.
