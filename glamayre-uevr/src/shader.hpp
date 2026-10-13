@@ -1,8 +1,8 @@
 #pragma once
-// Three independent, additive radius bands of Glamarye Intelligent Sharpen.
+// Four independent, additive radius bands of Glamarye Intelligent Sharpen.
 // Original equations: Robert Jessop, MIT; see LICENSE-GLAMARYE.txt.
 // Small=original 0.5px; Big=original Bigger Sharpen 1.4px;
-// Extra Big=experimental 2.5px radius (~1.79x Big, 5x Small).
+// Extra Big=experimental 2.5px; Ultra Big=experimental 5.0px radius.
 // All enabled bands read the SAME source image in one shader pass,
 // so no order-dependent re-sharpening / repeated texture copying.
 static constexpr char kSharpenShader[] = R"HLSL(
@@ -11,6 +11,7 @@ cbuffer C : register(b0) {
     float smallStrength;
     float bigStrength;
     float extraStrength;
+    float ultraStrength;
     float maxChange;
     float fxaaBias;
     float maximumColour;
@@ -113,7 +114,7 @@ float4 PSMain(VSOut input) : SV_Target {
         (frac(uv.x*8.0)<0.12 || frac(uv.y*8.0)<0.12))
         return float4(1.0,0.01,0.05,original.a);
     if (smallStrength<=0.00001 && bigStrength<=0.00001 &&
-        extraStrength<=0.00001)
+        extraStrength<=0.00001 && ultraStrength<=0.00001)
         return original;
     float3 c=DecodeColour(original.rgb);
     float3 sum=0;
@@ -123,7 +124,9 @@ float4 PSMain(VSOut input) : SV_Target {
         sum+=SharpenScale(uv,c,1.4,bigStrength,true,3.5);
     if (extraStrength>0.00001)
         sum+=SharpenScale(uv,c,2.5,extraStrength,true,6.25);
-    // Global safety limiter for three simultaneous sharpening bands.
+    if (ultraStrength>0.00001)
+        sum+=SharpenScale(uv,c,5.0,ultraStrength,true,12.5);
+    // Global safety limiter for four simultaneous sharpening bands.
     // For a single band this does not materially change the original formula.
     sum=clamp(sum,-maxChange,maxChange);
     return float4(EncodeColour(c+sum),original.a);
