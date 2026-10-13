@@ -81,7 +81,7 @@ jobs:
           $profile=Join-Path $env:APPDATA 'UnrealVRMod/Stalker2-Win64-Shipping'
           if (!(Test-Path (Join-Path $profile 'plugins/DuoViewJoey.dll'))) { throw 'Native plugin missing' }
           if (!(Test-Path (Join-Path $profile 'scripts/DuoViewJoeyUI.lua'))) { throw 'UEVR Lua UI missing' }
-          if ((Get-Content (Join-Path $profile 'data/DuoViewJoey.ini') -Raw) -notmatch '(?m)^Mode=2\s* { throw 'Mode 2 config not applied' }
+          if ((Get-Content (Join-Path $profile 'data/DuoViewJoey.ini') -Raw) -notmatch '(?m)^Mode=2\s*$') { throw 'Mode 2 config not applied' }
           if (!(Test-Path package/JoeyOriginal/UEVRBackend.dll)) { throw 'Joey original backend missing' }
           python -c "from pathlib import Path; from luaparser import ast; ast.parse(Path('package/Plugin/DuoViewJoeyUI.lua').read_text(encoding='utf-8')); print('Lua UI syntax parsed')"
           if ($LASTEXITCODE -ne 0) { throw 'UI Lua syntax invalid' }
