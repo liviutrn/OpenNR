@@ -75,6 +75,7 @@ jobs:
           Copy-Item workspace/duoview/joey_plugin/DuoViewJoeyUI.lua package/Plugin/
           Copy-Item workspace/duoview/joey_plugin/Install-DuoView.ps1 package/
           Copy-Item workspace/duoview/joey_plugin/README.md package/README.md
+          Copy-Item workspace/duoview/joey_plugin/HANDOFF_V12.md package/ENGINEERING_HANDOFF.md
           Copy-Item headers/LICENSE package/UEVR-LICENSE.txt
           'Source: https://github.com/liviutrn/OpenNR/tree/${{ github.sha }}' | Set-Content package/BUILD_SOURCE.txt
           Get-ChildItem package -Recurse -File | Get-FileHash -Algorithm SHA256 | Format-Table -AutoSize | Out-String -Width 300 | Set-Content package/HASHES.txt
@@ -121,36 +122,31 @@ jobs:
           path: package/
           if-no-files-found: error
           retention-days: 30
-      # STOP-SHIP: Build 25 independent review identified unsafe XR-layer omission,
-      # unverified producer/submit identity, unconfirmed Joey scene copy, and
-      # engine-owned D3D12 resource-state assumptions. Do not auto-publish
-      # binaries until those paths have a validated integration/fallback design.
-      - name: Publish experimental recovery download
-        if: ${{ false }}
+      - name: Publish owned-copy integration candidate
+        if: ${{ success() && github.ref == 'refs/heads/experiments/duoview-owned-copy-v12' }}
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          Compress-Archive -Path package/* -DestinationPath DuoView-Joey-Preserved-Plugin.zip
-          $tag='duoview-joey-plugin-v11-build-${{ github.run_number }}'
+          Compress-Archive -Path package/* -DestinationPath DuoView-Owned-Copy.zip
+          $tag='duoview-owned-copy-v12-build-${{ github.run_number }}'
           @'
-          Experimental v11 Joey-first DuoView Mono plugin for STALKER 2 DX12/OpenXR.
+          DuoView owned-copy integration candidate for STALKER 2 D3D12/OpenXR.
 
-          Preserves the official Joey Mono injector/backend byte for byte.
-          Includes staged diagnostics, shared-pose views, fixed fovea and PSVR2 gaze modes.
-          Exact binary contracts, seven Windows policy/WARP tests, in-place atlas pixel
-          readback, Windows DLL loading and plugin ABI exports passed for this build.
+          Original Joey preserved byte-for-byte. Corrected released DX12 copy
+          boundary, owned Mono output, prewarmed slots, copy/fence proof and
+          pose-preserving fallback. Eleven Windows tests, including cross-DLL
+          copy ABI and D3D12 debug-layer WARP.
 
-          Cross-thread display-time frame handoff and nonblocking GPU slot selection added.\n\n          STALKER 2 injection, headset behavior, eye tracking and performance remain
-          unverified. Start with Mode 0 and follow the included README. Disable
-          Cheeky and ReShade layers for the isolated test. This is a prerelease,
-          not a claim that the reported injection crash has been fixed in-game.
+          Headset visuals, gaze and performance remain unverified. First check:
+          Mode2 fixed fovea, Native Stereo with Native Fix off.
+          Read ENGINEERING_HANDOFF.md. Active candidate, not in-game validation.
 
-          Source commit: ${{ github.sha }}
-          Build: https://github.com/liviutrn/OpenNR/actions/runs/${{ github.run_id }}
+          Source: ${{ github.sha }}
+          Actions: https://github.com/liviutrn/OpenNR/actions/runs/${{ github.run_id }}
           '@ | Set-Content release-notes.md
-          gh release create $tag DuoView-Joey-Preserved-Plugin.zip --repo '${{ github.repository }}' --target '${{ github.sha }}' --title "DuoView Mono — Joey preserved, test build ${{ github.run_number }}" --prerelease --notes-file release-notes.md
-          if ($LASTEXITCODE -ne 0) { throw 'Experimental release publication failed; use the successful Actions artifact' }
+          gh release create $tag DuoView-Owned-Copy.zip --repo '${{ github.repository }}' --target '${{ github.sha }}' --title "DuoView owned-copy candidate — build ${{ github.run_number }}" --prerelease --notes-file release-notes.md
+          if ($LASTEXITCODE -ne 0) { throw 'Release publication failed' }
       - uses: actions/upload-artifact@v4
         if: always()
         with:
