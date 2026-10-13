@@ -1,0 +1,67 @@
+name: Clean Joey baseline provenance (no DuoView)
+on:
+  push:
+    branches: [experiments/duoview-clean-joey-oct11]
+    paths:
+      - 'duoview_clean_restart/**'
+      - '.github/workflows/duoview-clean-joey-provenance.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  source-and-binary-provenance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: joeyhodge/UEVR
+          ref: 5ac7edc207866569334175e4ed8a7517971547f6
+          path: joey_source
+          submodules: false
+      - name: Verify exact smooth-baseline source, SDK provenance and official asset bytes
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p proof
+          head=$(git -C joey_source rev-parse HEAD)
+          test "$head" = "5ac7edc207866569334175e4ed8a7517971547f6"
+          sdk=$(git -C joey_source ls-tree HEAD dependencies/submodules/UESDK | awk '{print $3}')
+          test "$sdk" = "3cffbc82429b6165ceec2714f0f0d9ae48f55596"
+          sdk_url=$(git -C joey_source config -f .gitmodules --get submodule.dependencies/submodules/UESDK.url)
+          test "$sdk_url" = "https://github.com/joeyhodge/UESDK.git"
+          {
+            echo "KNOWN-SMOOTH JOEY SOURCE SHA: $head"
+            echo "MATCHING UESDK GITLINK SHA: $sdk"
+            echo "SDK GITLINK URL: $sdk_url"
+            echo "KNOWN-SMOOTH ORIGINAL UEVRBackend.dll SHA256: 19e91cc8c22a02e2a97996e1523604ab202b4540d954ebc95e07e6b233970966"
+            echo "OFFICIAL RELEASE TAG: 101226HELLRAISERp1"
+            echo "NOTE: release tag commit 387ccb... is a different cherry-picked commit lineage"
+          } | tee proof/BASELINE_SOURCE.txt
+          release="https://github.com/joeyhodge/UEVR/releases/download/101226HELLRAISERp1"
+          for variant in UEVRBackend.dll DIBRUEVRBackend.dll; do
+            curl -fL --retry 3 -o "proof/$variant" "$release/$variant"
+            sha256sum "proof/$variant" | tee -a proof/RELEASE_HASHES.txt
+            ls -lh "proof/$variant"
+          done
+          if grep -q '19e91cc8c22a02e2a97996e1523604ab202b4540d954ebc95e07e6b233970966' proof/RELEASE_HASHES.txt; then
+            echo "USER-TESTED DLL MATCHED AN OFFICIAL RELEASE ASSET" | tee -a proof/BASELINE_SOURCE.txt
+          else
+            echo "USER-TESTED DLL DOES NOT MATCH EITHER OFFICIAL BACKEND RELEASE ASSET; do not silently substitute" | tee -a proof/BASELINE_SOURCE.txt
+          fi
+          code=$(curl -sS -o proof/SDK_HTTP_response.json -w '%{http_code}' -H "Accept: application/vnd.github+json" "https://api.github.com/repos/joeyhodge/UESDK" || true)
+          echo "Private Joey UESDK REST status: $code" | tee -a proof/BASELINE_SOURCE.txt
+          if [ "$code" != "200" ]; then
+            echo "SOURCE BUILD BLOCKED: pinned private SDK is inaccessible; exact clean backend compile not yet reproducible." | tee -a proof/BASELINE_SOURCE.txt
+          else
+            echo "SDK metadata can be reached, but gitlink accessibility/content still requires verification" | tee -a proof/BASELINE_SOURCE.txt
+          fi
+          rm -f proof/SDK_HTTP_response.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Clean-Joey-Provenance-${{ github.run_number }}
+          path: |
+            proof/BASELINE_SOURCE.txt
+            proof/RELEASE_HASHES.txt
+          if-no-files-found: error
