@@ -26,3 +26,6 @@ target_compile_features(GlamaryeGpuTest PRIVATE cxx_std_20)
 target_link_libraries(GlamaryeGpuTest PRIVATE d3d12 dxgi)
 add_dependencies(GlamaryeGpuTest GlamaryeSharpenUEVR)
 add_test(NAME DX12_WARP_Callback_Render COMMAND GlamaryeGpuTest)
+
+add_test(NAME DX12_WARP_SRGB_Projection COMMAND GlamaryeGpuTest srgb)
+add_test(NAME DX12_WARP_Typeless_SRGB_Projection COMMAND GlamaryeGpuTest typeless)
