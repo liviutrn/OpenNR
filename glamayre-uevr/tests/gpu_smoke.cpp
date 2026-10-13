@@ -175,14 +175,21 @@ int main() {
     }
     unsigned char* mapped=nullptr;
     CHECK(buffer->Map(0,nullptr,reinterpret_cast<void**>(&mapped)), "Readback Map");
-    unsigned differing=0;
+    unsigned differing=0, crossEyeChanged=0;
     for (UINT y=0;y<H;++y) for(UINT x=0;x<W;++x) {
         const auto red = mapped[footprint.Offset + y*footprint.Footprint.RowPitch + x*4];
         // Unsharpened clear colors are approximately 51 and 102.
         const int baseline = (x>=9 && x<13 && y>=9 && y<13) ? 77 : (x < W/2 ? 51 : 102);
-        if (abs(int(red)-baseline)>2) ++differing;
+        if (abs(int(red)-baseline)>2) {
+            ++differing;
+            if (x >= W/2) ++crossEyeChanged;
+        }
     }
     buffer->Unmap(0,nullptr);
+    if (crossEyeChanged) {
+        fprintf(stderr,"Eye-boundary bleed detected: %u right-eye pixels changed.\n",crossEyeChanged);
+        return 2;
+    }
     if (!differing) {
         fprintf(stderr,"WARP rendered, but no pixels changed. Shader may be bypassed.\n");
         return 2;
