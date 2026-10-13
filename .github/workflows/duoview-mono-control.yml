@@ -34,7 +34,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Submodules failed' }
           python workspace/duoview/apply_public_mono.py backend
           if ($LASTEXITCODE -ne 0) { throw 'Mono port failed' }
-          python -c "from pathlib import Path; s=Path('backend/src/mods/vr/VR.cpp').read_text(); assert 'service_mono_transition_present' in s and 'DUOVIEW' not in s.upper(); assert not (Path('backend/src/mods/vr/MonoD3D12.hpp').read_text().find('DuoView')>=0); print('Verified Mono port exists, DuoView excluded')"
+          python -c "from pathlib import Path; s=Path('backend/src/mods/VR.cpp').read_text(); assert 'service_mono_transition_present' in s and 'DUOVIEW' not in s.upper(); assert not (Path('backend/src/mods/vr/MonoD3D12.hpp').read_text().find('DuoView')>=0); print('Verified Mono port exists, DuoView excluded')"
           if ($LASTEXITCODE -ne 0) { throw 'Mono-only contract failed' }
           git -C backend diff --check
           if ($LASTEXITCODE -ne 0) { throw 'Source whitespace validation failed' }
