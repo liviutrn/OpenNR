@@ -58,7 +58,7 @@ def main():
             vr->m_openxr->end_mono_transition_frame();''', dx)
     start = s.index('void D3D12Component::on_post_present(VR* vr) {')
     end = s.index('\nvoid D3D12Component::on_reset(', start)
-    part = s[start:end]
+    part = s[start:end].rstrip()
     part = change_once(part,
         '    if (vr->is_mono_transition_quiescing() || vr->is_mono_transition_waiting() || m_mono_block_post_present) { return; }',
         '''    // Always retire graphics-memory allocations; only backbuffer clearing
