@@ -7,6 +7,9 @@ int main() {
   const auto right_local=glm::angleAxis(glm::radians(1.2f),glm::vec3(0,1,0));
   auto baseline=synchronized_left_eye_offset(left_local,right_local);
   assert(baseline);
+  auto opposite_sign=synchronized_left_eye_offset(left_local,-right_local);
+  assert(opposite_sign);
+  assert(glm::abs(glm::dot(*baseline,*opposite_sign))>.99999f);
   for(int yaw=-140;yaw<=140;yaw+=20) {
     const auto head=glm::angleAxis(glm::radians(float(yaw)),glm::normalize(glm::vec3(0,1.f,.2f)));
     const auto result=synchronized_left_eye_offset(head*left_local,head*right_local);
