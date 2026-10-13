@@ -20,14 +20,14 @@ For STALKER 2 DX12/OpenXR ONLY, mode 6 now requests 2 engine views:
 - Render rectangles are disjoint within the existing doublewide scene atlas.
 - Per-frame source snapshot freezes geometry/config and rejects different generations/frames and mismatching camera poses.
 - DX12 raster compositor samples the scene atlas once, resamples to full-size Mono, then copies same composited image into both XR eye halves. Scene source/target states are transitioned/restored.
-- Missing/invalid paired-view evidence or failed compositor GPU recording uses the existing current-frame original Mono copy and requests safe Mono ID5 after returning from the XR copy callback. It does not deliberately omit the XR projection layer.
+- Missing/invalid paired-view evidence or failed compositor GPU recording uses the existing current-frame original Mono copy and quarantines DuoView internally. ID 6 remains selected but subsequently executes the original single-view Mono renderer until the user explicitly switches away and back. This avoids an automatic mode-change quiescence/dropout during a bad GPU frame. It does not deliberately omit the XR projection layer.
 - Gaze is NOT active. Crop is fixed center. No smoothing or temporal reuse.
 
 ## Safety / regression boundaries
 The view-count, view-rect, projection, camera, and compositor branches are active only under mode 6 + STALKER 2 + DX12 + OpenXR.
 The original mode 5 camera, projection, one-view render count, copy, and OpenXR submission are not deliberately modified.
 Mode transitions reuse the already 30-minute-proven Joey deferred-retirement/generation protocol.
-The explicit abort to ID5 happens AFTER the OpenXR copy callback to avoid taking the rendering-method selection lock while holding the XR copy lock.
+The DuoView fault quarantine happens AFTER the OpenXR copy callback; it does not take the rendering-method selection lock inside the XR copy lock. The next frame uses original Joey Mono while preserving a valid XR projection.
 Unmatched packets cannot be composited; the last-resort original Mono copy attempts to preserve a projection frame.
 All shader resources use a bounded per-OpenXR-command-slot map and clear when swapchains are reset or destroyed.
 
@@ -35,7 +35,7 @@ All shader resources use a bounded per-OpenXR-command-slot map and clear when sw
 1. A source/Windows-CI test cannot prove that both Unreal scene views execute their intended actual STALKER 2 GPU shading pass, nor prove temporal/Lumen compatibility.
 2. The DX12 compositor creates PSOs and output textures lazily on first encounter of each command slot. It reuses them thereafter, but first activation/resize could have a one-time initialization spike. This needs prewarming before a polished release.
 3. The CPU main-family and view-callback checks are not an independent GPU producer-completion proof. Correct same-queue ordering and Joey's existing copy fence remain assumptions that require an in-game GPU capture or headset evidence.
-4. If geometry/pair evidence fails, one emergency original-Mono copy may briefly show an incomplete atlas; it is intentionally not treated as a valid DuoView composite. The code then requests the clean original Mono route. This is safer than repeatedly attempting uncertain GPU work but is not equivalent to a proven seamless fallback.
+4. If geometry/pair evidence fails, one emergency original-Mono copy may briefly show an incomplete atlas; it is intentionally not treated as a valid DuoView composite. The code then quarantines the two-view renderer and executes original Joey Mono on the next frame without automatically switching rendering IDs. This is safer than repeatedly attempting uncertain GPU work but is not equivalent to a proven seamless fallback.
 5. Independent production WARP tests verify the compositor algorithm and exact stereo output; original Joey compatibility tests verify legacy policies. Neither measures GPU frame time or real STALKER 2 performance.
 6. A calculated 62.5% of original Mono view pixels is NOT a demonstrated GPU-time speedup: two Unreal scene families/passes, shadows/Lumen, composition and copies introduce overhead.
 7. CI green cannot replace the user's 10–15 minute headset validation and scene-change test. Do not call this "stable" before that test.
@@ -56,5 +56,5 @@ All shader resources use a bounded per-OpenXR-command-slot map and clear when sw
 2. Launch STALKER 2 with same SteamVR/PSVR2 Toolkit/runtime and resolution as the clean 30-minute control.
 3. Verify ID 5 loads normally, then select ID 6 fixed-center experimental. Do not expect gaze yet.
 4. In a fixed scene compare fovea/peripheral actual detail, and record fpsVR GPU+CPU frametime. The central crop should be sharp; periphery deliberately coarse.
-5. Move head, look around, try a level change. Check for missing frames, room takeovers, crashes, black views, and whether ID 6 unexpectedly reverts to ID 5.
+5. Move head, look around, try a level change. Check for missing frames, room takeovers, crashes, black views, and whether ID 6 internally quarantines to Mono and shows its fallback status.
 6. If any issue, revert immediately to Build 3 folder and include UEVR logs. Do not interpret a compile success as stable runtime behavior.
