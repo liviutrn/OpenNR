@@ -1,7 +1,7 @@
 name: DuoView Joey binary-preserving plugin
 on:
   push:
-    branches: [experiments/duoview-uevr-v08-joey-plugin]
+    branches: [experiments/duoview-uevr-v08-joey-plugin, experiments/duoview-joey-first-v11]
     paths: ['duoview/**', '.github/workflows/duoview-joey-plugin.yml']
   workflow_dispatch:
 permissions:
@@ -48,7 +48,7 @@ jobs:
         run: |
           cmake -S workspace/duoview -B tests -G 'Visual Studio 17 2022' -A x64
           if ($LASTEXITCODE -ne 0) { throw 'Test configure failed' }
-          cmake --build tests --config Release --target DuoViewGeometryTests DuoViewGazeTests DuoViewFrameTests DuoViewConfigTests DuoViewStateTests DuoViewProductionWarpTests
+          cmake --build tests --config Release --target DuoViewGeometryTests DuoViewGazeTests DuoViewFrameTests DuoViewConfigTests DuoViewStateTests DuoViewSubmissionTests DuoViewProductionWarpTests
           if ($LASTEXITCODE -ne 0) { throw 'Test build failed' }
           ctest --test-dir tests -C Release --output-on-failure
           if ($LASTEXITCODE -ne 0) { throw 'Tests failed' }
@@ -105,16 +105,16 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           Compress-Archive -Path package/* -DestinationPath DuoView-Joey-Preserved-Plugin.zip
-          $tag='duoview-joey-plugin-v08-build-${{ github.run_number }}'
+          $tag='duoview-joey-plugin-v11-build-${{ github.run_number }}'
           @'
-          Experimental DuoView Mono recovery plugin for STALKER 2 DX12/OpenXR.
+          Experimental v11 Joey-first DuoView Mono plugin for STALKER 2 DX12/OpenXR.
 
           Preserves the official Joey Mono injector/backend byte for byte.
           Includes staged diagnostics, shared-pose views, fixed fovea and PSVR2 gaze modes.
-          Exact binary contracts, six Windows policy/WARP tests, in-place atlas pixel
+          Exact binary contracts, seven Windows policy/WARP tests, in-place atlas pixel
           readback, Windows DLL loading and plugin ABI exports passed for this build.
 
-          STALKER 2 injection, headset behavior, eye tracking and performance remain
+          Cross-thread display-time frame handoff and nonblocking GPU slot selection added.\n\n          STALKER 2 injection, headset behavior, eye tracking and performance remain
           unverified. Start with Mode 0 and follow the included README. Disable
           Cheeky and ReShade layers for the isolated test. This is a prerelease,
           not a claim that the reported injection crash has been fixed in-game.
