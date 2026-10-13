@@ -69,6 +69,9 @@ EnumerateFn g_enumerate = nullptr;
 int g_hookAcquire = -1, g_hookRelease = -1, g_hookEnd = -1, g_hookDestroy = -1;
 std::atomic<bool> g_hooked{false};
 std::atomic<unsigned long long> g_frames{0};
+std::atomic<unsigned long long> g_acquireCalls{0}, g_releaseCalls{0},
+    g_endFrameCalls{0}, g_projectionDetected{0}, g_dimensionDetected{0},
+    g_releaseEligible{0}, g_enumerateFailed{0};
 
 struct ImageContext {
     ComPtr<ID3D12Resource> texture;
@@ -126,6 +129,23 @@ bool makeContext(ImageContext& ctx, ID3D12Resource* tex, ID3D12Device* device) {
     return true;
 }
 
+
+// Public Joey UEVR sends its actual projection color as a 6288x2372
+// double-wide texture in the attached STALKER 2 log. The projection
+// identity derived from xrEndFrame is authoritative when the callback is
+// seen; if it isn't, require an exact headset-sized COLOR texture match.
+// This avoids accidental UI/depth processing while allowing runtime
+// implementations that bypass xrEndFrame's loader export trampoline.
+bool headsetExtent(const D3D12_RESOURCE_DESC& d, bool& twoEyes) {
+    if (!g_api || !g_api->vr || !g_api->vr->get_hmd_width || !g_api->vr->get_hmd_height)
+        return false;
+    const uint64_t w = g_api->vr->get_hmd_width();
+    const uint64_t h = g_api->vr->get_hmd_height();
+    if (w < 256 || h < 256 || w > 8192 || h > 8192 || d.Height != h)
+        return false;
+    twoEyes = (d.Width == 2*w);
+    return twoEyes || d.Width == w;
+}
 bool ensureImages(Swapchain swapchain, SwapchainState& state) {
     if (state.initialized) return !state.images.empty();
     // Fail closed; an incomplete mapping must not be retried every frame.
@@ -135,11 +155,25 @@ bool ensureImages(Swapchain swapchain, SwapchainState& state) {
     auto* dev = static_cast<ID3D12Device*>(g_api->renderer->device);
     if (!dev) return false;
     uint32_t count = 0;
-    if (g_enumerate(swapchain,0,&count,nullptr) != XR_SUCCESS || count<1 || count>8) return false;
+    if (g_enumerate(swapchain,0,&count,nullptr) != XR_SUCCESS || count<1 || count>8) {
+        g_enumerateFailed.fetch_add(1, std::memory_order_relaxed);
+        return false;
+    }
     std::vector<ImageD3D12> images(count);
     for(auto& image : images) image.type = XR_TYPE_IMAGE_D3D12;
     if (g_enumerate(swapchain,count,&count,
         reinterpret_cast<BaseHeader*>(images.data())) != XR_SUCCESS) return false;
+    // Runtime image formats and sizes are validated BEFORE allocating a
+    // new command allocator, descriptors or fence. Depth/UI fail closed.
+    if (!images[0].texture) return false;
+    bool isSplit = false;
+    const auto mainDesc = images[0].texture->GetDesc();
+    if (!headsetExtent(mainDesc, isSplit)) return false;
+    if (!state.projection) {
+        state.projection = true;
+        state.splitStereo = isSplit;
+        g_dimensionDetected.fetch_add(1, std::memory_order_relaxed);
+    }
     for (auto& image : images) {
         auto ctx = std::make_unique<ImageContext>();
         if (!makeContext(*ctx,image.texture,dev)) {
@@ -154,6 +188,7 @@ bool ensureImages(Swapchain swapchain, SwapchainState& state) {
 Result WINAPI onAcquire(Swapchain sc, const void* info, uint32_t* index) {
     if (!g_acquire) return -2;
     auto result = g_acquire(sc,info,index);
+    g_acquireCalls.fetch_add(1, std::memory_order_relaxed);
     if (result == XR_SUCCESS && index) {
         std::lock_guard guard(g_lock);
         auto& q = g_swapchains[sc].acquired;
@@ -163,6 +198,7 @@ Result WINAPI onAcquire(Swapchain sc, const void* info, uint32_t* index) {
     return result;
 }
 Result WINAPI onEndFrame(Session session, const FrameEndInfo* info) {
+    g_endFrameCalls.fetch_add(1, std::memory_order_relaxed);
     // Only projection layers carry scene color. In UEVR, UI overlays are quads.
     // A swapchain becomes eligible from the NEXT frame, once identity is known.
     if (info && info->layers && info->layerCount < 32) {
@@ -177,6 +213,7 @@ Result WINAPI onEndFrame(Session session, const FrameEndInfo* info) {
             if (!left.swapchain || !right.swapchain) continue;
             auto& l = g_swapchains[left.swapchain];
             auto& r = g_swapchains[right.swapchain];
+            if (!l.projection) g_projectionDetected.fetch_add(1, std::memory_order_relaxed);
             l.projection = true; r.projection = true;
             // Eye boundaries are derived from OpenXR projection sub-image
             // rectangles, not simply guessed from screen dimensions.
@@ -219,6 +256,7 @@ Result WINAPI onDestroy(Swapchain sc) {
 }
 
 Result WINAPI onRelease(Swapchain sc, const void* info) {
+    g_releaseCalls.fetch_add(1, std::memory_order_relaxed);
     // Do not ever change OpenXR's return codes or skip its real release.
     // The lock also serializes setup, release and swapchain reset on the CPU.
     {
@@ -229,9 +267,11 @@ Result WINAPI onRelease(Swapchain sc, const void* info) {
             if (!state.acquired.empty()) {
                 const uint32_t index = state.acquired.front();
                 state.acquired.pop_front();
-                if (state.projection && glamayre_sharpen_processing_enabled() &&
-                    g_api && g_api->renderer && g_api->renderer->command_queue &&
-                    ensureImages(sc,state) && index < state.images.size()) {
+                if (glamayre_sharpen_processing_enabled() && g_api &&
+                    g_api->renderer && g_api->renderer->command_queue &&
+                    ensureImages(sc,state) && state.projection &&
+                    index < state.images.size()) {
+                    g_releaseEligible.fetch_add(1, std::memory_order_relaxed);
                     auto& ctx = *state.images[index];
                     auto* queue = static_cast<ID3D12CommandQueue*>(g_api->renderer->command_queue);
                     // Avoid blocking the render thread if the same swapchain image
@@ -264,6 +304,13 @@ Result WINAPI onRelease(Swapchain sc, const void* info) {
 }
 } // namespace
 
+extern "C" unsigned long long glamayre_xr_acquire_count() { return g_acquireCalls.load(); }
+extern "C" unsigned long long glamayre_xr_release_count() { return g_releaseCalls.load(); }
+extern "C" unsigned long long glamayre_xr_endframe_count() { return g_endFrameCalls.load(); }
+extern "C" unsigned long long glamayre_xr_projection_count() { return g_projectionDetected.load(); }
+extern "C" unsigned long long glamayre_xr_dimension_count() { return g_dimensionDetected.load(); }
+extern "C" unsigned long long glamayre_xr_eligible_count() { return g_releaseEligible.load(); }
+extern "C" unsigned long long glamayre_xr_enum_failed() { return g_enumerateFailed.load(); }
 extern "C" unsigned long long glamayre_xr_processed_count() {
     return g_frames.load(std::memory_order_relaxed);
 }
@@ -331,5 +378,5 @@ extern "C" void glamayre_xr_tick(const UEVR_PluginInitializeParam* api) {
         reinterpret_cast<void**>(&g_destroy));
     if (g_hookDestroy < 0 || !g_destroy) { rollback(); return; }
     g_hooked.store(true,std::memory_order_release);
-    log("OpenXR projection hooks active. Awaiting the first xrEndFrame to identify scene.");
+    log("OpenXR hooks installed. Scene identified by projection layer or exact HMD-color extent; counters in Lua.");
 }
