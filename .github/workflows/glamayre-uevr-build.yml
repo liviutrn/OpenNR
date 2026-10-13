@@ -1,8 +1,8 @@
-name: Glamarye OpenXR Multi-Radius Build v02
+name: Glamarye OpenXR Stable Build v03
 on:
   push:
     branches:
-      - "experiments/glamayre-openxr-layer-v02-multiscale-timing"
+      - "experiments/glamayre-openxr-v03-stable"
     paths:
       - "glamayre-uevr/**"
       - ".github/workflows/glamayre-uevr-build.yml"
@@ -28,6 +28,19 @@ jobs:
           if ($m.api_layer.library_path -ne '.\GlamaryeOpenXRLayer.dll') { throw 'Wrong manifest DLL path' }
           if ($m.api_layer.disable_environment -ne 'GLAMARYE_OPENXR_LAYER_DISABLE') { throw 'Missing mandatory implicit layer disable_environment' }
           Write-Host 'Khronos implicit API layer manifest passed'
+      - name: Verify release files
+        shell: pwsh
+        run: |
+          $files = @(
+            "glamayre-uevr/build/Release/GlamaryeSharpenUEVR.dll",
+            "glamayre-uevr/build/Release/GlamaryeOpenXRLayer.dll",
+            "glamayre-uevr/layer/glamayre_openxr.json",
+            "glamayre-uevr/scripts/glamayre_sharpen.lua",
+            "glamayre-uevr/install-layer.ps1",
+            "glamayre-uevr/uninstall-layer.ps1"
+          )
+          foreach ($p in $files) { if (!(Test-Path $p)) { throw "Missing release file: $p" } }
+          Get-FileHash $files[0],$files[1] -Algorithm SHA256 | Format-Table
       - name: Verify DLL exists
         shell: pwsh
         run: |
@@ -51,6 +64,6 @@ jobs:
           Copy-Item glamayre-uevr/LICENSE-GLAMARYE.txt glamayre-uevr/package/
       - uses: actions/upload-artifact@v4
         with:
-          name: Glamarye-OpenXR-MultiRadius-v02
+          name: Glamarye-OpenXR-v03-Stable
           path: glamayre-uevr/package/
           retention-days: 30
