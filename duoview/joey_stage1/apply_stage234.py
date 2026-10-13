@@ -221,6 +221,28 @@ void VR::duoview_abort(const char* reason) {
         '    this->duoview_compositors.clear();\n    this->contexts.clear();\n    vr->m_openxr->swapchains.clear();')
     edit(dx,'    this->contexts.clear();\n\n    auto create_swapchain',
         '    this->duoview_compositors.clear();\n    this->contexts.clear();\n\n    auto create_swapchain')
+    # Prime each existing XR image's command slot at swapchain setup time.
+    # Startup/mode-transition prewarming occurs outside xrAcquire/copy/submit.
+    # No change is made to original Joey modes 0/5.
+    edit(dx,'''        if (vr->is_native_stereo_fix_texture_array_submit_enabled()) {
+            auto native_array_create_info = standard_swapchain_create_info;''',
+    '''        if (vr->is_duoview_renderer_active()) {
+            auto& duo_ctx = this->contexts[(uint32_t)runtimes::OpenXR::SwapchainIndex::DOUBLE_WIDE];
+            const bool duo_srgb = backbuffer_desc.Format == DXGI_FORMAT_B8G8R8A8_UNORM_SRGB ||
+                                  backbuffer_desc.Format == DXGI_FORMAT_R8G8B8A8_UNORM_SRGB;
+            for (auto& tc : duo_ctx.texture_contexts) {
+                if (!tc) continue;
+                auto& comp = this->duoview_compositors[&tc->commands];
+                if (!comp) comp = std::make_unique<uevr::duoview::dx12::Compositor>();
+                if (!comp->prewarm(device, vr->get_hmd_width(), vr->get_hmd_height(), duo_srgb)) {
+                    SPDLOG_WARNING_EVERY_N_SEC(2,
+                        "[DuoView] DX12 prewarm failed; guarded compositing/fallback remains available");
+                }
+            }
+        }
+
+        if (vr->is_native_stereo_fix_texture_array_submit_enabled()) {
+            auto native_array_create_info = standard_swapchain_create_info;''')
     edit(dx,'                    if (vr->is_using_mono()) {\n                        bool recorded = false;',
     '''                    if (vr->is_duoview_renderer_active()) {
                         bool recorded = false;

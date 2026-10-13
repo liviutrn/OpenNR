@@ -162,7 +162,8 @@ jobs:
           Uses same Mono camera, off-axis foveal projection, DX12 raster composition and original XR submission.
           On failure, DuoView is QUARANTINED internally inside ID6; the next frame uses Joey original Mono.
           The fault frame attempts a current-frame original Mono copy but may show incomplete atlas contents.
-          Shaders are precompiled into the DLL during CI. Initial PSO/texture creation still occurs on first use or resize; monitor frame pacing.
+          DXBC shaders are precompiled during CI; per-XR-image PSOs/textures are prewarmed on swapchain setup.
+          Changing source formats or unexpected swapchain lifecycle may still cause reconstruction. Monitor frame pacing.
           Experimental: Source/test/CI passing cannot prove exact game GPU producer completion or headset stability.
           NEVER overwrite 30-minute-proven Build3! Extract this ZIP into a SEPARATE TEST DIRECTORY.
           Stage5 gaze requires the installed PSVR2 Toolkit CAPI. Headset calibration/sign must be confirmed in game.

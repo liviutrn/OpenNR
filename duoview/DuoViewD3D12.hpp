@@ -16,6 +16,12 @@ static_assert(sizeof(ShaderConstants) == 80);
 
 class Compositor {
 public:
+    // Prebuild the per-slot PSO, descriptors and output outside OpenXR frame copy.
+    // Called after swapchain images and their command contexts are constructed.
+    bool prewarm(ID3D12Device* device, UINT width, UINT height, bool srgb) {
+        if (!device || !width || !height || FAILED(device->GetDeviceRemovedReason())) return false;
+        return prepare(device, width, height, srgb);
+    }
     // One instance per retired OpenXR command slot; descriptors/resources must
     // stay alive until that slot's GPU fence completes.
     bool record(ID3D12Device* device, ID3D12GraphicsCommandList* cmd,
