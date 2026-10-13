@@ -1,0 +1,52 @@
+# DuoView clean restart — current handoff
+
+Updated: 2026-10-13. Continue actual work; keep token consumption low.
+
+## Goal and immediate gate
+
+Liviu wants a clean rebuild of his smooth latest Joey Mono baseline before any DuoView integration. DuoView will eventually repurpose the working two native rendering views as high-resolution gaze-following fovea plus lower-resolution periphery, using Mono. Earlier mixed-version implementations hitched in every mode, including ordinary Mono/stereo. Do not reuse that mixed backend or substitute an older SDK. First compile the unchanged original sources, verify the package, and let Liviu test baseline stability.
+
+## Authoritative location
+
+- Repository: https://github.com/liviutrn/OpenNR
+- Branch: `experiments/duoview-joey-current-clean-v1`
+- Build-trigger commit: `659f3ecf1791042e4b8a95b974575a5300ef6f14`
+- Active Windows run: https://github.com/liviutrn/OpenNR/actions/runs/38450034680
+- Job: `115478255229`; run number 2.
+- Workflow: `.github/workflows/duoview-exact-joey-baseline.yml`.
+- Inspect the current branch head before writing: API commits may be newer than local Git HEAD. Use expected-SHA leases on updates.
+
+## Exact original source pins
+
+Latest release was rechecked on October 13: `101226HELLRAISERp1`.
+
+| Component | Repository | Commit |
+| --- | --- | --- |
+| DIBR-capable backend containing original Mono | joeyhodge/UEVR | `5ac7edc207866569334175e4ed8a7517971547f6` |
+| Original restricted SDK | joeyhodge/UESDK | `3cffbc82429b6165ceec2714f0f0d9ae48f55596` |
+| Matching injector/frontend | joeyhodge/uevr-frontend | `60be4b0f9a646109fd9fdf448bacd41477234091` |
+
+SDK tree: `c958569565e435c8670caec726eece63ac7c317b`. All 176 SDK files were retrieved through the authorized GitHub connector and checked against their Git blob hashes; tree and commit identities were reproduced. All previously missing headers and tests are present. SDK reconstruction is paused and excluded from the build. Native Stereo is ID 0; original Mono is ID 5. Selecting Mono does not run DIBR reconstruction.
+
+Official smooth DIBR DLL SHA-256: `19e91cc8c22a02e2a97996e1523604ab202b4540d954ebc95e07e6b233970966`. `baseline.lock.json` records the exact packages, pins and reference evidence. A fresh source build is not promised to be byte-identical to the release DLL.
+
+## Authorization and CI
+
+User joined Epic's GitHub organization, unlocking SDK access. First exact build run `38448199737` failed at SDK checkout because Actions needed separate credentials. User now reports adding repository Actions secret `UEVR_SOURCE_TOKEN` from his authorized account; active run tests that credential. Never print or retrieve the token. Never commit restricted SDK source into public OpenNR. CI fetches the source privately and archives binaries/logs/provenance only.
+
+Workflow builds on Windows 2022, checks out the three exact commits, initializes their pinned public submodules, and runs `verify_exact_baseline.py`. It builds/runs all original registered compatibility tests, then `uevr`, `vr-plugin-nullifier`, `LuaVR`, and the matching frontend. Final source verification precedes packaging.
+
+Frontend's original build deterministically regenerates tracked `UEVR/FilteredExecutables.json`. The verifier permits ONLY that expected regenerated text (hashes derived from unchanged original plaintext input), rejects all other tracked changes and untracked nonignored files. Original publishing mode is retained (`SelfContained=false`); no forced publishing change. Local source checks passed, including acceptance of the correct generated resource and rejection of a altered resource. Windows compilation and headset stability remain pending until the active run completes.
+
+## Next actions
+
+1. Inspect active run/job steps. Fetch full logs only on failure or after completion. Resolve build-orchestration mistakes without changing Joey/SDK input source. A source-level failure needs an evidence-based decision, not an arbitrary older SDK.
+2. If successful, retrieve artifact `Joey-101226-Exact-SDK-Clean-Baseline-2`. Its outer ZIP contains `Joey-101226-Clean-Baseline-Build-2.zip` and SHA-256 file. Verify nested ZIP integrity, file inventory, actual source identity and package hashes. Evidence artifact is `Joey-exact-SDK-baseline-build-evidence-2`.
+3. Update this handoff and README with exact result, commit, run, artifact and hashes. Provide a direct download/build link and concise test instructions for original Mono in Stalker 2 against official smooth Joey.
+4. Wait for that baseline stability result before integrating DuoView. Do not claim compiled tests prove absence of headset hitching.
+
+Other repository Actions workflows may fail at parsing inherited unrelated OpenNR workflows; inspect this named baseline workflow rather than counting every repository run as its result.
+
+## User constraint
+
+Liviu reported 22% account allowance remaining and asks for a handoff around 10%. The assistant cannot read that account meter. Keep output and monitoring economical, persist current state here, and do not launch unnecessary investigations or agents. GitHub API tools support fetch, file/blob fetch, tree/commit creation, expected-SHA ref update, job steps/logs and artifact downloads. No workflow_dispatch or secrets management tool is exposed; a meaningful workflow/verifier change can trigger a new push run. Do not rerun the obsolete earlier workflow revision.
