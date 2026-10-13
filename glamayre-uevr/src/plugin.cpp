@@ -41,7 +41,7 @@ namespace {
 const UEVR_PluginInitializeParam* g_api = nullptr;
 std::atomic<bool> g_enabled{false}, g_edges{true}, g_split{false}, g_debug{false}, g_timing{false};
 std::atomic<float> g_smallStrength{0.0f}, g_bigStrength{0.4f}, g_extraStrength{0.0f}, g_ultraStrength{0.0f};
-std::atomic<float> g_maxChange{0.10f}, g_bias{0.020f}, g_thin{0.75f};
+std::atomic<float> g_maxChange{0.10f}, g_bias{0.020f}, g_thin{0.0f};
 std::wstring g_ini;
 std::mutex g_gpuMutex;
 ID3D12Device* g_device = nullptr;
@@ -111,8 +111,10 @@ void readConfig() {
         g_extraStrength = getFloat(L"ExtraStrength", 0.0f, 0, 5);
     }
     g_ultraStrength = getFloat(L"UltraStrength", 0.0f, 0, 5);
-    g_timing = getInt(L"GpuTiming", 0);
-    g_thin = getFloat(L"ThinLineProtection", 0.75f, 0, 1);
+    // Diagnostics are an explicit per-session opt-in. An old INI value must
+    // not silently resume timestamp capture the next time a game loads.
+    g_timing = false;
+    g_thin = getFloat(L"ThinLineProtection", 0.0f, 0, 1);
     g_maxChange = getFloat(L"MaxChange", 0.10f, 0.01f, 0.5f);
     g_bias = getFloat(L"FXAABias", 0.02f, 0, 0.2f);
 }
@@ -127,7 +129,12 @@ void setSetting(const char* name, float number) {
     else if (_stricmp(name, "extra") == 0) { number = bound(number, 0, 5); g_extraStrength = number; iniKey = L"ExtraStrength"; swprintf_s(buffer, L"%.4f", double(number)); }
     else if (_stricmp(name, "ultra") == 0) { number = bound(number, 0, 5); g_ultraStrength = number; iniKey = L"UltraStrength"; swprintf_s(buffer, L"%.4f", double(number)); }
     else if (_stricmp(name, "thin") == 0) { number = bound(number, 0, 1); g_thin = number; iniKey = L"ThinLineProtection"; swprintf_s(buffer, L"%.4f", double(number)); }
-    else if (_stricmp(name, "timing") == 0) { g_timing = number != 0; iniKey = L"GpuTiming"; swprintf_s(buffer, L"%u", unsigned(g_timing.load())); }
+    else if (_stricmp(name, "timing") == 0) {
+        // Deliberately session-only; do not write the toggle to the INI.
+        g_timing = number != 0;
+        ++g_settingEvents;
+        return;
+    }
     else if (_stricmp(name, "edges") == 0) { g_edges = number != 0; iniKey = L"ProtectEdges"; swprintf_s(buffer, L"%u", unsigned(g_edges.load())); }
     else if (_stricmp(name, "split") == 0) { g_split = number != 0; iniKey = L"SideBySide"; swprintf_s(buffer, L"%u", unsigned(g_split.load())); }
     else if (_stricmp(name, "debug") == 0) { g_debug = number != 0; iniKey = L"DebugOverlay"; swprintf_s(buffer, L"%u", unsigned(g_debug.load())); }
