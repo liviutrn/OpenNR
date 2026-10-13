@@ -4,7 +4,7 @@ if(NOT WIN32)
   message(FATAL_ERROR "UEVR DX12 plugin requires Windows")
 endif()
 add_library(GlamaryeSharpenUEVR SHARED
-    src/plugin.cpp src/openxr_scene.cpp src/shader.hpp vendor/uevr/API.h)
+    src/plugin.cpp src/layer_bridge.cpp src/shader.hpp vendor/uevr/API.h)
 target_compile_features(GlamaryeSharpenUEVR PRIVATE cxx_std_20)
 target_include_directories(GlamaryeSharpenUEVR PRIVATE vendor src)
 target_compile_definitions(GlamaryeSharpenUEVR PRIVATE UNICODE _UNICODE NOMINMAX)
@@ -38,3 +38,21 @@ target_include_directories(GlamaryeOpenXRMock PRIVATE vendor src)
 target_compile_features(GlamaryeOpenXRMock PRIVATE cxx_std_20)
 target_link_libraries(GlamaryeOpenXRMock PRIVATE d3d12 dxgi)
 add_test(NAME OpenXR_WARP_Scene_Integration COMMAND GlamaryeOpenXRMock)
+
+include(FetchContent)
+FetchContent_Declare(glam_xr_headers
+    GIT_REPOSITORY https://github.com/KhronosGroup/OpenXR-SDK.git
+    GIT_TAG 458984d7f59d1ae6dc1b597d94b02e4f7132eaba
+    GIT_SHALLOW FALSE)
+FetchContent_GetProperties(glam_xr_headers)
+if(NOT glam_xr_headers_POPULATED)
+    FetchContent_Populate(glam_xr_headers)
+endif()
+add_library(GlamaryeOpenXRLayer SHARED layer/openxr_layer.cpp)
+target_compile_features(GlamaryeOpenXRLayer PRIVATE cxx_std_20)
+target_compile_definitions(GlamaryeOpenXRLayer PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+target_include_directories(GlamaryeOpenXRLayer PRIVATE
+    "${glam_xr_headers_SOURCE_DIR}/include"
+    "${glam_xr_headers_SOURCE_DIR}/src/common")
+target_link_libraries(GlamaryeOpenXRLayer PRIVATE d3d12)
+target_compile_options(GlamaryeOpenXRLayer PRIVATE /W4 /EHsc)
