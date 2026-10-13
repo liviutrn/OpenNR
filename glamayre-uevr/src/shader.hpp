@@ -66,7 +66,7 @@ float4 PSMain(VSOut input) : SV_Target {
     // Red test grid is OFF by default and only proves the GPU pass touches
     // the actual submitted eye texture; it is not part of Glamarye sharpening.
     if ((flags & 8u) != 0u &&
-        (frac(uv.x*12.0) < 0.04 || frac(uv.y*12.0) < 0.04))
+        (frac(uv.x*8.0) < 0.12 || frac(uv.y*8.0) < 0.12))
         return float4(1.0, 0.01, 0.05, original.a);
     if (strength <= 0.00001) return original;
 
