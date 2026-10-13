@@ -79,14 +79,7 @@ bool process(Swap& swap,uint32_t index) {
     if(!enabled||!record||!enabled()) return false;
 
     auto& ses=sit->second;
-    if(swap.images.empty()) {
-        auto dispatch=instances.find(ses.instance);
-        if(dispatch==instances.end()||!dispatch->second.enumerate) return false;
-        uint32_t count=0;
-        if(XR_FAILED(dispatch->second.enumerate(
-            reinterpret_cast<XrSwapchain>(&swap),0,&count,nullptr))) return false;
-        return false; // enumeration performed by ensureImages(), not here
-    }
+    if(swap.images.empty()) return false;
     if(index>=swap.images.size()) return false;
     Image& im=*swap.images[index];
     if(im.fence->GetCompletedValue()<im.lastSignal) return false;
@@ -334,9 +327,7 @@ extern "C" __declspec(dllexport) XrResult XRAPI_CALL LayerGetInstanceProcAddr(
     // Do not expose unsupported downstream extension/core calls.
     auto result=next(instance,name,fn);
     if(XR_FAILED(result)||!*fn)return result;
-#define ROUTE(symbol) if(std::strcmp(name,#symbol)==0) \
-    *fn=reinterpret_cast<PFN_xrVoidFunction>(&on##symbol)
-    // Declared explicitly below to avoid an accidental wrong export mapping.
+    // Only install wrappers for functions confirmed by the downstream layer.
     if(std::strcmp(name,"xrCreateSession")==0)*fn=(PFN_xrVoidFunction)&onCreateSession;
     else if(std::strcmp(name,"xrDestroySession")==0)*fn=(PFN_xrVoidFunction)&onDestroySession;
     else if(std::strcmp(name,"xrCreateSwapchain")==0)*fn=(PFN_xrVoidFunction)&onCreateSwapchain;
@@ -345,7 +336,6 @@ extern "C" __declspec(dllexport) XrResult XRAPI_CALL LayerGetInstanceProcAddr(
     else if(std::strcmp(name,"xrReleaseSwapchainImage")==0)*fn=(PFN_xrVoidFunction)&onRelease;
     else if(std::strcmp(name,"xrEndFrame")==0)*fn=(PFN_xrVoidFunction)&onEndFrame;
     else if(std::strcmp(name,"xrDestroyInstance")==0)*fn=(PFN_xrVoidFunction)&onDestroyInstance;
-#undef ROUTE
     return result;
 }
 extern "C" __declspec(dllexport) XrResult XRAPI_CALL LayerCreateInstance(
@@ -383,6 +373,8 @@ extern "C" __declspec(dllexport) XrResult XRAPI_CALL xrNegotiateLoaderApiLayerIn
     const XrNegotiateLoaderInfo* li,const char* name,XrNegotiateApiLayerRequest* req) {
     if(!li||!req||!name||std::strcmp(name,kName)!=0||
        li->structType!=XR_LOADER_INTERFACE_STRUCT_LOADER_INFO||
+       li->structSize<sizeof(XrNegotiateLoaderInfo)||
+       req->structSize<sizeof(XrNegotiateApiLayerRequest)||
        req->structType!=XR_LOADER_INTERFACE_STRUCT_API_LAYER_REQUEST||
        li->minInterfaceVersion>XR_CURRENT_LOADER_API_LAYER_VERSION||
        li->maxInterfaceVersion<XR_CURRENT_LOADER_API_LAYER_VERSION)
