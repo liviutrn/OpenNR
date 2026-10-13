@@ -7,6 +7,49 @@ This version has **two distinct DLLs**, based on the architecture of Cheeky's se
 
 **Previous v0.1–v0.4 used a broken external `openxr_loader.dll` hook and did not sharpen the scene.** This version no longer hooks any loader exports. The API layer observes `xrCreateSession`, `xrCreateSwapchain`, `xrAcquireSwapchainImage`, `xrEndFrame`, `xrReleaseSwapchainImage`, and destruction through the supported Khronos chain. It identifies headset scene images from **projection layers**, not texture dimensions or UI. Once recognized, it records the existing Glamarye GPU shader into the projection image after UEVR's DX12 copy and before the real OpenXR release on the same queue. It does not change Joey or its DLSS code.
 
+## v0.2: Four independent sharpening scales and opt-in GPU timing
+
+This is based on the **working** v0.1 Khronos OpenXR API-layer architecture. No Joey backend, OpenXR loader, DLSS hooks, or injection paths have been changed.
+
+### Sharpening controls
+
+All radius bands have independent strengths **0 to 5**, and zero means that band performs no neighborhood sampling:
+
+| Band | Radius | Default | Notes |
+|---|---:|---:|---|
+| Small | 0.5 pixels | 0 | Glamarye's original normal mode |
+| Big | 1.4 pixels | 0.4 | Glamarye's original Bigger Sharpen |
+| Extra Big | 2.5 pixels | 0 | Experimental, broader contrast |
+| Ultra Big | 5.0 pixels | 0 | Experimental, very broad contrast and possible halos |
+
+Bands combine in **one fullscreen GPU pass**, each reading the original, unsharpened source. Their contributions are added and bounded by the existing **Maximum sharpen change** global limiter. No sequential GPU passes or repeated DLSS reconstruction.
+
+**Existing settings migrate automatically:** When upgrading from the working v0.1, the previous `Strength` and `Bigger` values are used to populate either Small or Big. Both new radii default to zero. The other original settings, including jagged edge protection, edge bias, maximum change, diagnostic grid and eye separation, are preserved.
+
+**Thin-line protection** is an additional, independently adjustable 0–1 slider, default **0.75**. The original **Sharpen jagged edges less** setting stays unchanged: its FXAA-derived guard detects jagged steps, not every straight one-pixel wire. Thin-line protection uses a lightweight isolated-feature detector and attenuates all active sharpening bands around small lines. This should reduce halos around wire fences, foliage and similar geometry. Setting this control to zero restores the original guard-only behavior.
+
+### GPU diagnostic timing
+
+Open **Diagnostics → Measure GPU sharpening time** to opt in. The layer uses D3D12 timestamp queries to time the GPU copy-and-sharpen commands. It samples one out of every **32 submitted projection images** and reports an exponentially averaged GPU duration in **milliseconds**.
+
+The layer creates timestamp heaps and readback buffers lazily only after the option is enabled. Query commands, fence-result mapping, and timestamp readback are **never performed while it is disabled**. During normal operation there are no GPU waits or synchronized CPU readbacks. One existing fence-completion check for swapchain-image reuse remains regardless of timing.
+
+This measures **GPU time for the sharpening pass**, not total game frame time. In a double-wide mono projection this is approximately the extra GPU time per image/frame; in two separate stereo eye images the display is the **average per projection image**, not the sum of both eyes. Timing-query and sample reporting overhead are very small but not mathematically zero when enabled.
+
+### Upgrade from the working v0.1
+
+Quit STALKER 2, UEVR, and other OpenXR apps. Back up the v0.1 ZIP. Replace `plugins/GlamaryeSharpenUEVR.dll`, `scripts/glamayre_sharpen.lua`, and `layer/GlamaryeOpenXRLayer.dll` with the v0.2 versions.
+
+If the existing `glamayre_openxr.json` manifest path and folder remain unchanged, the registered OpenXR implicit layer should continue working without rerunning the installer. If installed to a **different** folder, run `install-layer.ps1` from the new folder after removing the old registration.
+
+Reopen Joey in OpenXR/DX12. Start with Small=0, Big=your previous strength, Extra Big=0, Ultra Big=0; enable one wider radius at a time to evaluate performance and haloing. Larger radius means more widely spaced samples, **not** that thin lines are automatically ignored.
+
+### Automated checks
+
+Windows CI tests the original shader compiler, D3D12 WARP rendering across SDR/sRGB/typeless formats, stereo separation and red diagnostic grid, simulated OpenXR hook lifecycle and real Khronos negotiation, plus actual GPU pixel comparisons with all four radii, FXAA jagged edge protection and isolated thin-line protection. The OpenXR integration test also toggles GPU timing on/off and confirms a completed asynchronous GPU timestamp sample. **Real PSVR2 frametimes still require a headset test.**
+
+---
+
 ## Install
 
 1. Close STALKER 2 and UEVR.
