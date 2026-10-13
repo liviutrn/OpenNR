@@ -31,11 +31,11 @@ std::map<uint32_t, Packet> packets;
 struct Draw { dv::FrameKey key; Optics optical; };
 thread_local std::optional<Draw> draw;
 dv::SubmissionMailbox<Packet> submissions;
-std::atomic<uint64_t> last_report{}, last_success{}, last_status_write{};
+std::atomic<uint64_t> last_report{}, last_success{}, last_status_write{}, last_status_check{};
 std::atomic<uint64_t> engine_ticks{}, locate_calls{}, producer_pairs{}, render_callbacks{}, matched_packets{}, composite_queued{}, end_calls{}, submitted_layers{}, rejected_layers{}, xr_accepted{}, xr_failed{};
 std::mutex status_mutex;
 std::string status_reason{"Not initialized"};
-std::filesystem::path status_path;
+std::filesystem::path status_path, status_request_path;
 void set_reason(const char* reason) {
     std::scoped_lock lock(status_mutex);
     status_reason = reason;
@@ -43,9 +43,15 @@ void set_reason(const char* reason) {
 void publish_status(bool force=false) {
     if (status_path.empty()) return;
     const auto now=GetTickCount64();
-    auto previous=last_status_write.load();
-    if (!force && (now-previous<1000 || !last_status_write.compare_exchange_strong(previous,now))) return;
-    if (force) last_status_write.store(now);
+    if (!force) {
+        // Poll infrequently, and do not do any file writes during gameplay
+        // unless the UEVR ImGui panel has explicitly requested fresh status.
+        auto checked = last_status_check.load();
+        if (now - checked < 250 || !last_status_check.compare_exchange_strong(checked,now)) return;
+        if (status_request_path.empty() || GetFileAttributesW(status_request_path.c_str()) == INVALID_FILE_ATTRIBUTES) return;
+        DeleteFileW(status_request_path.c_str());
+    }
+    last_status_write.store(now);
     std::string reason;
     { std::scoped_lock lock(status_mutex); reason=status_reason; }
     auto temp=status_path; temp+=L".tmp";
@@ -415,6 +421,7 @@ public:
         wchar_t directory[32768]{}; api->functions->get_persistent_dir(directory,32768);
         config_=std::filesystem::path(directory)/L"DuoViewJoey.ini";
         status_path=std::filesystem::path(directory)/L"DuoViewJoey.status";
+        status_request_path=std::filesystem::path(directory)/L"DuoViewJoey.status.request";
         mode=static_cast<int>(GetPrivateProfileIntW(L"DuoView",L"Mode",0,config_.c_str()));
         api->functions->log_info("[DuoViewJoey] Config path=%ls Mode=%d",config_.c_str(),mode.load());
         if (mode<0 || mode>3) mode=0;
