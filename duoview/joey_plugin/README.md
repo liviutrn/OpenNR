@@ -1,3 +1,18 @@
+# STOP-SHIP: NOT A WORKING FOVEATED RENDERER
+
+The independent Build 25 review found a missing exact Joey scene-copy / OpenXR
+swapchain contract. Until confirmed, the native plugin now **refuses to install
+the rendering hooks** for modes 1–3. This engineering checkpoint is safe to
+inspect and build but will not create two foveated game views.
+
+Original Joey binaries are unchanged. The UEVR Lua panel and config can still
+be inspected. It displays `FrameCopyContract=UNVERIFIED`, `Hooks=inactive`,
+and `Mode=0` for any requested active mode. This is intentional; do not ask
+users to test performance, gaze alignment or active DuoView with this package.
+
+See `STOP_SHIP_REMEDIATION_2026-10-13.md` and the independent review
+for the exact unresolved integration requirements.
+
 # DuoView Mono — Joey-preserving plugin with UEVR in-game control panel
 
 This branch is an **engineering integration candidate**, not a headset-validated product. The original Joey Mono binaries from `101226HELLRAISERp1` are reproduced and verified byte-for-byte. DuoView is provided only by an optional profile plugin.
