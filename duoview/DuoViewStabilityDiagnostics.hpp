@@ -20,6 +20,18 @@ struct Counters {
     std::atomic<std::uint32_t> raw_view_bits{0};
     std::atomic<std::int64_t> last_present_us{0}, max_present_gap_us{0};
     std::atomic<std::int64_t> max_frame_us{0}, max_commit_us{0}, max_clear_us{0};
+    // Inclusive span measurements from the ORIGINAL shared Windows backend.
+    std::atomic<std::int64_t> max_hook_lock_us{0}, max_hook_callback_us{0};
+    std::atomic<std::int64_t> max_dxgi_present_us{0}, max_post_callback_us{0};
+    std::atomic<std::int64_t> max_framework_fence_us{0};
+    std::atomic<std::int64_t> max_xr_wait_us{0}, max_xr_begin_us{0}, max_xr_end_us{0};
+    std::atomic<std::uint64_t> dxgi_present_calls{0}, dxgi_present_failures{0};
+    std::atomic<std::uint64_t> xr_wait_calls{0}, xr_wait_failures{0};
+    std::atomic<std::uint64_t> xr_begin_calls{0}, xr_begin_failures{0};
+    std::atomic<std::uint64_t> xr_end_calls{0}, xr_end_failures{0};
+    std::atomic<std::uint64_t> framework_fence_waits_over_8ms{0};
+    std::atomic<std::int64_t> max_successful_xr_wait_us{0};
+
 };
 inline Counters& counters() { static Counters c; return c; }
 inline void present_entry() {
