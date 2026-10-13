@@ -42,7 +42,7 @@ def verify(path):
         raise ValueError("Released Joey OpenXR::copy RVA/ABI prologue mismatch")
     if (copy_rva, copy_end) not in ranges:
         raise ValueError("Released Joey OpenXR::copy unwind boundary mismatch")
-    marker = b"[VR] OpenXR: Frame not begun when trying to copy.\\x00".replace(b"\\x00",b"\\0")
+    marker = b"[VR] OpenXR: Frame not begun when trying to copy." + bytes([0])
     if copy_rva not in references.get(image.index(marker),set()):
         raise ValueError("OpenXR::copy diagnostic string not linked to candidate function")
     print("Verified released Joey OpenXR::copy RVA, x64 prologue, unwind boundary and copy diagnostic")
