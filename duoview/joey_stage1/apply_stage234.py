@@ -53,18 +53,22 @@ def main():
     void duoview_abort(const char* reason);''')
     edit(header,'    std::atomic<const char*> m_mono_status{"Not selected"};',
         '''    uevr::duoview::State m_duoview;
+    std::atomic<bool> m_duoview_quarantined{false};
     std::once_flag m_duoview_settings_once;
     std::atomic<const char*> m_mono_status{"Not selected"};''')
     edit(header,'    void on_device_reset() override {\n        get_runtime()->on_device_reset();',
         '    void on_device_reset() override {\n        m_duoview.retire();\n        get_runtime()->on_device_reset();')
     cpp="src/mods/VR.cpp"
+    edit(cpp,
+        'ImGui::TextWrapped("DuoView Stage 1: rendering uses original Joey Mono unchanged. Two-view foveation and gaze are NOT active.");',
+        'ImGui::TextWrapped(is_duoview_renderer_active() ? "DuoView fixed-center two-view rendering (gaze disabled, experimental)" : "DuoView safe fallback: rendering original Joey Mono; foveated path disabled");')
     edit(cpp, '#include "VR.hpp"', '#include "VR.hpp"\n#include <cstring>')
     edit(cpp,'    m_mono_main_view_token = 0;\n    m_mono_attachment_token = 0;',
-        '    m_duoview.retire();\n    m_mono_main_view_token = 0;\n    m_mono_attachment_token = 0;')
+        '    m_duoview.retire();\n    if (selection.active() == RenderingMethod::DUOVIEW_MONO) m_duoview_quarantined.store(false, std::memory_order_release);\n    m_mono_main_view_token = 0;\n    m_mono_attachment_token = 0;')
     changed[cpp]+='''
 // Fixed-center first milestone. Do not sample gaze or mutable UI configuration.
 bool VR::is_duoview_renderer_active() const {
-    if (!is_using_duoview_mono() || !m_is_d3d12) return false;
+    if (!is_using_duoview_mono() || !m_is_d3d12 || m_duoview_quarantined.load(std::memory_order_acquire)) return false;
     const auto runtime = get_runtime();
     if (!runtime || !runtime->is_openxr()) return false;
     static const bool stalker2 = [] {
@@ -99,9 +103,10 @@ std::optional<uevr::duoview::ViewFrame> VR::duoview_begin_frame() {
 
 void VR::duoview_abort(const char* reason) {
     if (!is_using_duoview_mono()) return;
-    SPDLOG_WARNING_EVERY_N_SEC(2, "[DuoView] Aborting ID6 to original Mono ID5: {}", reason);
-    m_rendering_method->request(RenderingMethod::MONO);
+    SPDLOG_WARNING_EVERY_N_SEC(2, "[DuoView] Quarantining two-view path; continuing original Mono inside ID6: {}", reason);
+    m_duoview_quarantined.store(true, std::memory_order_release);
     m_duoview.retire();
+    set_mono_status("DuoView fault: rendering original Mono inside ID6; reselect ID6 to retry");
 }
 '''
     hook="src/mods/vr/FFakeStereoRenderingHook.cpp"
@@ -190,7 +195,7 @@ void VR::duoview_abort(const char* reason) {
         }''')
     edit(hook,'''            (!vr->is_using_mono() || views_ptr->count == 1));''',
     '''            (!vr->is_using_mono() ||
-              (vr->is_duoview_renderer_active() ? views_ptr->count == 2 : views_ptr->count == 1)));
+              (vr->is_duoview_renderer_active() ? (views_ptr->count == 1 || views_ptr->count == 2) : views_ptr->count == 1)));
         if (vr->is_duoview_renderer_active() && views_ptr) {
             vr->duoview_state().family(vr->duoview_key(frame_count), main_family, views_ptr->count);
         }''')
