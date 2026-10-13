@@ -1,6 +1,6 @@
 -- Glamarye Sharpen: minimal UEVR LuaLoader panel.
 -- This file is only UI; every GPU operation runs in the native DLL.
-local state = {enabled=false,big=true,edges=true,split=false,strength=0.4,limit=0.1,bias=0.02}
+local state = {enabled=false,big=true,edges=true,split=false,strength=0.4,limit=0.1,bias=0.02,xrHook=0,xrFrames=0}
 local received = false
 local pending = {}
 
@@ -69,5 +69,11 @@ uevr.lua.add_script_panel("Glamarye Sharpen", function()
     if state.gpuError then
         imgui.text("GPU initialization error: check UEVR.log. Sharpen is bypassed.")
     end
+    if state.xrHook ~= 1 then
+        imgui.text("OpenXR loader hook not active (check OpenXR mode and logs).")
+    else
+        imgui.text("OpenXR hook active. Processed scene images: " .. tostring(state.xrFrames or 0))
+    end
+    imgui.text("Sharpening applies to projection-layer scene images only.")
     imgui.text("DLSS and Joey native stereo/mono renderers are unchanged.")
 end)
