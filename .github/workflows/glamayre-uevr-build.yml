@@ -1,8 +1,8 @@
-name: Glamarye UEVR Windows Build v03 Joey
+name: Glamarye UEVR Windows Build v04 Verified
 on:
   push:
     branches:
-      - "experiments/glamayre-sharpen-uevr-v03-joey"
+      - "experiments/glamayre-sharpen-uevr-v04-verified"
     paths:
       - "glamayre-uevr/**"
       - ".github/workflows/glamayre-uevr-build.yml"
@@ -38,6 +38,6 @@ jobs:
           Copy-Item glamayre-uevr/LICENSE-GLAMARYE.txt glamayre-uevr/package/
       - uses: actions/upload-artifact@v4
         with:
-          name: Glamarye-Sharpen-UEVR-v03-Joey
+          name: Glamarye-Sharpen-UEVR-v04-Verified
           path: glamayre-uevr/package/
           retention-days: 30
