@@ -21,10 +21,10 @@ int main(int argc,char** argv) {
  int calls=0;auto lease=std::make_shared<int>(1);std::weak_ptr<int> lifetime=lease;
  CopyCallback a=std::function<void(d3d12::CommandContext&,ID3D12Resource*)>([&,lease](auto&,auto* s){assert(s==reinterpret_cast<ID3D12Resource*>(0x4321));++calls;});
  ExtraCallback b=std::function<void(d3d12::CommandContext&)>([&,lease](auto&){++calls;});
- CopyCallback c=a;lease.reset();D3D12_BOX box{};box.right=37;
+ CopyCallback c=a;RetainedPair pair(lease,reinterpret_cast<uevr::stalker2_native::PairFrame*>(0x123456));lease.reset();D3D12_BOX box{};box.right=37;
  assert(detour(reinterpret_cast<void*>(0x1234),7,reinterpret_cast<ID3D12Resource*>(0x4321),
   std::move(a),std::move(b),D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,&box,std::move(c),
-  reinterpret_cast<ID3D12Resource*>(0x4321),nullptr));
+  reinterpret_cast<ID3D12Resource*>(0x4321),std::move(pair)));
  assert(calls==3);a.reset();b.reset();c.reset();assert(lifetime.expired());
  assert(detour(reinterpret_cast<void*>(0x1234),7,reinterpret_cast<ID3D12Resource*>(0x4321),
   std::nullopt,std::nullopt,D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,&box,std::nullopt,
