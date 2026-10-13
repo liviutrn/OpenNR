@@ -300,13 +300,30 @@ XrResult XRAPI_CALL onEndFrame(XrSession session,const XrFrameEndInfo* info) {
 XrResult XRAPI_CALL onDestroyInstance(XrInstance inst) {
     PFN_xrDestroyInstance next{};
     {std::lock_guard lock(mutex);auto d=find(inst);if(!d)return XR_ERROR_HANDLE_INVALID;next=d->destroyInstance;}
+    // Teardown may happen without explicit swapchain/session destruction;
+    // retire GPU work before the runtime disposes the backing DX12 images.
+    {
+        std::lock_guard lock(mutex);
+        for(auto& [handle,sc]:swaps) {
+            auto sessionIt=sessions.find(sc.session);
+            if(sessionIt!=sessions.end() && sessionIt->second.instance==inst)
+                drain(sc);
+        }
+    }
     auto r=next?next(inst):XR_ERROR_FUNCTION_UNSUPPORTED;
     if(XR_SUCCEEDED(r)) {
         std::lock_guard lock(mutex);
+        for(auto it=swaps.begin();it!=swaps.end();) {
+            auto sessionIt=sessions.find(it->second.session);
+            if(sessionIt!=sessions.end() && sessionIt->second.instance==inst)
+                it=swaps.erase(it);
+            else ++it;
+        }
         for(auto it=sessions.begin();it!=sessions.end();) {
             if(it->second.instance==inst)it=sessions.erase(it);else ++it;
         }
         instances.erase(inst);
+        layerReady=!instances.empty();
     }
     return r;
 }
