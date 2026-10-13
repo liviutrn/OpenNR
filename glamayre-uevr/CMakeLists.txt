@@ -12,3 +12,10 @@ target_compile_options(GlamaryeSharpenUEVR PRIVATE /W4 /EHsc)
 target_link_libraries(GlamaryeSharpenUEVR PRIVATE d3d12 d3dcompiler dxgi)
 set_target_properties(GlamaryeSharpenUEVR PROPERTIES
     OUTPUT_NAME "GlamaryeSharpenUEVR")
+
+enable_testing()
+add_executable(GlamaryeShaderTest tests/shader_compile.cpp src/shader.hpp)
+target_include_directories(GlamaryeShaderTest PRIVATE src)
+target_compile_features(GlamaryeShaderTest PRIVATE cxx_std_20)
+target_link_libraries(GlamaryeShaderTest PRIVATE d3dcompiler)
+add_test(NAME HLSL_Compilation COMMAND GlamaryeShaderTest)
