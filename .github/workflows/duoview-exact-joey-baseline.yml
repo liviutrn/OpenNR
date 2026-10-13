@@ -1,0 +1,136 @@
+name: DuoView exact latest Joey baseline build
+on:
+  push:
+    branches: [experiments/duoview-joey-current-clean-v1]
+    paths:
+      - '.github/workflows/duoview-exact-joey-baseline.yml'
+      - 'duoview/clean_restart/verify_exact_baseline.py'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: duoview-exact-baseline-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  exact-latest-joey-baseline:
+    runs-on: windows-2022
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: workspace
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: joeyhodge/UEVR
+          ref: 5ac7edc207866569334175e4ed8a7517971547f6
+          fetch-depth: 0
+          path: backend
+          persist-credentials: false
+      - name: Check out the original restricted SDK at the exact gitlink
+        uses: actions/checkout@v4
+        with:
+          repository: joeyhodge/UESDK
+          ref: 3cffbc82429b6165ceec2714f0f0d9ae48f55596
+          token: ${{ secrets.UEVR_SOURCE_TOKEN || secrets.PAT_TOKEN || github.token }}
+          path: backend/dependencies/submodules/UESDK
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: joeyhodge/uevr-frontend
+          ref: 60be4b0f9a646109fd9fdf448bacd41477234091
+          path: frontend
+          persist-credentials: false
+      - name: Verify the unchanged exact source and public dependencies
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory evidence -Force | Out-Null
+          git -C backend submodule update --init --depth 1 -- dependencies/submodules/glm dependencies/submodules/imgui dependencies/submodules/spdlog
+          if ($LASTEXITCODE -ne 0) { throw 'Pinned public submodule checkout failed' }
+          python workspace/duoview/clean_restart/verify_exact_baseline.py workspace/duoview/clean_restart/baseline.lock.json backend frontend evidence
+          if ($LASTEXITCODE -ne 0) { throw 'Exact source identity or completeness verification failed' }
+      - name: Configure original compatibility tests and production backend
+        shell: pwsh
+        run: |
+          cmake -S backend -B backend/build -G 'Visual Studio 17 2022' -A x64 -DCMAKE_BUILD_TYPE=Release -DUEVR_BUILD_COMPATIBILITY_TESTS=ON *> evidence/configure.log
+          $code=$LASTEXITCODE; Get-Content evidence/configure.log | Select-Object -Last 60
+          if ($code -ne 0) { throw "Original Joey configuration failed ($code)" }
+      - name: Build every test target used by the official matching build
+        shell: pwsh
+        run: |
+          cmake --build backend/build --config Release --parallel 2 --target compatibility-policy-tests steam-frame-input-tests stock-frame-migration-tests gamepad-recovery-tests kananlib-decode-window-tests diagnostic-safety-tests prospi-camera-trace-tests prospi-camera-framing-tests prospi-celebration-framing-tests prospi-roof-visibility-tests hifi-hook-memory-tests nascar-hook-compatibility-tests input-hook-installation-tests mono-d3d11-tests mono-d3d12-tests ui-alpha-tests ui-alpha-lifecycle-tests ui-composition-tests lua-fname-binding-tests lua-context-dispatch-tests lua-controller-input-tests stalker2-native-policy-tests stalker2-native-d3d12-tests *> evidence/test-build.log
+          $code=$LASTEXITCODE; Get-Content evidence/test-build.log | Select-Object -Last 100
+          if ($code -ne 0) { throw "Original compatibility tests failed to compile ($code)" }
+      - name: Run the complete original compatibility suite
+        shell: pwsh
+        run: |
+          ctest --test-dir backend/build -C Release --output-on-failure --no-tests=error *> evidence/compatibility-tests.log
+          $code=$LASTEXITCODE; Get-Content evidence/compatibility-tests.log
+          if ($code -ne 0) { throw "Original compatibility tests failed ($code)" }
+      - name: Build original backend and auxiliary DLLs
+        shell: pwsh
+        run: |
+          cmake --build backend/build --config Release --target uevr vr-plugin-nullifier LuaVR --parallel 2 *> evidence/backend-build.log
+          $code=$LASTEXITCODE; Get-Content evidence/backend-build.log | Select-Object -Last 100
+          if ($code -ne 0) { throw "Original latest Joey backend failed to compile ($code)" }
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '6.0.x'
+      - name: Test and build matching original frontend
+        shell: pwsh
+        run: |
+          dotnet run --project frontend/tests/RenderingModes --configuration Release *> evidence/frontend-tests.log
+          $code=$LASTEXITCODE; Get-Content evidence/frontend-tests.log
+          if ($code -ne 0) { throw 'Original rendering-ID tests failed' }
+          dotnet publish frontend/UEVR/UEVR.csproj --output package --configuration Release --self-contained true *> evidence/frontend-build.log
+          $code=$LASTEXITCODE; Get-Content evidence/frontend-build.log | Select-Object -Last 60
+          if ($code -ne 0) { throw 'Matching original frontend failed to compile' }
+      - name: Verify final source and package clean baseline
+        shell: pwsh
+        run: |
+          python workspace/duoview/clean_restart/verify_exact_baseline.py workspace/duoview/clean_restart/baseline.lock.json backend frontend evidence
+          if ($LASTEXITCODE -ne 0) { throw 'Source changed during the build' }
+          Copy-Item backend/build/bin/uevr/*.dll package/
+          Copy-Item backend/build/bin/vr-plugin-nullifier/UEVRPluginNullifier.dll package/
+          Copy-Item backend/build/bin/LuaVR/LuaVR.dll package/
+          Copy-Item workspace/duoview/clean_restart/baseline.lock.json package/
+          Copy-Item evidence/exact-baseline-source.json package/
+          @'
+          CLEAN SOURCE REBUILD OF JOEY 101226HELLRAISERp1 DIBR+MONO.
+          Backend: 5ac7edc207866569334175e4ed8a7517971547f6
+          Original SDK: 3cffbc82429b6165ceec2714f0f0d9ae48f55596
+          Frontend: 60be4b0f9a646109fd9fdf448bacd41477234091
+          Native Stereo is ID 0; original Mono is ID 5.
+          No DuoView implementation or reconstructed SDK is included.
+          The original compatibility suite passed. Headset stability is not yet verified.
+          Extract into a separate folder and use your usual working game/settings.
+          Compare Native Stereo and Mono against the official smooth Joey build.
+          '@ | Set-Content package/READ_FIRST.txt
+          Get-ChildItem package -Recurse -File | Get-FileHash -Algorithm SHA256 | ConvertTo-Json | Set-Content evidence/package-sha256.json
+          $zip="Joey-101226-Clean-Baseline-Build-${{ github.run_number }}.zip"
+          Compress-Archive -Path package/* -DestinationPath $zip -Force
+          (Get-FileHash $zip -Algorithm SHA256).Hash | Set-Content "$zip.sha256"
+      - uses: actions/upload-artifact@v4
+        if: success()
+        with:
+          name: Joey-101226-Exact-SDK-Clean-Baseline-${{ github.run_number }}
+          path: |
+            Joey-101226-Clean-Baseline-Build-*.zip
+            Joey-101226-Clean-Baseline-Build-*.zip.sha256
+          if-no-files-found: error
+          retention-days: 90
+      - name: Record public source and dependency provenance
+        if: always()
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory evidence -Force | Out-Null
+          git -C backend submodule status | Set-Content evidence/submodules.txt
+          Copy-Item workspace/duoview/clean_restart/baseline.lock.json evidence/
+          Copy-Item backend/build/Testing/Temporary/LastTest.log evidence/ -ErrorAction SilentlyContinue
+          $global:LASTEXITCODE=0
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Joey-exact-SDK-baseline-build-evidence-${{ github.run_number }}
+          path: evidence/
+          if-no-files-found: error

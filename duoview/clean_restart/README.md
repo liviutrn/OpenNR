@@ -1,8 +1,15 @@
 # DuoView clean restart: current Joey baseline
 
-**Current status:** official baseline identity and binary hashes verified;
-original CPU/GPU and frontend ID checks pass. Full current backend rebuild
-is **blocked by SDK incompatibility**. No new installable DuoView build.
+**Current status:** the original required SDK is now accessible and its
+complete source has been verified against the exact Git blobs, tree and
+commit. The unchanged latest Joey baseline build is being prepared with
+the original SDK. No new installable baseline or DuoView build is available yet.
+
+The exact-source workflow is `.github/workflows/duoview-exact-joey-baseline.yml`.
+It pins the original backend, SDK and frontend, runs the complete original
+compatibility suite and packages only after all source/build gates pass.
+Its restricted SDK checkout uses the existing Actions secret
+`UEVR_SOURCE_TOKEN` (or `PAT_TOKEN`) when configured.
 
 This branch starts the source restart using the exact official Joey DIBR
 backend the user reported smooth. No new DuoView renderer is enabled here.
@@ -115,6 +122,17 @@ and [successful offline tests](https://github.com/liviutrn/OpenNR/actions/runs/3
   remains unconfirmed. Old experiment branches and releases are unchanged.
 
 ## Next engineering gate
+
+The authenticated source-download gate has now passed. All 176 SDK files,
+the SDK tree `c958569565e435c8670caec726eece63ac7c317b`, and the original commit
+object `3cffbc82429b6165ceec2714f0f0d9ae48f55596` have been verified.
+The missing-header inventory is empty and both missing SDK test sources
+are present. See `SDK_SOURCE_VERIFIED.json`.
+
+Use the original SDK for the complete baseline build. The reconstruction
+experiment is retained as evidence only and is not integrated.
+
+The prior fallback gate, retained for provenance, was:
 
 Obtain authentic SDK source matching `3cffbc...`, or recover bounded public
 implementations for every required interface with source/binary evidence

@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "repository": "joeyhodge/UESDK",
+  "commit": "3cffbc82429b6165ceec2714f0f0d9ae48f55596",
+  "tree": "c958569565e435c8670caec726eece63ac7c317b",
+  "tracked_file_count": 176,
+  "all_git_blob_hashes_verified": true,
+  "root_git_tree_verified": true,
+  "original_git_commit_object_reproduced": true,
+  "backend_commit": "5ac7edc207866569334175e4ed8a7517971547f6",
+  "frontend_commit": "60be4b0f9a646109fd9fdf448bacd41477234091",
+  "source_reconstruction_required": false,
+  "full_windows_baseline_build_verified": false,
+  "headset_stability_verified": false
+}

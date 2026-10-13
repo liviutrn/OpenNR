@@ -1,5 +1,13 @@
 # Exact current Joey SDK recovery
 
+**Current status: original SDK recovered. Reconstruction is paused.**
+After the user's EpicGames/GitHub access was activated, the connected tools
+could read the exact required SDK commit. All 176 tracked files were
+retrieved and each Git blob verified. The root Git tree and complete original
+commit object also match exactly. The exact-source baseline workflow now
+uses the original SDK; no code from this reconstruction folder is integrated.
+The sections below preserve the earlier evidence and isolated tests.
+
 The target remains the official latest release `101226HELLRAISERp1`, Mono
 backend `5ac7edc207866569334175e4ed8a7517971547f6`, and original SDK
 `3cffbc82429b6165ceec2714f0f0d9ae48f55596`. No other backend revision is used.
