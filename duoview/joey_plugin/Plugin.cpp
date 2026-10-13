@@ -119,7 +119,7 @@ bool two_views(void* family) {
     return count && *count == 2;
 }
 bool native_mode() {
-    if (!installed || !api->vr->is_openxr()) return false;
+    if (!installed.load() || mode.load() == 0 || !api->vr->is_openxr()) return false;
     const auto holder=read<uintptr_t>(backend+0xf10f10);
     const auto vr=holder ? read<uintptr_t>(*holder+8) : std::nullopt;
     const auto selection=vr ? read<uintptr_t>(*vr+0x56e60) : std::nullopt;
@@ -275,6 +275,7 @@ bool compose(const Packet& packet,ID3D12Resource* source) {
     slot.fence=++gpu->signal;
     if (FAILED(queue->Signal(gpu->fence.Get(),slot.fence))) { report("DuoView queue fence signal failed"); return false; }
     ++composite_queued;
+    set_reason("Composite queued on graphics queue; awaiting XR submission");
     const auto now=GetTickCount64(); auto previous=last_success.load();
     if (now-previous>=3000 && last_success.compare_exchange_strong(previous,now)) {
         const auto& l=packet.frame.config.layout;
