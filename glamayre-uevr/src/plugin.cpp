@@ -45,6 +45,7 @@ ID3D12Device* g_device = nullptr;
 ComPtr<ID3D12RootSignature> g_root;
 ComPtr<ID3DBlob> g_vs, g_ps;
 std::atomic<bool> g_gpuError{false};
+std::atomic<unsigned long long> g_settingEvents{0};
 unsigned long long g_lastReport = 0;
 bool g_callbacksRegistered = false;
 
@@ -106,7 +107,12 @@ void setSetting(const char* name, float number) {
     else if (_stricmp(name, "limit") == 0) { number = bound(number, 0.01f, 0.5f); g_maxChange = number; iniKey = L"MaxChange"; swprintf_s(buffer, L"%.4f", double(number)); }
     else if (_stricmp(name, "bias") == 0) { number = bound(number, 0, 0.2f); g_bias = number; iniKey = L"FXAABias"; swprintf_s(buffer, L"%.4f", double(number)); }
     else matched = false;
-    if (matched && !g_ini.empty()) WritePrivateProfileStringW(L"Sharpen", iniKey, buffer, g_ini.c_str());
+    if (matched) {
+        const auto received = ++g_settingEvents;
+        if (g_api && g_api->functions && g_api->functions->log_info && received <= 16)
+            g_api->functions->log_info("[Glamarye v03] UI setting: %s=%s", name, "updated");
+        if (!g_ini.empty()) WritePrivateProfileStringW(L"Sharpen", iniKey, buffer, g_ini.c_str());
+    }
 }
 void onCustomEvent(const char* event, const char* payload) {
     if (!event || std::strcmp(event, "glamayre_sharpen.set") != 0 || !payload) return;
@@ -127,10 +133,10 @@ void onPresent() {
     g_lastReport = now;
     char data[600];
     snprintf(data, sizeof(data),
-        "enabled=%d;big=%d;edges=%d;split=%d;strength=%.3f;limit=%.3f;bias=%.3f;gpuError=%d;debug=%d;xrHook=%d;xrResolved=%d;xrFrames=%llu;xrAcquire=%llu;xrRelease=%llu;xrEnd=%llu;xrProj=%llu;xrSize=%llu;xrEligible=%llu;xrEnumError=%llu",
+        "enabled=%d;big=%d;edges=%d;split=%d;strength=%.3f;limit=%.3f;bias=%.3f;gpuError=%d;debug=%d;settings=%llu;xrHook=%d;xrResolved=%d;xrFrames=%llu;xrAcquire=%llu;xrRelease=%llu;xrEnd=%llu;xrProj=%llu;xrSize=%llu;xrEligible=%llu;xrEnumError=%llu",
         int(g_enabled.load()), int(g_big.load()), int(g_edges.load()), int(g_split.load()),
         double(g_strength.load()), double(g_maxChange.load()), double(g_bias.load()),
-        int(g_gpuError.load()), int(g_debug.load()), int(glamayre_xr_hooks_ready()), int(glamayre_xr_resolved_hooks_ready()), glamayre_xr_processed_count(),
+        int(g_gpuError.load()), int(g_debug.load()), g_settingEvents.load(), int(glamayre_xr_hooks_ready()), int(glamayre_xr_resolved_hooks_ready()), glamayre_xr_processed_count(),
         glamayre_xr_acquire_count(), glamayre_xr_release_count(),
         glamayre_xr_endframe_count(), glamayre_xr_projection_count(),
         glamayre_xr_dimension_count(), glamayre_xr_eligible_count(),
