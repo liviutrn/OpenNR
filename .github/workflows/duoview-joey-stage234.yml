@@ -1,0 +1,180 @@
+name: DuoView Joey Stage 2-4 fixed-center two-view experimental build
+run-name: DuoView fixed-center 2-view renderer with exact SDK (${{ github.run_number }})
+on:
+  push:
+    branches: [experiments/duoview-joey-fixed-center-v1]
+    paths:
+      - '.github/workflows/duoview-joey-stage234.yml'
+      - 'duoview/joey_stage1/**'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: duoview-stage234-${{ github.ref }}
+  cancel-in-progress: false
+env:
+  PYTHONDONTWRITEBYTECODE: '1'
+jobs:
+  duoview-fixed-center-two-view:
+    runs-on: windows-2022
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: workspace
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: joeyhodge/UEVR
+          ref: 5ac7edc207866569334175e4ed8a7517971547f6
+          fetch-depth: 0
+          path: backend
+          persist-credentials: false
+      - name: Require the SDK source credential
+        shell: pwsh
+        env:
+          SDK_SOURCE_TOKEN: ${{ secrets.UEVR_SOURCE_TOKEN || secrets.PAT_TOKEN }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:SDK_SOURCE_TOKEN)) {
+            throw 'Add the repository Actions secret UEVR_SOURCE_TOKEN using a token from your Epic-authorized GitHub account; the default repository token cannot access this SDK.'
+          }
+          'Configured SDK source credential detected; access will be checked against the exact original repository.'
+      - name: Check out the original restricted SDK at the exact gitlink
+        uses: actions/checkout@v4
+        with:
+          repository: joeyhodge/UESDK
+          ref: 3cffbc82429b6165ceec2714f0f0d9ae48f55596
+          token: ${{ secrets.UEVR_SOURCE_TOKEN || secrets.PAT_TOKEN }}
+          path: backend/dependencies/submodules/UESDK
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: joeyhodge/uevr-frontend
+          ref: 60be4b0f9a646109fd9fdf448bacd41477234091
+          path: frontend
+          persist-credentials: false
+      - name: Verify the unchanged exact source and public dependencies
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory evidence -Force | Out-Null
+          git -C backend submodule update --init --depth 1 -- dependencies/submodules/glm dependencies/submodules/imgui dependencies/submodules/spdlog
+          if ($LASTEXITCODE -ne 0) { throw 'Pinned public submodule checkout failed' }
+          python workspace/duoview/clean_restart/verify_exact_baseline.py workspace/duoview/clean_restart/baseline.lock.json backend frontend evidence
+          if ($LASTEXITCODE -ne 0) { throw 'Exact source identity or completeness verification failed' }
+      - name: Apply exact-anchor Stage 1 fallback patch
+        shell: pwsh
+        run: |
+          python workspace/duoview/joey_stage1/apply_stage1.py backend frontend evidence
+          if ($LASTEXITCODE -ne 0) { throw 'Failed to apply guarded DuoView Stage 1 edits' }
+          python workspace/duoview/joey_stage1/verify_stage1.py backend frontend evidence
+          if ($LASTEXITCODE -ne 0) { throw 'Unexpected source changes in DuoView Stage 1' }
+      - name: Apply isolated two-view source changes
+        shell: pwsh
+        run: |
+          python workspace/duoview/joey_stage1/apply_stage234.py backend workspace/duoview
+          if ($LASTEXITCODE -ne 0) { throw 'Stage 2-4 source anchors did not match original Joey' }
+          python workspace/duoview/joey_stage1/verify_stage234.py backend frontend evidence
+          if ($LASTEXITCODE -ne 0) { throw 'Stage 2-4 violated original-source or SDK boundaries' }
+      - name: Configure independent DuoView geometric, state, and GPU WARP tests
+        shell: pwsh
+        run: |
+          cmake -S workspace/duoview -B duo_tests -G 'Visual Studio 17 2022' -A x64 *> evidence/duo-configure.log
+          $code=$LASTEXITCODE; Get-Content evidence/duo-configure.log | Select-Object -Last 50
+          if ($code -ne 0) { throw "DuoView independent tests configuration failed ($code)" }
+          cmake --build duo_tests --config Release --parallel 2 *> evidence/duo-test-build.log
+          $code=$LASTEXITCODE; Get-Content evidence/duo-test-build.log | Select-Object -Last 100
+          if ($code -ne 0) { throw "DuoView independent tests failed compilation ($code)" }
+          ctest --test-dir duo_tests -C Release --output-on-failure --no-tests=error *> evidence/duo-test-results.log
+          $code=$LASTEXITCODE; Get-Content evidence/duo-test-results.log
+          if ($code -ne 0) { throw "DuoView independent CPU/GPU tests failed ($code)" }
+      - name: Configure original compatibility tests and production backend
+        shell: pwsh
+        run: |
+          cmake -S backend -B backend/build -G 'Visual Studio 17 2022' -A x64 -DCMAKE_BUILD_TYPE=Release -DUEVR_BUILD_COMPATIBILITY_TESTS=ON *> evidence/configure.log
+          $code=$LASTEXITCODE; Get-Content evidence/configure.log | Select-Object -Last 60
+          if ($code -ne 0) { throw "Original Joey configuration failed ($code)" }
+      - name: Build every test target used by the official matching build
+        shell: pwsh
+        run: |
+          cmake --build backend/build --config Release --parallel 2 --target compatibility-policy-tests steam-frame-input-tests stock-frame-migration-tests gamepad-recovery-tests kananlib-decode-window-tests diagnostic-safety-tests prospi-camera-trace-tests prospi-camera-framing-tests prospi-celebration-framing-tests prospi-roof-visibility-tests hifi-hook-memory-tests nascar-hook-compatibility-tests input-hook-installation-tests mono-d3d11-tests mono-d3d12-tests ui-alpha-tests ui-alpha-lifecycle-tests ui-composition-tests lua-fname-binding-tests lua-context-dispatch-tests lua-controller-input-tests stalker2-native-policy-tests stalker2-native-d3d12-tests *> evidence/test-build.log
+          $code=$LASTEXITCODE; Get-Content evidence/test-build.log | Select-Object -Last 100
+          if ($code -ne 0) { throw "Original compatibility tests failed to compile ($code)" }
+      - name: Run the complete original compatibility suite
+        shell: pwsh
+        run: |
+          ctest --test-dir backend/build -C Release --output-on-failure --no-tests=error *> evidence/compatibility-tests.log
+          $code=$LASTEXITCODE; Get-Content evidence/compatibility-tests.log
+          if ($code -ne 0) { throw "Original compatibility tests failed ($code)" }
+      - name: Build original backend and auxiliary DLLs
+        shell: pwsh
+        run: |
+          cmake --build backend/build --config Release --target uevr vr-plugin-nullifier LuaVR --parallel 2 *> evidence/backend-build.log
+          $code=$LASTEXITCODE; Get-Content evidence/backend-build.log | Select-Object -Last 100
+          if ($code -ne 0) { throw "Original latest Joey backend failed to compile ($code)" }
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '6.0.x'
+      - name: Test and build matching original frontend
+        shell: pwsh
+        run: |
+          dotnet run --project frontend/tests/RenderingModes --configuration Release *> evidence/frontend-tests.log
+          $code=$LASTEXITCODE; Get-Content evidence/frontend-tests.log
+          if ($code -ne 0) { throw 'Original rendering-ID tests failed' }
+          dotnet publish frontend/UEVR/UEVR.csproj --output package --configuration Release *> evidence/frontend-build.log
+          $code=$LASTEXITCODE; Get-Content evidence/frontend-build.log | Select-Object -Last 60
+          if ($code -ne 0) { throw 'Matching original frontend failed to compile' }
+      - name: Verify final Stage 2-4 code identity and package
+        shell: pwsh
+        run: |
+          python workspace/duoview/joey_stage1/verify_stage234.py backend frontend evidence --final
+          if ($LASTEXITCODE -ne 0) { throw 'DuoView Stage 2-4 source changed during the build' }
+          Copy-Item backend/build/bin/uevr/*.dll package/
+          Copy-Item backend/build/bin/vr-plugin-nullifier/UEVRPluginNullifier.dll package/
+          Copy-Item backend/build/bin/LuaVR/LuaVR.dll package/
+          Copy-Item workspace/duoview/clean_restart/baseline.lock.json package/
+          Copy-Item evidence/exact-baseline-source.json package/
+          Copy-Item evidence/duoview-stage1-edits.json package/
+          Copy-Item evidence/duoview-stage1-source-hashes.json package/
+          Copy-Item evidence/duoview-stage234-hashes.json package/
+          @'
+          DUOVIEW FIXED-CENTER 2-VIEW EXPERIMENTAL BUILD — HEADSET BEHAVIOR UNVERIFIED.
+          Backend: exact Joey 5ac7edc207866569334175e4ed8a7517971547f6 + guarded DuoView modifications.
+          Restricted SDK unchanged: joeyhodge/UESDK 3cffbc82429b6165ceec2714f0f0d9ae48f55596.
+          Matching frontend source: 60be4b0f9a646109fd9fdf448bacd41477234091, plus ID 6.
+          Modes 0 and 5 are routed to ORIGINAL JOEY. Experimental mode ID6 is active ONLY in STALKER 2 DX12 OpenXR.
+          ID6 creates two actual UE scene views, full field periphery at 0.25x, center fovea 0.30x0.30 at 2.5x linear density.
+          Uses same Mono camera, off-axis foveal projection, DX12 raster composition and original XR submission.
+          Failure requests original Mono ID5 and still attempts current-frame original Mono XR copy.
+          IMPORTANT: a one-time shader PSO initialization may occur on first activation/resize; monitor frame pacing.
+          Experimental: Source/test/CI passing cannot prove exact game GPU producer completion or headset stability.
+          NEVER overwrite 30-minute-proven Build3! Extract this ZIP into a SEPARATE TEST DIRECTORY.
+          Stage 5 PSVR2 gaze is not implemented; fovea stays fixed center.
+          '@ | Set-Content package/READ_FIRST.txt
+          Get-ChildItem package -Recurse -File | Get-FileHash -Algorithm SHA256 | ConvertTo-Json | Set-Content evidence/package-sha256.json
+          $zip="Joey-DuoView-FixedCenter-Stage234-${{ github.run_number }}.zip"
+          Compress-Archive -Path package/* -DestinationPath $zip -Force
+          (Get-FileHash $zip -Algorithm SHA256).Hash | Set-Content "$zip.sha256"
+      - uses: actions/upload-artifact@v4
+        if: success()
+        with:
+          name: Joey-DuoView-FixedCenter-Stage234-${{ github.run_number }}
+          path: |
+            Joey-DuoView-FixedCenter-Stage234-*.zip
+            Joey-DuoView-FixedCenter-Stage234-*.zip.sha256
+          if-no-files-found: error
+          retention-days: 90
+      - name: Record public source and dependency provenance
+        if: always()
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory evidence -Force | Out-Null
+          git -C backend submodule status | Set-Content evidence/submodules.txt
+          Copy-Item workspace/duoview/clean_restart/baseline.lock.json evidence/
+          Copy-Item backend/build/Testing/Temporary/LastTest.log evidence/ -ErrorAction SilentlyContinue
+          $global:LASTEXITCODE=0
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Joey-DuoView-FixedCenter-Evidence-${{ github.run_number }}
+          path: evidence/
+          if-no-files-found: error
