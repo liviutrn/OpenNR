@@ -669,8 +669,8 @@ public:
                 mode=0; set_reason("Loaded hook signature mismatch; hooks refused"); publish_status(true); api->functions->log_error("[DuoViewJoey] Loaded hook prologue differs from the exact release; no renderer hooks installed"); return;
             }
         }
-        const std::array<uint8_t,20> copy_prologue{0x4c,0x89,0x4c,0x24,0x20,0x4c,0x89,0x44,0x24,0x18,0x89,0x54,0x24,0x10,0x55,0x53,0x56,0x57,0x41,0x54};
-        if (!readable(backend+0x1c4280,copy_prologue.size()) || std::memcmp(reinterpret_cast<void*>(backend+0x1c4280),copy_prologue.data(),copy_prologue.size())) {mode=0;set_reason("Exact copy ABI entry mismatch");publish_status(true);return;}
+        const std::array<uint8_t,20> copy_prologue{0x4c,0x89,0x4c,0x24,0x20,0x4c,0x89,0x44,0x24,0x18,0x89,0x54,0x24,0x10,0x48,0x89,0x4c,0x24,0x08,0x55};
+        if (!readable(backend+0x1e4770,copy_prologue.size()) || std::memcmp(reinterpret_cast<void*>(backend+0x1e4770),copy_prologue.data(),copy_prologue.size())) {mode=0;set_reason("Exact copy ABI entry mismatch");publish_status(true);return;}
         if (!dv::dx12::precompile_shader_cache()) {
             mode=0;
             set_reason("Compositor HLSL could not compile before renderer activation");
@@ -730,7 +730,7 @@ public:
             hook(backend+0x2ad080,&begin_hook,original_begin) &&
             hook(backend+0x3111f0,&pre_render_hook,original_pre_render) &&
             hook(backend+0x1f0f50,&frame_hook,original_frame) &&
-            hook(backend+0x1c4280,&copy_hook,original_copy) &&
+            hook(backend+0x1e4770,&copy_hook,original_copy) &&
             hook(reinterpret_cast<uintptr_t>(locate),&locate_hook,original_locate) &&
             hook(reinterpret_cast<uintptr_t>(end),&end_hook,original_end);
         if (!ok) { rollback_hooks(); mode=0; set_reason("Hook registration failed; rolled back, Joey untouched"); publish_status(true); api->functions->log_error("[DuoViewJoey] Hook transaction failed and was rolled back"); return; }
