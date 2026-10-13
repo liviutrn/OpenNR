@@ -10,6 +10,7 @@
 #include <vector>
 #include "DuoViewState.hpp"
 #include "DuoViewSubmission.hpp"
+#include "DuoViewActivation.hpp"
 #include "DuoViewD3D12.hpp"
 #include "PSVR2NativeGaze.hpp"
 #include "MonoRenderingPolicy.hpp"
@@ -31,6 +32,8 @@ std::map<uint32_t, Packet> packets;
 struct Draw { dv::FrameKey key; Optics optical; };
 thread_local std::optional<Draw> draw;
 dv::SubmissionMailbox<Packet> submissions;
+dv::ActivationGate activation_gate;
+std::atomic<int> selected_mode{};
 std::atomic<uint64_t> last_report{}, last_success{}, last_status_write{}, last_status_check{}, last_wait_report{}, present_callbacks{};
 std::atomic<uint64_t> engine_ticks{}, locate_calls{}, producer_pairs{}, render_callbacks{}, matched_packets{}, composite_queued{}, end_calls{}, submitted_layers{}, rejected_layers{}, xr_accepted{}, xr_failed{};
 std::atomic<uint32_t> output_width{}, output_height{};
@@ -60,6 +63,8 @@ void publish_status(bool force=false) {
     if (!out) return;
     out << "Mode=" << mode.load() << "\n"
         << "Hooks=" << (installed.load() ? "active" : "inactive") << "\n"
+        << "RequestedMode=" << selected_mode.load() << "\n"
+        << "FrameCopyContract=UNVERIFIED" << "\n"
         << "Reason=" << reason << "\n"
         << "OutputWidth=" << output_width.load() << "\n"
         << "OutputHeight=" << output_height.load() << "\n"
@@ -439,6 +444,8 @@ public:
         status_path=data_path/L"DuoViewJoey.status";
         status_request_path=data_path/L"DuoViewJoey.status.request";
         mode=static_cast<int>(GetPrivateProfileIntW(L"DuoView",L"Mode",0,config_.c_str()));
+        selected_mode=mode.load();
+        activation_gate.configure(mode!=0,generation.load());
         api->functions->log_info("[DuoViewJoey] Config path=%ls Mode=%d",config_.c_str(),mode.load());
         if (mode<0 || mode>3) mode=0;
         if (!mode) { set_reason("Disabled in configuration; Joey is unchanged"); publish_status(true); api->functions->log_info("[DuoViewJoey] Disabled mode 0: released Joey rendering is unchanged"); return; }
@@ -467,8 +474,29 @@ public:
                 mode=0; set_reason("Loaded hook signature mismatch; hooks refused"); publish_status(true); api->functions->log_error("[DuoViewJoey] Loaded hook prologue differs from the exact release; no renderer hooks installed"); return;
             }
         }
+        // STOP-SHIP gate: signature verification and WARP tests do not
+        // establish successful Joey source->OpenXR destination copying.
+        // Rendering an atlas before that contract is established risks
+        // removing the headset scene or corrupting engine-owned resources.
+        dv::CopyContractEvidence evidence{};
+        evidence.backend_generation=generation.load();
+        evidence.exact_binary=true;
+        if (!activation_gate.observe(evidence)) {
+            mode=0;
+            set_reason("STOP-SHIP: exact Joey DX12 copy/queue/swapchain contract unverified; no scene hooks installed");
+            publish_status(true);
+            api->functions->log_warn("[DuoViewJoey] Rendering disabled by copy-contract safety gate; Joey is unchanged");
+            return;
+        }
+        if (!dv::dx12::precompile_shader_cache()) {
+            mode=0;
+            set_reason("Compositor HLSL could not compile before renderer activation");
+            publish_status(true);
+            api->functions->log_error("[DuoViewJoey] Shader prewarm failed");
+            return;
+        }
         pending_=true;
-        set_reason("Validated binary; waiting for engine tick / OpenXR readiness");
+        set_reason("Verified scene-copy contract; waiting for OpenXR readiness");
         publish_status(true);
         api->functions->log_info("[DuoViewJoey] Backend validation passed; awaiting activation callback");
     }
@@ -569,7 +597,8 @@ public:
     }
     void on_device_reset() override {
         ++generation;
-        set_reason(installed ? "OpenXR/DX12 reset; awaiting fresh scene frames" : "Device reset; waiting for hooks");
+        activation_gate.reset(generation.load());
+        set_reason(installed ? "OpenXR/DX12 reset; retired active generation" : "Device reset; awaiting verified scene-copy contract");
         publish_status(true);
         state.retire();
         { std::scoped_lock lock(packets_mutex); packets.clear(); }
