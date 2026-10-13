@@ -31,12 +31,17 @@ def archive(lock, destination):
         for expected in (lock["backend"]["commit"], lock["backend"]["sdk_commit"]):
             if expected not in hashes:
                 raise RuntimeError(f"Official DLL does not contain expected source identity: {expected}")
+        if b"Mono (Experimental)" not in backend:
+            raise RuntimeError("The pinned official DIBR+Mono backend lacks its Mono mode label")
     with zipfile.ZipFile(destination / "UEVR.zip") as package:
         if package.testzip() is not None:
             raise RuntimeError("Official normal package has a corrupt entry")
-        if hashlib.sha256(package.read("UEVRBackend.dll")).hexdigest() != lock["official_assets"][3]["sha256"]:
+        normal = package.read("UEVRBackend.dll")
+        if hashlib.sha256(normal).hexdigest() != lock["official_assets"][3]["sha256"]:
             raise RuntimeError("Packaged normal DLL differs from the standalone official asset")
-    report = {"assets": verified, "dibr_embedded_commit_strings": hashes, "headset_test": "User reported smooth DIBR; no new runtime test performed"}
+        if b"Mono (Experimental)" in normal:
+            raise RuntimeError("Normal release mode inventory changed; recheck source before changing baseline")
+    report = {"assets": verified, "dibr_embedded_commit_strings": hashes, "release_variant_mono_labels": {"DIBRMONOUEVR.zip": True, "UEVR.zip": False}, "headset_test": "User reported smooth DIBR; no new runtime test performed"}
     (destination / "verified-release.json").write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     print(json.dumps(report, indent=2))
 

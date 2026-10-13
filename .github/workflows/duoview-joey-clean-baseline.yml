@@ -10,6 +10,65 @@ concurrency:
   group: duoview-clean-baseline-${{ github.ref }}
   cancel-in-progress: false
 jobs:
+  original-offline-tests:
+    runs-on: windows-2022
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: workspace
+      - uses: actions/checkout@v4
+        with:
+          repository: joeyhodge/UEVR
+          ref: 5ac7edc207866569334175e4ed8a7517971547f6
+          path: backend
+      - uses: actions/checkout@v4
+        with:
+          repository: nlohmann/json
+          ref: bc889afb4c5bf1c0d8ee29ef35eaaf4c8bef8a5d
+          path: json
+      - uses: actions/checkout@v4
+        with:
+          repository: KhronosGroup/OpenXR-SDK
+          ref: 458984d7f59d1ae6dc1b597d94b02e4f7132eaba
+          path: openxr
+      - name: Build original Joey tests independently of private SDK tests
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory evidence -Force | Out-Null
+          cmake -S workspace/duoview/clean_restart/offline -B offline-build -G 'Visual Studio 17 2022' -A x64 "-DJOEY_SOURCE=$env:GITHUB_WORKSPACE/backend" "-DJSON_SOURCE=$env:GITHUB_WORKSPACE/json" "-DOPENXR_SOURCE=$env:GITHUB_WORKSPACE/openxr" *> evidence/offline-configure.log
+          $code=$LASTEXITCODE; Get-Content evidence/offline-configure.log
+          if ($code -ne 0) { throw "Offline configure failed ($code)" }
+          cmake --build offline-build --config Release --parallel 2 *> evidence/offline-build.log
+          $code=$LASTEXITCODE; Get-Content evidence/offline-build.log | Select-Object -Last 60
+          if ($code -ne 0) { throw "Original tests failed to compile ($code)" }
+          ctest --test-dir offline-build -C Release --output-on-failure --no-tests=error *> evidence/offline-tests.log
+          $code=$LASTEXITCODE; Get-Content evidence/offline-tests.log
+          if ($code -ne 0) { throw "Original offline tests failed ($code)" }
+          git -C backend diff --exit-code HEAD
+          if ($LASTEXITCODE -ne 0) { throw 'Offline harness changed original Joey source' }
+      - uses: actions/checkout@v4
+        with:
+          repository: joeyhodge/uevr-frontend
+          ref: 60be4b0f9a646109fd9fdf448bacd41477234091
+          path: frontend
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '6.0.x'
+      - name: Verify original matching injector rendering IDs
+        shell: pwsh
+        run: |
+          dotnet run --project frontend/tests/RenderingModes --configuration Release *> evidence/frontend-tests.log
+          $code=$LASTEXITCODE; Get-Content evidence/frontend-tests.log
+          if ($code -ne 0) { throw 'Original frontend rendering ID tests failed' }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Joey-original-offline-test-evidence-${{ github.run_number }}
+          path: |
+            evidence/
+            offline-build/Testing/Temporary/LastTest.log
+          if-no-files-found: error
   official-release-evidence:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -61,18 +120,9 @@ jobs:
       - name: Configure unchanged Joey with diagnostic public SDK
         shell: pwsh
         run: |
-          cmake -S backend -B backend/build -G 'Visual Studio 17 2022' -A x64 -DCMAKE_BUILD_TYPE=Release -DUEVR_BUILD_COMPATIBILITY_TESTS=ON *> evidence/configure.log
+          cmake -S backend -B backend/build -G 'Visual Studio 17 2022' -A x64 -DCMAKE_BUILD_TYPE=Release -DUEVR_BUILD_COMPATIBILITY_TESTS=OFF *> evidence/configure.log
           $code=$LASTEXITCODE; Get-Content evidence/configure.log | Select-Object -Last 50
           if ($code -ne 0) { throw "Current Joey diagnostic configuration failed ($code)" }
-      - name: Build original Mono and STALKER 2 offline tests
-        shell: pwsh
-        run: |
-          cmake --build backend/build --config Release --target mono-d3d11-tests mono-d3d12-tests stalker2-native-policy-tests stalker2-native-d3d12-tests --parallel 2 *> evidence/offline-build.log
-          $code=$LASTEXITCODE; Get-Content evidence/offline-build.log | Select-Object -Last 60
-          if ($code -ne 0) { throw "Original Joey tests failed to compile ($code)" }
-          ctest --test-dir backend/build -C Release -R '^(mono-d3d11-tests|mono-d3d12-tests|stalker2-native-policy-tests|stalker2-native-d3d12-tests)$' --output-on-failure --no-tests=error *> evidence/offline-tests.log
-          $code=$LASTEXITCODE; Get-Content evidence/offline-tests.log
-          if ($code -ne 0) { throw "Original Joey offline tests failed ($code)" }
       - name: Compile complete unchanged Joey backend to expose real SDK gaps
         shell: pwsh
         run: |

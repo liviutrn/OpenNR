@@ -29,6 +29,14 @@ def audit(lock, backend, sdk, output):
     hashes = {}
     missing = {}
     sdk_includes = {}
+    missing_sdk_test_sources = []
+    for name in re.findall(r'"(dependencies/submodules/UESDK/[^"\n]+)"', (backend / "CMakeLists.txt").read_text(encoding="utf-8")):
+        relative = Path(name).relative_to("dependencies/submodules/UESDK")
+        if relative.parts[0] == "tests" and not (sdk / relative).is_file():
+            missing_sdk_test_sources.append(str(relative).replace("\\", "/"))
+    policy = (backend / "src/mods/vr/MonoRenderingPolicy.hpp").read_text(encoding="utf-8")
+    if not re.search(r"method_id\s*=\s*5\s*;", policy):
+        raise RuntimeError("Expected original Joey Mono ID 5 is absent")
     for name in git(backend, "ls-files").splitlines():
         path = backend / name
         if not path.is_file():
@@ -48,6 +56,8 @@ def audit(lock, backend, sdk, output):
         "backend_tracked_source_unmodified": True,
         "sdk_tracked_source_unmodified": True,
         "missing_direct_sdk_headers": dict(sorted(missing.items())),
+        "missing_sdk_test_sources": sorted(set(missing_sdk_test_sources)),
+        "original_mono_method_id": 5,
         "direct_sdk_header_count": len(sdk_includes),
         "full_backend_compatibility_verified": False,
         "headset_stability_verified": False,

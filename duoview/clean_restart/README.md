@@ -26,6 +26,14 @@ The latest release was rechecked on October 13, 2026. Matching original
 frontend branch `uevr-dibr-optin-safe` resolves to `60be4b0...`; it is pinned
 without changing its rendering IDs. Native Stereo remains 0 and Mono 5.
 
+The normal release source at `387ccb...` lists only Native Stereo (0),
+Synchronized Sequential (1), and Alternating/AFR (2). It has no Mono mode.
+Direct DLL inspection also finds the Mono label only in the DIBR+Mono
+package. The Mono branch's `non_dibr_choices` describes a potential build
+option; it is not evidence that the normal release contains Mono.
+The chosen baseline includes DIBR capability but DuoView extends **Mono**,
+which does not run DIBR depth reconstruction. The user accepted this choice.
+
 ## Baseline blocker and diagnostic build
 
 `joeyhodge/UESDK` remains inaccessible (GitHub connector HTTP 404). The exact
@@ -44,14 +52,24 @@ The CI workflow:
 3. Uses the explicitly labelled public SDK **for compatibility diagnostics**,
    records missing headers and hashes every tracked backend file.
 4. Builds and runs original Joey Mono DX11/DX12 WARP and STALKER 2 policy/
-   DX12 WARP tests. These test the existing graphics/lifetime policies; they
-   do not exercise the full Unreal injection or the headset.
+   DX12 WARP tests in an independent harness, plus matching frontend ID
+   tests. These test existing graphics/lifetime policies; they do not
+   exercise full Unreal injection or the headset. The full upstream test
+   suite remains blocked by missing SDK test sources.
 5. Attempts a complete current backend build to collect compiler evidence.
    An SDK failure fails the job; missing interfaces are not silently stubbed
    or disabled. Matching frontend/package build is gated on backend success.
 6. Saves exact current source snapshots, dependency IDs and compiler logs,
    including after a failed build. A successful diagnostic package would
    still be labelled as adapted SDK, with no headset stability claim.
+
+First run `38434181805` verified official release evidence. Its source job
+failed at CMake generation because the public SDK also lacks
+`tests/DiscoveryValidationTests.cpp` (and `LayoutSafetyTests.cpp` is another
+required source). The independent harness avoids changing Joey source;
+the full diagnostic backend configure uses the production default
+`UEVR_BUILD_COMPATIBILITY_TESTS=OFF` to reach actual backend compilation.
+This switches off test target generation only, not runtime compatibility.
 
 ## Frozen historical evidence
 
