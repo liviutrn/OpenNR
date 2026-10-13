@@ -66,6 +66,7 @@ jobs:
           New-Item package/Plugin -ItemType Directory -Force
           Copy-Item plugin-build/Release/DuoViewJoey.dll package/Plugin/
           Copy-Item workspace/duoview/joey_plugin/DuoViewJoey.ini package/Plugin/
+          Copy-Item workspace/duoview/joey_plugin/DuoViewJoeyUI.lua package/Plugin/
           Copy-Item workspace/duoview/joey_plugin/Install-DuoView.ps1 package/
           Copy-Item workspace/duoview/joey_plugin/README.md package/README.md
           Copy-Item headers/LICENSE package/UEVR-LICENSE.txt
