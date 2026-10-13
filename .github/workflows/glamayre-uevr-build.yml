@@ -1,8 +1,8 @@
-name: Glamarye UEVR Windows Build
+name: Glamarye UEVR Windows Build v02
 on:
   push:
     branches:
-      - "experiments/glamayre-sharpen-uevr-v01"
+      - "experiments/glamayre-sharpen-uevr-v02-openxr"
     paths:
       - "glamayre-uevr/**"
       - ".github/workflows/glamayre-uevr-build.yml"
@@ -38,6 +38,6 @@ jobs:
           Copy-Item glamayre-uevr/LICENSE-GLAMARYE.txt glamayre-uevr/package/
       - uses: actions/upload-artifact@v4
         with:
-          name: Glamarye-Sharpen-UEVR-v01
+          name: Glamarye-Sharpen-UEVR-v02-OpenXR
           path: glamayre-uevr/package/
           retention-days: 30
