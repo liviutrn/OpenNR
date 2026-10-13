@@ -1,7 +1,7 @@
-name: DuoView proven prototype stabilization
+name: DuoView proven renderer frame pacing v14
 on:
   push:
-    branches: [experiments/duoview-working-prototype-stability-v13]
+    branches: [experiments/duoview-proven-frame-pacing-v14]
     paths: ['duoview/**', '!duoview/*.md', 'duoview/TESTING.md', '.github/workflows/duoview-public-backend.yml']
   workflow_dispatch:
 permissions:
@@ -42,6 +42,12 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Working prototype stabilization failed' }
           python -c "from pathlib import Path; s=Path('backend/src/mods/vr/D3D12Component.cpp').read_text(); b=s.split('void D3D12Component::on_post_present(VR* vr) {')[1].split('void D3D12Component::on_reset(')[0]; assert 'return;' not in b and 'm_graphics_memory->Commit(command_queue);' in b and '!defer_backbuffer_clear' in b; print('Verified actual patched DX12 Present source')"
           if ($LASTEXITCODE -ne 0) { throw 'Actual Present source validation failed' }
+          python workspace/duoview/test_frame_pacing_v14.py
+          if ($LASTEXITCODE -ne 0) { throw 'Same-frame pose/family frame gate regression failed' }
+          python workspace/duoview/apply_frame_pacing_v14.py backend
+          if ($LASTEXITCODE -ne 0) { throw 'v14 frame pacing source patch failed' }
+          python -c "from pathlib import Path; s=Path('backend/src/mods/vr/runtimes/OpenXR.cpp').read_text(); assert 'evidence.generation != vr->mono_generation() || evidence.pose_frame != frame_count' in s and '[DuoView] Mono frame rejected:' in s and 'entry.projection_frame == frame &&' not in s.split('void OpenXR::note_mono_main_family(')[1].split('bool OpenXR::has_mono_frame(')[0];print('Verified actual v14 production OpenXR source')"
+          if ($LASTEXITCODE -ne 0) { throw 'Actual v14 source validation failed' }
           git -C backend diff --check
           if ($LASTEXITCODE -ne 0) { throw 'Patch whitespace check failed' }
       - name: Portable policies and production DX12 WARP compositor
@@ -89,7 +95,7 @@ jobs:
           Copy-Item backend/build/bin/LuaVR/LuaVR.dll package/
           'Source: https://github.com/liviutrn/OpenNR/tree/${{ github.sha }}' | Set-Content package/BUILD_SOURCE.txt
           if (Test-Path workspace/duoview/TESTING.md) { Copy-Item workspace/duoview/TESTING.md package/ }
-          Copy-Item workspace/duoview/STABILITY_V13.md package/STABILITY_V13.md
+          Copy-Item workspace/duoview/FRAME_PACING_V14.md package/FRAME_PACING_V14.md
           Copy-Item backend/LICENSE package/UEVR-LICENSE.txt
           Get-ChildItem package -Recurse -File | Get-FileHash -Algorithm SHA256 | Format-Table -AutoSize | Out-String -Width 300 | Set-Content package/HASHES.txt
       - name: Upload complete experimental injector
@@ -99,25 +105,28 @@ jobs:
           path: package/
           if-no-files-found: error
           retention-days: 30
-      - name: Publish Injector-5 stabilization candidate
-        if: ${{ success() && github.ref == 'refs/heads/experiments/duoview-working-prototype-stability-v13' }}
+      - name: Publish validated v14 frame pacing candidate
+        if: ${{ success() && github.ref == 'refs/heads/experiments/duoview-proven-frame-pacing-v14' }}
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          Compress-Archive -Path package/* -DestinationPath DuoView-Working-Prototype-Stability.zip
-          $tag='duoview-working-prototype-stability-v13-build-${{ github.run_number }}'
+          Compress-Archive -Path package/* -DestinationPath DuoView-Frame-Pacing-v14.zip
+          $tag='duoview-proven-frame-pacing-v14-build-${{ github.run_number }}'
           @'
-          DuoView user-tested Injector-5 renderer preserved, with one targeted
-          DX12 post-present allocation-retirement correction.
-          All original shared-pose real UE views, foveated compositor and PSVR2
-          gaze remain source-identical. Does not use Build 69's external hooks.
-          Windows CI passing is a controlled release gate, not proof of smooth
-          headset behavior or boot stability. Read STABILITY_V13.md.
+          DuoView Injector-5 foveation and PSVR2 eye tracking are confirmed
+          in STALKER 2 by the user. Build v13 still caused SteamVR scene dropouts.
+          Retains v13 DX12 post-present housekeeping fix and repairs duplicate
+          OpenXR pose-update clearing of same-frame view/projection evidence.
+          Decouples main-view family/projection callback ordering and adds
+          rate-limited missing-frame proof diagnostics.
+          No changes to foveation geometry, gaze, GPU compositor, or headset
+          frame timing. Runtime smoothness remains to be checked.
+          Read FRAME_PACING_V14.md.
           Source: ${{ github.sha }}
           Windows CI: https://github.com/liviutrn/OpenNR/actions/runs/${{ github.run_id }}
           '@ | Set-Content release-notes.md
-          gh release create $tag DuoView-Working-Prototype-Stability.zip --repo '${{ github.repository }}' --target '${{ github.sha }}' --title "DuoView proven renderer stabilization — build ${{ github.run_number }}" --prerelease --notes-file release-notes.md
+          gh release create $tag DuoView-Frame-Pacing-v14.zip --repo '${{ github.repository }}' --target '${{ github.sha }}' --title "DuoView proven renderer frame pacing v14 — build ${{ github.run_number }}" --prerelease --notes-file release-notes.md
           if ($LASTEXITCODE -ne 0) { throw 'Release publication failed' }
       - name: Diagnostics and applied source
         if: always()
