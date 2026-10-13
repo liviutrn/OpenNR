@@ -1,6 +1,17 @@
-# Glamarye Intelligent Sharpen for UEVR — experimental v0.3 (Joey OpenXR/DX12)
+# Glamarye Intelligent Sharpen for UEVR — experimental v0.4 (Joey OpenXR/DX12)
 
 **Status:** Windows GPU tests are automated; **actual STALKER 2 + Joey + PSVR2 runtime is unverified**. This is a new OpenXR game-scene integration, not a proven in-headset release.
+
+## What's independently tested in v0.4
+
+- The original shader compiles with warning-as-error settings on Windows.
+- Hardware DX12 WARP postprocessing modifies pixels on UNORM, BGRA8 sRGB and typeless sRGB.
+- The side-by-side stereo boundary is checked for cross-eye pixel contamination.
+- A red diagnostic grid is emitted and verified in an actual GPU readback.
+- **New** simulated OpenXR acquire/release/EndFrame/destroy test runs the *same source callbacks* as production. It confirms that only headset-size scene-color images are eligible, UI-sized images are rejected, work is queued and per-image resources are cleaned up.
+- **New** simulated early-device-unavailable and transient swapchain-enumeration failures now retry correctly.
+
+**These are software tests, not headset tests.** The OpenXR function detours still require confirmation with Joey's actual embedded wrappers and SteamVR runtime. A working UI and successful mock test do not prove live interception. The Lua diagnostic `xrFrames` must increase, and the optional red grid must be visible inside the PSVR2 before sharpening effectiveness can be evaluated.
 
 ## What changed since v0.2
 
@@ -23,7 +34,7 @@ In the public UEVR DX12 implementation, `D3D12Component::OpenXR::copy` submits s
 ## Installation
 
 1. Close STALKER 2 and UEVR.
-2. Remove the old **v0.2** `plugins/GlamaryeSharpenUEVR.dll` and `scripts/glamayre_sharpen.lua` first.
+2. Remove the old **v0.3** `plugins/GlamaryeSharpenUEVR.dll` and `scripts/glamayre_sharpen.lua` first.
 3. Extract the new ZIP to the game's UEVR profile: `%APPDATA%\UnrealVRMod\<game-executable-name>\`.
 4. Keep folders: `plugins/GlamaryeSharpenUEVR.dll`, `scripts/glamayre_sharpen.lua`.
 5. Start STALKER 2, choose **UEVR OpenXR + DX12** with your Joey build, and inject.
