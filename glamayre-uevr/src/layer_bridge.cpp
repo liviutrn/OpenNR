@@ -28,3 +28,18 @@ extern "C" unsigned long long glamayre_xr_dimension_count(){return status(4);}
 extern "C" unsigned long long glamayre_xr_eligible_count(){return status(5);}
 extern "C" unsigned long long glamayre_xr_processed_count(){return status(5);}
 extern "C" unsigned long long glamayre_xr_enum_failed(){return status(7);}
+
+namespace {
+using GpuTimingFn = void(__cdecl*)(uint64_t*,uint32_t);
+uint64_t timingSnapshot(unsigned field) {
+    HMODULE m=GetModuleHandleW(L"GlamaryeOpenXRLayer.dll");
+    if(!m) return 0;
+    auto fn=reinterpret_cast<GpuTimingFn>(GetProcAddress(m,"glamayre_layer_get_gpu_timing"));
+    if(!fn) return 0;
+    uint64_t values[2]{};
+    fn(values,2);
+    return field<2?values[field]:0;
+}
+}
+extern "C" unsigned long long glamayre_xr_gpu_us(){ return timingSnapshot(0); }
+extern "C" unsigned long long glamayre_xr_gpu_samples(){ return timingSnapshot(1); }
