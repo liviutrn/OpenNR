@@ -26,6 +26,13 @@ extern "C" void glamayre_xr_tick(const UEVR_PluginInitializeParam* api);
 extern "C" void glamayre_xr_reset_buffers();
 extern "C" unsigned long long glamayre_xr_processed_count();
 extern "C" bool glamayre_xr_hooks_ready();
+extern "C" unsigned long long glamayre_xr_acquire_count();
+extern "C" unsigned long long glamayre_xr_release_count();
+extern "C" unsigned long long glamayre_xr_endframe_count();
+extern "C" unsigned long long glamayre_xr_projection_count();
+extern "C" unsigned long long glamayre_xr_dimension_count();
+extern "C" unsigned long long glamayre_xr_eligible_count();
+extern "C" unsigned long long glamayre_xr_enum_failed();
 
 namespace {
 const UEVR_PluginInitializeParam* g_api = nullptr;
@@ -115,13 +122,22 @@ void onPresent() {
     unsigned long long now = GetTickCount64();
     if (now - g_lastReport < 400) return;
     g_lastReport = now;
-    char data[320];
+    char data[600];
     snprintf(data, sizeof(data),
-        "enabled=%d;big=%d;edges=%d;split=%d;strength=%.3f;limit=%.3f;bias=%.3f;gpuError=%d;xrHook=%d;xrFrames=%llu",
+        "enabled=%d;big=%d;edges=%d;split=%d;strength=%.3f;limit=%.3f;bias=%.3f;gpuError=%d;xrHook=%d;xrFrames=%llu;xrAcquire=%llu;xrRelease=%llu;xrEnd=%llu;xrProj=%llu;xrSize=%llu;xrEligible=%llu;xrEnumError=%llu",
         int(g_enabled.load()), int(g_big.load()), int(g_edges.load()), int(g_split.load()),
         double(g_strength.load()), double(g_maxChange.load()), double(g_bias.load()),
-        int(g_gpuError.load()), int(glamayre_xr_hooks_ready()), glamayre_xr_processed_count());
+        int(g_gpuError.load()), int(glamayre_xr_hooks_ready()), glamayre_xr_processed_count(),
+        glamayre_xr_acquire_count(), glamayre_xr_release_count(),
+        glamayre_xr_endframe_count(), glamayre_xr_projection_count(),
+        glamayre_xr_dimension_count(), glamayre_xr_eligible_count(),
+        glamayre_xr_enum_failed());
     g_api->functions->dispatch_lua_event("glamayre_sharpen.status", data);
+    static unsigned long long lastLog = 0;
+    if (now - lastLog >= 10000 && g_api->functions->log_info) {
+        lastLog = now;
+        g_api->functions->log_info("[Glamarye v03] %s", data);
+    }
 }
 struct Pass {
     D3D12_RESOURCE_DESC desc{};
@@ -398,7 +414,7 @@ extern "C" __declspec(dllexport) bool uevr_plugin_initialize(const UEVR_PluginIn
         return false;
     }
     g_callbacksRegistered = true;
-    if (api->functions->log_info) api->functions->log_info("Glamarye UEVR v0.2 loaded (OpenXR projection swapchain DX12)");
+    if (api->functions->log_info) api->functions->log_info("Glamarye UEVR v0.3 loaded (Joey OpenXR HMD scene DX12 diagnostics)");
     return true;
 }
 BOOL WINAPI DllMain(HINSTANCE module, DWORD reason, void*) {
