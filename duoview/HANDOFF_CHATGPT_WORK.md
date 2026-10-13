@@ -1,3 +1,11 @@
+# Latest status — Native bootstrap required; DuoView visuals work
+
+The user's 2026-10-13 10:36 report supersedes the profile-reset-only conclusion below. Injector-5 can be entered through **Native Stereo → DuoView Mono**; direct requested-mode startup remains unreliable and another Present E_ABORT crash occurred. Ordinary Mono is black. Periodic hitches affect all tested modes, while fovea, peripheral reduction, PSVR2 gaze and increased foveal resolution are reported working great.
+
+Continue from **[STABILITY_HANDOFF_2026-10-13.md](STABILITY_HANDOFF_2026-10-13.md)**. Preserve the original source-integrated renderer. Priorities are measured shared frame pacing, verified cold Native bootstrap, ordinary Mono indexing/frame validity, transition cleanup and post-present memory housekeeping. The v08 Joey plugin is untested fallback work, not the user's successful package. No new functional fix was built after this report.
+
+---
+
 # Current runtime status — Injector-5 launches after profile reset
 
 On 2026-10-13 the user clarified that **the original DuoView-Experimental-Windows-Injector-5 from the supplied handoff now launches and appears to work after deleting the old STALKER UEVR profile**. The immediate crash-recovery priority is superseded. Keep the original tested build as the runtime baseline; do not replace it merely because its backend differs from Joey.
