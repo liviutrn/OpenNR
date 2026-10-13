@@ -1,0 +1,116 @@
+name: DuoView exact-source Mono-only control
+on:
+  push:
+    branches: [experiments/duoview-exact-public-mono-control]
+    paths: ['duoview/**', '.github/workflows/duoview-mono-control.yml']
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: duo-public-mono-control-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  windows-mono-control:
+    runs-on: windows-2022
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: workspace
+      - uses: actions/checkout@v4
+        with:
+          repository: praydog/UEVR
+          ref: 4ee5c6b6162dee2291fc75f9dfc57667f6d45a2d
+          path: backend
+      - uses: actions/checkout@v4
+        with:
+          repository: elliotttate/UESDK-RenderDoc
+          ref: 418729025bad57b094bf6b2e2b55734454c97de6
+          path: backend/dependencies/submodules/UESDK
+      - name: Exact pinned public source + Mono ONLY
+        shell: pwsh
+        run: |
+          git -C backend submodule update --init --depth 1 -- dependencies/submodules/glm dependencies/submodules/imgui dependencies/submodules/spdlog
+          if ($LASTEXITCODE -ne 0) { throw 'Submodules failed' }
+          python workspace/duoview/apply_public_mono.py backend
+          if ($LASTEXITCODE -ne 0) { throw 'Mono port failed' }
+          python -c "from pathlib import Path; s=Path('backend/src/mods/vr/VR.cpp').read_text(); assert 'service_mono_transition_present' in s and 'DUOVIEW' not in s.upper(); assert not (Path('backend/src/mods/vr/MonoD3D12.hpp').read_text().find('DuoView')>=0); print('Verified Mono port exists, DuoView excluded')"
+          if ($LASTEXITCODE -ne 0) { throw 'Mono-only contract failed' }
+          git -C backend diff --check
+          if ($LASTEXITCODE -ne 0) { throw 'Source whitespace validation failed' }
+      - name: Configure and compile exact Mono-only backend
+        shell: pwsh
+        run: |
+          cmake -S backend -B backend/build -G 'Visual Studio 17 2022' -A x64 -DCMAKE_BUILD_TYPE=Release *> configure.log
+          $code=$LASTEXITCODE; Get-Content configure.log | Select-Object -Last 40
+          if ($code -ne 0) { throw "Configure failed ($code)" }
+          cmake --build backend/build --config Release --target uevr vr-plugin-nullifier LuaVR --parallel 2 *> build.log
+          $code=$LASTEXITCODE; Get-Content build.log | Select-Object -Last 120
+          if ($code -ne 0) { throw "Mono-only backend compilation failed ($code)" }
+      - uses: actions/checkout@v4
+        with:
+          repository: joeyhodge/uevr-frontend
+          ref: 60be4b0f9a646109fd9fdf448bacd41477234091
+          path: frontend
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '6.0.x'
+      - name: Build the matching Mono-only frontend and package
+        shell: pwsh
+        run: |
+          $p='frontend/UEVR/MainWindow.xaml.cs'
+          $s=Get-Content $p -Raw
+          $old='RenderingModeOptions.Create(supportsDibr: true)'
+          if ($s.Split($old).Count -ne 2) { throw 'Unexpected frontend source' }
+          $s=$s.Replace($old,'RenderingModeOptions.Create(supportsDibr: false)')
+          Set-Content $p $s
+          dotnet run --project frontend/tests/RenderingModes --configuration Release
+          if ($LASTEXITCODE -ne 0) { throw 'Frontend ID tests failed' }
+          dotnet publish frontend/UEVR/UEVR.csproj --output package --configuration Release --self-contained true
+          if ($LASTEXITCODE -ne 0) { throw 'Frontend compilation failed' }
+          Copy-Item backend/build/bin/uevr/* package/
+          Copy-Item backend/build/bin/vr-plugin-nullifier/UEVRPluginNullifier.dll package/
+          Copy-Item backend/build/bin/LuaVR/LuaVR.dll package/
+          Copy-Item workspace/duoview/MONO_ONLY_CONTROL.md package/
+          Copy-Item backend/LICENSE package/UEVR-LICENSE.txt
+          'Backend: praydog/UEVR@4ee5c6b6162dee2291fc75f9dfc57667f6d45a2d (Aug 30, 2026)' | Set-Content package/BASELINE_SOURCE.txt
+          'Mono port: apply_public_mono.py only (Joey algorithm reference from Sep 26, 2026)' | Add-Content package/BASELINE_SOURCE.txt
+          'DuoView modified rendering: NOT included' | Add-Content package/BASELINE_SOURCE.txt
+          'CI source: https://github.com/${{ github.repository }}/tree/${{ github.sha }}' | Add-Content package/BASELINE_SOURCE.txt
+          Get-ChildItem package -Recurse -File | Get-FileHash -Algorithm SHA256 |
+            Format-Table -AutoSize | Out-String -Width 300 | Set-Content package/HASHES.txt
+          if (!(Test-Path package/UEVRBackend.dll) -or !(Test-Path package/UEVRInjector.exe)) {
+            throw 'Missing baseline executable/backend'
+          }
+      - name: Publish exact-source Mono-only control
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          Compress-Archive -Path package/* -DestinationPath Mono-Only-August-Public-Baseline.zip
+          $tag='duoview-mono-only-control-build-${{ github.run_number }}'
+          @'
+          Exact Mono-only control for DuoView A/B tests.
+          Original source: praydog/UEVR Aug 30, 2026 @ 4ee5c6b6162dee2291fc75f9dfc57667f6d45a2d
+          UESDK: 418729025bad57b094bf6b2e2b55734454c97de6
+          Joey Mono port ONLY; no DuoView foveation and no v13/v14 patches.
+          Not an official Joey release.
+          Test Native Stereo (0) and Mono (5) separately, compare SteamVR background drops.
+          See MONO_ONLY_CONTROL.md inside ZIP.
+          '@ | Set-Content release-notes.md
+          gh release create $tag Mono-Only-August-Public-Baseline.zip --repo '${{ github.repository }}' --target '${{ github.sha }}' --title "UEVR exact August-source Mono-only control - build ${{ github.run_number }}" --prerelease --notes-file release-notes.md
+          if ($LASTEXITCODE -ne 0) { throw 'Publishing Mono control failed' }
+      - name: Save compiler evidence
+        if: always()
+        shell: pwsh
+        run: |
+          git -C backend diff --binary | Set-Content applied-mono-only.patch
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: DuoView-Mono-only-control-logs-${{ github.run_number }}
+          path: |
+            configure.log
+            build.log
+            applied-mono-only.patch
+          if-no-files-found: warn
