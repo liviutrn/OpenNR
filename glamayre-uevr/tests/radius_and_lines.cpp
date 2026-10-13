@@ -28,7 +28,7 @@ static void set(const char* key,float value) {
 }
 struct Mode {
     const char* name;
-    float small,big,extra,ultra;
+    float smallLevel,bigLevel,extraLevel,ultraLevel;
     bool protectEdges;
     float thin;
 };
@@ -127,8 +127,8 @@ int main(){
             D3D12_RECT line{step,y,LONG(W),y+1};
             cmd->ClearRenderTargetView(rtv,jaggyColor,1,&line);
         }
-        set("small",m.small);set("bigStrength",m.big);set("extra",m.extra);
-        set("ultra",m.ultra);set("edges",m.protectEdges?1:0);set("thin",m.thin);
+        set("small",m.smallLevel);set("bigStrength",m.bigLevel);set("extra",m.extraLevel);
+        set("ultra",m.ultraLevel);set("edges",m.protectEdges?1:0);set("thin",m.thin);
         if(k>0 && !record(cmd.Get(),rt.Get(),&rtv,false)){
             fprintf(stderr,"Shader refused %s\n",m.name);return 2;
         }
