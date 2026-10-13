@@ -115,7 +115,6 @@ float3 SharpenScale(float2 uv, float3 c, float radius, float amount,
 // opposite sides. At the same time require meaningful center-vs-side contrast.
 // This is optional and separate from original Glamarye jagged edge protection.
 float ThinLineMask(float2 uv, float3 c) {
-    if (thinProtection <= 0.00001) return 0.0;
     float3 left  = ReadAt(uv,float2(-1,0));
     float3 right = ReadAt(uv,float2( 1,0));
     float3 up    = ReadAt(uv,float2(0,-1));
@@ -145,7 +144,9 @@ float4 PSMain(VSOut input) : SV_Target {
         extraStrength<=0.00001 && ultraStrength<=0.00001)
         return original;
     float3 c=DecodeColour(original.rgb);
-    float thinMask=ThinLineMask(uv,c);
+    float thinMask=0.0;
+    if(thinProtection>0.00001)
+        thinMask=ThinLineMask(uv,c);
     float3 sum=0;
     if (smallStrength>0.00001)
         sum+=SharpenScale(uv,c,0.5,smallStrength,false,3.5,thinMask);
