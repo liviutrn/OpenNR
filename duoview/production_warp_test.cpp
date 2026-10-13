@@ -57,6 +57,14 @@ int main() try {
     transition(cmd.Get(),atlas.Get(),D3D12_RESOURCE_STATE_COPY_DEST,D3D12_RESOURCE_STATE_RENDER_TARGET);
     uevr::duoview::FrameConfig frame{{1,1},*layout,{.5f,.5f},{},1};frame.settings.feather_fraction=.12f;
     uevr::duoview::dx12::Compositor compositor;
+    // Force shader compilation and D3D12 pipeline creation to occur before
+    // any compositor record/draw. Cold record is forbidden in production.
+    if (compositor.record(device.Get(),cmd.Get(),atlas.Get(),stereo.Get(),
+            D3D12_RESOURCE_STATE_RENDER_TARGET,frame))
+        throw std::runtime_error("Cold compositor recorded before prewarm");
+    if (!uevr::duoview::dx12::precompile_shader_cache() ||
+        !compositor.prewarm(device.Get(),32,32,false))
+        throw std::runtime_error("DuoView compositor prewarm failed: " + compositor.error());
     if (compositor.record(device.Get(),cmd.Get(),atlas.Get(),bad.Get(),D3D12_RESOURCE_STATE_RENDER_TARGET,frame)) throw std::runtime_error("Invalid destination accepted");
     if (compositor.recorded_commands()) throw std::runtime_error("Rejected input recorded GPU commands");
     UINT64 frequency{};check(queue->GetTimestampFrequency(&frequency));
