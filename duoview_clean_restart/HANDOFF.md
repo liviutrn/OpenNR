@@ -39,7 +39,7 @@ The commit `5ac7...` has Git submodule `dependencies/submodules/UESDK` pinned to
 **Do NOT just substitute the July 2026 public SDK to make builds pass**; that is the key mistake in the old project. We must find a source-compatible public SDK baseline or independently verify each needed interface/header, and then recompile/test the *UNMODIFIED recent Joey* before adding DuoView.
 
 ### Phase 0 — Baseline provenance and reproducibility
-- Use the official *user-tested preserved* Joey DLL as the byte-for-byte control. Compare exact DLL SHA and release files, noting non-DIBR/DIBR variants explicitly. The packaged 16,240,640-byte `UEVRBackend.dll` may originate from an official DIBR artifact; verify by **SHA, not filename/size alone**.
+- Use the official *user-tested preserved* Joey DLL as the byte-for-byte control. Compare exact DLL SHA and release files, noting non-DIBR/DIBR variants explicitly. **EXACT CI VERIFIED:** The user-tested 16,240,640-byte `UEVRBackend.dll` was actually the official **`DIBRUEVRBackend.dll` renamed**. The official October 11 release DIBR DLL SHA256 is `19e91cc8c22a02e2a97996e1523604ab202b4540d954ebc95e07e6b233970966`, an exact match to the user's smooth baseline. The official standard `UEVRBackend.dll` instead hashes `ecdaea840b249ac1894775e2ec5667307b2adcad545843660e5d3edad350e08c` and is *not* the tested smooth binary. Proven by https://github.com/liviutrn/OpenNR/actions/runs/38434717102. This distinction is critical: for the clean restart, target the **official DIBR source/asset variant**, not the similarly named standard backend.
 - Checkout `joeyhodge/UEVR@5ac7...`, inspect compiler CMake, all real dependency versions and gitlinks. Fail closed if Joey private UESDK is unavailable; report actual missing headers/symbols without inventing definitions.
 - Produce a Windows CI baseline compile with **zero DuoView source changes** and user-test that compile against the same STALKER 2 version. This is a non-negotiable gate.
 
@@ -70,3 +70,10 @@ External plugin failed: https://github.com/liviutrn/OpenNR/releases/tag/duoview-
 
 ## Immediately useful instruction for next Work chat
 "Start clean from Joey @5ac7edc..., on the new experimental branch. First resolve exact UESDK source reproducibility and compile **unmodified** latest known-smooth Joey without any DuoView. Then reuse only verified foveation techniques of original Injector-5. All old v13/v14 code is historical. Do not merge the old August source, do not switch to an external hooking architecture, and do not ask for frequent unvalidated headset testing."
+
+## Verified clean-restart source integrity CI
+- Workflow: https://github.com/liviutrn/OpenNR/actions/runs/38434717102 — success, October 13, 2026.
+- Actual matching official asset: https://github.com/joeyhodge/UEVR/releases/download/101226HELLRAISERp1/DIBRUEVRBackend.dll
+- The matching official DIBR DLL has SHA256 `19e91cc8c22a02e2a97996e1523604ab202b4540d954ebc95e07e6b233970966`; official standard DLL has SHA256 `ecdaea840b249ac1894775e2ec5667307b2adcad545843660e5d3edad350e08c`.
+- Exact source SHA from preserved smooth DIBR backend `5ac7edc207866569334175e4ed8a7517971547f6`; gitlinked private UESDK `3cffbc82429b6165ceec2714f0f0d9ae48f55596`. `joeyhodge/UESDK` returned HTTP 404 in CI. The source baseline is **not** yet reproducibly compilable.
+- **No DuoView implementation was made in this branch**. All follow-on engineering must begin with source-compatible, **DIBR-variant** SDK rebuild, then unmodified-source baseline validation.
