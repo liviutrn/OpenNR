@@ -71,7 +71,7 @@ jobs:
       - name: Apply isolated two-view source changes
         shell: pwsh
         run: |
-          python workspace/duoview/joey_stage1/apply_stage234.py backend workspace/duoview
+          python workspace/duoview/joey_stage1/apply_stage234.py backend frontend workspace/duoview
           if ($LASTEXITCODE -ne 0) { throw 'Stage 2-4 source anchors did not match original Joey' }
           python workspace/duoview/joey_stage1/verify_stage234.py backend frontend evidence
           if ($LASTEXITCODE -ne 0) { throw 'Stage 2-4 violated original-source or SDK boundaries' }
