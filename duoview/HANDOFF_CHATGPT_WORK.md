@@ -1,3 +1,11 @@
+# v09 stability diagnostic build — current status (13 October 2026)
+
+This branch is a separate follow-up to the user's tested Injector-5. Its Windows DLL and injector compilation, portable/WARP regression suite, packaging, and ZIP verification passed: [Actions 38365762543](https://github.com/liviutrn/OpenNR/actions/runs/38365762543), compiled commit `40c5b72abd5805645a3e63def5a8a85d748abad8`, artifact `DuoView-v09-Stability-Windows-Injector-7` (ID `11797615838`). **No headset/game validation yet.**
+
+Read [V09_STABILITY_TESTING.md](V09_STABILITY_TESTING.md) before testing. It records the exact package hashes, two narrow lifecycle corrections, diagnostics and controlled tests needed. **Do not claim the recurring hitch, direct DuoView startup, Mono black screen, or Present E_ABORT are fixed.** Preserve Injector-5, its successful Native→DuoView visual/gaze behavior, and the separate v08 Joey-plugin experiment. Do not alter the working foveation renderer without trace-backed cause.
+
+---
+
 # Latest status — Native bootstrap required; DuoView visuals work
 
 The user's 2026-10-13 10:36 report supersedes the profile-reset-only conclusion below. Injector-5 can be entered through **Native Stereo → DuoView Mono**; direct requested-mode startup remains unreliable and another Present E_ABORT crash occurred. Ordinary Mono is black. Periodic hitches affect all tested modes, while fovea, peripheral reduction, PSVR2 gaze and increased foveal resolution are reported working great.
