@@ -1,0 +1,15 @@
+cmake_minimum_required(VERSION 3.20)
+project(DuoViewJoeyPlugin LANGUAGES CXX)
+set(CMAKE_CXX_STANDARD 20)
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
+if(NOT UEVR_SOURCE OR NOT GLM_SOURCE OR NOT OPENXR_SOURCE)
+  message(FATAL_ERROR "UEVR_SOURCE, GLM_SOURCE and OPENXR_SOURCE must be pinned public header trees")
+endif()
+add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/DuoViewShaderSource.hpp"
+  COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/../embed_shader.py" "${CMAKE_CURRENT_BINARY_DIR}/DuoViewShaderSource.hpp"
+  DEPENDS ../embed_shader.py ../DuoViewComposite.hlsl ../DuoViewCompositeRaster.hlsl)
+add_library(DuoViewJoey SHARED Plugin.cpp "${CMAKE_CURRENT_BINARY_DIR}/DuoViewShaderSource.hpp")
+target_include_directories(DuoViewJoey PRIVATE "${UEVR_SOURCE}/include" "${GLM_SOURCE}" "${OPENXR_SOURCE}/include" "${CMAKE_CURRENT_BINARY_DIR}" ..)
+target_compile_definitions(DuoViewJoey PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
+target_compile_options(DuoViewJoey PRIVATE /W4 /permissive- /EHsc)
+target_link_libraries(DuoViewJoey PRIVATE d3d12 dxgi d3dcompiler bcrypt advapi32)

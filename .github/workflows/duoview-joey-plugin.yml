@@ -1,0 +1,88 @@
+name: DuoView Joey binary-preserving plugin
+on:
+  push:
+    branches: [experiments/duoview-uevr-v08-joey-plugin]
+    paths: ['duoview/**', '.github/workflows/duoview-joey-plugin.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: duoview-joey-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  windows-plugin:
+    runs-on: windows-2022
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: workspace
+      - uses: actions/checkout@v4
+        with:
+          repository: joeyhodge/UEVR
+          ref: e30b0ee5dd480ce607abb63ef74c317bd43bd871
+          path: headers
+          submodules: false
+      - uses: actions/checkout@v4
+        with:
+          repository: g-truc/glm
+          ref: cc98465e3508535ba8c7f6208df934c156a018dc
+          path: glm
+      - uses: actions/checkout@v4
+        with:
+          repository: KhronosGroup/OpenXR-SDK
+          ref: 458984d7f59d1ae6dc1b597d94b02e4f7132eaba
+          path: openxr
+      - name: Verify unchanged official Joey Mono package
+        shell: pwsh
+        run: |
+          Invoke-WebRequest 'https://github.com/joeyhodge/UEVR/releases/download/101226HELLRAISERp1/DIBRMONOUEVR.zip' -OutFile joey.zip
+          if ((Get-FileHash joey.zip -Algorithm SHA256).Hash.ToLower() -ne 'd078f6e8c3c36f6877d0c6eafcb1d0344111d4f4992838c1a5ec4b91c553fade') { throw 'Official package digest mismatch' }
+          Expand-Archive joey.zip -DestinationPath package/JoeyOriginal
+          python -m pip install pefile capstone
+          if ($LASTEXITCODE -ne 0) { throw 'Binary inspection dependencies failed' }
+          python workspace/duoview/joey_plugin/verify_release.py package/JoeyOriginal/UEVRBackend.dll
+          if ($LASTEXITCODE -ne 0) { throw 'Exact binary hook contract failed' }
+      - name: Build existing policies and production WARP compositor
+        shell: pwsh
+        run: |
+          cmake -S workspace/duoview -B tests -G 'Visual Studio 17 2022' -A x64
+          if ($LASTEXITCODE -ne 0) { throw 'Test configure failed' }
+          cmake --build tests --config Release --target DuoViewGeometryTests DuoViewGazeTests DuoViewFrameTests DuoViewConfigTests DuoViewStateTests DuoViewProductionWarpTests
+          if ($LASTEXITCODE -ne 0) { throw 'Test build failed' }
+          ctest --test-dir tests -C Release --output-on-failure
+          if ($LASTEXITCODE -ne 0) { throw 'Tests failed' }
+      - name: Build compatible plugin without private SDK
+        shell: pwsh
+        run: |
+          cmake -S workspace/duoview/joey_plugin -B plugin-build -G 'Visual Studio 17 2022' -A x64 -DUEVR_SOURCE="$pwd/headers" -DGLM_SOURCE="$pwd/glm" -DOPENXR_SOURCE="$pwd/openxr" *> plugin-configure.log
+          $code = $LASTEXITCODE
+          Get-Content plugin-configure.log | Select-Object -Last 40
+          if ($code -ne 0) { throw 'Plugin configure failed' }
+          cmake --build plugin-build --config Release --parallel 2 *> plugin-build.log
+          $code = $LASTEXITCODE
+          Get-Content plugin-build.log | Select-Object -Last 100
+          if ($code -ne 0) { throw 'Plugin compilation failed' }
+          New-Item package/Plugin -ItemType Directory -Force
+          Copy-Item plugin-build/Release/DuoViewJoey.dll package/Plugin/
+          Copy-Item workspace/duoview/joey_plugin/DuoViewJoey.ini package/Plugin/
+          Copy-Item workspace/duoview/joey_plugin/Install-DuoView.ps1 package/
+          Copy-Item workspace/duoview/joey_plugin/README.md package/README.md
+          Copy-Item headers/LICENSE package/UEVR-LICENSE.txt
+          'Source: https://github.com/liviutrn/OpenNR/tree/${{ github.sha }}' | Set-Content package/BUILD_SOURCE.txt
+          Get-ChildItem package -Recurse -File | Get-FileHash -Algorithm SHA256 | Format-Table -AutoSize | Out-String -Width 300 | Set-Content package/HASHES.txt
+      - uses: actions/upload-artifact@v4
+        if: success()
+        with:
+          name: DuoView-Joey-Preserved-Plugin-${{ github.run_number }}
+          path: package/
+          if-no-files-found: error
+          retention-days: 30
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: DuoView-Joey-plugin-build-logs-${{ github.run_number }}
+          path: |
+            plugin-configure.log
+            plugin-build.log
+          retention-days: 30
