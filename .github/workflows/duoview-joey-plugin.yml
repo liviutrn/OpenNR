@@ -48,7 +48,7 @@ jobs:
         run: |
           cmake -S workspace/duoview -B tests -G 'Visual Studio 17 2022' -A x64
           if ($LASTEXITCODE -ne 0) { throw 'Test configure failed' }
-          cmake --build tests --config Release --target DuoViewGeometryTests DuoViewGazeTests DuoViewFrameTests DuoViewConfigTests DuoViewStateTests DuoViewSubmissionTests DuoViewProductionWarpTests
+          cmake --build tests --config Release --target DuoViewGeometryTests DuoViewGazeTests DuoViewFrameTests DuoViewConfigTests DuoViewStateTests DuoViewSubmissionTests DuoViewActivationTests DuoViewProductionWarpTests
           if ($LASTEXITCODE -ne 0) { throw 'Test build failed' }
           ctest --test-dir tests -C Release --output-on-failure
           if ($LASTEXITCODE -ne 0) { throw 'Tests failed' }
