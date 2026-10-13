@@ -57,6 +57,28 @@ end
 
 reload_settings()
 
+-- Mirror C++ make_layout *including pixel rounding*; never write a config
+-- that would disable native DuoView or exceed its packed atlas.
+local function validate_layout(settings, w, h)
+    if not w or not h or w <= 0 or h <= 0 then
+        return false, "Waiting for native output dimensions before saving", nil
+    end
+    if w > 8192 or h > 16384 then return false, "Unsupported output size", nil end
+    local cw,ch,ps,d,fe=settings.CropWidth,settings.CropHeight,
+        settings.PeripheralScale,settings.FovealDensity,settings.Feather
+    if cw<0.05 or cw>1 or ch<0.05 or ch>1 or
+       ps<0.05 or ps>0.5 or d<0.25 or d>4 or fe<0 or fe>0.45 then
+        return false, "Out-of-range layout value", nil
+    end
+    local round_size=function(x) return math.max(1,math.floor(x+0.5)) end
+    local fw,fh=round_size(w*cw*d),round_size(h*ch*d)
+    local pw,ph=round_size(w*ps),round_size(h*ps)
+    if fw+pw>2*w or math.max(fh,ph)>h then
+        return false, "Fovea/periphery do not fit the double-wide atlas", nil
+    end
+    return true,"Valid layout",{fw=fw,fh=fh,pw=pw,ph=ph,pixels=fw*fh+pw*ph}
+end
+
 uevr.sdk.callbacks.on_draw_ui(function()
     if not imgui.collapsing_header("DuoView Mono - Joey original backend") then return end
     if not available then
@@ -99,7 +121,23 @@ uevr.sdk.callbacks.on_draw_ui(function()
     local changed,border=imgui.checkbox("Show fovea border",config.DebugBorder==1)
     if changed then config.DebugBorder=border and 1 or 0;dirty=true end
 
-    if imgui.button("Save DuoView settings") then save_settings() end
+    local w,h=tonumber(status.OutputWidth),tonumber(status.OutputHeight)
+    local valid,reason,dimensions=validate_layout(config,w,h)
+    if dimensions then
+        imgui.text("Output "..tostring(w).."x"..tostring(h)..
+            "; fovea "..dimensions.fw.."x"..dimensions.fh..
+            "; periphery "..dimensions.pw.."x"..dimensions.ph)
+        imgui.text("Nominal scene pixels: "..tostring(dimensions.pixels)..
+            " vs full mono "..tostring(w*h).."; not a measured FPS gain")
+        if config.FovealDensity==1 then
+            imgui.text("Density=1: no central PPD increase over baseline Mono")
+        end
+    else
+        imgui.text("Cannot save: "..reason)
+    end
+    if imgui.button("Save DuoView settings") then
+        if valid then save_settings() else message="NOT SAVED: "..reason end
+    end
     imgui.same_line()
     if imgui.button("Reload from disk") then reload_settings();message="Reloaded from UEVR data profile." end
     imgui.text(message)
