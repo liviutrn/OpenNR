@@ -43,8 +43,8 @@ void set_reason(const char* reason) {
 void publish_status(bool force=false) {
     if (status_path.empty()) return;
     const auto now=GetTickCount64();
-    const auto previous=last_status_write.load();
-    if (!force && (now-previous<1000 || !last_status_write.compare_exchange_strong(const_cast<uint64_t&>(previous),now))) return;
+    auto previous=last_status_write.load();
+    if (!force && (now-previous<1000 || !last_status_write.compare_exchange_strong(previous,now))) return;
     if (force) last_status_write.store(now);
     std::string reason;
     { std::scoped_lock lock(status_mutex); reason=status_reason; }
