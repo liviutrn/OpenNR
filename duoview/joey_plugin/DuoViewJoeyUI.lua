@@ -4,7 +4,7 @@
 local CONFIG = "DuoViewJoey.ini"
 local STATUS = "DuoViewJoey.status"
 local REQUEST = "DuoViewJoey.status.request"
-local options = {"Disabled (original Joey)", "Shared-pose reference", "Fixed fovea", "PSVR2 eye-tracked fovea"}
+local options = {"Disabled (original Joey)", "Retired diagnostic (select fixed fovea)", "Fixed fovea", "PSVR2 eye-tracked fovea"}
 local config = {Mode=0, CropWidth=0.5, CropHeight=0.5, PeripheralScale=0.2, FovealDensity=1.0, Feather=0.08, DebugBorder=1}
 local status = {}
 local dirty = false
@@ -106,7 +106,8 @@ uevr.sdk.callbacks.on_draw_ui(function()
     imgui.text("Matching producer frames: "..(status.MatchedPackets or "0").." / GPU composites queued: "..(status.CompositesQueued or "0"))
     imgui.text("XR accepted: "..(status.XRSubmitAccepted or "0").." / XR rejected: "..(status.XRSubmitFailed or "0"))
     imgui.text("Withheld scene layers: "..(status.RejectedLayers or "0"))
-    imgui.text("Only incrementing paired views + composites + accepted XR frames indicates runtime progress.")
+    imgui.text("Copy contract: "..(status.FrameCopyContract or "Waiting"))
+    imgui.text("Paired views, owned composites and accepted XR frames must all advance.")
     imgui.spacing()
 
     local changed,new_mode=imgui.combo("Rendering mode (restart)",config.Mode+1,options)
