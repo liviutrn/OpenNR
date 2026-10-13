@@ -67,7 +67,16 @@ EndFrameFn g_endframe = nullptr;
 DestroyFn g_destroy = nullptr;
 EnumerateFn g_enumerate = nullptr;
 int g_hookAcquire = -1, g_hookRelease = -1, g_hookEnd = -1, g_hookDestroy = -1;
-std::atomic<bool> g_hooked{false};
+std::atomic<bool> g_hooked{false}, g_resolvedHooked{false};
+bool g_resolvedHookAttempted = false;
+ULONGLONG g_primaryInstalledTime = 0;
+AcquireFn g_acquireResolved = nullptr;
+ReleaseFn g_releaseResolved = nullptr;
+EndFrameFn g_endframeResolved = nullptr;
+DestroyFn g_destroyResolved = nullptr;
+int g_resolvedAcquireHook=-1, g_resolvedReleaseHook=-1,
+    g_resolvedEndHook=-1, g_resolvedDestroyHook=-1;
+thread_local unsigned g_acqDepth=0, g_relDepth=0, g_endDepth=0, g_destDepth=0;
 std::atomic<unsigned long long> g_frames{0};
 std::atomic<unsigned long long> g_acquireCalls{0}, g_releaseCalls{0},
     g_endFrameCalls{0}, g_projectionDetected{0}, g_dimensionDetected{0},
@@ -185,9 +194,11 @@ bool ensureImages(Swapchain swapchain, SwapchainState& state) {
     return true;
 }
 
-Result WINAPI onAcquire(Swapchain sc, const void* info, uint32_t* index) {
-    if (!g_acquire) return -2;
-    auto result = g_acquire(sc,info,index);
+Result handleAcquire(AcquireFn original, Swapchain sc, const void* info, uint32_t* index) {
+    if (!original) return -2;
+    ++g_acqDepth;
+    auto result = original(sc,info,index);
+    if (--g_acqDepth != 0) return result;
     g_acquireCalls.fetch_add(1, std::memory_order_relaxed);
     if (result == XR_SUCCESS && index) {
         std::lock_guard guard(g_lock);
@@ -197,11 +208,19 @@ Result WINAPI onAcquire(Swapchain sc, const void* info, uint32_t* index) {
     }
     return result;
 }
-Result WINAPI onEndFrame(Session session, const FrameEndInfo* info) {
-    g_endFrameCalls.fetch_add(1, std::memory_order_relaxed);
+Result WINAPI onAcquire(Swapchain sc, const void* info, uint32_t* index) {
+    return handleAcquire(g_acquire,sc,info,index);
+}
+Result WINAPI onAcquireResolved(Swapchain sc, const void* info, uint32_t* index) {
+    return handleAcquire(g_acquireResolved,sc,info,index);
+}
+Result handleEndFrame(EndFrameFn original, Session session, const FrameEndInfo* info) {
+    if (!original) return -2;
+    const bool outer = (++g_endDepth == 1);
+    if (outer) g_endFrameCalls.fetch_add(1, std::memory_order_relaxed);
     // Only projection layers carry scene color. In UEVR, UI overlays are quads.
     // A swapchain becomes eligible from the NEXT frame, once identity is known.
-    if (info && info->layers && info->layerCount < 32) {
+    if (outer && info && info->layers && info->layerCount < 32) {
         std::lock_guard guard(g_lock);
         for (uint32_t i=0;i<info->layerCount;++i) {
             auto* base = info->layers[i];
@@ -224,9 +243,17 @@ Result WINAPI onEndFrame(Session session, const FrameEndInfo* info) {
             if (doubled) l.splitStereo = true;
         }
     }
-    return g_endframe ? g_endframe(session,info) : -2;
+    auto result = original(session,info);
+    --g_endDepth;
+    return result;
 }
 
+Result WINAPI onEndFrame(Session session,const FrameEndInfo* info) {
+    return handleEndFrame(g_endframe,session,info);
+}
+Result WINAPI onEndFrameResolved(Session session,const FrameEndInfo* info) {
+    return handleEndFrame(g_endframeResolved,session,info);
+}
 void waitAndClear(SwapchainState& state) {
     // During swapchain destruction only; never blocks a normal frame.
     for (auto& p : state.images) {
@@ -243,8 +270,10 @@ void waitAndClear(SwapchainState& state) {
     state.acquired.clear();
 }
 
-Result WINAPI onDestroy(Swapchain sc) {
-    {
+Result handleDestroy(DestroyFn original,Swapchain sc) {
+    if (!original) return -2;
+    bool outer = (++g_destDepth == 1);
+    if (outer) {
         std::lock_guard guard(g_lock);
         auto it = g_swapchains.find(sc);
         if (it != g_swapchains.end()) {
@@ -252,14 +281,20 @@ Result WINAPI onDestroy(Swapchain sc) {
             g_swapchains.erase(it);
         }
     }
-    return g_destroy ? g_destroy(sc) : -2;
+    auto result = original(sc);
+    --g_destDepth;
+    return result;
 }
 
-Result WINAPI onRelease(Swapchain sc, const void* info) {
-    g_releaseCalls.fetch_add(1, std::memory_order_relaxed);
+Result WINAPI onDestroy(Swapchain sc) { return handleDestroy(g_destroy,sc); }
+Result WINAPI onDestroyResolved(Swapchain sc) { return handleDestroy(g_destroyResolved,sc); }
+Result handleRelease(ReleaseFn original,Swapchain sc,const void* info) {
+    if (!original) return -2;
+    bool outer = (++g_relDepth == 1);
+    if (outer) g_releaseCalls.fetch_add(1, std::memory_order_relaxed);
     // Do not ever change OpenXR's return codes or skip its real release.
     // The lock also serializes setup, release and swapchain reset on the CPU.
-    {
+    if (outer) {
         std::lock_guard guard(g_lock);
         auto it = g_swapchains.find(sc);
         if (it != g_swapchains.end()) {
@@ -300,8 +335,12 @@ Result WINAPI onRelease(Swapchain sc, const void* info) {
             }
         }
     }
-    return g_release ? g_release(sc,info) : -2;
+    auto result = original(sc,info);
+    --g_relDepth;
+    return result;
 }
+Result WINAPI onRelease(Swapchain sc,const void* info) { return handleRelease(g_release,sc,info); }
+Result WINAPI onReleaseResolved(Swapchain sc,const void* info) { return handleRelease(g_releaseResolved,sc,info); }
 } // namespace
 
 extern "C" unsigned long long glamayre_xr_acquire_count() { return g_acquireCalls.load(); }
