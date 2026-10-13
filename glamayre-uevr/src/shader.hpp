@@ -20,29 +20,26 @@ static const float3 luma = float3(0.2126, 0.7152, 0.0722);
 // Glamarye's explicit color-space transformation, where required.
 // When the SRV and RTV use DXGI_FORMAT_*_SRGB, hardware handles the two
 // conversions automatically and mode 0 avoids processing the transfer twice.
-float DecodeSRGB(float v) {
-    if (v <= 0.04045) return v / 12.92;
-    return pow(abs(v + 0.055) / 1.055, 2.4);
-}
-float EncodeSRGB(float v) {
-    if (v <= 0.0031308) return v * 12.92;
-    return 1.055 * pow(abs(v), 1.0 / 2.4) - 0.055;
-}
 float3 DecodeColour(float3 c) {
-    float3 result = c;
-    if (colourMode == 1u)
-        result = float3(DecodeSRGB(c.r), DecodeSRGB(c.g), DecodeSRGB(c.b));
-    if (colourMode == 2u)
-        result = c * (80.0 / 203.0);
-    return result;
+    // Branchless vector decode avoids FXC's conditional-function return warnings.
+    float3 srgbLow = c / 12.92;
+    float3 srgbHigh = pow(abs(c + 0.055) / 1.055, 2.4);
+    float3 mask = float3(c.r > 0.04045 ? 1.0 : 0.0,
+                         c.g > 0.04045 ? 1.0 : 0.0,
+                         c.b > 0.04045 ? 1.0 : 0.0);
+    float3 srgbLinear = lerp(srgbLow, srgbHigh, mask);
+    return (colourMode == 1u) ? srgbLinear :
+           ((colourMode == 2u) ? c * (80.0 / 203.0) : c);
 }
 float3 EncodeColour(float3 c) {
-    float3 result = c;
-    if (colourMode == 1u)
-        result = float3(EncodeSRGB(c.r), EncodeSRGB(c.g), EncodeSRGB(c.b));
-    if (colourMode == 2u)
-        result = c * (203.0 / 80.0);
-    return result;
+    float3 srgbLow = c * 12.92;
+    float3 srgbHigh = 1.055 * pow(abs(c), 1.0 / 2.4) - 0.055;
+    float3 mask = float3(c.r > 0.0031308 ? 1.0 : 0.0,
+                         c.g > 0.0031308 ? 1.0 : 0.0,
+                         c.b > 0.0031308 ? 1.0 : 0.0);
+    float3 srgbOut = lerp(srgbLow, srgbHigh, mask);
+    return (colourMode == 1u) ? srgbOut :
+           ((colourMode == 2u) ? c * (203.0 / 80.0) : c);
 }
 struct VSOut { float4 pos : SV_Position; };
 VSOut VSMain(uint id : SV_VertexID) {
