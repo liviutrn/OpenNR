@@ -110,7 +110,7 @@ void setSetting(const char* name, float number) {
     if (matched) {
         const auto received = ++g_settingEvents;
         if (g_api && g_api->functions && g_api->functions->log_info && received <= 16)
-            g_api->functions->log_info("[Glamarye v03] UI setting: %s=%s", name, "updated");
+            g_api->functions->log_info("[Glamarye v04] UI setting: %s=%s", name, "updated");
         if (!g_ini.empty()) WritePrivateProfileStringW(L"Sharpen", iniKey, buffer, g_ini.c_str());
     }
 }
@@ -145,7 +145,7 @@ void onPresent() {
     static unsigned long long lastLog = 0;
     if (now - lastLog >= 10000 && g_api->functions->log_info) {
         lastLog = now;
-        g_api->functions->log_info("[Glamarye v03] %s", data);
+        g_api->functions->log_info("[Glamarye v04] %s", data);
     }
 }
 struct Pass {
@@ -423,7 +423,7 @@ extern "C" __declspec(dllexport) bool uevr_plugin_initialize(const UEVR_PluginIn
         return false;
     }
     g_callbacksRegistered = true;
-    if (api->functions->log_info) api->functions->log_info("Glamarye UEVR v0.3 loaded (Joey OpenXR HMD scene DX12 diagnostics)");
+    if (api->functions->log_info) api->functions->log_info("Glamarye UEVR v0.4 loaded (Joey OpenXR HMD scene DX12 diagnostics)");
     return true;
 }
 BOOL WINAPI DllMain(HINSTANCE module, DWORD reason, void*) {
