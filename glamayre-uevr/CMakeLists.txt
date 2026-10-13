@@ -1,0 +1,14 @@
+cmake_minimum_required(VERSION 3.22)
+project(GlamaryeSharpenUEVR LANGUAGES CXX)
+if(NOT WIN32)
+  message(FATAL_ERROR "UEVR DX12 plugin requires Windows")
+endif()
+add_library(GlamaryeSharpenUEVR SHARED
+    src/plugin.cpp src/shader.hpp vendor/uevr/API.h)
+target_compile_features(GlamaryeSharpenUEVR PRIVATE cxx_std_20)
+target_include_directories(GlamaryeSharpenUEVR PRIVATE vendor src)
+target_compile_definitions(GlamaryeSharpenUEVR PRIVATE UNICODE _UNICODE NOMINMAX)
+target_compile_options(GlamaryeSharpenUEVR PRIVATE /W4 /EHsc)
+target_link_libraries(GlamaryeSharpenUEVR PRIVATE d3d12 d3dcompiler dxgi)
+set_target_properties(GlamaryeSharpenUEVR PROPERTIES
+    OUTPUT_NAME "GlamaryeSharpenUEVR")
