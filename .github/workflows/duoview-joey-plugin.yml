@@ -5,7 +5,7 @@ on:
     paths: ['duoview/**', '.github/workflows/duoview-joey-plugin.yml']
   workflow_dispatch:
 permissions:
-  contents: read
+  contents: write
 concurrency:
   group: duoview-joey-${{ github.ref }}
   cancel-in-progress: true
@@ -71,6 +71,26 @@ jobs:
           Copy-Item headers/LICENSE package/UEVR-LICENSE.txt
           'Source: https://github.com/liviutrn/OpenNR/tree/${{ github.sha }}' | Set-Content package/BUILD_SOURCE.txt
           Get-ChildItem package -Recurse -File | Get-FileHash -Algorithm SHA256 | Format-Table -AutoSize | Out-String -Width 300 | Set-Content package/HASHES.txt
+      - name: Check plugin loadability and ABI exports
+        shell: pwsh
+        run: |
+          Add-Type -TypeDefinition @'
+          using System;
+          using System.Runtime.InteropServices;
+          public static class PluginLoaderCheck {
+            [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)] public static extern IntPtr LoadLibraryW(string path);
+            [DllImport("kernel32.dll", CharSet=CharSet.Ansi)] public static extern IntPtr GetProcAddress(IntPtr module, string name);
+            [DllImport("kernel32.dll")] public static extern bool FreeLibrary(IntPtr module);
+          }
+          '@
+          $module=[PluginLoaderCheck]::LoadLibraryW((Resolve-Path package/Plugin/DuoViewJoey.dll).Path)
+          if ($module -eq [IntPtr]::Zero) { throw "Plugin LoadLibrary failed: $([Runtime.InteropServices.Marshal]::GetLastWin32Error())" }
+          try {
+            foreach ($name in @('uevr_plugin_initialize','uevr_plugin_required_version')) {
+              if ([PluginLoaderCheck]::GetProcAddress($module,$name) -eq [IntPtr]::Zero) { throw "Missing plugin ABI export: $name" }
+            }
+          } finally { [PluginLoaderCheck]::FreeLibrary($module) | Out-Null }
+          Write-Host 'Windows DLL loadability and public UEVR ABI exports passed'
       - uses: actions/upload-artifact@v4
         if: success()
         with:
@@ -78,6 +98,32 @@ jobs:
           path: package/
           if-no-files-found: error
           retention-days: 30
+      - name: Publish experimental recovery download
+        if: success()
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          Compress-Archive -Path package/* -DestinationPath DuoView-Joey-Preserved-Plugin.zip
+          $tag='duoview-joey-plugin-v08-build-${{ github.run_number }}'
+          @'
+          Experimental DuoView Mono recovery plugin for STALKER 2 DX12/OpenXR.
+
+          Preserves the official Joey Mono injector/backend byte for byte.
+          Includes staged diagnostics, shared-pose views, fixed fovea and PSVR2 gaze modes.
+          Exact binary contracts, six Windows policy/WARP tests, in-place atlas pixel
+          readback, Windows DLL loading and plugin ABI exports passed for this build.
+
+          STALKER 2 injection, headset behavior, eye tracking and performance remain
+          unverified. Start with Mode 0 and follow the included README. Disable
+          Cheeky and ReShade layers for the isolated test. This is a prerelease,
+          not a claim that the reported injection crash has been fixed in-game.
+
+          Source commit: ${{ github.sha }}
+          Build: https://github.com/liviutrn/OpenNR/actions/runs/${{ github.run_id }}
+          '@ | Set-Content release-notes.md
+          gh release create $tag DuoView-Joey-Preserved-Plugin.zip --repo '${{ github.repository }}' --target '${{ github.sha }}' --title "DuoView Mono — Joey preserved, test build ${{ github.run_number }}" --prerelease --notes-file release-notes.md
+          if ($LASTEXITCODE -ne 0) { throw 'Experimental release publication failed; use the successful Actions artifact' }
       - uses: actions/upload-artifact@v4
         if: always()
         with:
