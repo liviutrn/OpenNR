@@ -18,14 +18,17 @@ def replace(text,old,new,name):
 def main():
     p=argparse.ArgumentParser()
     p.add_argument("backend",type=Path)
+    p.add_argument("frontend",type=Path)
     p.add_argument("source",type=Path)
     a=p.parse_args()
     root=a.backend
     src=a.source
     changed={}
+    def source_root(path):
+        return a.frontend if path.startswith("UEVR/") or path.startswith("tests/RenderingModes/") else root
     def edit(path,before,after):
         s=changed.get(path)
-        if s is None: s=(root/path).read_text(encoding="utf-8-sig")
+        if s is None: s=(source_root(path)/path).read_text(encoding="utf-8-sig")
         changed[path]=replace(s,before,after,path)
     edit("src/mods/vr/MonoRenderingPolicy.hpp",
         'DuoView Mono (Stage 1 - safe Mono fallback)',
@@ -271,7 +274,7 @@ void VR::duoview_abort(const char* reason) {
         '#pragma once\nnamespace uevr::duoview::dx12 {\ninline constexpr char shader_source[] = R"DUOVIEW_SHADER('+
         shader+')DUOVIEW_SHADER";\n}\n',encoding="utf-8",newline="")
     for path,text in changed.items():
-        (root/path).write_text(text,encoding="utf-8",newline="")
+        (source_root(path)/path).write_text(text,encoding="utf-8",newline="")
     print("Applied true fixed-center two-view geometry, common camera, same-frame state and DX12 compositor (experimental).")
 
 if __name__=="__main__":
