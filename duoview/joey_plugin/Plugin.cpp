@@ -313,7 +313,7 @@ bool prepare_gpu(ID3D12Resource* source) {
 // actual selected-scene boundary. Never replace an engine-owned scene resource.
 void begin_hook(void* extension,void* family) {
     original_begin(extension,family);
-    if (!draw || !native_mode() || !two_views(family)) return;
+    if (!draw || !installed || !two_views(family)) return;
     const auto producer=family_frame(family); if (!producer) return;
     Packet packet{}; packet.producer=*producer; packet.epoch=draw->key.generation;
     packet.optical=draw->optical; packet.modified=draw->modified; packet.slot=draw->slot;
@@ -343,7 +343,7 @@ void pre_render_hook(void* extension,void* commands,void* family) {
 }
 int frame_hook(void* component,void* vr) {
     Scope scope{};
-    if(native_mode()) {
+    if(installed && api->vr->is_openxr()) {
         const auto xr=read<uintptr_t>(reinterpret_cast<uintptr_t>(vr)+0xa0);
         const auto ready=xr ? read<uint8_t>(*xr+0x330):std::nullopt;
         const auto consumer=xr && ready && *ready ? read<uint32_t>(*xr+0x32c):std::nullopt;
@@ -367,7 +367,8 @@ bool copy_hook(void* self,uint32_t index,ID3D12Resource* source,
     D3D12_RESOURCE_STATES src_state,D3D12_BOX* box,duoview_joey::CopyCallback post,
     ID3D12Resource* retained,duoview_joey::RetainedPair pair) {
     using namespace duoview_joey;
-    if(index!=0 || !copy_scope || !native_mode())
+    if(index!=0 || !copy_scope || (!native_mode() &&
+        !(copy_scope->producer && copy_scope->producer->modified)))
         return original_copy(self,index,source,std::move(pre),std::move(extra),src_state,box,
             std::move(post),retained,std::move(pair));
     auto& scope=*copy_scope;
@@ -446,7 +447,31 @@ bool copy_hook(void* self,uint32_t index,ID3D12Resource* source,
         scope.failed=true; stop("Actual Joey copy/fence proof failed; restoring native producers");
         // Hardware/command-context failure cannot be cured by relabeling a
         // stale swapchain image. Do not publish this source as copied.
-        release_reservation(slot); return false;
+        if(hold && hold->epoch==generation.load() && hold->slot!=slot) {
+            auto fallback=hold->slot; d3d12::CommandContext* fallback_ctx{}; CopyProof fallback_proof{};
+            CopyCallback replay=std::function<void(d3d12::CommandContext&,ID3D12Resource*)>(
+                [&](d3d12::CommandContext& c,ID3D12Resource* destination) {
+                    fallback_ctx=&c;fallback_proof.fence_before=c.fence_value;scope.destination=destination;
+                    if(!c.ready()) return;
+                    fallback_proof.recorded=dv::dx12::copy_owned_image(c.cmd_list.Get(),device.Get(),
+                        fallback->destination.Get(),destination,D3D12_RESOURCE_STATE_RENDER_TARGET);
+                    fallback_proof.destination_verified=fallback_proof.recorded;
+                    if(fallback_proof.recorded) c.has_commands=true;
+                });
+            fallback_proof.original_returned=original_copy(self,index,nullptr,std::move(replay),std::nullopt,
+                D3D12_RESOURCE_STATE_RENDER_TARGET,nullptr,std::nullopt,nullptr,nullptr);
+            if(fallback_ctx) {
+                std::scoped_lock lock(fallback_ctx->mtx);
+                fallback_proof.fence_after=fallback_ctx->fence_value;
+                fallback_proof.poisoned=fallback_ctx->poisoned;fallback_proof.waiting=fallback_ctx->waiting_for_fence;
+                std::scoped_lock gpu_lock(gpu_mutex);
+                if(fallback_proof.fence_after>fallback_proof.fence_before && fallback_ctx->fence) {
+                    fallback->fence=fallback_ctx->fence;fallback->fence_value=fallback_proof.fence_after;
+                } else if(fallback_proof.recorded) fallback->quarantined=true;
+            }
+            if(fallback_proof.queued()) {scope.verified=true;scope.failed=false;scope.image=*hold;return true;}
+        }
+        return false;
     }
     scope.verified=true; scope.failed=false;
     if(action==CopyAction::Hold) scope.image=*hold;
@@ -494,7 +519,7 @@ bool image_in_swapchain(XrSwapchain handle,ID3D12Resource* resource) {
 }
 XrResult XRAPI_CALL end_hook(XrSession session,const XrFrameEndInfo* info) {
     ++end_calls;
-    if(!native_mode() || !copy_scope || !info || info->layerCount>64 ||
+    if(!copy_scope || (!native_mode() && !(copy_scope->producer && copy_scope->producer->modified)) || !info || info->layerCount>64 ||
         (info->layerCount && !info->layers)) return original_end(session,info);
     auto& scope=*copy_scope;
     auto end=*info;
