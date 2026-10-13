@@ -66,3 +66,12 @@ target_include_directories(GlamaryeLayerIntegration PRIVATE
 target_link_libraries(GlamaryeLayerIntegration PRIVATE d3d12 dxgi)
 add_dependencies(GlamaryeLayerIntegration GlamaryeSharpenUEVR GlamaryeOpenXRLayer)
 add_test(NAME Khronos_OpenXR_Layer_And_GPU_Integration COMMAND GlamaryeLayerIntegration)
+
+# Real DX12 WARP pixel-differential tests: 4 radii, original FXAA edge
+# attenuation, isolated one-pixel wire suppression, multi-band mixing.
+add_executable(GlamaryeRadiusAndLines tests/radius_and_lines.cpp)
+target_compile_features(GlamaryeRadiusAndLines PRIVATE cxx_std_20)
+target_include_directories(GlamaryeRadiusAndLines PRIVATE vendor)
+target_link_libraries(GlamaryeRadiusAndLines PRIVATE d3d12 dxgi)
+add_dependencies(GlamaryeRadiusAndLines GlamaryeSharpenUEVR)
+add_test(NAME DX12_WARP_Radii_And_Thin_Lines COMMAND GlamaryeRadiusAndLines)
