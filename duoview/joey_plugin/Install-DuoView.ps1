@@ -13,7 +13,9 @@ foreach ($item in $items) {
     Move-Item $from $backup
   }
 }
-$config=Join-Path $profilePath 'DuoViewJoey.ini'
+$data=Join-Path $profilePath 'data'
+New-Item $data -ItemType Directory -Force | Out-Null
+$config=Join-Path $data 'DuoViewJoey.ini'
 if (Test-Path $config) {
   New-Item $backup -ItemType Directory -Force | Out-Null
   Copy-Item $config $backup
@@ -27,13 +29,13 @@ if (Test-Path $oldUi) {
   Copy-Item $oldUi $backup
 }
 Copy-Item (Join-Path $PSScriptRoot 'Plugin\DuoViewJoeyUI.lua') $scripts
-$oldStatus=Join-Path $profilePath 'DuoViewJoey.status'
+$oldStatus=Join-Path $data 'DuoViewJoey.status'
 if (Test-Path $oldStatus) { Remove-Item $oldStatus -Force }
 $text=Get-Content (Join-Path $PSScriptRoot 'Plugin\DuoViewJoey.ini') -Raw
 $text=$text -replace '(?m)^Mode=\d+$',"Mode=$Mode"
 Set-Content $config $text -Encoding ASCII
 Write-Host "Installed test mode $Mode. Use JoeyOriginal\UEVRInjector.exe from this extracted package."
-Write-Host 'UEVR Scripts menu: DuoView Mono - Joey original backend. It includes live status and editable settings.'
+Write-Host 'UEVR Scripts menu: DuoView Mono - Joey original backend. The Lua UI uses UEVR game/data for settings and status.'
 Write-Host 'Conflicting Cheeky/ReShade modules must be disabled for active DuoView modes; this installer DOES NOT change them.'
 if ($Mode -eq 0) { Write-Host 'Select ordinary Mono. This stage records diagnostics and does not hook rendering.' }
 else { Write-Host 'Select Native Stereo, with Native Fix, Extreme Compatibility, 2D Screen, and Stereo Emulation OFF.' }
