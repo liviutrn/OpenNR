@@ -68,7 +68,7 @@ def verify(path):
             raise ValueError(f"Embedded {name} is not a PE unwind function entry")
         if image[caller] != 0xE8 or caller + 5 + struct.unpack_from("<i", image, caller + 1)[0] != entry_rva:
             raise ValueError(f"Embedded {name} original backend callsite mismatch")
-        name_bytes = name.encode() + b"\\0"
+        name_bytes = name.encode() + b"\0"
         name_rva = image.find(name_bytes)
         if name_rva < 0 or entry_rva not in references.get(name_rva, set()):
             raise ValueError(f"Embedded {name} dispatch-string reference mismatch")
