@@ -31,7 +31,7 @@ std::map<uint32_t, Packet> packets;
 struct Draw { dv::FrameKey key; Optics optical; };
 thread_local std::optional<Draw> draw;
 dv::SubmissionMailbox<Packet> submissions;
-std::atomic<uint64_t> last_report{}, last_success{}, last_status_write{}, last_status_check{};
+std::atomic<uint64_t> last_report{}, last_success{}, last_status_write{}, last_status_check{}, last_wait_report{}, present_callbacks{};
 std::atomic<uint64_t> engine_ticks{}, locate_calls{}, producer_pairs{}, render_callbacks{}, matched_packets{}, composite_queued{}, end_calls{}, submitted_layers{}, rejected_layers{}, xr_accepted{}, xr_failed{};
 std::mutex status_mutex;
 std::string status_reason{"Not initialized"};
@@ -61,6 +61,7 @@ void publish_status(bool force=false) {
         << "Hooks=" << (installed.load() ? "active" : "inactive") << "\n"
         << "Reason=" << reason << "\n"
         << "EngineTicks=" << engine_ticks.load() << "\n"
+        << "PresentCallbacks=" << present_callbacks.load() << "\n"
         << "LocateViews=" << locate_calls.load() << "\n"
         << "ProducerPairs=" << producer_pairs.load() << "\n"
         << "RenderCallbacks=" << render_callbacks.load() << "\n"
@@ -419,9 +420,14 @@ public:
         const auto hash=file_hash(backend_path);
         api->functions->log_info("[DuoViewJoey] Released-backend SHA256=%s commit=%s",hash.c_str(),api->functions->get_commit_hash());
         wchar_t directory[32768]{}; api->functions->get_persistent_dir(directory,32768);
-        config_=std::filesystem::path(directory)/L"DuoViewJoey.ini";
-        status_path=std::filesystem::path(directory)/L"DuoViewJoey.status";
-        status_request_path=std::filesystem::path(directory)/L"DuoViewJoey.status.request";
+        // UEVR's Lua fs bindings are intentionally sandboxed in /data.
+        // Keep native and Lua configuration/status in that same supported area.
+        const auto data_path=std::filesystem::path(directory)/L"data";
+        std::error_code directory_error;
+        std::filesystem::create_directories(data_path,directory_error);
+        config_=data_path/L"DuoViewJoey.ini";
+        status_path=data_path/L"DuoViewJoey.status";
+        status_request_path=data_path/L"DuoViewJoey.status.request";
         mode=static_cast<int>(GetPrivateProfileIntW(L"DuoView",L"Mode",0,config_.c_str()));
         api->functions->log_info("[DuoViewJoey] Config path=%ls Mode=%d",config_.c_str(),mode.load());
         if (mode<0 || mode>3) mode=0;
@@ -454,19 +460,36 @@ public:
         pending_=true;
         set_reason("Validated binary; waiting for engine tick / OpenXR readiness");
         publish_status(true);
+        api->functions->log_info("[DuoViewJoey] Backend validation passed; awaiting activation callback");
     }
     void on_pre_engine_tick(uevr::API::UGameEngine*, float) override {
         ++engine_ticks;
-        if (!pending_) {
-            publish_status();
-            return;
-        }
+        activate_if_ready();
+        publish_status();
+    }
+    void on_present() override {
+        ++present_callbacks;
+        activate_if_ready();
+        publish_status();
+    }
+    void activate_if_ready() {
+        if (!pending_ || installing_.test_and_set()) return;
+        struct Unlock { std::atomic_flag& busy; ~Unlock(){ busy.clear(); } } unlock{installing_};
         if (!api->vr->is_openxr() || !api->vr->is_runtime_ready()) {
-            publish_status();
+            auto last=last_wait_report.load();
+            auto now=GetTickCount64();
+            if (now-last >= 3000 && last_wait_report.compare_exchange_strong(last,now)) {
+                set_reason("Waiting for OpenXR runtime readiness (UEVR native readiness gate)");
+                api->functions->log_info("[DuoViewJoey] Waiting for OpenXR runtime ready; present=%llu tick=%llu", 
+                    static_cast<unsigned long long>(present_callbacks.load()), static_cast<unsigned long long>(engine_ticks.load()));
+            }
             return;
         }
         auto instance=reinterpret_cast<XrInstance>(api->openxr->get_xr_instance());
-        if (!instance) return;
+        if (!instance) {
+            set_reason("OpenXR instance unavailable");
+            return;
+        }
         const auto loader=GetModuleHandleW(L"openxr_loader.dll");
         const auto get_proc=loader ? reinterpret_cast<PFN_xrGetInstanceProcAddr>(GetProcAddress(loader,"xrGetInstanceProcAddr")) : nullptr;
         PFN_xrVoidFunction locate{},end{};
@@ -476,6 +499,8 @@ public:
             return;
         }
         pending_=false;
+        set_reason("Registering verified binary/OpenXR hooks");
+        publish_status(true);
         const bool ok=hook(backend+0x2969b0,&rect_hook,original_rect) &&
             hook(backend+0x2bf2f0,&projection_hook,original_projection) &&
             hook(backend+0x2682c0,&projection_closure_hook,original_projection_closure) &&
@@ -547,5 +572,6 @@ private:
     }
     std::filesystem::path config_;
     bool pending_{};
+    std::atomic_flag installing_=ATOMIC_FLAG_INIT;
 };
 DuoViewPlugin plugin;
