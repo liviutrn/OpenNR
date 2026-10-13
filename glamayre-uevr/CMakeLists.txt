@@ -75,3 +75,13 @@ target_include_directories(GlamaryeRadiusAndLines PRIVATE vendor)
 target_link_libraries(GlamaryeRadiusAndLines PRIVATE d3d12 dxgi)
 add_dependencies(GlamaryeRadiusAndLines GlamaryeSharpenUEVR)
 add_test(NAME DX12_WARP_Radii_And_Thin_Lines COMMAND GlamaryeRadiusAndLines)
+
+# Stable-release regression tests: fresh defaults, v0.1 settings migration,
+# four independent settings, diagnostics off after restart and UI persistence.
+add_executable(GlamaryeConfigRegression tests/config_regression.cpp vendor/uevr/API.h)
+target_compile_features(GlamaryeConfigRegression PRIVATE cxx_std_20)
+target_include_directories(GlamaryeConfigRegression PRIVATE vendor)
+add_dependencies(GlamaryeConfigRegression GlamaryeSharpenUEVR)
+foreach(case_name fresh old_big old_small explicit timing_saved ui_events)
+    add_test(NAME Stable_Config_${case_name} COMMAND GlamaryeConfigRegression ${case_name})
+endforeach()
