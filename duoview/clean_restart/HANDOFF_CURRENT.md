@@ -11,7 +11,7 @@ Liviu wants a clean rebuild of his smooth latest Joey Mono baseline before any D
 - Repository: https://github.com/liviutrn/OpenNR
 - Branch: `experiments/duoview-joey-current-clean-v1`
 - Build-trigger commit: `64432d0442066715fa442660a0848cf4963640b0`
-- Active Windows run: https://github.com/liviutrn/OpenNR/actions/runs/38453012351
+- Successful Windows run: https://github.com/liviutrn/OpenNR/actions/runs/38453012351
 - Job: `115488463072`; run number 3.
 - Workflow: `.github/workflows/duoview-exact-joey-baseline.yml`.
 - Inspect the current branch head before writing: API commits may be newer than local Git HEAD. Use expected-SHA leases on updates.
@@ -40,17 +40,26 @@ Frontend's original build deterministically regenerates tracked `UEVR/FilteredEx
 
 That run compiled all original targets, passed all **41 registered tests**, compiled backend/auxiliary DLLs, passed frontend ID tests and published the matching frontend. Final packaging stopped at the strict untracked-files gate. Original `tests/ProSpiCameraTraceAnalyzerTests.py` imports the analyzer, creating `tools/__pycache__/analyze_prospi_camera_trace.cpython-*.pyc`. Locally reproduced that artifact, then verified original analyzer tests and the source gate pass with `PYTHONDONTWRITEBYTECODE=1`. The current workflow sets that environment variable globally; the verifier now reports offending paths. Original source and compatibility checks remain unchanged. Failed-run evidence artifact: `11840404431`, digest `b1cae50e4ba6561a382627ac48bc9c2c35e0a622bc9a018823c6022ba7a9c658`.
 
-The current run repeats the build with this orchestration correction.
+The corrected run succeeded: all 41 tests, original backend/auxiliary/frontend compilation, frontend ID checks, final source guard and packaging passed. Both ZIP layers and all package file hashes were independently verified after download.
 
-## Next actions
+## Delivered build and next actions
 
-1. Inspect active run/job steps. Fetch full logs only on failure or after completion. Resolve build-orchestration mistakes without changing Joey/SDK input source. A source-level failure needs an evidence-based decision, not an arbitrary older SDK.
-2. If successful, retrieve artifact `Joey-101226-Exact-SDK-Clean-Baseline-3`. Its outer ZIP contains `Joey-101226-Clean-Baseline-Build-3.zip` and SHA-256 file. Verify nested ZIP integrity, file inventory, actual source identity and package hashes. Evidence artifact is `Joey-exact-SDK-baseline-build-evidence-3`.
-3. Update this handoff and README with exact result, commit, run, artifact and hashes. Provide a direct download/build link and concise test instructions for original Mono in Stalker 2 against official smooth Joey.
-4. Wait for that baseline stability result before integrating DuoView. Do not claim compiled tests prove absence of headset hitching.
+- Download: https://github.com/liviutrn/OpenNR/actions/runs/38453012351/artifacts/11842620175
+- Outer artifact SHA-256: `979b6e2560e19c04c8052e58266b4709c9d7917fdfe46e07c15dbf6ad9308b70`.
+- Nested installable ZIP: `Joey-101226-Clean-Baseline-Build-3.zip`.
+- Installable ZIP SHA-256: `80a09a741f4ccbe4e53400c379058ed227b5a424e873d60c64a1eda8c908e2c8`.
+- Rebuilt backend SHA-256: `339b88dcae20c808ed618791bed1fdb1ab41ea0d5dd10416dbe34d84b2db131f`.
+- Evidence artifact: `11842068138`, SHA-256 `2b001ddab6f71c6649355e7d4522d16d8dc3feb988433d09159c707bae4cbbdb`.
+- Package has 11 files, including injector EXE, backend, OpenVR/OpenXR loaders, LuaVR and nullifier DLLs, source lock/identity and instructions. ZIP CRCs, published archive digests, individual package hashes and source pins are verified. See `BASELINE_BUILD_VERIFIED.json`.
+- This is an unchanged-source rebuild, not a promise of byte-identical official release DLL output. The source audit JSON retains a conservative `full_backend_compatibility_verified=false` default because it verifies source only; complete build/test results are recorded separately in run evidence and `BASELINE_BUILD_VERIFIED.json`.
+
+1. Liviu extracts the outer artifact ZIP, then the nested installable ZIP into its own folder. Launch `UEVRInjector.exe` with his usual working runtime/settings and test **original Mono (ID 5)** in Stalker 2 against official smooth Joey. Native Stereo remains ID 0 if he also wishes to compare it. No diagnostic overlays or additional plugins are required for this stability check.
+2. Wait for his baseline stability result. Passing offline tests does not prove headset stability. If it hitches, investigate differences between the exact-source rebuild and official binary before adding DuoView.
+3. If stable, proceed from this exact source baseline to DuoView. Audit two-view creation, per-view projection/resolution, common camera state, temporal history per view, gaze updates, composition and GPU lifetime/frame handoff. Keep ordinary Mono/native paths intact; do not transplant the older mixed-version backend. Do not implement speculative Unreal offsets or SDK substitutes.
+4. Update the handoff as work advances. SDK acquisition/reconstruction is solved; do not spend another chat searching for the SDK.
 
 Other repository Actions workflows may fail at parsing inherited unrelated OpenNR workflows; inspect this named baseline workflow rather than counting every repository run as its result.
 
 ## User constraint
 
-Liviu initially reported 22% account allowance remaining, then 18% at 22:08 Bucharest time and asks for a handoff around 10%. The assistant cannot read that account meter. Keep output and monitoring economical, persist current state here, and do not launch unnecessary investigations or agents. GitHub API tools support fetch, file/blob fetch, tree/commit creation, expected-SHA ref update, job steps/logs and artifact downloads. No workflow_dispatch or secrets management tool is exposed; a meaningful workflow/verifier change can trigger a new push run. Do not rerun the obsolete earlier workflow revision.
+Liviu initially reported 22% account allowance remaining, then 18% at 22:08 Bucharest time then 12% at 22:25, and now asks for a handoff at 5%. The assistant cannot read that account meter. Keep output and monitoring economical, persist current state here, and do not launch unnecessary investigations or agents. GitHub API tools support fetch, file/blob fetch, tree/commit creation, expected-SHA ref update, job steps/logs and artifact downloads. No workflow_dispatch or secrets management tool is exposed; a meaningful workflow/verifier change can trigger a new push run. Do not rerun the obsolete earlier workflow revision.

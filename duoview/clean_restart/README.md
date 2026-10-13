@@ -1,170 +1,40 @@
-# DuoView clean restart: current Joey baseline
+# DuoView clean restart: exact Joey Mono baseline
 
-**Current status:** the original required SDK is now accessible and its
-complete source has been verified against the exact Git blobs, tree and
-commit. The unchanged latest Joey baseline build is being prepared with
-the original SDK. No new installable baseline or DuoView build is available yet.
+The original SDK is accessible and fully verified. No SDK reconstruction or public substitute is used by the active baseline build.
 
-The exact-source workflow is `.github/workflows/duoview-exact-joey-baseline.yml`.
-It pins the original backend, SDK and frontend, runs the complete original
-compatibility suite and packages only after all source/build gates pass.
-Its restricted SDK checkout uses the existing Actions secret
-`UEVR_SOURCE_TOKEN` (or `PAT_TOKEN`) when configured.
+**Current status:** the clean Windows baseline is ready for headset testing. [Run 38453012351](https://github.com/liviutrn/OpenNR/actions/runs/38453012351) passed all **41 original registered compatibility tests**, compiled original backend/auxiliary DLLs and matching frontend, passed frontend rendering-ID tests, and passed final source verification. Both ZIP layers and every package file hash were independently checked after download.
 
-The first exact-source run `38448199737` stopped at SDK checkout: its CI
-credential could not read the restricted SDK, before any compilation.
-The user's authenticated connection has already retrieved and verified the
-complete source. Configure `UEVR_SOURCE_TOKEN` from the Epic-authorized
-account, then run the latest exact-source workflow revision. This is a CI
-authentication gate, not a remaining SDK source incompatibility.
+[Download clean baseline Build 3](https://github.com/liviutrn/OpenNR/actions/runs/38453012351/artifacts/11842620175). Extract the outer artifact ZIP, then extract `Joey-101226-Clean-Baseline-Build-3.zip` into its own folder. Launch `UEVRInjector.exe`, use your working SteamVR/runtime settings, and test original **Mono (ID 5)** in Stalker 2. Compare hitching against the official smooth Joey build. DuoView is not included; headset stability remains untested.
 
-This branch starts the source restart using the exact official Joey DIBR
-backend the user reported smooth. No new DuoView renderer is enabled here.
-The existing old `duoview/` implementation is historical reference only; this
-workflow neither applies its patches nor compiles it.
+Package SHA-256: `80a09a741f4ccbe4e53400c379058ed227b5a424e873d60c64a1eda8c908e2c8`. Rebuilt backend SHA-256: `339b88dcae20c808ed618791bed1fdb1ab41ea0d5dd10416dbe34d84b2db131f`. This is an unchanged-source rebuild, not a byte-identical release binary. [Build verification metadata](BASELINE_BUILD_VERIFIED.json) records source commit, run, artifact, hashes and package inventory.
 
-## Corrected provenance
+## Source identity
 
-The supplied handoff incorrectly called hash `19e91cc8...` a normal Joey
-backend. GitHub's release digests and direct ZIP inspection identify it as
-the **DIBR-capable** asset in `DIBRMONOUEVR.zip` from release
-`101226HELLRAISERp1`. The ZIP stores it under the regular filename
-`UEVRBackend.dll`, which likely contributed to the confusion.
+Latest official release rechecked October 13, 2026: **101226HELLRAISERp1**.
 
-The official DLL embeds both backend commit
-`5ac7edc207866569334175e4ed8a7517971547f6` and SDK commit
-`3cffbc82429b6165ceec2714f0f0d9ae48f55596`. Its SHA-256 is
-`19e91cc8c22a02e2a97996e1523604ab202b4540d954ebc95e07e6b233970966`.
-The normal official DLL is a distinct asset with SHA-256
-`ecdaea840b249ac1894775e2ec5667307b2adcad545843660e5d3edad350e08c`.
-The normal tag points to `387ccb...` and pins SDK `e667df...`; neither is
-the source identity of the smooth DLL identified by the handoff.
+| Component | Exact commit |
+| --- | --- |
+| Joey DIBR-capable backend with original Mono | `5ac7edc207866569334175e4ed8a7517971547f6` |
+| Original joeyhodge/UESDK | `3cffbc82429b6165ceec2714f0f0d9ae48f55596` |
+| Matching joeyhodge/uevr-frontend | `60be4b0f9a646109fd9fdf448bacd41477234091` |
 
-The latest release was rechecked on October 13, 2026. Matching original
-frontend branch `uevr-dibr-optin-safe` resolves to `60be4b0...`; it is pinned
-without changing its rendering IDs. Native Stereo remains 0 and Mono 5.
+All 176 SDK files, their Git blobs, SDK tree `c958569565e435c8670caec726eece63ac7c317b`, and original commit object were verified. The previously missing headers and SDK test sources are present. Actions uses the authorized repository secret `UEVR_SOURCE_TOKEN`; restricted SDK source is never committed into public OpenNR.
 
-The normal release source at `387ccb...` lists only Native Stereo (0),
-Synchronized Sequential (1), and Alternating/AFR (2). It has no Mono mode.
-Direct DLL inspection also finds the Mono label only in the DIBR+Mono
-package. The Mono branch's `non_dibr_choices` describes a potential build
-option; it is not evidence that the normal release contains Mono.
-The chosen baseline includes DIBR capability but DuoView extends **Mono**,
-which does not run DIBR depth reconstruction. The user accepted this choice.
+The official smooth DIBR DLL SHA-256 is `19e91cc8c22a02e2a97996e1523604ab202b4540d954ebc95e07e6b233970966`. Its package uses the ordinary filename `UEVRBackend.dll`. This is the source variant identified from Liviu's smooth baseline, rather than the different normal release tag/SDK.
 
-## Baseline blocker and diagnostic build
+## Included behavior and build gates
 
-`joeyhodge/UESDK` remains inaccessible (GitHub connector HTTP 404). The exact
-SDK commit was not found in the accessible `elliotttate/UESDK-RenderDoc`
-repository. Public source searches found no matching source for the first
-missing compatibility headers. The pinned July public SDK lacks 15 headers
-directly included by the current backend and its tests. This is a minimum
-gap count, not a complete SDK API/behavior audit.
+- Original Native Stereo is ID 0; original Mono is ID 5.
+- Mono does not run DIBR depth reconstruction.
+- No DuoView renderer or reconstructed SDK is integrated.
+- The workflow checks exact backend/SDK/frontend source identity, builds all original test targets, runs the complete registered suite, and compiles original backend, auxiliary DLLs and frontend.
+- Final source verification rejects changed input code and unexpected files. Only the frontend resource deterministically regenerated by its original script is accepted as an expected tracked build output.
+- Packaging preserves the original frontend publishing mode and records source pins and hashes.
 
-The CI workflow:
+Workflow: `.github/workflows/duoview-exact-joey-baseline.yml`. Source lock: [baseline.lock.json](baseline.lock.json). SDK verification: [SDK_SOURCE_VERIFIED.json](SDK_SOURCE_VERIFIED.json).
 
-1. Downloads both official release packages and DLLs, verifies all hashes,
-   ZIP CRCs, packaged/standalone identity, and DIBR embedded commit strings.
-2. Checks out the entire current Joey backend at the smooth DLL's exact
-   source commit, unchanged. It records exact SDK access results.
-3. Uses the explicitly labelled public SDK **for compatibility diagnostics**,
-   records missing headers and hashes every tracked backend file.
-4. Builds and runs original Joey Mono DX11/DX12 WARP and STALKER 2 policy/
-   DX12 WARP tests in an independent harness, plus matching frontend ID
-   tests. These test existing graphics/lifetime policies; they do not
-   exercise full Unreal injection or the headset. The full upstream test
-   suite remains blocked by missing SDK test sources.
-5. Attempts a complete current backend build to collect compiler evidence.
-   An SDK failure fails the job; missing interfaces are not silently stubbed
-   or disabled. Matching frontend/package build is gated on backend success.
-6. Saves exact current source snapshots, dependency IDs and compiler logs,
-   including after a failed build. A successful diagnostic package would
-   still be labelled as adapted SDK, with no headset stability claim.
+## Next gate
 
-First run `38434181805` verified official release evidence. Its source job
-failed at CMake generation because the public SDK also lacks
-`tests/DiscoveryValidationTests.cpp` (and `LayoutSafetyTests.cpp` is another
-required source). The independent harness avoids changing Joey source;
-the full diagnostic backend configure uses the production default
-`UEVR_BUILD_COMPATIBILITY_TESTS=OFF` to reach actual backend compilation.
-This switches off test target generation only, not runtime compatibility.
+Artifact inspection is complete. Liviu now compares original Mono in Stalker 2 with the official smooth Joey build using his existing working runtime/settings. Compiled tests do not establish headset stability. DuoView integration remains paused until this clean baseline is confirmed stable.
 
-The separate CPU-only driver invokes Joey's unchanged Mono policy tests:
-4,769 assertions passed with zero failures locally. See
-`SDK_GAP_AUDIT.md` for exact gaps, original frame behavior, test scope and
-reproduction instructions. This is not a complete source rebuild or a
-headset test.
-
-## Completed verification
-
-| Check | Result | Evidence |
-| --- | --- | --- |
-| Both official release ZIPs and DLLs | All four SHA-256 hashes and package checks passed | Run `38435076991`, official asset archive `11832084328` |
-| Original Mono CPU policy | 4,769 assertions, zero failures | Local GCC C++23 execution of unchanged Joey tests via `offline/MonoPolicyMain.cpp` |
-| Original Mono DX11/DX12 and STALKER 2 policy/DX12 WARP | All four tests passed | Run `38435425509`, job `115431979148` |
-| Original injector rendering IDs | Passed | Same successful offline job; artifact `11833881205` |
-| Complete current Joey + diagnostic public SDK | Failed; no installable backend | Run `38435076991`, job `115426842595`, compiler/source artifact `11833226728` |
-| Rebuilt baseline in headset | Not available/tested | Requires complete SDK compatibility first |
-
-The successful offline-only run deliberately skipped the already-verified
-asset archive and the failed full backend job. Its green result is **not**
-a complete baseline build. Backend runtime source is identical across both
-verification runs. Documentation-only commits use `[skip ci]`; a harness
-correction may use `[offline-only]` to rerun only the affected test job.
-
-Compiler evidence archive SHA-256:
-`8f158f4cea170ff64abff1b2d4cc81214baa0eec28b2454a92c06c7de6247879`.
-It contains full configure/build logs, exact source ZIPs, source hashes,
-SDK access results and submodule revisions. See the
-[full source diagnostic run](https://github.com/liviutrn/OpenNR/actions/runs/38435076991)
-and [successful offline tests](https://github.com/liviutrn/OpenNR/actions/runs/38435425509).
-
-## Frozen historical evidence
-
-- v14 run `38426715379`: completed successfully; headset result unknown.
-- Old exact Mono-only control run `38431096553`: completed successfully;
-  release `duoview-mono-only-control-build-3` now exists. ZIP SHA-256:
-  `39713c5dc73c3aed8a26bd40608908f60871599e0b4dd4e16b0f140edad6ab38`.
-- Original integrated foveation remains user-confirmed; sustained stability
-  remains unconfirmed. Old experiment branches and releases are unchanged.
-
-## Next engineering gate
-
-The authenticated source-download gate has now passed. All 176 SDK files,
-the SDK tree `c958569565e435c8670caec726eece63ac7c317b`, and the original commit
-object `3cffbc82429b6165ceec2714f0f0d9ae48f55596` have been verified.
-The missing-header inventory is empty and both missing SDK test sources
-are present. See `SDK_SOURCE_VERIFIED.json`.
-
-Use the original SDK for the complete baseline build. The reconstruction
-experiment is retained as evidence only and is not integrated.
-
-The prior fallback gate, retained for provenance, was:
-
-Obtain authentic SDK source matching `3cffbc...`, or recover bounded public
-implementations for every required interface with source/binary evidence
-and tests. Audit behavior changes, not only declarations or successful
-compilation. No guessed Unreal vtables/offsets, no compatibility removals to
-make the build green. A public SDK adaptation cannot be called the original
-Joey build.
-
-Only after the rebuilt baseline passes Native Stereo and Mono on the user's
-STALKER 2 scene without SteamVR takeovers may DuoView integration start.
-Preserve original XR lifecycle and modes; integrate two same-pose UE views
-internally, first with a fixed fovea, then add PSVR2 gaze. This branch does
-not request another experimental foveation headset test.
-
-## SDK recovery checkpoint
-
-The exact official DLL's matching PDB was recovered from Joey's successful
-run `38150970046`, artifact `11707171949`. Both the release DLL SHA-256 and
-the PDB GUID/age were verified. This provides authentic current SDK type
-contracts and machine-code locations; it does not recover the original source.
-
-The first isolated memory module has been reconstructed from that evidence.
-Windows run `38442752728` passed 52 checks with zero failures, including
-differential tests against the original compiled helpers. It is not integrated
-into the backend, and no full SDK/full backend build is available yet.
-
-See [exact SDK recovery](sdk_reconstruction/README.md) for the original
-artifact identities, implementation, test scope and remaining dependency gates.
+[Current resumable engineering handoff](HANDOFF_CURRENT.md) contains active run/job identifiers, remaining work and the exact packaging correction. Earlier public-SDK diagnostic failures are archived in [SDK_GAP_AUDIT.md](SDK_GAP_AUDIT.md); they do not describe the current SDK availability.

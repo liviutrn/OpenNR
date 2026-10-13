@@ -10,6 +10,8 @@
   "backend_commit": "5ac7edc207866569334175e4ed8a7517971547f6",
   "frontend_commit": "60be4b0f9a646109fd9fdf448bacd41477234091",
   "source_reconstruction_required": false,
-  "full_windows_baseline_build_verified": false,
-  "headset_stability_verified": false
+  "full_windows_baseline_build_verified": true,
+  "headset_stability_verified": false,
+  "baseline_build_run": 38453012351,
+  "baseline_artifact_id": 11842620175
 }

@@ -1,0 +1,27 @@
+{
+  "run": 38453012351,
+  "source_commit": "64432d0442066715fa442660a0848cf4963640b0",
+  "tests_passed": 41,
+  "artifact_id": 11842620175,
+  "artifact_sha256": "979b6e2560e19c04c8052e58266b4709c9d7917fdfe46e07c15dbf6ad9308b70",
+  "package_sha256": "80a09a741f4ccbe4e53400c379058ed227b5a424e873d60c64a1eda8c908e2c8",
+  "backend_sha256": "339b88dcae20c808ed618791bed1fdb1ab41ea0d5dd10416dbe34d84b2db131f",
+  "file_count": 11,
+  "files": [
+    "baseline.lock.json",
+    "exact-baseline-source.json",
+    "LuaVR.dll",
+    "openvr_api.dll",
+    "openxr_loader.dll",
+    "READ_FIRST.txt",
+    "UEVRBackend.dll",
+    "UEVRInjector.dll.config",
+    "UEVRInjector.exe",
+    "UEVRInjector.pdb",
+    "UEVRPluginNullifier.dll"
+  ],
+  "all_package_hashes_verified": true,
+  "sdk_exact_original": true,
+  "duoview_integrated": false,
+  "headset_stability_verified": false
+}
