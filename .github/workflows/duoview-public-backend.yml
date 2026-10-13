@@ -91,6 +91,7 @@ jobs:
           if (Test-Path workspace/duoview/TESTING.md) { Copy-Item workspace/duoview/TESTING.md package/ }
           Copy-Item workspace/duoview/STABILITY_V13.md package/STABILITY_V13.md
           Copy-Item backend/LICENSE package/UEVR-LICENSE.txt
+          Get-ChildItem package -Recurse -File | Get-FileHash -Algorithm SHA256 | Format-Table -AutoSize | Out-String -Width 300 | Set-Content package/HASHES.txt
       - name: Upload complete experimental injector
         uses: actions/upload-artifact@v4
         with:
