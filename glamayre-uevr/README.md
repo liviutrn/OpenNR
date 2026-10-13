@@ -1,6 +1,14 @@
-# Glamarye Intelligent Sharpen for UEVR — experimental v0.2 (OpenXR/DX12)
+# Glamarye Intelligent Sharpen for UEVR — experimental v0.3 (Joey OpenXR/DX12)
 
 **Status:** Windows GPU tests are automated; **actual STALKER 2 + Joey + PSVR2 runtime is unverified**. This is a new OpenXR game-scene integration, not a proven in-headset release.
+
+## What changed since v0.2
+
+- Based on the real STALKER 2/Joey UEVR log of 2026-10-13, which confirms plugin loading but no visible sharpening in headset.
+- Adds a fail-closed identification of the headset scene color swapchain by the exact UEVR hmd eye dimensions when projection layers cannot be observed. Rejects unknown formats and all UI/depth extent mismatches.
+- If no loader-export xrReleaseSwapchainImage calls occur for four seconds, also attempts to hook function pointers obtained from xrGetInstanceProcAddr for Joey builds that may use cached runtime dispatch; the two hook paths suppress nested duplicate callbacks.
+- Adds counters for native menu settings, loader and runtime hooks, Acquire, Release, EndFrame, projection detection, dimension detection, eligible copies, and recorded rendering. Native logs report these every ten seconds.
+- Adds a TEST ONLY red grid checkbox under Diagnostics, disabled by default. The red grid must be visible inside the PSVR2 if the image submitted to the headset is modified.
 
 ## What changed since v0.1
 
@@ -15,7 +23,7 @@ In the public UEVR DX12 implementation, `D3D12Component::OpenXR::copy` submits s
 ## Installation
 
 1. Close STALKER 2 and UEVR.
-2. Remove the old **v0.1** `plugins/GlamaryeSharpenUEVR.dll` and `scripts/glamayre_sharpen.lua` first.
+2. Remove the old **v0.2** `plugins/GlamaryeSharpenUEVR.dll` and `scripts/glamayre_sharpen.lua` first.
 3. Extract the new ZIP to the game's UEVR profile: `%APPDATA%\UnrealVRMod\<game-executable-name>\`.
 4. Keep folders: `plugins/GlamaryeSharpenUEVR.dll`, `scripts/glamayre_sharpen.lua`.
 5. Start STALKER 2, choose **UEVR OpenXR + DX12** with your Joey build, and inject.
@@ -56,3 +64,9 @@ Windows CI compiles the DLL, compiles the embedded HLSL with FXC warnings-as-err
 ## Attribution
 
 Main source: [Glamayre Fast Effects](https://github.com/rj200/Glamarye_Fast_Effects_for_ReShade) by Robert Jessop (MIT, license included). The C API `vendor/uevr/API.h` is from praydog UEVR (MIT). Cheeky Foveated DLSS inspired the UEVR plugin and Lua integration patterns; no Cheeky binaries or source code are redistributed.
+
+## How to interpret the diagnostic log
+
+Search the newest UEVR log for `[Glamarye v03]` lines. `settings=0` even after toggling controls indicates the Lua-to-native event path failed. `xrRelease=0` and `xrAcquire=0` means no hooked swapchain callbacks are firing; check `xrResolved` to see whether the cached runtime fallback attached. Nonzero Acquire/Release but zero `xrSize` and `xrProj` means the OpenXR projection images were not recognized. Nonzero `xrEligible` but `xrFrames=0` means command-list submission or GPU setup refused. If `xrFrames` increases but the red grid does not appear, the processed color image may not be the final display image or the GPU work may be overwritten. This is an experimental test, not a verified headset release.
+
+The attached test log also showed unrelated DuoView mode switching and intermittent OpenXR time errors; those are not proof that Glamarye caused them. Avoid changing Joey's rendering mode while doing a controlled sharpening A/B test.
