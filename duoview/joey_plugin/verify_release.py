@@ -45,6 +45,35 @@ def verify(path):
     marker = b"[VR] OpenXR: Frame not begun when trying to copy." + bytes([0])
     if copy_rva not in references.get(image.index(marker),set()):
         raise ValueError("OpenXR::copy diagnostic string not linked to candidate function")
+    # Independent 2026-10-13 in-game diagnosis:
+    # The original backend has NO openxr_loader.dll PE import; Khronos's loader
+    # is statically linked into UEVRBackend.dll. Dynamic GetModuleHandleW
+    # therefore leaves Build 61's native hooks inactive, even with a working UI.
+    imports = {entry.dll.lower() for entry in pe.DIRECTORY_ENTRY_IMPORT}
+    if b"openxr_loader.dll" in imports:
+        raise ValueError("Backend import assumptions changed; re-audit embedded XR targets")
+
+    # Exact wrapper RVAs and upstream callsites, confirmed against the published
+    # Joey source and a real release disassembly. The plugin hooks the original
+    # statically linked xrEndFrame/xrLocateViews, not another loader instance.
+    embedded_openxr = {
+        0x562790: ("xrEndFrame", "48895c2418574881ecb0000000488b05", 0x3DE20D),
+        0x562E60: ("xrLocateViews", "405356574154415641574881ecc80000", 0x3F0746),
+        0x562910: ("xrEnumerateSwapchainImages", "4053565741564881ecb8000000488b05", 0x3B2CFD),
+    }
+    for entry_rva, (name, prologue, caller) in embedded_openxr.items():
+        if image[entry_rva:entry_rva + 16] != bytes.fromhex(prologue):
+            raise ValueError(f"Embedded {name} entry contract mismatch: 0x{entry_rva:x}")
+        if not any(a == entry_rva for a, _ in ranges):
+            raise ValueError(f"Embedded {name} is not a PE unwind function entry")
+        if image[caller] != 0xE8 or caller + 5 + struct.unpack_from("<i", image, caller + 1)[0] != entry_rva:
+            raise ValueError(f"Embedded {name} original backend callsite mismatch")
+        name_bytes = name.encode() + b"\\0"
+        name_rva = image.find(name_bytes)
+        if name_rva < 0 or entry_rva not in references.get(name_rva, set()):
+            raise ValueError(f"Embedded {name} dispatch-string reference mismatch")
+        print(f"Verified static OpenXR wrapper {name} RVA 0x{entry_rva:x}; direct original callsite 0x{caller:x}")
+
     print("Verified released Joey OpenXR::copy RVA, x64 prologue, unwind boundary and copy diagnostic")
     for address, (marker, prologue) in CONTRACTS.items():
         if image[address:address+16] != bytes.fromhex(prologue):
