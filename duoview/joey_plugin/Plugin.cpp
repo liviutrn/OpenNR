@@ -571,7 +571,7 @@ private:
         return buffer[0] ? std::wcstof(buffer,nullptr) : fallback;
     }
     std::filesystem::path config_;
-    bool pending_{};
+    std::atomic<bool> pending_{false};
     std::atomic_flag installing_=ATOMIC_FLAG_INIT;
 };
 DuoViewPlugin plugin;
