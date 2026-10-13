@@ -1,3 +1,15 @@
+# Current runtime status — Injector-5 launches after profile reset
+
+On 2026-10-13 the user clarified that **the original DuoView-Experimental-Windows-Injector-5 from the supplied handoff now launches and appears to work after deleting the old STALKER UEVR profile**. The immediate crash-recovery priority is superseded. Keep the original tested build as the runtime baseline; do not replace it merely because its backend differs from Joey.
+
+Remaining reported issue: frequent, clockwork-like hitches. The user supplied a SteamVR timing screenshot showing repeated bands of GPU work and very low activity. This is evidence of periodic behavior, not proof of a shader, gaze, GPU fence, OpenXR or frame-gate cause. A fresh UEVR.log and fixed-gaze vs ordinary-Mono comparisons are needed. The earlier crash logs predate the successful profile reset.
+
+The separate `experiments/duoview-uevr-v08-joey-plugin` build compiled and was published as an experimental fallback; its game behavior has not been tested. It is **not the user's working package** and is not the current development baseline. Preserve both branches. No hitch fix has been built or game-validated following this new report.
+
+See `HITCH_STATUS_2026-10-13.md`. Historical compilation status follows.
+
+---
+
 # Current continuation status (2026-10-13) — COMPLETE WINDOWS BUILD PASSED
 
 The initial handoff below is **historical**. Continue from the active **public backend Windows injector** workflow and `duoview/WORK_LOG.md`, not the earlier private-SDK compile probe. The first complete public SDK UEVR DLL plus matching .NET injector was built and packaged successfully on [Actions run 38316421524](https://github.com/liviutrn/OpenNR/actions/runs/38316421524), source commit `bd74b21f46aa51c6d535680a005682e2572d6965`. Download **DuoView-Experimental-Windows-Injector-5**, artifact ID `11777567376` (not the build logs). Its downloaded ZIP passed integrity checks and contains `UEVRBackend.dll` and `UEVRInjector.exe`. Windows policy and production WARP tests passed. **No STALKER 2 or PSVR2 headset testing yet**; frame routing, rendering savings, and eye gaze remain runtime acceptance checks. Source pins and integration details are in `duoview/UEVR_INTEGRATION.md`. The older below-stated 'first action' and failed run status are not current.
