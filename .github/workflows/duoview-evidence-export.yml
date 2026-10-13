@@ -1,0 +1,45 @@
+name: DuoView engineering evidence export
+on:
+  push:
+    branches: [experiments/duoview-joey-first-v11]
+    paths: ['.github/workflows/duoview-evidence-export.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Pin exact Build 25 source and CI evidence
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p audit/source audit/ci_build audit/ci_logs audit/metadata
+          # Archive exactly the source from the successful Windows build,
+          # not the HEAD that introduced this non-rendering export workflow.
+          git archive 681b962237c702d2b09486b56d7526233f922dd0 duoview .github/workflows/duoview-joey-plugin.yml | tar -xf - -C audit/source
+          gh run download 38378964134 -R liviutrn/OpenNR -n DuoView-Joey-Preserved-Plugin-25 -D audit/ci_build
+          gh run download 38378964134 -R liviutrn/OpenNR -n DuoView-Joey-plugin-build-logs-25 -D audit/ci_logs
+          gh api repos/liviutrn/OpenNR/actions/jobs/115234315063/logs > audit/ci_logs/full_actions_job_115234315063.log
+          gh api repos/liviutrn/OpenNR/actions/runs/38378964134 > audit/metadata/github_run_38378964134.json
+          gh api repos/liviutrn/OpenNR/releases/tags/duoview-joey-plugin-v11-build-25 > audit/metadata/github_release_build25.json
+          git rev-parse 681b962237c702d2b09486b56d7526233f922dd0 > audit/metadata/compiled_source_sha.txt
+          printf 'Build 25 source snapshot and CI artifacts, not in-game validated.\n' > audit/metadata/READ_ME_FIRST.txt
+          (cd audit && find . -type f -print0 | sort -z | xargs -0 sha256sum) > audit/metadata/export_sha256.txt
+          test -s audit/ci_build/Plugin/DuoViewJoey.dll
+          test -s audit/ci_logs/plugin-build.log
+          test -s audit/ci_logs/full_actions_job_115234315063.log
+          echo 'DuoView evidence export complete'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: DuoView-Build25-ExactSource-And-CI
+          path: audit/
+          if-no-files-found: error
+          retention-days: 30
