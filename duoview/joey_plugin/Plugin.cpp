@@ -737,16 +737,40 @@ public:
             set_reason("OpenXR instance unavailable");
             return;
         }
-        const auto loader=GetModuleHandleW(L"openxr_loader.dll");
-        const auto get_proc=loader ? reinterpret_cast<PFN_xrGetInstanceProcAddr>(GetProcAddress(loader,"xrGetInstanceProcAddr")) : nullptr;
-        PFN_xrVoidFunction locate{},end{},enumerate{};
-        if (!get_proc || XR_FAILED(get_proc(instance,"xrLocateViews",&locate)) || XR_FAILED(get_proc(instance,"xrEndFrame",&end)) ||
-            XR_FAILED(get_proc(instance,"xrEnumerateSwapchainImages",&enumerate))) {
-            set_reason("OpenXR loader functions unavailable; hooks pending");
-            publish_status();
+        // Joey's exact UEVRBackend.dll embeds a statically linked OpenXR loader.
+        // GetModuleHandleW("openxr_loader.dll") is NOT a valid dependency:
+        // the backend's PE import table has no openxr_loader.dll import.
+        // The three wrapper RVAs below were independently proven by tracing
+        // the released backend's real xrEndFrame, xrLocateViews and
+        // xrEnumerateSwapchainImages callsites. Avoid instantiating a second
+        // loader, which would have a separate XrInstance registry.
+        constexpr uintptr_t xr_locate_rva=0x562e60;
+        constexpr uintptr_t xr_end_rva=0x562790;
+        constexpr uintptr_t xr_enumerate_rva=0x562910;
+        const std::array<uint8_t,16> locate_entry{
+            0x40,0x53,0x56,0x57,0x41,0x54,0x41,0x56,
+            0x41,0x57,0x48,0x81,0xec,0xc8,0x00,0x00};
+        const std::array<uint8_t,16> end_entry{
+            0x48,0x89,0x5c,0x24,0x18,0x57,0x48,0x81,
+            0xec,0xb0,0x00,0x00,0x00,0x48,0x8b,0x05};
+        const std::array<uint8_t,16> enumerate_entry{
+            0x40,0x53,0x56,0x57,0x41,0x56,0x48,0x81,
+            0xec,0xb8,0x00,0x00,0x00,0x48,0x8b,0x05};
+        const auto exact_entry=[&](uintptr_t rva,const auto& entry) {
+            return readable(backend+rva,entry.size()) &&
+                std::memcmp(reinterpret_cast<const void*>(backend+rva),
+                            entry.data(),entry.size())==0;
+        };
+        if (!exact_entry(xr_locate_rva,locate_entry) ||
+            !exact_entry(xr_end_rva,end_entry) ||
+            !exact_entry(xr_enumerate_rva,enumerate_entry)) {
+            pending_=false; mode=0;
+            set_reason("Embedded OpenXR entry differs from verified Joey; no hooks installed");
+            publish_status(true);
+            api->functions->log_error("[DuoViewJoey] Static Joey OpenXR loader contract mismatch; refused");
             return;
         }
-        enumerate_images=reinterpret_cast<PFN_xrEnumerateSwapchainImages>(enumerate);
+        enumerate_images=reinterpret_cast<PFN_xrEnumerateSwapchainImages>(backend+xr_enumerate_rva);
         pending_=false;
         set_reason("Registering verified binary/OpenXR hooks");
         publish_status(true);
@@ -757,13 +781,15 @@ public:
             hook(backend+0x3111f0,&pre_render_hook,original_pre_render) &&
             hook(backend+0x1f0f50,&frame_hook,original_frame) &&
             hook(backend+0x1e4770,&copy_hook,original_copy) &&
-            hook(reinterpret_cast<uintptr_t>(locate),&locate_hook,original_locate) &&
-            hook(reinterpret_cast<uintptr_t>(end),&end_hook,original_end);
+            hook(backend+xr_locate_rva,&locate_hook,original_locate) &&
+            hook(backend+xr_end_rva,&end_hook,original_end);
         if (!ok) { rollback_hooks(); mode=0; set_reason("Hook registration failed; rolled back, Joey untouched"); publish_status(true); api->functions->log_error("[DuoViewJoey] Hook transaction failed and was rolled back"); return; }
         installed=true;
-        set_reason("Copy observer installed; original views until exact baseline snapshot is accepted");
+        set_reason("Static Joey OpenXR hooks active; observing actual native scene copy");
         publish_status(true);
-        api->functions->log_info("[DuoViewJoey] Mode=%d installed on unchanged official Joey Mono backend; select Native Stereo",mode.load());
+        api->functions->log_info("[DuoViewJoey] Mode=%d: hooked embedded Joey OpenXR wrappers at 0x%llx/0x%llx; select Native Stereo",
+             mode.load(),static_cast<unsigned long long>(xr_locate_rva),
+             static_cast<unsigned long long>(xr_end_rva));
     }
     void on_pre_viewport_client_draw(UEVR_UGameViewportClientHandle,UEVR_FViewportHandle,UEVR_FCanvasHandle) override {
         if(draw && !draw->published) release_reservation(draw->slot);
