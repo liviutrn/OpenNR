@@ -32,7 +32,7 @@ struct Draw { dv::FrameKey key; Optics optical; };
 thread_local std::optional<Draw> draw;
 dv::SubmissionMailbox<Packet> submissions;
 std::atomic<uint64_t> last_report{}, last_success{}, last_status_write{};
-std::atomic<uint64_t> engine_ticks{}, locate_calls{}, producer_pairs{}, render_callbacks{}, matched_packets{}, composite_queued{}, end_calls{}, submitted_layers{}, rejected_layers{};
+std::atomic<uint64_t> engine_ticks{}, locate_calls{}, producer_pairs{}, render_callbacks{}, matched_packets{}, composite_queued{}, end_calls{}, submitted_layers{}, rejected_layers{}, xr_accepted{}, xr_failed{};
 std::mutex status_mutex;
 std::string status_reason{"Not initialized"};
 std::filesystem::path status_path;
@@ -62,7 +62,9 @@ void publish_status(bool force=false) {
         << "CompositesQueued=" << composite_queued.load() << "\n"
         << "EndFrames=" << end_calls.load() << "\n"
         << "SubmittedLayers=" << submitted_layers.load() << "\n"
-        << "RejectedLayers=" << rejected_layers.load() << "\n";
+        << "RejectedLayers=" << rejected_layers.load() << "\n"
+        << "XRSubmitAccepted=" << xr_accepted.load() << "\n"
+        << "XRSubmitFailed=" << xr_failed.load() << "\n";
     out.close();
     if (out) MoveFileExW(temp.c_str(),status_path.c_str(),MOVEFILE_REPLACE_EXISTING);
 }
@@ -341,6 +343,7 @@ XrResult XRAPI_CALL end_hook(XrSession session,const XrFrameEndInfo* info) {
     const auto submitted=submissions.take(info->displayTime,generation.load());
     auto end=*info;
     std::vector<const XrCompositionLayerBaseHeader*> layers;
+    bool prepared_scene_layer = false;
     std::vector<XrCompositionLayerProjection> projections; projections.reserve(info->layerCount);
     std::vector<std::array<XrCompositionLayerProjectionView,2>> pairs; pairs.reserve(info->layerCount);
     for(uint32_t i=0;i<info->layerCount;++i) {
@@ -371,11 +374,23 @@ XrResult XRAPI_CALL end_hook(XrSession session,const XrFrameEndInfo* info) {
         }
         if (!valid_pair) { ++rejected_layers; continue; }
         ++submitted_layers;
+        prepared_scene_layer = true;
         pairs.push_back(pair); projections.push_back(*projection); projections.back().views=pairs.back().data();
         layers.push_back(reinterpret_cast<const XrCompositionLayerBaseHeader*>(&projections.back()));
     }
     end.layerCount=static_cast<uint32_t>(layers.size()); end.layers=layers.data();
-    return original_end(session,&end);
+    const auto result = original_end(session,&end);
+    if (prepared_scene_layer) {
+        if (XR_SUCCEEDED(result)) {
+            ++xr_accepted;
+            set_reason("OpenXR accepted DuoView projection submission; headset visuals unverified");
+        } else {
+            ++xr_failed;
+            set_reason("OpenXR rejected DuoView projection submission");
+            report("OpenXR returned failure after DuoView projection submission");
+        }
+    }
+    return result;
 }
 std::vector<int> hooks;
 template<class Fn> bool hook(uintptr_t target,Fn replacement,Fn& original) {
