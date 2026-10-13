@@ -5,7 +5,7 @@ $profilePath=Join-Path $env:APPDATA 'UnrealVRMod\Stalker2-Win64-Shipping'
 $plugins=Join-Path $profilePath 'plugins'
 New-Item $plugins -ItemType Directory -Force | Out-Null
 $backup=Join-Path $profilePath ('DuoViewBackup-'+(Get-Date -Format 'yyyyMMdd-HHmmss'))
-$items=@('CheekyFoveatedDLSS.dll','CheekyFoveatedDLSSRuntime.dll','CheekyFoveatedDLSS','DuoViewJoey.dll')
+$items=@('DuoViewJoey.dll')
 foreach ($item in $items) {
   $from=Join-Path $plugins $item
   if (Test-Path $from) {
@@ -19,11 +19,22 @@ if (Test-Path $config) {
   Copy-Item $config $backup
 }
 Copy-Item (Join-Path $PSScriptRoot 'Plugin\DuoViewJoey.dll') $plugins
+$scripts=Join-Path $profilePath 'scripts'
+New-Item $scripts -ItemType Directory -Force | Out-Null
+$oldUi=Join-Path $scripts 'DuoViewJoeyUI.lua'
+if (Test-Path $oldUi) {
+  New-Item $backup -ItemType Directory -Force | Out-Null
+  Copy-Item $oldUi $backup
+}
+Copy-Item (Join-Path $PSScriptRoot 'Plugin\DuoViewJoeyUI.lua') $scripts
+$oldStatus=Join-Path $profilePath 'DuoViewJoey.status'
+if (Test-Path $oldStatus) { Remove-Item $oldStatus -Force }
 $text=Get-Content (Join-Path $PSScriptRoot 'Plugin\DuoViewJoey.ini') -Raw
 $text=$text -replace '(?m)^Mode=\d+$',"Mode=$Mode"
 Set-Content $config $text -Encoding ASCII
 Write-Host "Installed test mode $Mode. Use JoeyOriginal\UEVRInjector.exe from this extracted package."
-Write-Host 'Disable Cheeky and ReShade OpenXR API layers for this test.'
+Write-Host 'UEVR Scripts menu: DuoView Mono - Joey original backend. It includes live status and editable settings.'
+Write-Host 'Conflicting Cheeky/ReShade modules must be disabled for active DuoView modes; this installer DOES NOT change them.'
 if ($Mode -eq 0) { Write-Host 'Select ordinary Mono. This stage records diagnostics and does not hook rendering.' }
 else { Write-Host 'Select Native Stereo, with Native Fix, Extreme Compatibility, 2D Screen, and Stereo Emulation OFF.' }
-Write-Host 'Remove plugins\DuoViewJoey.dll to restore ordinary Joey behavior. Any moved plugins are in the timestamped backup folder.'
+Write-Host 'Remove plugins\DuoViewJoey.dll to restore ordinary Joey behavior. The installer leaves other plugins untouched; previous DuoView files are backed up.'
