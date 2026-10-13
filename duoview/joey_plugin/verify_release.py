@@ -35,9 +35,9 @@ def verify(path):
             references.setdefault(target, set()).add(ranges[index][0])
     # Independently correlate Joey's published C++ OpenXR::copy implementation
     # with this exact Mono DLL: full unwind region, prologue, and diagnostic.
-    copy_rva = 0x1C4280
-    copy_end = 0x1C4D34
-    copy_prologue = bytes.fromhex("4c894c24204c89442418895424105553565741544155")
+    copy_rva = 0x1E4770
+    copy_end = 0x1E5AC2
+    copy_prologue = bytes.fromhex("4c894c24204c894424188954241048894c240855535657415441554156415748")
     if image[copy_rva:copy_rva+len(copy_prologue)] != copy_prologue:
         raise ValueError("Released Joey OpenXR::copy RVA/ABI prologue mismatch")
     if (copy_rva, copy_end) not in ranges:
@@ -55,6 +55,13 @@ def verify(path):
         print(f"Verified released function 0x{address:x}: {marker}")
     disassembler = capstone.Cs(capstone.CS_ARCH_X86, capstone.CS_MODE_64)
     proofs = {
+        0x1E47A4: ("lea", "rbx, [rcx + 0x170]"),
+        0x1E4890: ("cmp", "byte ptr [rbx + 0x40], 0"),
+        0x1E5338: ("cmp", "byte ptr [r13 + 0x40], 0"),
+        0x1E53A6: ("mov", "r9d, dword ptr [rbp + 0x118]"),
+        0x1E5473: ("cmp", "byte ptr [rax + 0x40], 0"),
+        0x1E549A: ("cmp", "byte ptr [r9 + 0x40], 0"),
+        0x1E54EF: ("call", "0x3b8090"),
         0x2AD39D: ("mov", "ecx, dword ptr [rip + 0x11299cd]"),
         0x2AD3A3: ("mov", "edi, dword ptr [rcx + r15]"),
         0x2AD3B0: ("mov", "rax, qword ptr [rip + 0xc0ce81]"),
@@ -79,6 +86,12 @@ def verify(path):
     assert 0x3118F9 + 6 + 0x10C5471 == 0x13D6D70
     assert 0x2AD3B0 + 7 + 0xC0CE81 == 0xEBA238
     assert 0x136870 + 7 + 0xDDA699 == 0xF10F10
+    # The shared logging marker also occurs in DX11 copy at 0x1c4280.
+    # Marker identity alone was the Build49 handoff mistake. Prove this
+    # function is actually called from the exact D3D12 on_frame region.
+    call=0x1F83F5
+    assert image[call]==0xE8 and call+5+struct.unpack_from("<i",image,call+1)[0]==copy_rva
+    print("Verified DX12 caller, optional callback flags, source-state operand and CommandContext execute target")
     print("Verified dynamic SDK offsets, VR holder, active selection, and XR producer/consumer counter operands")
 
 if __name__ == "__main__":
