@@ -8,7 +8,7 @@ inline bool copy_owned_image(ID3D12GraphicsCommandList* cmd, ID3D12Device* devic
     if (s.Dimension!=D3D12_RESOURCE_DIMENSION_TEXTURE2D || d.Dimension!=s.Dimension ||
         s.Width!=d.Width || s.Height!=d.Height || s.DepthOrArraySize!=1 || d.DepthOrArraySize!=1 ||
         s.MipLevels!=1 || d.MipLevels!=1 || s.SampleDesc.Count!=1 || d.SampleDesc.Count!=1 ||
-        !dv::dx12::bgra8(s.Format) || !dv::dx12::bgra8(d.Format)) return false;
+        !bgra8(s.Format) || !bgra8(d.Format)) return false;
     ComPtr<ID3D12Device> sd,dd;
     if (FAILED(source->GetDevice(IID_PPV_ARGS(&sd))) || FAILED(destination->GetDevice(IID_PPV_ARGS(&dd))) ||
         sd.Get()!=device || dd.Get()!=device) return false;
