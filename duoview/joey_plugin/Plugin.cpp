@@ -333,10 +333,17 @@ XrResult XRAPI_CALL locate_hook(XrSession session,const XrViewLocateInfo* info,X
                 {std::tan(v.fov.angleLeft),std::tan(v.fov.angleRight),std::tan(v.fov.angleUp),std::tan(v.fov.angleDown)}};
         }
         if (auto geometry=uevr::mono::geometry(eyes)) {
-            UEVR_Vector3f position{}; UEVR_Quaternionf head{}; api->vr->get_pose(api->vr->get_hmd_index(),&position,&head);
-            const glm::quat head_q{head.w,head.x,head.y,head.z};
-            const glm::quat eye_q{views[0].pose.orientation.w,views[0].pose.orientation.x,views[0].pose.orientation.y,views[0].pose.orientation.z};
-            std::scoped_lock lock(optics_mutex); optics=Optics{*geometry,info->displayTime,glm::normalize(glm::inverse(head_q)*eye_q)};
+            // PSVR2 Toolkit gaze is already head-local. Sampling get_pose()
+            // here is unsafe: Joey's view-space head update can follow LocateViews.
+            // Estimate the head optical basis from the two *same-sample* eye
+            // orientations so common head rotations cancel exactly.
+            const glm::quat left{views[0].pose.orientation.w,views[0].pose.orientation.x,views[0].pose.orientation.y,views[0].pose.orientation.z};
+            const glm::quat right{views[1].pose.orientation.w,views[1].pose.orientation.x,views[1].pose.orientation.y,views[1].pose.orientation.z};
+            if (!std::isfinite(left.w) || !std::isfinite(right.w)) return result;
+            const auto approximate_head=glm::normalize(glm::slerp(glm::normalize(left),glm::normalize(right),.5f));
+            const auto optical_offset=glm::normalize(glm::inverse(approximate_head)*glm::normalize(left));
+            std::scoped_lock lock(optics_mutex);
+            optics=Optics{*geometry,info->displayTime,optical_offset};
         }
     }
     return result;
