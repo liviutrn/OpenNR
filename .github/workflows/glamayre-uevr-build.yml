@@ -1,0 +1,41 @@
+name: Glamarye UEVR Windows Build
+on:
+  push:
+    branches:
+      - "experiments/glamayre-sharpen-uevr-v01"
+    paths:
+      - "glamayre-uevr/**"
+      - ".github/workflows/glamayre-uevr-build.yml"
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  compile:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure MSVC x64
+        run: cmake -S glamayre-uevr -B glamayre-uevr/build -G "Visual Studio 17 2022" -A x64
+      - name: Build Release
+        run: cmake --build glamayre-uevr/build --config Release --parallel
+      - name: Verify DLL exists
+        shell: pwsh
+        run: |
+          $p = "glamayre-uevr/build/Release/GlamaryeSharpenUEVR.dll"
+          if (!(Test-Path $p)) { throw "DLL missing: $p" }
+          Write-Host "SHA256:"
+          (Get-FileHash $p -Algorithm SHA256).Hash
+      - name: Package UEVR plugin
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force glamayre-uevr/package/plugins | Out-Null
+          New-Item -ItemType Directory -Force glamayre-uevr/package/scripts | Out-Null
+          Copy-Item glamayre-uevr/build/Release/GlamaryeSharpenUEVR.dll glamayre-uevr/package/plugins/
+          Copy-Item glamayre-uevr/scripts/glamayre_sharpen.lua glamayre-uevr/package/scripts/
+          Copy-Item glamayre-uevr/README.md glamayre-uevr/package/
+          Copy-Item glamayre-uevr/LICENSE-GLAMARYE.txt glamayre-uevr/package/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Glamarye-Sharpen-UEVR-v01
+          path: glamayre-uevr/package/
+          retention-days: 30
