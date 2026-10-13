@@ -115,6 +115,11 @@ int main() {
     D3D12_RECT rightArea{LONG(W / 2), 0, LONG(W), LONG(H)};
     cmd->ClearRenderTargetView(rtv, left, 1, &whole);
     cmd->ClearRenderTargetView(rtv, right, 1, &rightArea);
+    // A small, low-contrast texture detail ensures Bigger Sharpen with edge
+    // protection ON has a meaningful test beyond a solid vertical silhouette.
+    float patch[4]{0.30f,0.30f,0.30f,1.0f};
+    D3D12_RECT smallPatch{9,9,13,13};
+    cmd->ClearRenderTargetView(rtv, patch, 1, &smallPatch);
 
     g_custom("glamayre_sharpen.set", "enabled=1");
     g_custom("glamayre_sharpen.set", "strength=1.8");
@@ -169,7 +174,7 @@ int main() {
     for (UINT y=0;y<H;++y) for(UINT x=0;x<W;++x) {
         const auto red = mapped[footprint.Offset + y*footprint.Footprint.RowPitch + x*4];
         // Unsharpened clear colors are approximately 51 and 102.
-        const int baseline = x < W/2 ? 51 : 102;
+        const int baseline = (x>=9 && x<13 && y>=9 && y<13) ? 77 : (x < W/2 ? 51 : 102);
         if (abs(int(red)-baseline)>2) ++differing;
     }
     buffer->Unmap(0,nullptr);
