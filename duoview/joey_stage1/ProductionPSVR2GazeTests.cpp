@@ -19,14 +19,14 @@ int main() try {
     require(!psvr2::calibrated_ray(s),"backward ray invalidates");
     s.raw.combined_direction={0,0,1};s.size=0;
     require(!psvr2::calibrated_ray(s),"invalid CAPI packet size");
-    std::array<float,16> p{};p[0]=1;p[5]=1;p[11]=-1;
+    std::array<float,16> p{};p[0]=1;p[5]=1;p[11]=1;
     auto c=psvr2::projection_uv({0,0,1},p);
     require(c && std::abs(c->u-.5f)<1e-5f && std::abs(c->v-.5f)<1e-5f,"forward mapped to center");
     auto r=psvr2::projection_uv({.5f,.5f,1},p);
     require(r && std::abs(r->u-.75f)<1e-5f && std::abs(r->v-.25f)<1e-5f,"right/up projection");
     p[8]=.2f;c=psvr2::projection_uv({0,0,1},p);
     require(c && std::abs(c->u-.4f)<1e-5f,"asymmetric Mono optical projection");
-    p[11]=1;require(!psvr2::projection_uv({0,0,1},p),"unsupported negative-w projection fails closed");
+    p[11]=-1;require(!psvr2::projection_uv({0,0,1},p),"unsupported negative-w projection fails closed");
     require(!psvr2::projection_uv({0,0,0},p),"invalid forward ray");
     std::cout<<"PSVR2 CAPI ABI, ray validity, blink, mapping and projection PASS\n";
     return 0;

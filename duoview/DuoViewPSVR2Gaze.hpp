@@ -64,15 +64,16 @@ inline std::optional<Ray> calibrated_ray(const Status& s) {
     return Ray{-d.x/norm,d.y/norm,d.z/norm};
 }
 
-// Projection from the EXACT same frozen Joey LEFT optical Mono basis used by both views.
-// Column-major 4x4, and a gaze direction has no translation component.
+// Projection from Joey's actual shared Mono perspective, not a generic OpenXR matrix.
+// Joey OpenXR::update_matrices creates a +Z-forward Unreal projection (p[11] == +1).
+// A direction has no translation component; source gaze is already +forward.
 inline std::optional<UV> projection_uv(const Ray& r,const std::array<float,16>& p) {
     if (!std::isfinite(r.right)||!std::isfinite(r.up)||
         !std::isfinite(r.forward)||r.forward<=.1f) return {};
     for(float x:p) if(!std::isfinite(x)) return {};
-    const float x=p[0]*r.right+p[4]*r.up-p[8]*r.forward;
-    const float y=p[1]*r.right+p[5]*r.up-p[9]*r.forward;
-    const float w=p[3]*r.right+p[7]*r.up-p[11]*r.forward;
+    const float x=p[0]*r.right+p[4]*r.up+p[8]*r.forward;
+    const float y=p[1]*r.right+p[5]*r.up+p[9]*r.forward;
+    const float w=p[3]*r.right+p[7]*r.up+p[11]*r.forward;
     if(!std::isfinite(w)||w<=.01f) return {};
     const float u=(x/w+1.f)*.5f, v=(1.f-y/w)*.5f;
     if(!std::isfinite(u)||!std::isfinite(v)) return {};
