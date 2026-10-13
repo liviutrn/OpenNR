@@ -61,7 +61,7 @@ jobs:
           $p='frontend/UEVR/MainWindow.xaml.cs'
           $s=Get-Content $p -Raw
           $old='RenderingModeOptions.Create(supportsDibr: true)'
-          if ($s.Split($old).Count -ne 2) { throw 'Unexpected frontend source' }
+          if ([regex]::Matches($s,[regex]::Escape($old)).Count -ne 1) { throw 'Unexpected frontend source' }
           $s=$s.Replace($old,'RenderingModeOptions.Create(supportsDibr: false)')
           Set-Content $p $s
           dotnet run --project frontend/tests/RenderingModes --configuration Release
