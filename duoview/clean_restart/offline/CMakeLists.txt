@@ -6,6 +6,7 @@ if(NOT WIN32)
 endif()
 
 foreach(root IN ITEMS JOEY_SOURCE JSON_SOURCE OPENXR_SOURCE)
+    file(TO_CMAKE_PATH "${${root}}" ${root})
     if(NOT IS_DIRECTORY "${${root}}")
         message(FATAL_ERROR "Missing ${root} checkout")
     endif()
