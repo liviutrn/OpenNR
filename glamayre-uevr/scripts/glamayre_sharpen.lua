@@ -1,0 +1,73 @@
+-- Glamarye Sharpen: minimal UEVR LuaLoader panel.
+-- This file is only UI; every GPU operation runs in the native DLL.
+local state = {enabled=false,big=true,edges=true,split=false,strength=0.4,limit=0.1,bias=0.02}
+local received = false
+local pending = {}
+
+local function send(key, value)
+    if type(value) == "boolean" then value = value and 1 or 0 end
+    uevr.api:dispatch_custom_event("glamayre_sharpen.set", key .. "=" .. tostring(value))
+end
+
+uevr.sdk.callbacks.on_lua_event(function(event, message)
+    if event ~= "glamayre_sharpen.status" then return end
+    received = true
+    for key, raw in string.gmatch(message or "", "([%w]+)=([^;]+)") do
+        local n = tonumber(raw)
+        if n ~= nil then
+            if key == "gpuError" then
+                state.gpuError = n ~= 0
+            elseif pending[key] == nil then
+                if key == "enabled" or key == "big" or key == "edges" or key == "split" then
+                    state[key] = n ~= 0
+                else
+                    state[key] = n
+                end
+            end
+        end
+    end
+end)
+
+local function checkbox(label, key)
+    local changed, value = imgui.checkbox(label, state[key] == true)
+    if changed then
+        state[key] = value
+        send(key, value)
+    end
+end
+
+local function slider(label, key, minimum, maximum)
+    local changed, value = imgui.slider_float(label, state[key], minimum, maximum, "%.3f")
+    local active = imgui.is_item_active()
+    if changed then
+        state[key] = value
+        pending[key] = true
+    end
+    if pending[key] and not active then
+        send(key, state[key])
+        pending[key] = nil
+    end
+end
+
+uevr.lua.add_script_panel("Glamarye Sharpen", function()
+    if not received then
+        imgui.text("Waiting for GlamaryeSharpenUEVR.dll")
+        imgui.text("Install DLL in this game's UEVR plugins folder.")
+        return
+    end
+    checkbox("Enable Intelligent Sharpen", "enabled")
+    slider("Sharpen strength", "strength", 0.0, 2.0)
+    checkbox("Bigger Sharpen (1.4 pixel radius)", "big")
+    checkbox("Sharpen jagged edges less", "edges")
+    slider("Maximum sharpen change", "limit", 0.01, 0.5)
+    slider("FXAA edge detection bias", "bias", 0.0, 0.2)
+    if imgui.tree_node("Stereo image layout") then
+        checkbox("Two eyes packed side-by-side in one texture", "split")
+        imgui.text("Leave off for Mono and per-eye texture arrays.")
+        imgui.tree_pop()
+    end
+    if state.gpuError then
+        imgui.text("GPU initialization error: check UEVR.log. Sharpen is bypassed.")
+    end
+    imgui.text("DLSS and Joey native stereo/mono renderers are unchanged.")
+end)
