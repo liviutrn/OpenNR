@@ -95,6 +95,7 @@ struct SwapchainState {
     bool projection = false;
     bool splitStereo = false;
     bool initialized = false;
+    uint32_t enumerateAttempts = 0;
     std::vector<std::unique_ptr<ImageContext>> images;
 };
 std::unordered_map<Swapchain,SwapchainState> g_swapchains;
@@ -157,27 +158,39 @@ bool headsetExtent(const D3D12_RESOURCE_DESC& d, bool& twoEyes) {
 }
 bool ensureImages(Swapchain swapchain, SwapchainState& state) {
     if (state.initialized) return !state.images.empty();
-    // Fail closed; an incomplete mapping must not be retried every frame.
-    state.initialized = true;
+    // The device/runtime may not be ready at the first release in Joey.
+    // Don't permanently poison this swapchain when early setup is incomplete.
     if (!g_enumerate || !g_api || !g_api->renderer ||
         g_api->renderer->renderer_type != UEVR_RENDERER_D3D12) return false;
     auto* dev = static_cast<ID3D12Device*>(g_api->renderer->device);
     if (!dev) return false;
+    if (state.enumerateAttempts >= 5) { state.initialized=true; return false; }
     uint32_t count = 0;
-    if (g_enumerate(swapchain,0,&count,nullptr) != XR_SUCCESS || count<1 || count>8) {
+    if (g_enumerate(swapchain,0,&count,nullptr) != XR_SUCCESS || count<1) {
+        ++state.enumerateAttempts;
         g_enumerateFailed.fetch_add(1, std::memory_order_relaxed);
         return false;
     }
+    if (count>8) { state.initialized=true; return false; }
     std::vector<ImageD3D12> images(count);
     for(auto& image : images) image.type = XR_TYPE_IMAGE_D3D12;
     if (g_enumerate(swapchain,count,&count,
-        reinterpret_cast<BaseHeader*>(images.data())) != XR_SUCCESS) return false;
-    // Runtime image formats and sizes are validated BEFORE allocating a
-    // new command allocator, descriptors or fence. Depth/UI fail closed.
-    if (!images[0].texture) return false;
+        reinterpret_cast<BaseHeader*>(images.data())) != XR_SUCCESS) {
+        ++state.enumerateAttempts;
+        g_enumerateFailed.fetch_add(1, std::memory_order_relaxed);
+        return false;
+    }
+    if (!images[0].texture) {
+        ++state.enumerateAttempts;
+        return false;
+    }
+    // This classification is permanent until XR destroys the swapchain.
     bool isSplit = false;
     const auto mainDesc = images[0].texture->GetDesc();
-    if (!headsetExtent(mainDesc, isSplit)) return false;
+    if (!headsetExtent(mainDesc, isSplit)) {
+        state.initialized = true; // wrong UI/depth extent, never touch it
+        return false;
+    }
     if (!state.projection) {
         state.projection = true;
         state.splitStereo = isSplit;
@@ -187,10 +200,14 @@ bool ensureImages(Swapchain swapchain, SwapchainState& state) {
         auto ctx = std::make_unique<ImageContext>();
         if (!makeContext(*ctx,image.texture,dev)) {
             state.images.clear();
+            // Permanently reject an unsupported or non-color texture;
+            // never repeatedly allocate GPU resources for it.
+            state.initialized = true;
             return false;
         }
         state.images.push_back(std::move(ctx));
     }
+    state.initialized = true;
     return true;
 }
 
