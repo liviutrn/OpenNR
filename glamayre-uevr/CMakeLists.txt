@@ -29,3 +29,5 @@ add_test(NAME DX12_WARP_Callback_Render COMMAND GlamaryeGpuTest)
 
 add_test(NAME DX12_WARP_SRGB_Projection COMMAND GlamaryeGpuTest srgb)
 add_test(NAME DX12_WARP_Typeless_SRGB_Projection COMMAND GlamaryeGpuTest typeless)
+
+add_test(NAME DX12_WARP_Red_Grid COMMAND GlamaryeGpuTest debug)
