@@ -12,6 +12,8 @@ permissions:
 concurrency:
   group: duoview-exact-baseline-${{ github.ref }}
   cancel-in-progress: false
+env:
+  PYTHONDONTWRITEBYTECODE: '1'
 jobs:
   exact-latest-joey-baseline:
     runs-on: windows-2022

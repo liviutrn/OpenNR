@@ -33,8 +33,9 @@ def verify(lock_path, backend, frontend, output):
         if (frontend / generated).read_text(encoding="utf-8") != expected:
             raise ValueError("Frontend generated resource differs from its original build script")
     for source in (backend, sdk, frontend):
-        if git(source, "ls-files", "--others", "--exclude-standard"):
-            raise ValueError(f"Untracked files could affect source identity: {source.name}")
+        untracked = git(source, "ls-files", "--others", "--exclude-standard")
+        if untracked:
+            raise ValueError(f"Untracked files could affect source identity: {source.name}: {untracked}")
     report.update(frontend_commit=actual_frontend, exact_original_sdk=True,
                   sdk_tree="c958569565e435c8670caec726eece63ac7c317b",
                   duoview_integrated=False, reconstructed_sdk_integrated=False,
