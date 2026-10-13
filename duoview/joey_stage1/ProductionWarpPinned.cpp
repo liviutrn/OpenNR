@@ -1,6 +1,7 @@
 #include <windows.h>
 #include "DuoViewD3D12.hpp"
 #include <dxgi1_6.h>
+#include <d3d12sdklayers.h>
 #include <array>
 #include <iostream>
 #include <stdexcept>
@@ -29,6 +30,10 @@ static void transition(ID3D12GraphicsCommandList* cmd, ID3D12Resource* r, D3D12_
     barrier.Transition={r,D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES,a,b};cmd->ResourceBarrier(1,&barrier);
 }
 int main() try {
+    // Exercise the actual copied Joey compositor with D3D12 validation on WARP.
+    ComPtr<ID3D12Debug> debug;
+    if (SUCCEEDED(D3D12GetDebugInterface(IID_PPV_ARGS(&debug))))
+        debug->EnableDebugLayer();
     ComPtr<IDXGIFactory4> factory;check(CreateDXGIFactory1(IID_PPV_ARGS(&factory)));
     ComPtr<IDXGIAdapter> adapter;check(factory->EnumWarpAdapter(IID_PPV_ARGS(&adapter)));
     ComPtr<ID3D12Device> device;check(D3D12CreateDevice(adapter.Get(),D3D_FEATURE_LEVEL_11_0,IID_PPV_ARGS(&device)));
