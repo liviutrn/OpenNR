@@ -12,7 +12,7 @@ permissions:
   contents: read
 concurrency:
   group: duoview-stage234-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: true
 env:
   PYTHONDONTWRITEBYTECODE: '1'
 jobs:
