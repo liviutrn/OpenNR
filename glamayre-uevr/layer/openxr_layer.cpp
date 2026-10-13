@@ -46,6 +46,7 @@ struct SessionData {
     XrInstance instance{XR_NULL_HANDLE};
     ComPtr<ID3D12Device> device;
     ComPtr<ID3D12CommandQueue> queue;
+    uint64_t timestampFrequency = 0;
 };
 struct Image {
     ComPtr<ID3D12Resource> resource;
@@ -54,6 +55,11 @@ struct Image {
     ComPtr<ID3D12DescriptorHeap> rtvs;
     ComPtr<ID3D12Fence> fence;
     UINT64 lastSignal{};
+    // All timing resources are created lazily on diagnostic enable.
+    ComPtr<ID3D12QueryHeap> timeQueries;
+    ComPtr<ID3D12Resource> timeReadback;
+    bool timePending = false;
+    bool timeUnsupported = false;
 };
 struct Swap {
     XrSession session{XR_NULL_HANDLE};
@@ -68,10 +74,58 @@ std::unordered_map<XrInstance,Dispatch> instances;
 std::unordered_map<XrSession,SessionData> sessions;
 std::unordered_map<XrSwapchain,Swap> swaps;
 std::atomic<uint64_t> acquires{}, releases{}, endframes{}, projections{}, processed{}, rejects{}, errors{};
+std::atomic<uint64_t> gpuMeanUs{}, gpuSampleCount{}, timingFrameCounter{};
 std::atomic<bool> layerReady{false};
 
 using Record = bool (__cdecl*)(void*,void*,void*,bool);
 using Enabled = bool (__cdecl*)();
+bool initializeTiming(Image& im, ID3D12Device* device) {
+    if (im.timeQueries && im.timeReadback) return true;
+    if (im.timeUnsupported) return false;
+    D3D12_QUERY_HEAP_DESC query{};
+    query.Type = D3D12_QUERY_HEAP_TYPE_TIMESTAMP;
+    query.Count = 2;
+    if (FAILED(device->CreateQueryHeap(&query,IID_PPV_ARGS(&im.timeQueries)))) {
+        im.timeUnsupported = true;
+        return false;
+    }
+    D3D12_HEAP_PROPERTIES props{};
+    props.Type = D3D12_HEAP_TYPE_READBACK;
+    D3D12_RESOURCE_DESC buffer{};
+    buffer.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+    buffer.Width = 2 * sizeof(uint64_t);
+    buffer.Height = 1;
+    buffer.DepthOrArraySize = 1;
+    buffer.MipLevels = 1;
+    buffer.SampleDesc.Count = 1;
+    buffer.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+    if (FAILED(device->CreateCommittedResource(
+            &props,D3D12_HEAP_FLAG_NONE,&buffer,D3D12_RESOURCE_STATE_COPY_DEST,
+            nullptr,IID_PPV_ARGS(&im.timeReadback)))) {
+        im.timeQueries.Reset();
+        im.timeUnsupported = true;
+        return false;
+    }
+    return true;
+}
+void consumeTiming(Image& im,uint64_t frequency) {
+    if (!im.timePending || !im.timeReadback || !frequency) return;
+    // Caller has already checked the per-image fence, so Map never waits.
+    const D3D12_RANGE needed{0,2*sizeof(uint64_t)};
+    uint64_t* values=nullptr;
+    if (FAILED(im.timeReadback->Map(0,&needed,reinterpret_cast<void**>(&values)))) return;
+    const uint64_t start=values[0],stop=values[1];
+    D3D12_RANGE written{0,0};
+    im.timeReadback->Unmap(0,&written);
+    im.timePending=false;
+    if (stop<=start) return;
+    uint64_t us=(stop-start)*1000000ull/frequency;
+    if(us>1000000ull) return; // invalid timestamp or long stall
+    uint64_t samples=gpuSampleCount.fetch_add(1,std::memory_order_relaxed);
+    uint64_t previous=gpuMeanUs.load(std::memory_order_relaxed);
+    uint64_t mean=(samples==0) ? us : (previous*7+us)/8;
+    gpuMeanUs.store(mean,std::memory_order_relaxed);
+}
 bool process(Swap& swap,uint32_t index) {
     if (!swap.projection || swap.rejected) return false;
     auto sit=sessions.find(swap.session);
@@ -87,18 +141,43 @@ bool process(Swap& swap,uint32_t index) {
     if(index>=swap.images.size()) return false;
     Image& im=*swap.images[index];
     if(im.fence->GetCompletedValue()<im.lastSignal) return false;
+    // One cheap atomic flag check while processing already-enabled sharpening.
+    // When false: no timestamp query, no Map, no readback, no timer allocations.
+    auto timingFn=reinterpret_cast<Enabled>(GetProcAddress(plugin,
+        "glamayre_sharpen_timing_enabled"));
+    const bool timingOn=timingFn && timingFn();
+    if(timingOn && im.timePending)
+        consumeTiming(im,ses.timestampFrequency);
+    const bool sample=timingOn &&
+        ((timingFrameCounter.fetch_add(1,std::memory_order_relaxed) % 32ull)==0);
+    bool doQuery=false;
+    if(sample && !im.timePending && !im.timeUnsupported) {
+        if(!ses.timestampFrequency)
+            ses.queue->GetTimestampFrequency(&ses.timestampFrequency);
+        if(ses.timestampFrequency)
+            doQuery=initializeTiming(im,ses.device.Get());
+    }
     if(FAILED(im.allocator->Reset())||
        FAILED(im.list->Reset(im.allocator.Get(),nullptr))) {++errors;return false;}
+    if(doQuery)
+        im.list->EndQuery(im.timeQueries.Get(),D3D12_QUERY_TYPE_TIMESTAMP,0);
     auto rtv=im.rtvs->GetCPUDescriptorHandleForHeapStart();
     if(!record(im.list.Get(),im.resource.Get(),&rtv,swap.doubleWide)) {
         im.list->Close();return false;
+    }
+    if(doQuery) {
+        im.list->EndQuery(im.timeQueries.Get(),D3D12_QUERY_TYPE_TIMESTAMP,1);
+        im.list->ResolveQueryData(im.timeQueries.Get(),D3D12_QUERY_TYPE_TIMESTAMP,
+            0,2,im.timeReadback.Get(),0);
     }
     if(FAILED(im.list->Close())) {++errors;return false;}
     ID3D12CommandList* commands[]={im.list.Get()};
     ses.queue->ExecuteCommandLists(1,commands);
     UINT64 next=im.lastSignal+1;
     if(FAILED(ses.queue->Signal(im.fence.Get(),next))) {++errors;return false;}
-    im.lastSignal=next; ++processed;
+    im.lastSignal=next;
+    if(doQuery) im.timePending=true;
+    ++processed;
     return true;
 }
 bool ensureImages(XrSwapchain sc,Swap& s) {
@@ -334,6 +413,13 @@ template<class T> void lookup(PFN_xrGetInstanceProcAddr gipa,XrInstance inst,
 }
 } // namespace
 
+// This returns the cached aggregate only; it never queries the GPU.
+// The normal Lua status handler calls it only while measurement is toggled on.
+extern "C" __declspec(dllexport) void __cdecl glamayre_layer_get_gpu_timing(uint64_t* out,uint32_t count) {
+    if(!out || count<2)return;
+    out[0]=gpuMeanUs.load(std::memory_order_relaxed);
+    out[1]=gpuSampleCount.load(std::memory_order_relaxed);
+}
 extern "C" __declspec(dllexport) void __cdecl glamayre_layer_get_status(uint64_t* out,uint32_t count) {
     if(!out||count<8)return;
     out[0]=layerReady?1:0;out[1]=acquires;out[2]=releases;out[3]=endframes;
