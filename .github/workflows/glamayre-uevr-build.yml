@@ -1,8 +1,8 @@
-name: Glamarye OpenXR API Layer Windows Build v01
+name: Glamarye OpenXR Multi-Radius Build v02
 on:
   push:
     branches:
-      - "experiments/glamayre-openxr-layer-v01"
+      - "experiments/glamayre-openxr-layer-v02-multiscale-timing"
     paths:
       - "glamayre-uevr/**"
       - ".github/workflows/glamayre-uevr-build.yml"
@@ -51,6 +51,6 @@ jobs:
           Copy-Item glamayre-uevr/LICENSE-GLAMARYE.txt glamayre-uevr/package/
       - uses: actions/upload-artifact@v4
         with:
-          name: Glamarye-OpenXR-Layer-v01
+          name: Glamarye-OpenXR-MultiRadius-v02
           path: glamayre-uevr/package/
           retention-days: 30
