@@ -1,110 +1,108 @@
--- DuoView Joey-first controls rendered by UEVR's own Lua/ImGui UI.
--- Loaded automatically from the game's profile scripts directory.
--- This UI has no rendering hooks and does not touch Joey's binaries.
-local appdata = os.getenv("APPDATA")
-local base = appdata and (appdata .. "\\UnrealVRMod\\Stalker2-Win64-Shipping\\") or nil
-local config_file = base and (base .. "DuoViewJoey.ini") or nil
-local status_file = base and (base .. "DuoViewJoey.status") or nil
-local options = {"Disabled (original Joey)", "Shared-pose two views", "Fixed fovea", "PSVR2 eye-tracked fovea"}
-local config = {Mode=0,CropWidth=0.50,CropHeight=0.50,PeripheralScale=0.20,FovealDensity=1.00,Feather=0.08,DebugBorder=1}
+-- DuoView UI using ONLY the Lua APIs exposed by Joey/UEVR.
+-- No os.getenv, os.time, io.open, arbitrary filesystem paths, or standalone overlay.
+-- UEVR's fs API operates inside this game's UnrealVRMod/<game>/data sandbox.
+local CONFIG = "DuoViewJoey.ini"
+local STATUS = "DuoViewJoey.status"
+local REQUEST = "DuoViewJoey.status.request"
+local options = {"Disabled (original Joey)", "Shared-pose reference", "Fixed fovea", "PSVR2 eye-tracked fovea"}
+local config = {Mode=0, CropWidth=0.5, CropHeight=0.5, PeripheralScale=0.2, FovealDensity=1.0, Feather=0.08, DebugBorder=1}
 local status = {}
 local dirty = false
-local last_poll = -1
+local draw_count = 0
+local message = "Settings apply on next game launch."
+local available = type(fs) == "table" and type(fs.read) == "function" and type(fs.write) == "function"
 
-local function read_pairs(path)
-    local data = {}
-    if not path then return data end
-    local f = io.open(path,"r")
-    if not f then return data end
-    for line in f:lines() do
-        local key, value = line:match("^%s*([%a][%w_]*)%s*=%s*(.-)%s*$")
-        if key then data[key] = value end
+local function read_pairs(filename)
+    local values = {}
+    if not available then return values end
+    local success, contents = pcall(fs.read,filename)
+    if not success or type(contents) ~= "string" then return values end
+    for line in contents:gmatch("[^\r\n]+") do
+        local key,value=line:match("^%s*([%a][%w_]*)%s*=%s*(.-)%s*$")
+        if key and value then values[key] = value end
     end
-    f:close()
-    return data
+    return values
 end
 
-local function load_config()
-    local loaded = read_pairs(config_file)
-    for key, original in pairs(config) do
-        if loaded[key] then
-            local value = tonumber(loaded[key])
-            if value then config[key] = value end
-        end
-    end
-    config.Mode = math.max(0, math.min(3,math.floor(config.Mode)))
-    dirty = false
+local function write_file(filename, contents)
+    if not available then return false end
+    local success, result = pcall(fs.write, filename, contents)
+    -- Return value may be void, depending on the UEVR binding version.
+    return success and result ~= false
 end
 
-local function save_config()
-    if not config_file then return false end
-    local f = io.open(config_file,"w")
-    if not f then return false end
-    f:write("[DuoView]\n")
-    local keys={"Mode","CropWidth","CropHeight","PeripheralScale","FovealDensity","Feather","DebugBorder"}
+local function reload_settings()
+    local saved=read_pairs(CONFIG)
+    for key,_ in pairs(config) do
+        local num=tonumber(saved[key])
+        if num then config[key]=num end
+    end
+    config.Mode=math.max(0,math.min(3,math.floor(config.Mode)))
+    dirty=false
+end
+
+local keys={"Mode","CropWidth","CropHeight","PeripheralScale","FovealDensity","Feather","DebugBorder"}
+local function save_settings()
+    local lines={"[DuoView]"}
     for _,key in ipairs(keys) do
-        f:write(key,"=",tostring(config[key]),"\n")
+        lines[#lines+1] = key.."="..tostring(config[key])
     end
-    f:close()
-    dirty = false
-    return true
+    if write_file(CONFIG,table.concat(lines,"\n").."\n") then
+        dirty=false
+        message="Saved. Restart STALKER 2 to apply the new configuration."
+    else
+        message="ERROR: Cannot save DuoViewJoey.ini via UEVR fs."
+    end
 end
 
-load_config()
-local message = "Changes are saved to your UEVR profile; restart the game to apply."
+reload_settings()
+
 uevr.sdk.callbacks.on_draw_ui(function()
     if not imgui.collapsing_header("DuoView Mono - Joey original backend") then return end
-    if not base then
-        imgui.text("APPDATA is unavailable. Cannot read the game profile.")
+    if not available then
+        imgui.text("ERROR: UEVR sandbox fs API is unavailable; UI cannot save/read native settings.")
+        imgui.text("Joey original injector is not modified.")
         return
     end
-
-    local now = os.time()
-    if now ~= last_poll then
-        last_poll = now
-        status = read_pairs(status_file)
-        -- Native plugin polls this request at most four times per second.
-        -- Without this UI open, it performs no periodic status file writes.
-        local request = io.open(status_file .. ".request", "w")
-        if request then request:write(tostring(now)); request:close() end
+    draw_count=draw_count+1
+    if draw_count==1 or draw_count%45==0 then
+        status=read_pairs(STATUS)
+        write_file(REQUEST,"1")
     end
 
-    imgui.text("Backend: Joey 101226HELLRAISERp1 (unchanged)")
-    imgui.text("Plugin hooks: "..(status.Hooks or "No native status: not initialized"))
-    imgui.text("Native state: "..(status.Reason or "Check profile plugin installation"))
-    imgui.text("Applied mode: "..(status.Mode or "unknown").."  |  Selected mode: "..tostring(config.Mode))
-    imgui.text("Engine ticks: "..(status.EngineTicks or "0").."   LocateViews: "..(status.LocateViews or "0"))
-    imgui.text("Paired views: "..(status.ProducerPairs or "0").."   Render callbacks: "..(status.RenderCallbacks or "0"))
-    imgui.text("Matched frames: "..(status.MatchedPackets or "0").."   Composites: "..(status.CompositesQueued or "0"))
-    imgui.text("XR end frames: "..(status.EndFrames or "0").."   Layers submitted: "..(status.SubmittedLayers or "0")..
-        "   Rejected: "..(status.RejectedLayers or "0"))
-    imgui.text("If counters do not advance, DuoView is NOT rendering.")
+    imgui.text("Native plugin: "..(status.Hooks or "No native status"))
+    imgui.text("Reason: "..(status.Reason or "Waiting for native plugin initial state"))
+    imgui.text("Applied mode: "..(status.Mode or "?").."; menu selected: "..tostring(config.Mode))
+    imgui.text("Present callbacks: "..(status.PresentCallbacks or "0").." / Engine ticks: "..(status.EngineTicks or "0"))
+    imgui.text("OpenXR LocateViews: "..(status.LocateViews or "0").." / XR end frames: "..(status.EndFrames or "0"))
+    imgui.text("Paired UE views: "..(status.ProducerPairs or "0").." / Renderer callbacks: "..(status.RenderCallbacks or "0"))
+    imgui.text("Matching producer frames: "..(status.MatchedPackets or "0").." / GPU composites queued: "..(status.CompositesQueued or "0"))
+    imgui.text("XR accepted: "..(status.XRSubmitAccepted or "0").." / XR rejected: "..(status.XRSubmitFailed or "0"))
+    imgui.text("Withheld scene layers: "..(status.RejectedLayers or "0"))
+    imgui.text("Only incrementing paired views + composites + accepted XR frames indicates runtime progress.")
     imgui.spacing()
-    local changed, next_mode = imgui.combo("Render mode", config.Mode + 1, options)
-    if changed then config.Mode = next_mode - 1; dirty = true end
 
-    local function control(name, key, lo, hi, speed)
-        local did_change, next_value = imgui.drag_float(name, config[key], speed, lo, hi, "%.3f")
-        if did_change then
-            config[key] = math.max(lo, math.min(hi,next_value))
-            dirty = true
-        end
+    local changed,new_mode=imgui.combo("Rendering mode (restart)",config.Mode+1,options)
+    if changed then
+        config.Mode=math.max(0,math.min(3,new_mode-1))
+        dirty=true
     end
-    control("Crop width", "CropWidth", 0.05, 1.0, 0.01)
-    control("Crop height", "CropHeight", 0.05, 1.0, 0.01)
-    control("Peripheral scale", "PeripheralScale", 0.05, 0.50, 0.01)
-    control("Foveal density", "FovealDensity", 0.25, 4.0, 0.05)
-    control("Feather", "Feather", 0.0, 0.45, 0.01)
-    local border = config.DebugBorder == 1
-    local toggle, checked = imgui.checkbox("Debug fovea border", border)
-    if toggle then config.DebugBorder = checked and 1 or 0; dirty = true end
+    local function slider(label,key,minval,maxval,step)
+        local changed,newval=imgui.drag_float(label,config[key],step,minval,maxval,"%.3f")
+        if changed then config[key]=math.max(minval,math.min(maxval,newval)); dirty=true end
+    end
+    slider("Crop width","CropWidth",0.05,1.0,0.01)
+    slider("Crop height","CropHeight",0.05,1.0,0.01)
+    slider("Peripheral resolution scale","PeripheralScale",0.05,0.5,0.01)
+    slider("Foveal density","FovealDensity",0.25,4.0,0.05)
+    slider("Blend feather","Feather",0.0,0.45,0.01)
+    local changed,border=imgui.checkbox("Show fovea border",config.DebugBorder==1)
+    if changed then config.DebugBorder=border and 1 or 0;dirty=true end
 
-    if imgui.button("Save settings") then
-        message = save_config() and "Saved. Restart STALKER 2 to apply." or "Could not write DuoViewJoey.ini."
-    end
+    if imgui.button("Save DuoView settings") then save_settings() end
     imgui.same_line()
-    if imgui.button("Reload settings") then load_config(); message = "Reloaded from profile INI." end
+    if imgui.button("Reload from disk") then reload_settings();message="Reloaded from UEVR data profile." end
     imgui.text(message)
     if dirty then imgui.text("Unsaved changes") end
-    imgui.text("Use OpenXR + Native Stereo (ID 0) for active DuoView modes.")
+    imgui.text("Use OpenXR and Native Stereo ID 0 for DuoView modes 1-3.")
 end)
