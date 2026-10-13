@@ -1,4 +1,5 @@
 name: DuoView exact latest Joey baseline build
+run-name: Exact Joey Mono baseline with original SDK (${{ github.run_number }})
 on:
   push:
     branches: [experiments/duoview-joey-current-clean-v1]
