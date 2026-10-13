@@ -10,7 +10,7 @@ cbuffer C : register(b0) {
     float maxChange;
     float fxaaBias;
     float maximumColour;
-    uint flags;    // bit0: edge protection; bit1: bigger sharpen; bit2: side-by-side
+    uint flags;    // bit0: edge protection; bit1: bigger; bit2: side-by-side; bit3: debug grid
     uint layer;
     uint colourMode; // 0=hardware sRGB/linear; 1=manual SDR sRGB; 2=scRGB (203 nit reference)
 };
@@ -63,6 +63,11 @@ float3 ReadAt(float2 uv, float2 offset, float2 centerUV) {
 float4 PSMain(VSOut input) : SV_Target {
     float2 uv = input.pos.xy / imageSize;
     float4 original = src.SampleLevel(linearClamp, float3(uv, float(layer)), 0);
+    // Red test grid is OFF by default and only proves the GPU pass touches
+    // the actual submitted eye texture; it is not part of Glamarye sharpening.
+    if ((flags & 8u) != 0u &&
+        (frac(uv.x*12.0) < 0.04 || frac(uv.y*12.0) < 0.04))
+        return float4(1.0, 0.01, 0.05, original.a);
     if (strength <= 0.00001) return original;
 
     float3 c = DecodeColour(original.rgb);
