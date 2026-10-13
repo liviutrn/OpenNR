@@ -291,15 +291,12 @@ bool prepare_gpu(ID3D12Resource* source) {
     next->width=static_cast<uint32_t>(desc.Width); next->height=desc.Height; next->format=desc.Format;
     D3D12_HEAP_PROPERTIES heap{}; heap.Type=D3D12_HEAP_TYPE_DEFAULT;
     heap.CreationNodeMask=heap.VisibleNodeMask=1;
-    auto target=desc; target.Format=DXGI_FORMAT_B8G8R8A8_TYPELESS;
-    target.Flags=D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
+
     for (auto& slot:next->slots) {
         slot=std::make_shared<Slot>();
-        if (FAILED(device->CreateCommittedResource(&heap,D3D12_HEAP_FLAG_NONE,&target,
-            D3D12_RESOURCE_STATE_RENDER_TARGET,nullptr,IID_PPV_ARGS(&slot->destination))) ||
-            !slot->compositor.prewarm(device,next->width/2,next->height,
+        if (!slot->compositor.prewarm(device,next->width/2,next->height,
                 desc.Format==DXGI_FORMAT_B8G8R8A8_UNORM_SRGB)) return false;
-        slot->destination->SetName(L"DuoView::OwnedFrame");
+
     }
     gpu=next;
     std::erase_if(retiring,[](const auto& old) {
@@ -392,7 +389,20 @@ bool copy_hook(void* self,uint32_t index,ID3D12Resource* source,
     std::shared_ptr<Slot> slot;
     if(action==CopyAction::Compose) slot=scope.producer->slot;
     else if(action==CopyAction::Hold) { slot=hold->slot; stop("Frame copy mismatch: coherent held image; subsequent producers restored"); }
-    else if(action==CopyAction::Native && supported && !armed) slot=reserve_slot();
+    else if(action==CopyAction::Native && supported && !armed && (!hold || !faulted)) {
+        slot=reserve_slot();
+        if(slot && !slot->destination) {
+            ComPtr<ID3D12Device> device;source->GetDevice(IID_PPV_ARGS(&device));
+            auto target=source->GetDesc();target.Format=DXGI_FORMAT_B8G8R8A8_TYPELESS;
+            target.Flags=D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
+            D3D12_HEAP_PROPERTIES heap{};heap.Type=D3D12_HEAP_TYPE_DEFAULT;
+            heap.CreationNodeMask=heap.VisibleNodeMask=1;
+            if(!device || FAILED(device->CreateCommittedResource(&heap,D3D12_HEAP_FLAG_NONE,&target,
+                D3D12_RESOURCE_STATE_RENDER_TARGET,nullptr,IID_PPV_ARGS(&slot->destination)))) {
+                release_reservation(slot);slot.reset();
+            }
+        }
+    }
     if(action==CopyAction::Native && !slot) {
         // Passive original rendering: record the real acquired destination,
         // without altering scene pixels or optional callback ownership.
@@ -406,28 +416,33 @@ bool copy_hook(void* self,uint32_t index,ID3D12Resource* source,
         scope.failed=true; return false;
     }
     ComPtr<ID3D12Device> device; auto* queue=static_cast<ID3D12CommandQueue*>(api->renderer->command_queue);
-    if(FAILED(slot->destination->GetDevice(IID_PPV_ARGS(&device))) || !queue) {scope.failed=true;return false;}
+    if(!slot->compositor.mono_image() || FAILED(slot->compositor.mono_image()->GetDevice(IID_PPV_ARGS(&device))) || !queue) {scope.failed=true;return false;}
     scope.recording_slot=slot;
     d3d12::CommandContext* ctx{}; CopyProof proof{};
     CopyCallback commands=std::function<void(d3d12::CommandContext&,ID3D12Resource*)>(
         [&](d3d12::CommandContext& c,ID3D12Resource* destination) {
             ctx=&c; proof.fence_before=c.fence_value; scope.destination=destination;
             if(!c.ready()) return;
-            const auto d=destination->GetDesc(),s=slot->destination->GetDesc();
+            const auto d=destination->GetDesc(),s=slot->compositor.mono_image()->GetDesc();
             ComPtr<ID3D12Device> dd;
-            if(d.Width!=s.Width || d.Height!=s.Height || !dv::dx12::bgra8(d.Format) ||
+            if(d.Width!=2*s.Width || d.Height!=s.Height || !dv::dx12::bgra8(d.Format) ||
                FAILED(destination->GetDevice(IID_PPV_ARGS(&dd))) || dd.Get()!=device.Get()) return;
             proof.destination_verified=true;
             if(action==CopyAction::Compose) {
                 slot->source=source;
                 if(!slot->compositor.record(device.Get(),c.cmd_list.Get(),source,
-                    slot->destination.Get(),src_state,scope.producer->frame.config)) return;
+                    destination,src_state,scope.producer->frame.config)) return;
+                proof.recorded=true;
             } else if(action==CopyAction::Native) {
                 slot->source=source;
                 if(!dv::dx12::copy_owned_image(c.cmd_list.Get(),device.Get(),source,slot->destination.Get(),src_state)) return;
             }
-            proof.recorded=dv::dx12::copy_owned_image(c.cmd_list.Get(),device.Get(),slot->destination.Get(),destination,
-                D3D12_RESOURCE_STATE_RENDER_TARGET);
+            if(action==CopyAction::Hold && hold->mono)
+                proof.recorded=dv::dx12::copy_composite_to_stereo(c.cmd_list.Get(),device.Get(),slot->compositor.mono_image(),destination,
+                    D3D12_RESOURCE_STATE_RENDER_TARGET,D3D12_RESOURCE_STATE_RENDER_TARGET);
+            else if(action!=CopyAction::Compose)
+                proof.recorded=dv::dx12::copy_owned_image(c.cmd_list.Get(),device.Get(),slot->destination.Get(),destination,
+                    D3D12_RESOURCE_STATE_RENDER_TARGET);
             if(proof.recorded) c.has_commands=true;
         });
     // Original optional callbacks are absent on the validated direct path.
@@ -453,8 +468,10 @@ bool copy_hook(void* self,uint32_t index,ID3D12Resource* source,
                 [&](d3d12::CommandContext& c,ID3D12Resource* destination) {
                     fallback_ctx=&c;fallback_proof.fence_before=c.fence_value;scope.destination=destination;
                     if(!c.ready()) return;
-                    fallback_proof.recorded=dv::dx12::copy_owned_image(c.cmd_list.Get(),device.Get(),
-                        fallback->destination.Get(),destination,D3D12_RESOURCE_STATE_RENDER_TARGET);
+                    fallback_proof.recorded=hold->mono ?
+                        dv::dx12::copy_composite_to_stereo(c.cmd_list.Get(),device.Get(),fallback->compositor.mono_image(),destination,
+                            D3D12_RESOURCE_STATE_RENDER_TARGET,D3D12_RESOURCE_STATE_RENDER_TARGET) :
+                        dv::dx12::copy_owned_image(c.cmd_list.Get(),device.Get(),fallback->destination.Get(),destination,D3D12_RESOURCE_STATE_RENDER_TARGET);
                     fallback_proof.destination_verified=fallback_proof.recorded;
                     if(fallback_proof.recorded) c.has_commands=true;
                 });
@@ -734,6 +751,7 @@ public:
         auto slot=armed && !faulted ? reserve_slot() : std::shared_ptr<Slot>{};
         draw=Draw{{generation.load(),serial},*optical,bool(slot),false,slot};
         if(!slot) return; // Busy slots leave this producer fully unmodified.
+        slot->destination.Reset(); // Retired native snapshot; active frames retain only the owned Mono image.
         std::array<float,16> projection{};
         projection[0]=1.f/optical->geometry.horizontal;projection[5]=1.f/optical->geometry.vertical;
         projection[11]=1.f;projection[14]=.1f;
