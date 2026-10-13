@@ -1,5 +1,9 @@
 # DuoView clean restart: current Joey baseline
 
+**Current status:** official baseline identity and binary hashes verified;
+original CPU/GPU and frontend ID checks pass. Full current backend rebuild
+is **blocked by SDK incompatibility**. No new installable DuoView build.
+
 This branch starts the source restart using the exact official Joey DIBR
 backend the user reported smooth. No new DuoView renderer is enabled here.
 The existing old `duoview/` implementation is historical reference only; this
@@ -76,6 +80,30 @@ The separate CPU-only driver invokes Joey's unchanged Mono policy tests:
 `SDK_GAP_AUDIT.md` for exact gaps, original frame behavior, test scope and
 reproduction instructions. This is not a complete source rebuild or a
 headset test.
+
+## Completed verification
+
+| Check | Result | Evidence |
+| --- | --- | --- |
+| Both official release ZIPs and DLLs | All four SHA-256 hashes and package checks passed | Run `38435076991`, official asset archive `11832084328` |
+| Original Mono CPU policy | 4,769 assertions, zero failures | Local GCC C++23 execution of unchanged Joey tests via `offline/MonoPolicyMain.cpp` |
+| Original Mono DX11/DX12 and STALKER 2 policy/DX12 WARP | All four tests passed | Run `38435425509`, job `115431979148` |
+| Original injector rendering IDs | Passed | Same successful offline job; artifact `11833881205` |
+| Complete current Joey + diagnostic public SDK | Failed; no installable backend | Run `38435076991`, job `115426842595`, compiler/source artifact `11833226728` |
+| Rebuilt baseline in headset | Not available/tested | Requires complete SDK compatibility first |
+
+The successful offline-only run deliberately skipped the already-verified
+asset archive and the failed full backend job. Its green result is **not**
+a complete baseline build. Backend runtime source is identical across both
+verification runs. Documentation-only commits use `[skip ci]`; a harness
+correction may use `[offline-only]` to rerun only the affected test job.
+
+Compiler evidence archive SHA-256:
+`8f158f4cea170ff64abff1b2d4cc81214baa0eec28b2454a92c06c7de6247879`.
+It contains full configure/build logs, exact source ZIPs, source hashes,
+SDK access results and submodule revisions. See the
+[full source diagnostic run](https://github.com/liviutrn/OpenNR/actions/runs/38435076991)
+and [successful offline tests](https://github.com/liviutrn/OpenNR/actions/runs/38435425509).
 
 ## Frozen historical evidence
 

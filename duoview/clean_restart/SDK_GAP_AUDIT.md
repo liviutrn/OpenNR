@@ -30,6 +30,26 @@ This is a lower bound. Existing headers may also have changed declarations
 or behavior. The full compiler diagnostic and the exact SDK source remain
 necessary before claiming a complete compatibility inventory.
 
+## Complete compiler outcome
+
+Run `38435076991`, job `115426842595`, completed with backend compilation
+failure. The public SDK itself compiled into `uesdk.lib`; the current
+backend did not compile. MSVC confirmed missing `BoundedDiscovery.hpp`,
+`DiscoveryMemory.hpp`, `GalacticRacerRuntime.hpp`, `MafiaDiscovery.hpp`,
+`ObjectIdentity.hpp`, and `ReflectedNameCall.hpp` in real translation units.
+Other missing headers remain in the direct-include inventory; preprocessing
+stops at the first missing include in each translation unit.
+
+`ProSpiRoofVisibility.cpp` also reports absent `sdk::object_liveness::Identity`,
+`sdk::observe_uobject`, and `sdk::is_current_object`. The build log contains
+105 error lines, mostly cascading from these missing definitions; this is
+not a count of 105 independent defects.
+
+The full compiler/source evidence artifact is `11833226728`, with SHA-256
+`8f158f4cea170ff64abff1b2d4cc81214baa0eec28b2454a92c06c7de6247879`.
+It was downloaded, hash-checked and inspected; its source audit matches the
+local report. No compile failure was suppressed to create a binary.
+
 ## Baseline frame behavior to preserve
 
 All three behaviors highlighted by the old v13/v14 investigation also
@@ -73,6 +93,12 @@ g++ -std=c++23 -O2 -pthread -Ijoey-current/src -Ijoey-current/tests \
 
 These checks provide no headset stability, performance or full injection
 proof. Source snapshots and logs are retained in the CI evidence artifacts.
+
+The Windows verification subsequently completed successfully in run
+`38435425509`, job `115431979148`: four of four original GPU/policy tests
+passed, followed by the original frontend rendering-ID/profile tests.
+Artifact `11833881205` contains those logs. The official runtime and a
+rebuilt runtime have not received a new headset test in this session.
 
 ## Requirements for an SDK adaptation
 
