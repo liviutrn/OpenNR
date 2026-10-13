@@ -22,6 +22,10 @@
 #include "shader.hpp"
 
 using Microsoft::WRL::ComPtr;
+extern "C" void glamayre_xr_tick(const UEVR_PluginInitializeParam* api);
+extern "C" void glamayre_xr_reset_buffers();
+extern "C" unsigned long long glamayre_xr_processed_count();
+extern "C" bool glamayre_xr_hooks_ready();
 
 namespace {
 const UEVR_PluginInitializeParam* g_api = nullptr;
@@ -106,15 +110,17 @@ void onCustomEvent(const char* event, const char* payload) {
     setSetting(name.c_str(), value);
 }
 void onPresent() {
+    glamayre_xr_tick(g_api);
     if (!g_api || !g_api->functions || !g_api->functions->dispatch_lua_event) return;
     unsigned long long now = GetTickCount64();
     if (now - g_lastReport < 400) return;
     g_lastReport = now;
-    char data[256];
+    char data[320];
     snprintf(data, sizeof(data),
-        "enabled=%d;big=%d;edges=%d;split=%d;strength=%.3f;limit=%.3f;bias=%.3f;gpuError=%d",
+        "enabled=%d;big=%d;edges=%d;split=%d;strength=%.3f;limit=%.3f;bias=%.3f;gpuError=%d;xrHook=%d;xrFrames=%llu",
         int(g_enabled.load()), int(g_big.load()), int(g_edges.load()), int(g_split.load()),
-        double(g_strength.load()), double(g_maxChange.load()), double(g_bias.load()), int(g_gpuError.load()));
+        double(g_strength.load()), double(g_maxChange.load()), double(g_bias.load()),
+        int(g_gpuError.load()), int(glamayre_xr_hooks_ready()), glamayre_xr_processed_count());
     g_api->functions->dispatch_lua_event("glamayre_sharpen.status", data);
 }
 struct Pass {
@@ -154,7 +160,7 @@ void resetGpu() {
     g_vs.Reset(); g_ps.Reset(); g_root.Reset(); g_device = nullptr;
     g_gpuError = false;
 }
-void onDeviceReset() { resetGpu(); }
+void onDeviceReset() { glamayre_xr_reset_buffers(); resetGpu(); }
 
 bool setupRootAndShaders(ID3D12Device* device) {
     if (g_root) return true;
@@ -179,7 +185,7 @@ bool setupRootAndShaders(ID3D12Device* device) {
     range.BaseShaderRegister = 0; range.OffsetInDescriptorsFromTableStart = 0;
     D3D12_ROOT_PARAMETER params[2]{};
     params[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
-    params[0].Constants.ShaderRegister = 0; params[0].Constants.Num32BitValues = 8;
+    params[0].Constants.ShaderRegister = 0; params[0].Constants.Num32BitValues = 9;
     params[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
     params[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
     params[1].DescriptorTable.NumDescriptorRanges = 1;
@@ -245,9 +251,9 @@ bool makePass(ID3D12Device* device, const D3D12_RESOURCE_DESC& d, DXGI_FORMAT fo
 }
 struct Constants {
     float width, height, strength, maxChange, fxaaBias, maximumColour;
-    uint32_t flags, layer;
+    uint32_t flags, layer, colourMode;
 };
-static_assert(sizeof(Constants) == 32);
+static_assert(sizeof(Constants) == 36);
 void barrier(ID3D12GraphicsCommandList* cmd, ID3D12Resource* res,
              D3D12_RESOURCE_STATES before, D3D12_RESOURCE_STATES after) {
     D3D12_RESOURCE_BARRIER b{};
@@ -256,25 +262,25 @@ void barrier(ID3D12GraphicsCommandList* cmd, ID3D12Resource* res,
     b.Transition.StateBefore = before; b.Transition.StateAfter = after;
     cmd->ResourceBarrier(1, &b);
 }
-void onPostDX12(void* list, void* resource, void* rtvHandle) {
-    if (!g_enabled || g_strength.load() <= 0 || !list || !resource || g_gpuError) return;
+bool recordSharpenDX12(void* list, void* resource, void* rtvHandle, bool autoSplit) {
+    if (!g_enabled || g_strength.load() <= 0 || !list || !resource || g_gpuError) return false;
     auto* cmd = static_cast<ID3D12GraphicsCommandList*>(list);
     auto* target = static_cast<ID3D12Resource*>(resource);
     D3D12_RESOURCE_DESC desc = target->GetDesc();
     // Unsupported paths are skipped rather than touching the game's GPU state.
     if (desc.Dimension != D3D12_RESOURCE_DIMENSION_TEXTURE2D || desc.SampleDesc.Count != 1 ||
-        desc.MipLevels != 1 || !desc.Width || !desc.Height || desc.DepthOrArraySize > 2) return;
+        desc.MipLevels != 1 || !desc.Width || !desc.Height || desc.DepthOrArraySize > 2) return false;
     DXGI_FORMAT format = typedFormat(desc.Format);
-    if (format == DXGI_FORMAT_UNKNOWN) return;
+    if (format == DXGI_FORMAT_UNKNOWN) return false;
     std::lock_guard lock(g_gpuMutex);
     ComPtr<ID3D12Device> device;
-    if (!succeeded(cmd->GetDevice(IID_PPV_ARGS(&device)), "Get DX12 device")) return;
+    if (!succeeded(cmd->GetDevice(IID_PPV_ARGS(&device)), "Get DX12 device")) return false;
     if (g_device != device.Get()) {
         // Different devices should only arrive after UEVR on_device_reset.
-        if (g_device != nullptr) return;
+        if (g_device != nullptr) return false;
         g_device = device.Get();
     }
-    if (!setupRootAndShaders(device.Get())) return;
+    if (!setupRootAndShaders(device.Get())) return false;
     Pass* pass = nullptr;
     for (auto& cached : g_passes) {
         if (cached.desc.Width == desc.Width && cached.desc.Height == desc.Height &&
@@ -283,9 +289,9 @@ void onPostDX12(void* list, void* resource, void* rtvHandle) {
         }
     }
     if (!pass) {
-        if (g_passes.size() >= 16) return;  // bound persistent allocations across resize events
+        if (g_passes.size() >= 16) return false;  // bound persistent allocations across resize events
         Pass p;
-        if (!makePass(device.Get(), desc, format, p)) return;
+        if (!makePass(device.Get(), desc, format, p)) return false;
         g_passes.push_back(std::move(p));
         pass = &g_passes.back();
     }
@@ -319,14 +325,14 @@ void onPostDX12(void* list, void* resource, void* rtvHandle) {
         Pass::TargetViews* views = nullptr;
         for (auto& v : pass->targets) if (v.target == target) { views = &v; break; }
         if (!views) {
-            if (pass->targets.size() >= 16) return;
+            if (pass->targets.size() >= 16) return false;
             D3D12_DESCRIPTOR_HEAP_DESC rdesc{};
             rdesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
             rdesc.NumDescriptors = desc.DepthOrArraySize;
             Pass::TargetViews v;
             v.target = target;
             if (!succeeded(device->CreateDescriptorHeap(&rdesc, IID_PPV_ARGS(&v.heap)),
-                           "Create per-resource RTV heap")) return;
+                           "Create per-resource RTV heap")) return false;
             auto base = v.heap->GetCPUDescriptorHandleForHeapStart();
             for (unsigned i=0; i < desc.DepthOrArraySize; ++i) {
                 D3D12_RENDER_TARGET_VIEW_DESC dsv{};
@@ -344,17 +350,28 @@ void onPostDX12(void* list, void* resource, void* rtvHandle) {
     Constants constants{float(desc.Width), float(desc.Height),
         g_strength.load(), g_maxChange.load(), g_bias.load(),
         (format == DXGI_FORMAT_R16G16B16A16_FLOAT || format == DXGI_FORMAT_R11G11B10_FLOAT
-            || format == DXGI_FORMAT_R32G32B32A32_FLOAT) ? 16.0f : 1.0f,
-        (g_edges ? 1u : 0u) | (g_big ? 2u : 0u) | (g_split && desc.DepthOrArraySize == 1 ? 4u : 0u), 0u};
+            || format == DXGI_FORMAT_R32G32B32A32_FLOAT) ? (10000.0f / 203.0f) : 1.0f,
+        (g_edges ? 1u : 0u) | (g_big ? 2u : 0u) | ((g_split || autoSplit) && desc.DepthOrArraySize == 1 ? 4u : 0u), 0u,
+        (format == DXGI_FORMAT_R16G16B16A16_FLOAT || format == DXGI_FORMAT_R11G11B10_FLOAT || format == DXGI_FORMAT_R32G32B32A32_FLOAT) ? 2u :
+        (format == DXGI_FORMAT_B8G8R8A8_UNORM_SRGB || format == DXGI_FORMAT_R8G8B8A8_UNORM_SRGB) ? 0u : 1u};
     for (uint32_t eye = 0; eye < desc.DepthOrArraySize; ++eye) {
         constants.layer = eye;
-        cmd->SetGraphicsRoot32BitConstants(0, 8, &constants, 0);
+        cmd->SetGraphicsRoot32BitConstants(0, 9, &constants, 0);
         D3D12_CPU_DESCRIPTOR_HANDLE out{output.ptr + SIZE_T(step) * eye};
         cmd->OMSetRenderTargets(1, &out, FALSE, nullptr);
         cmd->DrawInstanced(3, 1, 0, 0);
     }
+    return true;
 }
 } // namespace
+extern "C" __declspec(dllexport) bool glamayre_sharpen_gpu_record(
+    void* list, void* resource, void* rtvHandle, bool autoSplit) {
+    return recordSharpenDX12(list, resource, rtvHandle, autoSplit);
+}
+extern "C" __declspec(dllexport) bool glamayre_sharpen_processing_enabled() {
+    return g_enabled.load() && g_strength.load() > 0 && !g_gpuError.load();
+}
+
 
 extern "C" __declspec(dllexport) void uevr_plugin_required_version(UEVR_PluginVersion* v) {
     if (v) *v = {UEVR_PLUGIN_VERSION_MAJOR, UEVR_PLUGIN_VERSION_MINOR, UEVR_PLUGIN_VERSION_PATCH};
@@ -363,27 +380,25 @@ extern "C" __declspec(dllexport) bool uevr_plugin_initialize(const UEVR_PluginIn
     if (!api || !api->version || api->version->major != UEVR_PLUGIN_VERSION_MAJOR ||
         api->version->minor < UEVR_PLUGIN_VERSION_MINOR ||
         !api->callbacks || !api->functions || !api->renderer ||
-        !api->callbacks->on_post_render_vr_framework_dx12 ||
         !api->callbacks->on_device_reset || !api->callbacks->on_present ||
         !api->callbacks->on_custom_event) return false;
     if (g_callbacksRegistered) return true;
     g_api = api;
     readConfig();
-    bool a = api->callbacks->on_post_render_vr_framework_dx12(onPostDX12);
-    bool b = api->callbacks->on_device_reset(onDeviceReset);
-    bool c = api->callbacks->on_present(onPresent);
-    bool d = api->callbacks->on_custom_event(onCustomEvent);
+    bool a = api->callbacks->on_device_reset(onDeviceReset);
+    bool b = api->callbacks->on_present(onPresent);
+    bool c = api->callbacks->on_custom_event(onCustomEvent);
+    bool d = true;
     if (!a || !b || !c || !d) {
         if (api->functions->remove_callback) {
-            if (a) api->functions->remove_callback(reinterpret_cast<void*>(&onPostDX12));
-            if (b) api->functions->remove_callback(reinterpret_cast<void*>(&onDeviceReset));
-            if (c) api->functions->remove_callback(reinterpret_cast<void*>(&onPresent));
-            if (d) api->functions->remove_callback(reinterpret_cast<void*>(&onCustomEvent));
+            if (a) api->functions->remove_callback(reinterpret_cast<void*>(&onDeviceReset));
+            if (b) api->functions->remove_callback(reinterpret_cast<void*>(&onPresent));
+            if (c) api->functions->remove_callback(reinterpret_cast<void*>(&onCustomEvent));
         }
         return false;
     }
     g_callbacksRegistered = true;
-    if (api->functions->log_info) api->functions->log_info("Glamarye UEVR v0.1 loaded (DX12)");
+    if (api->functions->log_info) api->functions->log_info("Glamarye UEVR v0.2 loaded (OpenXR projection swapchain DX12)");
     return true;
 }
 BOOL WINAPI DllMain(HINSTANCE module, DWORD reason, void*) {
