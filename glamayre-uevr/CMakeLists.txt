@@ -31,3 +31,10 @@ add_test(NAME DX12_WARP_SRGB_Projection COMMAND GlamaryeGpuTest srgb)
 add_test(NAME DX12_WARP_Typeless_SRGB_Projection COMMAND GlamaryeGpuTest typeless)
 
 add_test(NAME DX12_WARP_Red_Grid COMMAND GlamaryeGpuTest debug)
+
+# Simulated headset-side OpenXR lifecycle, including scene-vs-UI classification.
+add_executable(GlamaryeOpenXRMock tests/openxr_mock.cpp vendor/uevr/API.h)
+target_include_directories(GlamaryeOpenXRMock PRIVATE vendor src)
+target_compile_features(GlamaryeOpenXRMock PRIVATE cxx_std_20)
+target_link_libraries(GlamaryeOpenXRMock PRIVATE d3d12 dxgi)
+add_test(NAME OpenXR_WARP_Scene_Integration COMMAND GlamaryeOpenXRMock)
