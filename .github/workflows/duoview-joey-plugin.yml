@@ -115,8 +115,12 @@ jobs:
           path: package/
           if-no-files-found: error
           retention-days: 30
+      # STOP-SHIP: Build 25 independent review identified unsafe XR-layer omission,
+      # unverified producer/submit identity, unconfirmed Joey scene copy, and
+      # engine-owned D3D12 resource-state assumptions. Do not auto-publish
+      # binaries until those paths have a validated integration/fallback design.
       - name: Publish experimental recovery download
-        if: success()
+        if: ${{ false }}
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
