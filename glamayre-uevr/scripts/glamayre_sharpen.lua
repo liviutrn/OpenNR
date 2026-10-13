@@ -68,26 +68,25 @@ uevr.lua.add_script_panel("Glamarye Sharpen", function()
     end
     if imgui.tree_node("Stereo image layout") then
         checkbox("Two eyes packed side-by-side in one texture", "split")
-        imgui.text("Leave off for Mono and per-eye texture arrays.")
+        imgui.text("Normally leave off. OpenXR detects double-wide stereo automatically.")
         imgui.tree_pop()
     end
     if state.gpuError then
         imgui.text("GPU initialization error: check UEVR.log. Sharpen is bypassed.")
     end
     if state.xrHook ~= 1 then
-        imgui.text("OpenXR loader hook not active (check OpenXR mode and logs).")
+        imgui.text("Glamarye API layer not loaded. Run install-layer.ps1 and restart the game.")
     else
-        imgui.text("OpenXR hooks: loader=" .. tostring(state.xrHook or 0)
-            .. " runtime=" .. tostring(state.xrResolved or 0))
+        imgui.text("Khronos OpenXR API layer: ACTIVE")
         imgui.text("Processed scene images: " .. tostring(state.xrFrames or 0))
         if imgui.tree_node("Frame path diagnostics") then
             imgui.text("Acquired: " .. tostring(state.xrAcquire or 0))
             imgui.text("Released: " .. tostring(state.xrRelease or 0))
             imgui.text("EndFrame: " .. tostring(state.xrEnd or 0))
             imgui.text("Projection matched: " .. tostring(state.xrProj or 0))
-            imgui.text("HMD size matched: " .. tostring(state.xrSize or 0))
-            imgui.text("Eligible submissions: " .. tostring(state.xrEligible or 0))
-            imgui.text("Enumerate errors: " .. tostring(state.xrEnumError or 0))
+            imgui.text("Projection image classified: " .. tostring(state.xrSize or 0))
+            imgui.text("GPU sharpening submissions: " .. tostring(state.xrEligible or 0))
+            imgui.text("API-layer errors: " .. tostring(state.xrEnumError or 0))
             imgui.tree_pop()
         end
         if (state.xrFrames or 0) == 0 then
