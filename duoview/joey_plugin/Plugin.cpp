@@ -9,6 +9,7 @@
 #include <map>
 #include <vector>
 #include "DuoViewState.hpp"
+#include "DuoViewSubmission.hpp"
 #include "DuoViewD3D12.hpp"
 #include "PSVR2NativeGaze.hpp"
 #include "MonoRenderingPolicy.hpp"
@@ -29,7 +30,7 @@ struct Packet { dv::ViewFrame frame; Optics optical; uint32_t producer{}; bool r
 std::map<uint32_t, Packet> packets;
 struct Draw { dv::FrameKey key; Optics optical; };
 thread_local std::optional<Draw> draw;
-thread_local std::optional<Packet> submitted;
+dv::SubmissionMailbox<Packet> submissions;
 std::atomic<uint64_t> last_report{}, last_success{};
 
 bool readable(uintptr_t address, size_t size) {
@@ -200,8 +201,21 @@ bool compose(const Packet& packet,ID3D12Resource* source) {
         gpu = std::make_unique<Gpu>(); gpu->device=device; gpu->queue=queue;
         if (FAILED(device->CreateFence(0,D3D12_FENCE_FLAG_NONE,IID_PPV_ARGS(&gpu->fence)))) { gpu.reset(); return false; }
     }
-    auto& slot = gpu->slots[gpu->next++ % gpu->slots.size()];
-    if (slot.fence && gpu->fence->GetCompletedValue() < slot.fence) return false;
+    // Prefer any completed slot rather than skipping a frame because the next
+    // round-robin slot is busy. Never reset an in-flight command allocator.
+    const auto completed = gpu->fence->GetCompletedValue();
+    Slot* ready = nullptr;
+    for (size_t attempt = 0; attempt < gpu->slots.size(); ++attempt) {
+        const auto index = (gpu->next + attempt) % gpu->slots.size();
+        auto& candidate = gpu->slots[index];
+        if (!candidate.fence || completed >= candidate.fence) {
+            ready = &candidate;
+            gpu->next = (index + 1) % gpu->slots.size();
+            break;
+        }
+    }
+    if (!ready) return false; // no CPU fence wait / forced hitch
+    auto& slot = *ready;
     slot.source=source;
     if (!slot.allocator) {
         if (FAILED(device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT,IID_PPV_ARGS(&slot.allocator))) ||
@@ -234,7 +248,6 @@ bool compose(const Packet& packet,ID3D12Resource* source) {
     return true;
 }
 int frame_hook(void* component,void* vr) {
-    submitted.reset();
     if (native_mode()) {
         const auto openxr = read<uintptr_t>(reinterpret_cast<uintptr_t>(vr)+0xa0);
         const auto handoff=openxr ? read<uint8_t>(*openxr+0x330) : std::nullopt;
@@ -250,13 +263,16 @@ int frame_hook(void* component,void* vr) {
         if (packet) {
             auto* rhi=uevr::API::StereoHook::get_scene_render_target();
             auto* source=rhi ? static_cast<ID3D12Resource*>(rhi->get_native_resource()) : nullptr;
-            if (mode==1 || compose(*packet,source)) submitted=packet;
-            else report("Scene format, queue, fence or compositor validation rejected this frame");
+            if (mode==1 || compose(*packet,source)) {
+                if (!submissions.publish(packet->optical.time, packet->frame.config.key.generation,
+                        packet->frame.config.key.frame, *packet))
+                    report("Duplicate or invalid predicted display time: frame not published");
+            } else report("Scene format, queue, fence or compositor validation rejected this frame");
         } else report("Waiting for matching producer/render/consumer frame; no stale atlas will be submitted");
     }
-    const auto result=original_frame(component,vr);
-    submitted.reset();
-    return result;
+    // xrEndFrame may run on another thread, or later than this callback.
+    // Publication is bounded and can ONLY be consumed by its exact displayTime.
+    return original_frame(component,vr);
 }
 XrResult XRAPI_CALL locate_hook(XrSession session,const XrViewLocateInfo* info,XrViewState* view_state,uint32_t capacity,uint32_t* count,XrView* views) {
     const auto result=original_locate(session,info,view_state,capacity,count,views);
@@ -277,7 +293,11 @@ XrResult XRAPI_CALL locate_hook(XrSession session,const XrViewLocateInfo* info,X
     return result;
 }
 XrResult XRAPI_CALL end_hook(XrSession session,const XrFrameEndInfo* info) {
-    if (!native_mode() || !info || info->layerCount>64) return original_end(session,info);
+    if (!native_mode() || !info || info->layerCount>64 || (info->layerCount && !info->layers))
+        return original_end(session,info);
+    // Consume exactly one producer whose LocateViews prediction matches
+    // THIS OpenXR frame. No cross-thread TLS or last-frame fallback.
+    const auto submitted=submissions.take(info->displayTime,generation.load());
     auto end=*info;
     std::vector<const XrCompositionLayerBaseHeader*> layers;
     std::vector<XrCompositionLayerProjection> projections; projections.reserve(info->layerCount);
@@ -432,6 +452,7 @@ public:
         ++generation;
         state.retire();
         { std::scoped_lock lock(packets_mutex); packets.clear(); }
+        submissions.retire();
         { std::scoped_lock lock(optics_mutex); optics.reset(); }
         { std::scoped_lock lock(gpu_mutex); if(gpu) retiring.push_back(std::move(gpu)); }
     }
