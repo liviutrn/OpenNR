@@ -21,6 +21,7 @@ static void* g_uiHandle=reinterpret_cast<void*>(uintptr_t(0x42));
 static ID3D12Resource* g_sceneTexture=nullptr;
 static ID3D12Resource* g_uiTexture=nullptr;
 static bool g_lastSplit=false;
+static bool g_failEnumerateOnce=false;
 extern "C" bool glamayre_sharpen_gpu_record(void*,void* resource,void* rtv,bool autoSplit) {
     if (!resource || !rtv || resource != g_sceneTexture) return false;
     ++g_draws;
@@ -39,6 +40,7 @@ static Result WINAPI fakeRelease(Swapchain,const void*) { ++g_fakeReleases; retu
 static Result WINAPI fakeEnd(Session,const FrameEndInfo*) { ++g_fakeEnds; return XR_SUCCESS; }
 static Result WINAPI fakeDestroy(Swapchain) { return XR_SUCCESS; }
 static Result WINAPI fakeEnumerate(Swapchain sc,uint32_t capacity,uint32_t* out,BaseHeader* buffer) {
+    if (g_failEnumerateOnce) { g_failEnumerateOnce=false;return -2; }
     ID3D12Resource* tex=(sc==g_sceneHandle)?g_sceneTexture:
                        (sc==g_uiHandle)?g_uiTexture:nullptr;
     if (!tex) return -1;
@@ -109,9 +111,26 @@ int main() {
     g_destroy=fakeDestroy;
     g_enumerate=fakeEnumerate;
 
+    // CASE 0: Joey may release its first headset image before the
+    // DX12 device pointer is ready. Do not permanently mark the image invalid.
+    renderer.device=nullptr;
+    uint32_t idx=999;
+    if (onAcquire(g_sceneHandle,nullptr,&idx)!=XR_SUCCESS) return 12;
+    if (onRelease(g_sceneHandle,nullptr)!=XR_SUCCESS || g_draws!=0 ||
+        g_swapchains[g_sceneHandle].initialized) {
+        fprintf(stderr,"Premature OpenXR initialization poisoned the scene\n");return 13;
+    }
+    renderer.device=device.Get();
+    g_failEnumerateOnce=true;
+    if (onAcquire(g_sceneHandle,nullptr,&idx)!=XR_SUCCESS) return 14;
+    if (onRelease(g_sceneHandle,nullptr)!=XR_SUCCESS || g_draws!=0 ||
+        g_swapchains[g_sceneHandle].initialized ||
+        g_swapchains[g_sceneHandle].enumerateAttempts!=1) {
+        fprintf(stderr,"Transient swapchain enumeration failure did not retry\n");return 15;
+    }
     // CASE 1: before xrEndFrame identifies any projection layer,
     // the unique color buffer with exact HMD pixel extent is accepted.
-    uint32_t idx=999;
+    idx=999;
     if (onAcquire(g_sceneHandle,nullptr,&idx)!=XR_SUCCESS||idx!=0) return 2;
     if (onRelease(g_sceneHandle,nullptr)!=XR_SUCCESS||g_draws!=1||
         !g_lastSplit||glamayre_xr_processed_count()!=1) {
@@ -149,8 +168,8 @@ int main() {
     if (onRelease(g_sceneHandle,nullptr)!=XR_SUCCESS) return 8;
     // When submitting twice on WARP, previous fence may still be in flight:
     // skip rather than wait, so a pass count of 1 or 2 is acceptable.
-    if (g_draws<1 || g_fakeReleases!=3||g_fakeEnds!=1 ||
-        glamayre_xr_dimension_count()!=1||glamayre_xr_release_count()!=3) {
+    if (g_draws<1 || g_fakeReleases!=5||g_fakeEnds!=1 ||
+        glamayre_xr_dimension_count()!=1||glamayre_xr_release_count()!=5) {
         fprintf(stderr,"Callback counts inconsistent\n");return 9;
     }
     // Test fence draining occurs on teardown only.
