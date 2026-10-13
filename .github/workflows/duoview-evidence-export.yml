@@ -27,7 +27,7 @@ jobs:
           git archive 681b962237c702d2b09486b56d7526233f922dd0 duoview .github/workflows/duoview-joey-plugin.yml | tar -xf - -C audit/source
           gh run download 38378964134 -R liviutrn/OpenNR -n DuoView-Joey-Preserved-Plugin-25 -D audit/ci_build
           gh run download 38378964134 -R liviutrn/OpenNR -n DuoView-Joey-plugin-build-logs-25 -D audit/ci_logs
-          gh api repos/liviutrn/OpenNR/actions/jobs/115234315063/logs > audit/ci_logs/full_actions_job_115234315063.log
+          gh api --allow-escape-sequences repos/liviutrn/OpenNR/actions/jobs/115234315063/logs > audit/ci_logs/full_actions_job_115234315063.log
           gh api repos/liviutrn/OpenNR/actions/runs/38378964134 > audit/metadata/github_run_38378964134.json
           gh api repos/liviutrn/OpenNR/releases/tags/duoview-joey-plugin-v11-build-25 > audit/metadata/github_release_build25.json
           git rev-parse 681b962237c702d2b09486b56d7526233f922dd0 > audit/metadata/compiled_source_sha.txt
