@@ -1,0 +1,78 @@
+# DuoView clean restart: current Joey baseline
+
+This branch starts the source restart using the exact official Joey DIBR
+backend the user reported smooth. No new DuoView renderer is enabled here.
+The existing old `duoview/` implementation is historical reference only; this
+workflow neither applies its patches nor compiles it.
+
+## Corrected provenance
+
+The supplied handoff incorrectly called hash `19e91cc8...` a normal Joey
+backend. GitHub's release digests and direct ZIP inspection identify it as
+the **DIBR-capable** asset in `DIBRMONOUEVR.zip` from release
+`101226HELLRAISERp1`. The ZIP stores it under the regular filename
+`UEVRBackend.dll`, which likely contributed to the confusion.
+
+The official DLL embeds both backend commit
+`5ac7edc207866569334175e4ed8a7517971547f6` and SDK commit
+`3cffbc82429b6165ceec2714f0f0d9ae48f55596`. Its SHA-256 is
+`19e91cc8c22a02e2a97996e1523604ab202b4540d954ebc95e07e6b233970966`.
+The normal official DLL is a distinct asset with SHA-256
+`ecdaea840b249ac1894775e2ec5667307b2adcad545843660e5d3edad350e08c`.
+The normal tag points to `387ccb...` and pins SDK `e667df...`; neither is
+the source identity of the smooth DLL identified by the handoff.
+
+The latest release was rechecked on October 13, 2026. Matching original
+frontend branch `uevr-dibr-optin-safe` resolves to `60be4b0...`; it is pinned
+without changing its rendering IDs. Native Stereo remains 0 and Mono 5.
+
+## Baseline blocker and diagnostic build
+
+`joeyhodge/UESDK` remains inaccessible (GitHub connector HTTP 404). The exact
+SDK commit was not found in the accessible `elliotttate/UESDK-RenderDoc`
+repository. Public source searches found no matching source for the first
+missing compatibility headers. The pinned July public SDK lacks 15 headers
+directly included by the current backend and its tests. This is a minimum
+gap count, not a complete SDK API/behavior audit.
+
+The CI workflow:
+
+1. Downloads both official release packages and DLLs, verifies all hashes,
+   ZIP CRCs, packaged/standalone identity, and DIBR embedded commit strings.
+2. Checks out the entire current Joey backend at the smooth DLL's exact
+   source commit, unchanged. It records exact SDK access results.
+3. Uses the explicitly labelled public SDK **for compatibility diagnostics**,
+   records missing headers and hashes every tracked backend file.
+4. Builds and runs original Joey Mono DX11/DX12 WARP and STALKER 2 policy/
+   DX12 WARP tests. These test the existing graphics/lifetime policies; they
+   do not exercise the full Unreal injection or the headset.
+5. Attempts a complete current backend build to collect compiler evidence.
+   An SDK failure fails the job; missing interfaces are not silently stubbed
+   or disabled. Matching frontend/package build is gated on backend success.
+6. Saves exact current source snapshots, dependency IDs and compiler logs,
+   including after a failed build. A successful diagnostic package would
+   still be labelled as adapted SDK, with no headset stability claim.
+
+## Frozen historical evidence
+
+- v14 run `38426715379`: completed successfully; headset result unknown.
+- Old exact Mono-only control run `38431096553`: completed successfully;
+  release `duoview-mono-only-control-build-3` now exists. ZIP SHA-256:
+  `39713c5dc73c3aed8a26bd40608908f60871599e0b4dd4e16b0f140edad6ab38`.
+- Original integrated foveation remains user-confirmed; sustained stability
+  remains unconfirmed. Old experiment branches and releases are unchanged.
+
+## Next engineering gate
+
+Obtain authentic SDK source matching `3cffbc...`, or recover bounded public
+implementations for every required interface with source/binary evidence
+and tests. Audit behavior changes, not only declarations or successful
+compilation. No guessed Unreal vtables/offsets, no compatibility removals to
+make the build green. A public SDK adaptation cannot be called the original
+Joey build.
+
+Only after the rebuilt baseline passes Native Stereo and Mono on the user's
+STALKER 2 scene without SteamVR takeovers may DuoView integration start.
+Preserve original XR lifecycle and modes; integrate two same-pose UE views
+internally, first with a fixed fovea, then add PSVR2 gaze. This branch does
+not request another experimental foveation headset test.

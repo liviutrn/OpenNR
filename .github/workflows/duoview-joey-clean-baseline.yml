@@ -1,0 +1,125 @@
+name: DuoView current Joey baseline audit
+on:
+  push:
+    branches: [experiments/duoview-joey-current-clean-v1]
+    paths: ['duoview/clean_restart/**', '.github/workflows/duoview-joey-clean-baseline.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: duoview-clean-baseline-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  official-release-evidence:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Archive and verify both official release variants
+        run: python duoview/clean_restart/archive_release.py duoview/clean_restart/baseline.lock.json official
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Joey-official-verified-101226HELLRAISERp1-${{ github.run_number }}
+          path: official/
+          if-no-files-found: error
+  current-source-sdk-diagnostic:
+    runs-on: windows-2022
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: workspace
+      - uses: actions/checkout@v4
+        with:
+          repository: joeyhodge/UEVR
+          ref: 5ac7edc207866569334175e4ed8a7517971547f6
+          fetch-depth: 0
+          path: backend
+      - name: Record exact SDK availability
+        shell: pwsh
+        env:
+          GIT_TERMINAL_PROMPT: '0'
+        run: |
+          New-Item -ItemType Directory evidence -Force | Out-Null
+          git ls-remote https://github.com/joeyhodge/UESDK.git *> evidence/exact-sdk-access.log
+          $accessCode=$LASTEXITCODE
+          "Exact SDK remote result: $accessCode; required commit 3cffbc82429b6165ceec2714f0f0d9ae48f55596" | Add-Content evidence/exact-sdk-access.log
+          Get-Content evidence/exact-sdk-access.log
+          $global:LASTEXITCODE=0
+      - uses: actions/checkout@v4
+        with:
+          repository: elliotttate/UESDK-RenderDoc
+          ref: 418729025bad57b094bf6b2e2b55734454c97de6
+          path: backend/dependencies/submodules/UESDK
+      - name: Audit unchanged current Joey source and explicit SDK differences
+        shell: pwsh
+        run: |
+          git -C backend submodule update --init --depth 1 -- dependencies/submodules/glm dependencies/submodules/imgui dependencies/submodules/spdlog
+          if ($LASTEXITCODE -ne 0) { throw 'Pinned public submodules failed' }
+          python workspace/duoview/clean_restart/audit_sources.py workspace/duoview/clean_restart/baseline.lock.json backend backend/dependencies/submodules/UESDK evidence
+          if ($LASTEXITCODE -ne 0) { throw 'Source identity audit failed' }
+      - name: Configure unchanged Joey with diagnostic public SDK
+        shell: pwsh
+        run: |
+          cmake -S backend -B backend/build -G 'Visual Studio 17 2022' -A x64 -DCMAKE_BUILD_TYPE=Release -DUEVR_BUILD_COMPATIBILITY_TESTS=ON *> evidence/configure.log
+          $code=$LASTEXITCODE; Get-Content evidence/configure.log | Select-Object -Last 50
+          if ($code -ne 0) { throw "Current Joey diagnostic configuration failed ($code)" }
+      - name: Build original Mono and STALKER 2 offline tests
+        shell: pwsh
+        run: |
+          cmake --build backend/build --config Release --target mono-d3d11-tests mono-d3d12-tests stalker2-native-policy-tests stalker2-native-d3d12-tests --parallel 2 *> evidence/offline-build.log
+          $code=$LASTEXITCODE; Get-Content evidence/offline-build.log | Select-Object -Last 60
+          if ($code -ne 0) { throw "Original Joey tests failed to compile ($code)" }
+          ctest --test-dir backend/build -C Release -R '^(mono-d3d11-tests|mono-d3d12-tests|stalker2-native-policy-tests|stalker2-native-d3d12-tests)$' --output-on-failure --no-tests=error *> evidence/offline-tests.log
+          $code=$LASTEXITCODE; Get-Content evidence/offline-tests.log
+          if ($code -ne 0) { throw "Original Joey offline tests failed ($code)" }
+      - name: Compile complete unchanged Joey backend to expose real SDK gaps
+        shell: pwsh
+        run: |
+          cmake --build backend/build --config Release --target uevr vr-plugin-nullifier LuaVR --parallel 2 *> evidence/backend-build.log
+          $code=$LASTEXITCODE; Get-Content evidence/backend-build.log | Select-Object -Last 120
+          if ($code -ne 0) { throw "Unmodified current Joey + public SDK is incompatible ($code); see saved evidence, not a baseline build" }
+      - uses: actions/checkout@v4
+        with:
+          repository: joeyhodge/uevr-frontend
+          ref: 60be4b0f9a646109fd9fdf448bacd41477234091
+          path: frontend
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '6.0.x'
+      - name: Compile exact matching frontend only after complete backend passes
+        shell: pwsh
+        run: |
+          dotnet run --project frontend/tests/RenderingModes --configuration Release
+          if ($LASTEXITCODE -ne 0) { throw 'Joey frontend rendering ID tests failed' }
+          dotnet publish frontend/UEVR/UEVR.csproj --output package --configuration Release --self-contained true
+          if ($LASTEXITCODE -ne 0) { throw 'Joey frontend compile failed' }
+          Copy-Item backend/build/bin/uevr/* package/
+          Copy-Item backend/build/bin/vr-plugin-nullifier/UEVRPluginNullifier.dll package/
+          Copy-Item backend/build/bin/LuaVR/LuaVR.dll package/
+          Copy-Item workspace/duoview/clean_restart/baseline.lock.json package/
+          Copy-Item evidence/source-audit.json package/
+          'DIAGNOSTIC CURRENT JOEY + DIFFERENT PUBLIC SDK. Not an equivalent official release rebuild. No DuoView. No headset stability proof.' | Set-Content package/READ_FIRST.txt
+          Get-ChildItem package -Recurse -File | Get-FileHash -Algorithm SHA256 | ConvertTo-Json | Set-Content evidence/package-sha256.json
+      - uses: actions/upload-artifact@v4
+        if: success()
+        with:
+          name: Joey-current-publicsdk-diagnostic-${{ github.run_number }}
+          path: package/
+          if-no-files-found: error
+      - name: Archive exact source snapshots and dependency provenance
+        if: always()
+        shell: pwsh
+        run: |
+          git -C backend submodule status | Set-Content evidence/submodules.txt
+          git -C backend archive --format=zip --output="$env:GITHUB_WORKSPACE/evidence/joey-source.zip" HEAD
+          git -C backend/dependencies/submodules/UESDK archive --format=zip --output="$env:GITHUB_WORKSPACE/evidence/public-sdk-source.zip" HEAD
+          Copy-Item workspace/duoview/clean_restart/baseline.lock.json evidence/
+          Copy-Item backend/build/Testing/Temporary/LastTest.log evidence/ -ErrorAction SilentlyContinue
+          $global:LASTEXITCODE=0
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Joey-clean-restart-compiler-evidence-${{ github.run_number }}
+          path: evidence/
+          if-no-files-found: error

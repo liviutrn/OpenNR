@@ -1,0 +1,47 @@
+{
+  "schema_version": 1,
+  "release": "101226HELLRAISERp1",
+  "backend": {
+    "repository": "joeyhodge/UEVR",
+    "commit": "5ac7edc207866569334175e4ed8a7517971547f6",
+    "variant": "DIBR-capable Joey, including original Mono ID 5",
+    "sdk_repository": "joeyhodge/UESDK",
+    "sdk_commit": "3cffbc82429b6165ceec2714f0f0d9ae48f55596"
+  },
+  "frontend": {
+    "repository": "joeyhodge/uevr-frontend",
+    "commit": "60be4b0f9a646109fd9fdf448bacd41477234091"
+  },
+  "public_sdk_diagnostic": {
+    "repository": "elliotttate/UESDK-RenderDoc",
+    "commit": "418729025bad57b094bf6b2e2b55734454c97de6",
+    "equivalent_to_original": false
+  },
+  "official_assets": [
+    {
+      "name": "DIBRMONOUEVR.zip",
+      "sha256": "d078f6e8c3c36f6877d0c6eafcb1d0344111d4f4992838c1a5ec4b91c553fade"
+    },
+    {
+      "name": "DIBRUEVRBackend.dll",
+      "sha256": "19e91cc8c22a02e2a97996e1523604ab202b4540d954ebc95e07e6b233970966"
+    },
+    {
+      "name": "UEVR.zip",
+      "sha256": "759fcba16f90788a7dfdd8d7cf75fae0b70f0b655cadfb4256cdc31ce05f244c"
+    },
+    {
+      "name": "UEVRBackend.dll",
+      "sha256": "ecdaea840b249ac1894775e2ec5667307b2adcad545843660e5d3edad350e08c"
+    }
+  ],
+  "normal_variant_reference": {
+    "commit": "387ccb744b57387b438bab7027fd017a23df66a8",
+    "sdk_commit": "e667df09713d48952df7b6d22caeca917998f6e9"
+  },
+  "headset_evidence": {
+    "official_dibr": "User reports smooth JoeyOriginal; no timed per-mode benchmark supplied",
+    "source_rebuild": "Not yet built or headset tested",
+    "duoview_on_this_baseline": "Not implemented; baseline stability gate must pass first"
+  }
+}
