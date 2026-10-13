@@ -11,6 +11,7 @@ EDITED_BACKEND = {
 }
 ADDED_BACKEND = {
  "src/mods/vr/DuoViewGeometry.hpp", "src/mods/vr/DuoViewGaze.hpp",
+ "src/mods/vr/DuoViewPSVR2Gaze.hpp",
  "src/mods/vr/DuoViewFrame.hpp", "src/mods/vr/DuoViewConfig.hpp",
  "src/mods/vr/DuoViewState.hpp", "src/mods/vr/DuoViewD3D12.hpp",
  "src/mods/vr/DuoViewMonoCopyD3D12.hpp", "src/mods/vr/DuoViewShaderSource.hpp",
@@ -52,6 +53,10 @@ def main():
  shaders=(a.backend/"src/mods/vr/DuoViewShaderSource.hpp").read_text(encoding="utf-8")
  if "D3DCompile(" in compositor or "shader_source" in compositor:
   raise RuntimeError("Runtime shader compiler still in production compositor")
+ if "DuoViewPSVR2Gaze.hpp" not in (a.backend/"src/mods/VR.hpp").read_text(encoding="utf-8"):
+  raise RuntimeError("Production VR headers missing native PSVR2 gaze integration")
+ if ".eye_tracked=true" not in (a.backend/"src/mods/VR.cpp").read_text(encoding="utf-8"):
+  raise RuntimeError("Stage5 gaze is not enabled")
  if "vertex_shader_bytecode[]" not in shaders or "pixel_shader_bytecode[]" not in shaders:
   raise RuntimeError("Precompiled DXBC shader arrays missing")
  inputs = sorted(EDITED_BACKEND | ADDED_BACKEND)

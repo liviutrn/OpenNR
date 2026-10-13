@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Apply bounded fixed-center two-view integration after verified Stage 1.
-Does not touch Joey mode 0/5. Two engine scene views are restricted to a
-STALKER 2 DX12 OpenXR mode-6 selection, and an incomplete pair requests the
-original Mono mode and still sends a current-frame copy (never an empty layer).
+Original Joey modes 0/5 are protected. STALKER 2 DX12 OpenXR mode 6 only.
+An incomplete pair quarantines the renderer inside mode 6; a single fault
+frame may contain incomplete atlas pixels, then later frames use Joey Mono.
 All original-source anchors must match exactly or the build fails.
 """
 from pathlib import Path
@@ -34,16 +34,16 @@ def main():
         changed[path]=replace(s,before,after,path)
     edit("src/mods/vr/MonoRenderingPolicy.hpp",
         'DuoView Mono (Stage 1 - safe Mono fallback)',
-        'DuoView Mono (Fixed Center - Experimental)')
+        'DuoView Mono (Eye Tracked - Experimental)')
     edit("UEVR/RenderingModeOptions.cs",
         'DuoView Mono (Stage 1 - safe Mono fallback)',
-        'DuoView Mono (Fixed Center - Experimental)')
+        'DuoView Mono (Eye Tracked - Experimental)')
     edit("tests/RenderingModes/Program.cs",
         'DuoView Mono (Stage 1 - safe Mono fallback)',
-        'DuoView Mono (Fixed Center - Experimental)')
+        'DuoView Mono (Eye Tracked - Experimental)')
     header="src/mods/VR.hpp"
     edit(header,'#include "vr/RenderingMethodSetting.hpp"',
-        '#include "vr/RenderingMethodSetting.hpp"\n#include "vr/DuoViewState.hpp"')
+        '#include "vr/RenderingMethodSetting.hpp"\n#include "vr/DuoViewState.hpp"\n#include "vr/DuoViewPSVR2Gaze.hpp"')
     edit(header,'    bool is_using_duoview_mono() const { return m_rendering_method->value() == RenderingMethod::DUOVIEW_MONO; }',
         '''    bool is_using_duoview_mono() const { return m_rendering_method->value() == RenderingMethod::DUOVIEW_MONO; }
     bool is_duoview_renderer_active() const;
@@ -51,10 +51,17 @@ def main():
     uevr::duoview::FrameKey duoview_key(uint32_t frame) const {
         return {mono_generation(), static_cast<uint64_t>(frame) + 1u};
     }
+    uevr::duoview::FrameKey duoview_producer_key() const {
+        // Draw prepares the NEXT UE engine frame; BeginRenderViewFamily
+        // subsequently publishes that frame number as internal_frame_count.
+        return duoview_key(get_runtime()->internal_frame_count + 1u);
+    }
+    bool duoview_gaze_active() const { return m_duoview_gaze.active(); }
     std::optional<uevr::duoview::ViewFrame> duoview_begin_frame();
     void duoview_abort(const char* reason);''')
     edit(header,'    std::atomic<const char*> m_mono_status{"Not selected"};',
         '''    uevr::duoview::State m_duoview;
+    uevr::duoview::psvr2::Reader m_duoview_gaze;
     std::atomic<bool> m_duoview_quarantined{false};
     std::once_flag m_duoview_settings_once;
     std::atomic<const char*> m_mono_status{"Not selected"};''')
@@ -63,12 +70,13 @@ def main():
     cpp="src/mods/VR.cpp"
     edit(cpp,
         'ImGui::TextWrapped("DuoView Stage 1: rendering uses original Joey Mono unchanged. Two-view foveation and gaze are NOT active.");',
-        'ImGui::TextWrapped(is_duoview_renderer_active() ? "DuoView fixed-center two-view rendering (gaze disabled, experimental)" : "DuoView safe fallback: rendering original Joey Mono; foveated path disabled");')
+        'ImGui::TextWrapped(is_duoview_renderer_active() ? (duoview_gaze_active() ? "DuoView ID6: eye-tracked two-view Mono (PSVR2 Toolkit active)" : "DuoView ID6: two-view CENTER fallback (no fresh PSVR2 gaze)") : "DuoView ID6: original Joey Mono fallback / DuoView inactive");')
     edit(cpp, '#include "VR.hpp"', '#include "VR.hpp"\n#include <cstring>')
     edit(cpp,'    m_mono_main_view_token = 0;\n    m_mono_attachment_token = 0;',
         '    m_duoview.retire();\n    if (selection.active() == RenderingMethod::DUOVIEW_MONO) m_duoview_quarantined.store(false, std::memory_order_release);\n    m_mono_main_view_token = 0;\n    m_mono_attachment_token = 0;')
     changed[cpp]+='''
-// Fixed-center first milestone. Do not sample gaze or mutable UI configuration.
+// Stage 5: sample native PSVR2 gaze ONCE per immutable source frame.
+ // CAPI unavailable or invalid => fixed center. Never adjust mid-frame.
 bool VR::is_duoview_renderer_active() const {
     if (!is_using_duoview_mono() || !m_is_d3d12 || m_duoview_quarantined.load(std::memory_order_acquire)) return false;
     const auto runtime = get_runtime();
@@ -89,18 +97,17 @@ std::optional<uevr::duoview::ViewFrame> VR::duoview_begin_frame() {
         if (!m_duoview.configure({.crop_width=.30f, .crop_height=.30f,
             .peripheral_scale=.25f, .foveal_density=2.5f,
             .feather_fraction=.08f, .debug_border=false,
-            .eye_tracked=false, .fovea_view=1u})) {
+            .eye_tracked=true, .fovea_view=1u})) {
             spdlog::error("[DuoView] Fixed-center settings rejected");
         }
     });
-    const auto rt = get_runtime();
-    const auto key = duoview_key(rt->internal_frame_count);
+    const auto key = duoview_producer_key();
     if (auto found = m_duoview.snapshot(key)) return found;
     const auto projection = get_projection_matrix(VRRuntime::Eye::LEFT);
     std::array<float, 16> frozen{};
     std::memcpy(frozen.data(), &projection[0][0], sizeof(frozen));
     return m_duoview.begin(key, get_hmd_width(), get_hmd_height(), frozen,
-        []() -> std::optional<uevr::duoview::UV> { return uevr::duoview::UV{.u=.5f,.v=.5f}; });
+        [this, frozen]() -> std::optional<uevr::duoview::UV> { return m_duoview_gaze.read_uv(frozen); });
 }
 
 void VR::duoview_abort(const char* reason) {
@@ -136,7 +143,7 @@ void VR::duoview_abort(const char* reason) {
                 return;
             }
         }
-        // No transaction here: stay on original Mono rectangle for this frame.
+        // Pair cannot pass frame validation. Original Mono fallback is guarded at submission.
     }
     if (VR::get()->is_using_mono()) {
         *x = 0;
@@ -148,7 +155,7 @@ void VR::duoview_abort(const char* reason) {
     //std::scoped_lock _{vr->get_vr_mutex()};''',
     '''    auto vr = VR::get();
     if (vr->is_duoview_renderer_active() && g_hook->m_has_double_precision && view_index == 1) {
-        const auto key = vr->duoview_key(vr->get_runtime()->internal_frame_count);
+        const auto key = vr->duoview_producer_key();
         if (const auto pose = vr->duoview_state().camera(key, 1)) {
             auto* rot = reinterpret_cast<Rotator<double>*>(view_rotation);
             auto* pos = reinterpret_cast<Vector3d*>(view_location);
@@ -162,7 +169,7 @@ void VR::duoview_abort(const char* reason) {
     edit(hook,'''        // Modify Player Control Rotation
         const auto controller_camera_guard_active = vr->is_controller_camera_conflict_guard_active();''',
     '''        if (vr->is_duoview_renderer_active() && g_hook->m_has_double_precision && view_index == 0) {
-            const auto key = vr->duoview_key(vr->get_runtime()->internal_frame_count);
+            const auto key = vr->duoview_producer_key();
             const auto* r = reinterpret_cast<const Rotator<double>*>(view_rotation);
             const auto* p = reinterpret_cast<const Vector3d*>(view_location);
             const uevr::duoview::CameraPose pose{{r->pitch,r->yaw,r->roll},{p->x,p->y,p->z}};
@@ -223,8 +230,8 @@ void VR::duoview_abort(const char* reason) {
                             vr->duoview_key(static_cast<uint32_t>(frame_count)));
                         vr->m_openxr->note_mono_copy(static_cast<uint32_t>(frame_count), false);
                         // Do not skip the OpenXR copy if pair evidence fails.
-                        // The same-frame original Mono copy is the last-resort
-                        // emergency path; immediately request safe mode ID 5.
+                        // Emergency copy may be an incomplete atlas; quarantine ID6
+                        // after this callback, then original Joey Mono on the next frame.
                         const bool submitted = m_openxr.copy(
                             (uint32_t)runtimes::OpenXR::SwapchainIndex::DOUBLE_WIDE, nullptr,
                             [this, source=backbuffer, scene_source_state, device, frame,
@@ -256,7 +263,7 @@ void VR::duoview_abort(const char* reason) {
                         bool recorded = false;''')
     # Copy reference modules into exact checked-out Joey tree. No private SDK
     # declarations or altered SDK files.
-    for name in ("DuoViewGeometry.hpp","DuoViewGaze.hpp","DuoViewFrame.hpp",
+    for name in ("DuoViewGeometry.hpp","DuoViewGaze.hpp","DuoViewPSVR2Gaze.hpp","DuoViewFrame.hpp",
                  "DuoViewConfig.hpp","DuoViewState.hpp","DuoViewD3D12.hpp",
                  "DuoViewMonoCopyD3D12.hpp"):
         target=root/"src/mods/vr"/name
@@ -281,7 +288,7 @@ void VR::duoview_abort(const char* reason) {
         str(root/"src/mods/vr/DuoViewShaderSource.hpp")], check=True)
     for path,text in changed.items():
         (source_root(path)/path).write_text(text,encoding="utf-8",newline="")
-    print("Applied true fixed-center two-view geometry, common camera, same-frame state and DX12 compositor (experimental).")
+    print("Applied Stage 5 PSVR2 gaze with cached per-frame projection, same-pose two-view and DX12 compositor (experimental).")
 
 if __name__=="__main__":
     main()
