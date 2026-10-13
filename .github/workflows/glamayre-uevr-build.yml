@@ -18,6 +18,8 @@ jobs:
         run: cmake -S glamayre-uevr -B glamayre-uevr/build -G "Visual Studio 17 2022" -A x64
       - name: Build Release
         run: cmake --build glamayre-uevr/build --config Release --parallel
+      - name: Compile embedded HLSL with Windows D3D compiler
+        run: ctest --test-dir glamayre-uevr/build -C Release --output-on-failure
       - name: Verify DLL exists
         shell: pwsh
         run: |
