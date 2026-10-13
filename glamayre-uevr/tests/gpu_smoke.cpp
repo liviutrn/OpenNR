@@ -45,6 +45,8 @@ int main() {
     if (!dll) { fprintf(stderr, "Could not load plugin DLL: %lu\n", GetLastError()); return 2; }
     using Initialize = bool (*)(const UEVR_PluginInitializeParam*);
     auto init = reinterpret_cast<Initialize>(GetProcAddress(dll, "uevr_plugin_initialize"));
+    using GpuRecord = bool (*)(void*, void*, void*, bool);
+    auto record = reinterpret_cast<GpuRecord>(GetProcAddress(dll, "glamayre_sharpen_gpu_record"));
     if (!init) { fprintf(stderr, "Missing UEVR plugin export\n"); return 2; }
 
     UEVR_PluginCallbacks callbacks{};
@@ -66,7 +68,7 @@ int main() {
     host.callbacks = &callbacks;
     host.functions = &fns;
     host.renderer = &renderer;
-    if (!init(&host) || !g_render || !g_custom) { fprintf(stderr, "Plugin adapter registration failed\n"); return 2; }
+    if (!record || !init(&host) || !g_custom) { fprintf(stderr, "Plugin adapter registration failed\n"); return 2; }
 
     ComPtr<IDXGIFactory4> factory;
     CHECK(CreateDXGIFactory1(IID_PPV_ARGS(&factory)), "DXGI factory");
@@ -117,9 +119,9 @@ int main() {
     g_custom("glamayre_sharpen.set", "enabled=1");
     g_custom("glamayre_sharpen.set", "strength=1.8");
     g_custom("glamayre_sharpen.set", "limit=0.25");
-    g_custom("glamayre_sharpen.set", "big=0");
-    g_custom("glamayre_sharpen.set", "edges=0");
-    g_render(cmd.Get(), rt.Get(), &rtv);
+    g_custom("glamayre_sharpen.set", "big=1");
+    g_custom("glamayre_sharpen.set", "edges=1");
+    if (!record(cmd.Get(), rt.Get(), &rtv, true)) { fprintf(stderr, "GPU render record refused.\n"); return 2; }
 
     D3D12_RESOURCE_BARRIER b{};
     b.Type=D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
