@@ -37,7 +37,7 @@ extern "C" unsigned long long glamayre_xr_enum_failed();
 
 namespace {
 const UEVR_PluginInitializeParam* g_api = nullptr;
-std::atomic<bool> g_enabled{false}, g_big{true}, g_edges{true}, g_split{false};
+std::atomic<bool> g_enabled{false}, g_big{true}, g_edges{true}, g_split{false}, g_debug{false};
 std::atomic<float> g_strength{0.4f}, g_maxChange{0.10f}, g_bias{0.020f};
 std::wstring g_ini;
 std::mutex g_gpuMutex;
@@ -87,6 +87,7 @@ void readConfig() {
     g_big = getInt(L"Bigger", 1);
     g_edges = getInt(L"ProtectEdges", 1);
     g_split = getInt(L"SideBySide", 0);
+    g_debug = getInt(L"DebugOverlay", 0);
     g_strength = getFloat(L"Strength", 0.4f, 0, 2);
     g_maxChange = getFloat(L"MaxChange", 0.10f, 0.01f, 0.5f);
     g_bias = getFloat(L"FXAABias", 0.02f, 0, 0.2f);
@@ -100,6 +101,7 @@ void setSetting(const char* name, float number) {
     else if (_stricmp(name, "big") == 0) { g_big = number != 0; iniKey = L"Bigger"; swprintf_s(buffer, L"%u", unsigned(g_big.load())); }
     else if (_stricmp(name, "edges") == 0) { g_edges = number != 0; iniKey = L"ProtectEdges"; swprintf_s(buffer, L"%u", unsigned(g_edges.load())); }
     else if (_stricmp(name, "split") == 0) { g_split = number != 0; iniKey = L"SideBySide"; swprintf_s(buffer, L"%u", unsigned(g_split.load())); }
+    else if (_stricmp(name, "debug") == 0) { g_debug = number != 0; iniKey = L"DebugOverlay"; swprintf_s(buffer, L"%u", unsigned(g_debug.load())); }
     else if (_stricmp(name, "strength") == 0) { number = bound(number, 0, 2); g_strength = number; iniKey = L"Strength"; swprintf_s(buffer, L"%.4f", double(number)); }
     else if (_stricmp(name, "limit") == 0) { number = bound(number, 0.01f, 0.5f); g_maxChange = number; iniKey = L"MaxChange"; swprintf_s(buffer, L"%.4f", double(number)); }
     else if (_stricmp(name, "bias") == 0) { number = bound(number, 0, 0.2f); g_bias = number; iniKey = L"FXAABias"; swprintf_s(buffer, L"%.4f", double(number)); }
@@ -125,10 +127,10 @@ void onPresent() {
     g_lastReport = now;
     char data[600];
     snprintf(data, sizeof(data),
-        "enabled=%d;big=%d;edges=%d;split=%d;strength=%.3f;limit=%.3f;bias=%.3f;gpuError=%d;xrHook=%d;xrResolved=%d;xrFrames=%llu;xrAcquire=%llu;xrRelease=%llu;xrEnd=%llu;xrProj=%llu;xrSize=%llu;xrEligible=%llu;xrEnumError=%llu",
+        "enabled=%d;big=%d;edges=%d;split=%d;strength=%.3f;limit=%.3f;bias=%.3f;gpuError=%d;debug=%d;xrHook=%d;xrResolved=%d;xrFrames=%llu;xrAcquire=%llu;xrRelease=%llu;xrEnd=%llu;xrProj=%llu;xrSize=%llu;xrEligible=%llu;xrEnumError=%llu",
         int(g_enabled.load()), int(g_big.load()), int(g_edges.load()), int(g_split.load()),
         double(g_strength.load()), double(g_maxChange.load()), double(g_bias.load()),
-        int(g_gpuError.load()), int(glamayre_xr_hooks_ready()), int(glamayre_xr_resolved_hooks_ready()), glamayre_xr_processed_count(),
+        int(g_gpuError.load()), int(g_debug.load()), int(glamayre_xr_hooks_ready()), int(glamayre_xr_resolved_hooks_ready()), glamayre_xr_processed_count(),
         glamayre_xr_acquire_count(), glamayre_xr_release_count(),
         glamayre_xr_endframe_count(), glamayre_xr_projection_count(),
         glamayre_xr_dimension_count(), glamayre_xr_eligible_count(),
@@ -368,7 +370,7 @@ bool recordSharpenDX12(void* list, void* resource, void* rtvHandle, bool autoSpl
         g_strength.load(), g_maxChange.load(), g_bias.load(),
         (format == DXGI_FORMAT_R16G16B16A16_FLOAT || format == DXGI_FORMAT_R11G11B10_FLOAT
             || format == DXGI_FORMAT_R32G32B32A32_FLOAT) ? (10000.0f / 203.0f) : 1.0f,
-        (g_edges ? 1u : 0u) | (g_big ? 2u : 0u) | ((g_split || autoSplit) && desc.DepthOrArraySize == 1 ? 4u : 0u), 0u,
+        (g_edges ? 1u : 0u) | (g_big ? 2u : 0u) | ((g_split || autoSplit) && desc.DepthOrArraySize == 1 ? 4u : 0u) | (g_debug ? 8u : 0u), 0u,
         (format == DXGI_FORMAT_R16G16B16A16_FLOAT || format == DXGI_FORMAT_R11G11B10_FLOAT || format == DXGI_FORMAT_R32G32B32A32_FLOAT) ? 2u :
         (format == DXGI_FORMAT_B8G8R8A8_UNORM_SRGB || format == DXGI_FORMAT_R8G8B8A8_UNORM_SRGB) ? 0u : 1u};
     for (uint32_t eye = 0; eye < desc.DepthOrArraySize; ++eye) {
