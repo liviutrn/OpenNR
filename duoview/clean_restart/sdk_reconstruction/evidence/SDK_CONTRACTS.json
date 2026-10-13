@@ -1,0 +1,2702 @@
+{
+  "dll_sha256": "19e91cc8c22a02e2a97996e1523604ab202b4540d954ebc95e07e6b233970966",
+  "pdb": {
+    "sha256": "9d90e575d3e3d4b131be08809cb232c782afb267b15584c431fcb04ef9143a17",
+    "guid": "b9d7af12-4a42-4336-bdab-dbcb3a011af2",
+    "age": 1
+  },
+  "sdk_source_recovered": false,
+  "full_sdk_equivalence_verified": false,
+  "sdk_type_count": 357,
+  "functions_observed": 5249,
+  "core_types": [
+    {
+      "index": "0xcade",
+      "leaf": "0x1507",
+      "name": "sdk::object_liveness::Policy",
+      "forward": false,
+      "field_list": "0xcada",
+      "fields": [
+        {
+          "leaf": "0x1502",
+          "name": "legacy_unchanged",
+          "value": 0,
+          "kind": "enumerator"
+        },
+        {
+          "leaf": "0x1502",
+          "name": "ue54_garbage",
+          "value": 1,
+          "kind": "enumerator"
+        },
+        {
+          "leaf": "0x1502",
+          "name": "ue55_to_58_garbage_unreachable",
+          "value": 2,
+          "kind": "enumerator"
+        }
+      ]
+    },
+    {
+      "index": "0x1bf41",
+      "leaf": "0x1505",
+      "name": "sdk::object_array::HeaderLayout",
+      "size": 24,
+      "forward": false,
+      "field_list": "0x1bf3d",
+      "fields": [
+        {
+          "leaf": "0x150d",
+          "type": {
+            "index": "0x75",
+            "primitive": true
+          },
+          "name": "flags",
+          "offset": 0,
+          "kind": "member"
+        },
+        {
+          "leaf": "0x150d",
+          "type": {
+            "index": "0x75",
+            "primitive": true
+          },
+          "name": "index",
+          "offset": 4,
+          "kind": "member"
+        },
+        {
+          "leaf": "0x150d",
+          "type": {
+            "index": "0x75",
+            "primitive": true
+          },
+          "name": "uclass",
+          "offset": 8,
+          "kind": "member"
+        },
+        {
+          "leaf": "0x150d",
+          "type": {
+            "index": "0x75",
+            "primitive": true
+          },
+          "name": "name",
+          "offset": 12,
+          "kind": "member"
+        },
+        {
+          "leaf": "0x150d",
+          "type": {
+            "index": "0x75",
+            "primitive": true
+          },
+          "name": "outer",
+          "offset": 16,
+          "kind": "member"
+        },
+        {
+          "leaf": "0x150d",
+          "type": {
+            "index": "0x30",
+            "primitive": true
+          },
+          "name": "packed_index",
+          "offset": 20,
+          "kind": "member"
+        },
+        {
+          "leaf": "0x1511",
+          "type": {
+            "index": "0x1bf38",
+            "leaf": "0x1009"
+          },
+          "name": "operator==",
+          "kind": "method"
+        },
+        {
+          "leaf": "0x1511",
+          "type": {
+            "index": "0x1bf39",
+            "leaf": "0x1009"
+          },
+          "name": "valid",
+          "kind": "method"
+        },
+        {
+          "leaf": "0x1511",
+          "type": {
+            "index": "0x1bf3c",
+            "leaf": "0x1009"
+          },
+          "name": "HeaderLayout",
+          "kind": "method"
+        }
+      ]
+    },
+    {
+      "index": "0x1bf51",
+      "leaf": "0x1505",
+      "name": "sdk::object_array::Layout",
+      "size": 72,
+      "forward": false,
+      "field_list": "0x1bf50",
+      "fields": [
+        {
+          "leaf": "0x1511",
+          "type": {
+            "index": "0x1bf48",
+            "leaf": "0x1009"
+          },
+          "name": "operator==",
+          "kind": "method"
+        },
+        {
+          "leaf": "0x150d",
+          "type": {
+            "index": "0x23",
+            "primitive": true
+          },
+          "name": "objects_offset",
+          "offset": 0,
+          "kind": "member"
+        },
+        {
+          "leaf": "0x150d",
+          "type": {
+            "index": "0x23",
+            "primitive": true
+          },
+          "name": "flat_count_offset",
+          "offset": 8,
+          "kind": "member"
+        },
+        {
+          "leaf": "0x150d",
+          "type": {
+            "index": "0x30",
+            "primitive": true
+          },
+          "name": "chunked",
+          "offset": 16,
+          "kind": "member"
+        },
+        {
+          "leaf": "0x150d",
+          "type": {
+            "index": "0x30",
+            "primitive": true
+          },
+          "name": "inlined",
+          "offset": 17,
+          "kind": "member"
+        },
+        {
+          "leaf": "0x150d",
+          "type": {
+            "index": "0x30",
+            "primitive": true
+          },
+          "name": "different_chunk_size",
+          "offset": 18,
+          "kind": "member"
+        },
+        {
+          "leaf": "0x150d",
+          "type": {
+            "index": "0x30",
+            "primitive": true
+          },
+          "name": "packed_flags",
+          "offset": 19,
+          "kind": "member"
+        },
+        {
+          "leaf": "0x150d",
+          "type": {
+            "index": "0x30",
+            "primitive": true
+          },
+          "name": "ue58",
+          "offset": 20,
+          "kind": "member"
+        },
+        {
+          "leaf": "0x150d",
+          "type": {
+            "index": "0x75",
+            "primitive": true
+          },
+          "name": "objects_per_chunk",
+          "offset": 24,
+          "kind": "member"
+        },
+        {
+          "leaf": "0x150d",
+          "type": {
+            "index": "0x23",
+            "primitive": true
+          },
+          "name": "stride",
+          "offset": 32,
+          "kind": "member"
+        },
+        {
+          "leaf": "0x150d",
+          "type": {
+            "index": "0x23",
+            "primitive": true
+          },
+          "name": "object",
+          "offset": 40,
+          "kind": "member"
+        },
+        {
+          "leaf": "0x150d",
+          "type": {
+            "index": "0x23",
+            "primitive": true
+          },
+          "name": "flags",
+          "offset": 48,
+          "kind": "member"
+        },
+        {
+          "leaf": "0x150d",
+          "type": {
+            "index": "0x23",
+            "primitive": true
+          },
+          "name": "cluster",
+          "offset": 56,
+          "kind": "member"
+        },
+        {
+          "leaf": "0x150d",
+          "type": {
+            "index": "0x23",
+            "primitive": true
+          },
+          "name": "serial",
+          "offset": 64,
+          "kind": "member"
+        },
+        {
+          "leaf": "0x1511",
+          "type": {
+            "index": "0x1bf4b",
+            "leaf": "0x1009"
+          },
+          "name": "fits",
+          "kind": "method"
+        },
+        {
+          "leaf": "0x1511",
+          "type": {
+            "index": "0x1bf4c",
+            "leaf": "0x1009"
+          },
+          "name": "valid",
+          "kind": "method"
+        },
+        {
+          "leaf": "0x1511",
+          "type": {
+            "index": "0x1bf4f",
+            "leaf": "0x1009"
+          },
+          "name": "Layout",
+          "kind": "method"
+        }
+      ]
+    },
+    {
+      "index": "0x1c0c5",
+      "leaf": "0x1505",
+      "name": "sdk::discovery::Memory",
+      "size": 24,
+      "forward": false,
+      "field_list": "0x1c0c4",
+      "fields": [
+        {
+          "leaf": "0x150d",
+          "type": {
+            "index": "0x603",
+            "primitive": true
+          },
+          "name": "context",
+          "offset": 0,
+          "kind": "member"
+        },
+        {
+          "leaf": "0x150d",
+          "type": {
+            "index": "0x1c0bc",
+            "leaf": "0x1002"
+          },
+          "name": "read",
+          "offset": 8,
+          "kind": "member"
+        },
+        {
+          "leaf": "0x150d",
+          "type": {
+            "index": "0x1c0bf",
+            "leaf": "0x1002"
+          },
+          "name": "executable",
+          "offset": 16,
+          "kind": "member"
+        },
+        {
+          "leaf": "0x1511",
+          "type": {
+            "index": "0x1c0c3",
+            "leaf": "0x1009"
+          },
+          "name": "Memory",
+          "kind": "method"
+        }
+      ]
+    },
+    {
+      "index": "0x1c0cb",
+      "leaf": "0x1507",
+      "name": "sdk::discovery::Accessor",
+      "forward": false,
+      "field_list": "0x1c0c9",
+      "fields": [
+        {
+          "leaf": "0x1502",
+          "name": "rejected",
+          "value": 0,
+          "kind": "enumerator"
+        },
+        {
+          "leaf": "0x1502",
+          "name": "null_pointer",
+          "value": 1,
+          "kind": "enumerator"
+        },
+        {
+          "leaf": "0x1502",
+          "name": "this_pointer",
+          "value": 2,
+          "kind": "enumerator"
+        },
+        {
+          "leaf": "0x1502",
+          "name": "this_plus_pointer",
+          "value": 3,
+          "kind": "enumerator"
+        }
+      ]
+    },
+    {
+      "index": "0x1c2b0",
+      "leaf": "0x1505",
+      "name": "sdk::detail::InitOptionsLayout",
+      "size": 40,
+      "forward": false,
+      "field_list": "0x1c2af",
+      "fields": [
+        {
+          "leaf": "0x150d",
+          "type": {
+            "index": "0x63f3",
+            "leaf": "0x1504",
+            "name": "std::optional<unsigned int>",
+            "size": 0,
+            "forward": true,
+            "field_list": "0x0"
+          },
+          "name": "view_family",
+          "offset": 0,
+          "kind": "member"
+        },
+        {
+          "leaf": "0x150d",
+          "type": {
+            "index": "0x63f3",
+            "leaf": "0x1504",
+            "name": "std::optional<unsigned int>",
+            "size": 0,
+            "forward": true,
+            "field_list": "0x0"
+          },
+          "name": "scene_state",
+          "offset": 8,
+          "kind": "member"
+        },
+        {
+          "leaf": "0x150d",
+          "type": {
+            "index": "0x63f3",
+            "leaf": "0x1504",
+            "name": "std::optional<unsigned int>",
+            "size": 0,
+            "forward": true,
+            "field_list": "0x0"
+          },
+          "name": "player_index",
+          "offset": 16,
+          "kind": "member"
+        },
+        {
+          "leaf": "0x150d",
+          "type": {
+            "index": "0x63f3",
+            "leaf": "0x1504",
+            "name": "std::optional<unsigned int>",
+            "size": 0,
+            "forward": true,
+            "field_list": "0x0"
+          },
+          "name": "stereo_pass",
+          "offset": 24,
+          "kind": "member"
+        },
+        {
+          "leaf": "0x150d",
+          "type": {
+            "index": "0x63f3",
+            "leaf": "0x1504",
+            "name": "std::optional<unsigned int>",
+            "size": 0,
+            "forward": true,
+            "field_list": "0x0"
+          },
+          "name": "world_to_meters",
+          "offset": 32,
+          "kind": "member"
+        },
+        {
+          "leaf": "0x1511",
+          "type": {
+            "index": "0x1c2ac",
+            "leaf": "0x1009"
+          },
+          "name": "operator==",
+          "kind": "method"
+        },
+        {
+          "leaf": "0x1511",
+          "type": {
+            "index": "0x1c2ae",
+            "leaf": "0x1009"
+          },
+          "name": "InitOptionsLayout",
+          "kind": "method"
+        }
+      ]
+    },
+    {
+      "index": "0x1c2bd",
+      "leaf": "0x1505",
+      "name": "sdk::detail::DiscoveryRetry",
+      "size": 16,
+      "forward": false,
+      "field_list": "0x1c2bb",
+      "fields": [
+        {
+          "leaf": "0x150d",
+          "type": {
+            "index": "0x75",
+            "primitive": true
+          },
+          "name": "failures",
+          "offset": 0,
+          "kind": "member"
+        },
+        {
+          "leaf": "0x150d",
+          "type": {
+            "index": "0x13",
+            "primitive": true
+          },
+          "name": "next_ms",
+          "offset": 8,
+          "kind": "member"
+        },
+        {
+          "leaf": "0x1511",
+          "type": {
+            "index": "0x1c2b6",
+            "leaf": "0x1009"
+          },
+          "name": "due",
+          "kind": "method"
+        },
+        {
+          "leaf": "0x1511",
+          "type": {
+            "index": "0x1c2b8",
+            "leaf": "0x1009"
+          },
+          "name": "fail",
+          "kind": "method"
+        },
+        {
+          "leaf": "0x1511",
+          "type": {
+            "index": "0x1c2ba",
+            "leaf": "0x1009"
+          },
+          "name": "DiscoveryRetry",
+          "kind": "method"
+        }
+      ]
+    },
+    {
+      "index": "0x1c2e6",
+      "leaf": "0x1505",
+      "name": "sdk::detail::FamilyLayout",
+      "size": 56,
+      "forward": false,
+      "field_list": "0x1c2e4",
+      "fields": [
+        {
+          "leaf": "0x150d",
+          "type": {
+            "index": "0x3800",
+            "leaf": "0x1504",
+            "name": "std::optional<unsigned __int64>",
+            "size": 0,
+            "forward": true,
+            "field_list": "0x0"
+          },
+          "name": "vtable",
+          "offset": 0,
+          "kind": "member"
+        },
+        {
+          "leaf": "0x150d",
+          "type": {
+            "index": "0xed1f",
+            "leaf": "0x1504",
+            "name": "std::optional<bool>",
+            "size": 0,
+            "forward": true,
+            "field_list": "0x0"
+          },
+          "name": "has_vtable",
+          "offset": 16,
+          "kind": "member"
+        },
+        {
+          "leaf": "0x150d",
+          "type": {
+            "index": "0x63f3",
+            "leaf": "0x1504",
+            "name": "std::optional<unsigned int>",
+            "size": 0,
+            "forward": true,
+            "field_list": "0x0"
+          },
+          "name": "views",
+          "offset": 20,
+          "kind": "member"
+        },
+        {
+          "leaf": "0x150d",
+          "type": {
+            "index": "0x63f3",
+            "leaf": "0x1504",
+            "name": "std::optional<unsigned int>",
+            "size": 0,
+            "forward": true,
+            "field_list": "0x0"
+          },
+          "name": "render_target",
+          "offset": 28,
+          "kind": "member"
+        },
+        {
+          "leaf": "0x150d",
+          "type": {
+            "index": "0x63f3",
+            "leaf": "0x1504",
+            "name": "std::optional<unsigned int>",
+            "size": 0,
+            "forward": true,
+            "field_list": "0x0"
+          },
+          "name": "frame_count",
+          "offset": 36,
+          "kind": "member"
+        },
+        {
+          "leaf": "0x150d",
+          "type": {
+            "index": "0x63f3",
+            "leaf": "0x1504",
+            "name": "std::optional<unsigned int>",
+            "size": 0,
+            "forward": true,
+            "field_list": "0x0"
+          },
+          "name": "scene_interface",
+          "offset": 44,
+          "kind": "member"
+        },
+        {
+          "leaf": "0x150d",
+          "type": {
+            "index": "0x30",
+            "primitive": true
+          },
+          "name": "attempted",
+          "offset": 52,
+          "kind": "member"
+        },
+        {
+          "leaf": "0x150d",
+          "type": {
+            "index": "0x30",
+            "primitive": true
+          },
+          "name": "attempted_with_rt",
+          "offset": 53,
+          "kind": "member"
+        },
+        {
+          "leaf": "0x1511",
+          "type": {
+            "index": "0x1c2d8",
+            "leaf": "0x1009"
+          },
+          "name": "has_offsets",
+          "kind": "method"
+        },
+        {
+          "leaf": "0x1511",
+          "type": {
+            "index": "0x1c2de",
+            "leaf": "0x1009"
+          },
+          "name": "operator==",
+          "kind": "method"
+        },
+        {
+          "leaf": "0x1511",
+          "type": {
+            "index": "0x1c2e2",
+            "leaf": "0x1009"
+          },
+          "name": "FamilyLayout",
+          "kind": "method"
+        }
+      ]
+    },
+    {
+      "index": "0x1c334",
+      "leaf": "0x1505",
+      "name": "sdk::object_liveness::Identity",
+      "size": 40,
+      "forward": false,
+      "field_list": "0x1c332",
+      "fields": [
+        {
+          "leaf": "0x150d",
+          "type": {
+            "index": "0x23",
+            "primitive": true
+          },
+          "name": "object",
+          "offset": 0,
+          "kind": "member"
+        },
+        {
+          "leaf": "0x150d",
+          "type": {
+            "index": "0x23",
+            "primitive": true
+          },
+          "name": "vtable",
+          "offset": 8,
+          "kind": "member"
+        },
+        {
+          "leaf": "0x150d",
+          "type": {
+            "index": "0x74",
+            "primitive": true
+          },
+          "name": "index",
+          "offset": 16,
+          "kind": "member"
+        },
+        {
+          "leaf": "0x150d",
+          "type": {
+            "index": "0x74",
+            "primitive": true
+          },
+          "name": "serial",
+          "offset": 20,
+          "kind": "member"
+        },
+        {
+          "leaf": "0x150d",
+          "type": {
+            "index": "0x8060",
+            "leaf": "0x1002"
+          },
+          "name": "layout",
+          "offset": 24,
+          "kind": "member"
+        },
+        {
+          "leaf": "0x150d",
+          "type": {
+            "index": "0x121b",
+            "leaf": "0x1002"
+          },
+          "name": "header_layout",
+          "offset": 32,
+          "kind": "member"
+        },
+        {
+          "leaf": "0x1511",
+          "type": {
+            "index": "0x1c32f",
+            "leaf": "0x1009"
+          },
+          "name": "has_serial",
+          "kind": "method"
+        },
+        {
+          "leaf": "0x1511",
+          "type": {
+            "index": "0x1c331",
+            "leaf": "0x1009"
+          },
+          "name": "Identity",
+          "kind": "method"
+        }
+      ]
+    },
+    {
+      "index": "0x1c33b",
+      "leaf": "0x1505",
+      "name": "sdk::object_liveness::Observation",
+      "size": 48,
+      "forward": false,
+      "field_list": "0x1c339",
+      "fields": [
+        {
+          "leaf": "0x150d",
+          "type": {
+            "index": "0x119de",
+            "leaf": "0x1505",
+            "name": "sdk::object_liveness::Identity",
+            "size": 0,
+            "forward": true,
+            "field_list": "0x0"
+          },
+          "name": "identity",
+          "offset": 0,
+          "kind": "member"
+        },
+        {
+          "leaf": "0x150d",
+          "type": {
+            "index": "0x75",
+            "primitive": true
+          },
+          "name": "flags",
+          "offset": 40,
+          "kind": "member"
+        },
+        {
+          "leaf": "0x1511",
+          "type": {
+            "index": "0x1c338",
+            "leaf": "0x1009"
+          },
+          "name": "Observation",
+          "kind": "method"
+        }
+      ]
+    },
+    {
+      "index": "0x3bb9c",
+      "leaf": "0x1505",
+      "name": "sdk::discovery::RtmSelection",
+      "size": 40,
+      "forward": false,
+      "field_list": "0x3bb9b",
+      "fields": [
+        {
+          "leaf": "0x150d",
+          "type": {
+            "index": "0x30",
+            "primitive": true
+          },
+          "name": "accepted",
+          "offset": 0,
+          "kind": "member"
+        },
+        {
+          "leaf": "0x150d",
+          "type": {
+            "index": "0x30",
+            "primitive": true
+          },
+          "name": "embedded",
+          "offset": 1,
+          "kind": "member"
+        },
+        {
+          "leaf": "0x150d",
+          "type": {
+            "index": "0x30",
+            "primitive": true
+          },
+          "name": "ue411",
+          "offset": 2,
+          "kind": "member"
+        },
+        {
+          "leaf": "0x150d",
+          "type": {
+            "index": "0x23",
+            "primitive": true
+          },
+          "name": "index",
+          "offset": 8,
+          "kind": "member"
+        },
+        {
+          "leaf": "0x150d",
+          "type": {
+            "index": "0x23",
+            "primitive": true
+          },
+          "name": "examined",
+          "offset": 16,
+          "kind": "member"
+        },
+        {
+          "leaf": "0x150d",
+          "type": {
+            "index": "0x1c0cb",
+            "leaf": "0x1507",
+            "name": "sdk::discovery::Accessor",
+            "forward": false,
+            "field_list": "0x1c0c9"
+          },
+          "name": "kind",
+          "offset": 24,
+          "kind": "member"
+        },
+        {
+          "leaf": "0x150d",
+          "type": {
+            "index": "0x11df",
+            "leaf": "0x1002"
+          },
+          "name": "reason",
+          "offset": 32,
+          "kind": "member"
+        },
+        {
+          "leaf": "0x1511",
+          "type": {
+            "index": "0x3bb9a",
+            "leaf": "0x1009"
+          },
+          "name": "RtmSelection",
+          "kind": "method"
+        }
+      ]
+    }
+  ],
+  "type_inventory": [
+    {
+      "name": "sdk::EFindName",
+      "size": null,
+      "index": "0x2376"
+    },
+    {
+      "name": "sdk::object_liveness::Policy",
+      "size": null,
+      "index": "0xcade"
+    },
+    {
+      "name": "sdk::UObject",
+      "size": 1,
+      "index": "0x1be02"
+    },
+    {
+      "name": "sdk::OwnedFName",
+      "size": 12,
+      "index": "0x1be1d"
+    },
+    {
+      "name": "sdk::IConsoleVariable",
+      "size": 8,
+      "index": "0x1be48"
+    },
+    {
+      "name": "sdk::FSlateResource",
+      "size": 8,
+      "index": "0x1be69"
+    },
+    {
+      "name": "sdk::USceneComponent",
+      "size": 1,
+      "index": "0x1be83"
+    },
+    {
+      "name": "sdk::FConsoleManager",
+      "size": 24,
+      "index": "0x1bebe"
+    },
+    {
+      "name": "sdk::UField",
+      "size": 1,
+      "index": "0x1bed2"
+    },
+    {
+      "name": "sdk::FMalloc",
+      "size": 8,
+      "index": "0x1bef7"
+    },
+    {
+      "name": "sdk::UGameEngine",
+      "size": 1,
+      "index": "0x1beff"
+    },
+    {
+      "name": "sdk::FUObjectArray",
+      "size": 1,
+      "index": "0x1bf18"
+    },
+    {
+      "name": "sdk::UActorComponent",
+      "size": 1,
+      "index": "0x1bf2d"
+    },
+    {
+      "name": "sdk::object_array::Header",
+      "size": 24,
+      "index": "0x1bf34"
+    },
+    {
+      "name": "sdk::object_array::HeaderLayout",
+      "size": 24,
+      "index": "0x1bf41"
+    },
+    {
+      "name": "sdk::object_array::Layout",
+      "size": 72,
+      "index": "0x1bf51"
+    },
+    {
+      "name": "sdk::ConsoleObjectElement",
+      "size": 32,
+      "index": "0x1bf58"
+    },
+    {
+      "name": "sdk::FNameCasePreserving",
+      "size": 12,
+      "index": "0x1bf60"
+    },
+    {
+      "name": "sdk::AActor",
+      "size": 1,
+      "index": "0x1bf88"
+    },
+    {
+      "name": "sdk::FRHICommandBase_New",
+      "size": 16,
+      "index": "0x1bfa7"
+    },
+    {
+      "name": "sdk::IViewportRenderTargetProvider",
+      "size": 8,
+      "index": "0x1bfca"
+    },
+    {
+      "name": "sdk::UObjectReference<sdk::UTexture>",
+      "size": 72,
+      "index": "0x1bff3"
+    },
+    {
+      "name": "sdk::ConsoleVariableDataWrapper",
+      "size": 48,
+      "index": "0x1c011"
+    },
+    {
+      "name": "sdk::UClass",
+      "size": 1,
+      "index": "0x1c01c"
+    },
+    {
+      "name": "sdk::FUObjectItem",
+      "size": 24,
+      "index": "0x1c02c"
+    },
+    {
+      "name": "sdk::FSceneView",
+      "size": 1,
+      "index": "0x1c044"
+    },
+    {
+      "name": "sdk::IConsoleObject",
+      "size": 8,
+      "index": "0x1c066"
+    },
+    {
+      "name": "sdk::IConsoleObject::VtableInfo",
+      "size": 28,
+      "index": "0x1c06d"
+    },
+    {
+      "name": "sdk::FSceneViewInitOptionsBase",
+      "size": 1,
+      "index": "0x1c09d"
+    },
+    {
+      "name": "sdk::discovery::Walk",
+      "size": 288,
+      "index": "0x1c0b2"
+    },
+    {
+      "name": "sdk::discovery::Instruction",
+      "size": 872,
+      "index": "0x1c0b8"
+    },
+    {
+      "name": "sdk::discovery::Memory",
+      "size": 24,
+      "index": "0x1c0c5"
+    },
+    {
+      "name": "sdk::discovery::Accessor",
+      "size": null,
+      "index": "0x1c0cb"
+    },
+    {
+      "name": "sdk::FRHICommandListBase",
+      "size": 32,
+      "index": "0x1c0d3"
+    },
+    {
+      "name": "sdk::ISlateViewport",
+      "size": 8,
+      "index": "0x1c0ee"
+    },
+    {
+      "name": "sdk::UObjectBase",
+      "size": 1,
+      "index": "0x1c126"
+    },
+    {
+      "name": "sdk::ConsoleObjectArray",
+      "size": 16,
+      "index": "0x1c132"
+    },
+    {
+      "name": "sdk::UEngine",
+      "size": 1,
+      "index": "0x1c15e"
+    },
+    {
+      "name": "sdk::UEngine::EngineOutputDevice",
+      "size": 264,
+      "index": "0x1c17c"
+    },
+    {
+      "name": "sdk::USceneCaptureComponent2D",
+      "size": 1,
+      "index": "0x1c19b"
+    },
+    {
+      "name": "sdk::UTexture",
+      "size": 1,
+      "index": "0x1c1b6"
+    },
+    {
+      "name": "sdk::UStruct",
+      "size": 1,
+      "index": "0x1c1dc"
+    },
+    {
+      "name": "sdk::UScriptStruct",
+      "size": 1,
+      "index": "0x1c1ec"
+    },
+    {
+      "name": "sdk::UScriptStruct::StructOps",
+      "size": 16,
+      "index": "0x1c1fa"
+    },
+    {
+      "name": "sdk::UObjectReference<sdk::AActor>",
+      "size": 72,
+      "index": "0x1c225"
+    },
+    {
+      "name": "sdk::UWorld",
+      "size": 1,
+      "index": "0x1c229"
+    },
+    {
+      "name": "sdk::UObjectReference<sdk::USceneCaptureComponent2D>",
+      "size": 72,
+      "index": "0x1c252"
+    },
+    {
+      "name": "sdk::IConsoleCommand",
+      "size": 8,
+      "index": "0x1c27b"
+    },
+    {
+      "name": "sdk::FTextureResource",
+      "size": 1,
+      "index": "0x1c282"
+    },
+    {
+      "name": "sdk::FTexture",
+      "size": 1,
+      "index": "0x1c295"
+    },
+    {
+      "name": "sdk::detail::ImmutableSnapshot<sdk::detail::InitOptionsLayout>",
+      "size": 152,
+      "index": "0x1c2a7"
+    },
+    {
+      "name": "sdk::detail::InitOptionsLayout",
+      "size": 40,
+      "index": "0x1c2b0"
+    },
+    {
+      "name": "sdk::detail::DiscoveryRetry",
+      "size": 16,
+      "index": "0x1c2bd"
+    },
+    {
+      "name": "sdk::detail::ImmutableSnapshot<sdk::object_array::Layout>",
+      "size": 184,
+      "index": "0x1c2ce"
+    },
+    {
+      "name": "sdk::detail::FamilyLayout",
+      "size": 56,
+      "index": "0x1c2e6"
+    },
+    {
+      "name": "sdk::detail::ImmutableSnapshot<sdk::object_array::HeaderLayout>",
+      "size": 136,
+      "index": "0x1c2f7"
+    },
+    {
+      "name": "sdk::FName",
+      "size": 8,
+      "index": "0x1c321"
+    },
+    {
+      "name": "sdk::FViewportInfo",
+      "size": 1,
+      "index": "0x1c327"
+    },
+    {
+      "name": "sdk::FRenderResource",
+      "size": 1,
+      "index": "0x1c32b"
+    },
+    {
+      "name": "sdk::object_liveness::Identity",
+      "size": 40,
+      "index": "0x1c334"
+    },
+    {
+      "name": "sdk::object_liveness::Observation",
+      "size": 48,
+      "index": "0x1c33b"
+    },
+    {
+      "name": "sdk::object_liveness::ItemLayout",
+      "size": 40,
+      "index": "0x1c343"
+    },
+    {
+      "name": "sdk::object_liveness::ItemObservation",
+      "size": 16,
+      "index": "0x1c34a"
+    },
+    {
+      "name": "sdk::IConsoleManager",
+      "size": 8,
+      "index": "0x1c365"
+    },
+    {
+      "name": "sdk::FFieldClass",
+      "size": 1,
+      "index": "0x24d57"
+    },
+    {
+      "name": "sdk::AController",
+      "size": 1,
+      "index": "0x24d64"
+    },
+    {
+      "name": "sdk::FBoolProperty",
+      "size": 1,
+      "index": "0x24d75"
+    },
+    {
+      "name": "sdk::FProperty",
+      "size": 1,
+      "index": "0x24d82"
+    },
+    {
+      "name": "sdk::FEnumProperty",
+      "size": 1,
+      "index": "0x24d92"
+    },
+    {
+      "name": "sdk::FField",
+      "size": 1,
+      "index": "0x24da0"
+    },
+    {
+      "name": "sdk::UFunction",
+      "size": 1,
+      "index": "0x24db8"
+    },
+    {
+      "name": "sdk::TConsoleVariableData<int>",
+      "size": 8,
+      "index": "0x24dbe"
+    },
+    {
+      "name": "sdk::UGameplayStatics",
+      "size": 1,
+      "index": "0x24dd7"
+    },
+    {
+      "name": "sdk::FArrayProperty",
+      "size": 1,
+      "index": "0x24de0"
+    },
+    {
+      "name": "sdk::UGameViewportClient",
+      "size": 1,
+      "index": "0x24df1"
+    },
+    {
+      "name": "sdk::UGameViewportClient::VPOutputDevice",
+      "size": 264,
+      "index": "0x24e0b"
+    },
+    {
+      "name": "sdk::APlayerController",
+      "size": 1,
+      "index": "0x24e1e"
+    },
+    {
+      "name": "sdk::FStructProperty",
+      "size": 1,
+      "index": "0x24e2f"
+    },
+    {
+      "name": "sdk::EControllerHand",
+      "size": null,
+      "index": "0x25aaf"
+    },
+    {
+      "name": "sdk::common::UFunctionError",
+      "size": null,
+      "index": "0x262d2"
+    },
+    {
+      "name": "sdk::TArrayLite<wchar_t>",
+      "size": 16,
+      "index": "0x28507"
+    },
+    {
+      "name": "sdk::ReflectedNameCall",
+      "size": 1056,
+      "index": "0x28515"
+    },
+    {
+      "name": "sdk::TArray<sdk::UObject *>",
+      "size": 16,
+      "index": "0x28532"
+    },
+    {
+      "name": "sdk::TArray<wchar_t>",
+      "size": 16,
+      "index": "0x2854d"
+    },
+    {
+      "name": "sdk::kh3::Evidence",
+      "size": 24,
+      "index": "0x28550"
+    },
+    {
+      "name": "sdk::kh3::ObjectArray",
+      "size": 16,
+      "index": "0x28555"
+    },
+    {
+      "name": "sdk::kh3::LocalPlayerStates",
+      "size": 24,
+      "index": "0x28558"
+    },
+    {
+      "name": "sdk::kh3::ObjectHeader",
+      "size": 48,
+      "index": "0x2855c"
+    },
+    {
+      "name": "sdk::UMotionControllerComponent",
+      "size": 1,
+      "index": "0x28567"
+    },
+    {
+      "name": "sdk::ktjl::ObjectArray",
+      "size": 32,
+      "index": "0x2856c"
+    },
+    {
+      "name": "sdk::ktjl::ObjectHeader",
+      "size": 40,
+      "index": "0x28570"
+    },
+    {
+      "name": "sdk::UObjectReference<sdk::UMotionControllerComponent>",
+      "size": 72,
+      "index": "0x2858b"
+    },
+    {
+      "name": "sdk::ScopedProcessEventParams",
+      "size": 8,
+      "index": "0x2859f"
+    },
+    {
+      "name": "sdk::TArrayLite<void *>",
+      "size": 16,
+      "index": "0x285a4"
+    },
+    {
+      "name": "sdk::FObjectProperty",
+      "size": 1,
+      "index": "0x285ab"
+    },
+    {
+      "name": "sdk::APawn",
+      "size": 1,
+      "index": "0x285ae"
+    },
+    {
+      "name": "sdk::TArray<void *>",
+      "size": 16,
+      "index": "0x285cb"
+    },
+    {
+      "name": "sdk::ScriptVector",
+      "size": 1,
+      "index": "0x285cf"
+    },
+    {
+      "name": "sdk::TArray<sdk::UPrimitiveComponent *>",
+      "size": 16,
+      "index": "0x285f0"
+    },
+    {
+      "name": "sdk::UObjectReference<sdk::USceneComponent>",
+      "size": 72,
+      "index": "0x28609"
+    },
+    {
+      "name": "sdk::UPrimitiveComponent",
+      "size": 1,
+      "index": "0x28611"
+    },
+    {
+      "name": "sdk::APlayerCameraManager",
+      "size": 1,
+      "index": "0x28615"
+    },
+    {
+      "name": "sdk::TArray<wchar_t>",
+      "size": 16,
+      "index": "0x2add2"
+    },
+    {
+      "name": "sdk::object_array::read_header::__l13::<lambda_1>",
+      "size": 8,
+      "index": "0x2c372"
+    },
+    {
+      "name": "sdk::UEnum",
+      "size": 1,
+      "index": "0x2ff99"
+    },
+    {
+      "name": "sdk::mafia::ViewportHelperIndices",
+      "size": 16,
+      "index": "0x30d9d"
+    },
+    {
+      "name": "sdk::TConsoleVariableData<float>",
+      "size": 8,
+      "index": "0x30da3"
+    },
+    {
+      "name": "sdk::FConsoleManager::fuzzy_find::__l2::<lambda_1>",
+      "size": 1,
+      "index": "0x30fb8"
+    },
+    {
+      "name": "sdk::UHeadMountedDisplayFunctionLibrary",
+      "size": 1,
+      "index": "0x3a64d"
+    },
+    {
+      "name": "sdk::ScriptRotator",
+      "size": 1,
+      "index": "0x3a65b"
+    },
+    {
+      "name": "sdk::TArray<sdk::FSceneView *>",
+      "size": 16,
+      "index": "0x3bb29"
+    },
+    {
+      "name": "sdk::FSceneViewInitOptionsT<float>",
+      "size": 272,
+      "index": "0x3bb2d"
+    },
+    {
+      "name": "sdk::FSceneViewInitOptionsUE5T<double>",
+      "size": 448,
+      "index": "0x3bb32"
+    },
+    {
+      "name": "sdk::FRenderTarget",
+      "size": 8,
+      "index": "0x3bb44"
+    },
+    {
+      "name": "sdk::FSceneViewInitOptionsUE50To53T<double>",
+      "size": 416,
+      "index": "0x3bb49"
+    },
+    {
+      "name": "sdk::FScene",
+      "size": 8,
+      "index": "0x3bb5d"
+    },
+    {
+      "name": "sdk::FSceneViewProjectionDataUE50To53T<double>",
+      "size": 320,
+      "index": "0x3bb61"
+    },
+    {
+      "name": "sdk::FSceneViewFamily",
+      "size": 1,
+      "index": "0x3bb75"
+    },
+    {
+      "name": "sdk::FTextureRenderTargetResource",
+      "size": 1,
+      "index": "0x3bb80"
+    },
+    {
+      "name": "sdk::ktjl::stereo::Header",
+      "size": 16,
+      "index": "0x3bb8a"
+    },
+    {
+      "name": "sdk::ktjl::stereo::Reference",
+      "size": 40,
+      "index": "0x3bb94"
+    },
+    {
+      "name": "sdk::ktjl::stereo::Plan",
+      "size": 128,
+      "index": "0x3bb97"
+    },
+    {
+      "name": "sdk::discovery::RtmSelection",
+      "size": 40,
+      "index": "0x3bb9c"
+    },
+    {
+      "name": "sdk::FRHICommandBase_Old",
+      "size": 16,
+      "index": "0x3bb9f"
+    },
+    {
+      "name": "sdk::FViewport",
+      "size": 8,
+      "index": "0x3bbb3"
+    },
+    {
+      "name": "sdk::FViewport::IntPoint",
+      "size": 8,
+      "index": "0x3bbb4"
+    },
+    {
+      "name": "sdk::FSceneViewProjectionDataT<float>",
+      "size": 176,
+      "index": "0x3bbb8"
+    },
+    {
+      "name": "sdk::FSceneInterface",
+      "size": 8,
+      "index": "0x3bbc4"
+    },
+    {
+      "name": "sdk::FSceneViewProjectionDataUE5T<double>",
+      "size": 352,
+      "index": "0x3bbc8"
+    },
+    {
+      "name": "sdk::detail::ImmutableSnapshot<sdk::detail::FamilyLayout>",
+      "size": 168,
+      "index": "0x3bbd1"
+    },
+    {
+      "name": "sdk::UKismetRenderingLibrary",
+      "size": 1,
+      "index": "0x3bbd9"
+    },
+    {
+      "name": "sdk::FRenderTargetPool",
+      "size": 1,
+      "index": "0x3f2b5"
+    },
+    {
+      "name": "sdk::ConsoleVariableDataWrapper::set_via_console_manager::__l8::<lambda_1>",
+      "size": 16,
+      "index": "0x41a04"
+    },
+    {
+      "name": "sdk::ConsoleVariableDataWrapper::set_via_console_manager::__l15::<lambda_2>",
+      "size": 16,
+      "index": "0x41a0c"
+    },
+    {
+      "name": "sdk::FSceneViewFamily::set_frame_count_offset::__l2::<lambda_1>",
+      "size": 8,
+      "index": "0x43b2a"
+    },
+    {
+      "name": "sdk::TArrayLite<unsigned __int64>",
+      "size": 16,
+      "index": "0x44e65"
+    },
+    {
+      "name": "sdk::TArrayLite<sdk::FSceneView *>",
+      "size": 16,
+      "index": "0x4533a"
+    },
+    {
+      "name": "sdk::FSceneViewFamily",
+      "size": 1,
+      "index": "0x45341"
+    },
+    {
+      "name": "sdk::ConsoleVariableDataWrapper",
+      "size": 48,
+      "index": "0x45345"
+    },
+    {
+      "name": "sdk::FMalloc::get::__l2::<lambda_1>::()::__l2::<lambda_1>::()::__l29::<lambda_1>",
+      "size": 8,
+      "index": "0x8c95d"
+    },
+    {
+      "name": "sdk::FMalloc::get::__l2::<lambda_1>::()::__l2::<lambda_1>",
+      "size": 24,
+      "index": "0x8c98c"
+    },
+    {
+      "name": "sdk::FMalloc::get::__l2::<lambda_1>::()::__l53::<lambda_2>",
+      "size": 8,
+      "index": "0x8c996"
+    },
+    {
+      "name": "sdk::FMalloc::get::__l2::<lambda_1>",
+      "size": 1,
+      "index": "0x8c9b0"
+    },
+    {
+      "name": "sdk::UObjectBase::update_process_event_index::__l14::<lambda_1>::()::__l21::<lambda_1>",
+      "size": 40,
+      "index": "0x8d600"
+    },
+    {
+      "name": "sdk::UObjectBase::update_offsets_post_uobjectarray::__l2::<lambda_2>::()::__l8::<lambda_1>",
+      "size": 16,
+      "index": "0x8d612"
+    },
+    {
+      "name": "sdk::UObjectBase::update_offsets_post_uobjectarray::__l2::<lambda_2>::()::__l11::<lambda_2>",
+      "size": 8,
+      "index": "0x8d61b"
+    },
+    {
+      "name": "sdk::UObjectBase::update_offsets_post_uobjectarray::__l2::<lambda_2>::()::__l22::<lambda_3>",
+      "size": 16,
+      "index": "0x8d624"
+    },
+    {
+      "name": "sdk::UObjectBase::update_offsets_post_uobjectarray::__l117::<lambda_7>::()::__l33::<lambda_1>",
+      "size": 16,
+      "index": "0x8d642"
+    },
+    {
+      "name": "sdk::UObjectBase::update_offsets_post_uobjectarray::__l117::<lambda_7>::()::__l71::<lambda_2>",
+      "size": 8,
+      "index": "0x8d64a"
+    },
+    {
+      "name": "sdk::object_liveness::current_policy::__l2::<lambda_1>",
+      "size": 1,
+      "index": "0x8d6a8"
+    },
+    {
+      "name": "sdk::UObjectBase::try_resolve_process_event_index::__l2::<lambda_1>",
+      "size": 1,
+      "index": "0x8d6c7"
+    },
+    {
+      "name": "sdk::UObjectBase::update_offsets::__l2::<lambda_1>",
+      "size": 1,
+      "index": "0x8d6d0"
+    },
+    {
+      "name": "sdk::UObjectBase::update_offsets_post_uobjectarray::__l2::<lambda_4>",
+      "size": 1,
+      "index": "0x8d709"
+    },
+    {
+      "name": "sdk::UObjectBase::update_offsets_post_uobjectarray::__l2::<lambda_2>",
+      "size": 16,
+      "index": "0x8d712"
+    },
+    {
+      "name": "sdk::UObjectBase::update_offsets_post_uobjectarray::__l2::<lambda_1>",
+      "size": 1,
+      "index": "0x8d716"
+    },
+    {
+      "name": "sdk::UObjectBase::update_offsets_post_uobjectarray::__l32::<lambda_3>",
+      "size": 1,
+      "index": "0x8d71b"
+    },
+    {
+      "name": "sdk::UObjectBase::update_offsets_post_uobjectarray::__l71::<lambda_6>",
+      "size": 16,
+      "index": "0x8d724"
+    },
+    {
+      "name": "sdk::UObjectBase::update_offsets_post_uobjectarray::__l71::<lambda_5>",
+      "size": 8,
+      "index": "0x8d72c"
+    },
+    {
+      "name": "sdk::UObjectBase::update_offsets_post_uobjectarray::__l117::<lambda_7>",
+      "size": 24,
+      "index": "0x8d734"
+    },
+    {
+      "name": "sdk::UObjectBase::update_process_event_index::__l14::<lambda_1>",
+      "size": 40,
+      "index": "0x8d73e"
+    },
+    {
+      "name": "sdk::TArray<sdk::ULocalPlayer *>",
+      "size": 16,
+      "index": "0x8d8c9"
+    },
+    {
+      "name": "sdk::UEngine::get_emulatestereo_string_ref_address::__l2::<lambda_1>::()::__l11::<lambda_1>",
+      "size": 8,
+      "index": "0x8da64"
+    },
+    {
+      "name": "sdk::UEngine::get_initialize_hmd_device_address::__l2::<lambda_1>::()::__l2::<lambda_1>",
+      "size": 1,
+      "index": "0x8da73"
+    },
+    {
+      "name": "sdk::UEngine::get_stereo_rendering_device_offset::__l2::<lambda_1>::()::__l2::<lambda_3>",
+      "size": 24,
+      "index": "0x8da9e"
+    },
+    {
+      "name": "sdk::UEngine::get_stereo_rendering_device_offset::__l2::<lambda_1>::()::__l2::<lambda_1>",
+      "size": 8,
+      "index": "0x8dab5"
+    },
+    {
+      "name": "sdk::UEngine::get_stereo_rendering_device_offset::__l2::<lambda_1>::()::__l2::<lambda_2>",
+      "size": 8,
+      "index": "0x8dacf"
+    },
+    {
+      "name": "sdk::UEngine::get_stereo_rendering_device_offset::__l2::<lambda_1>::()::__l2::<lambda_4>",
+      "size": 48,
+      "index": "0x8daec"
+    },
+    {
+      "name": "sdk::UEngine::exec::__l2::<lambda_1>",
+      "size": 8,
+      "index": "0x8db25"
+    },
+    {
+      "name": "sdk::UEngine::get_emulatestereo_string_ref_address::__l2::<lambda_1>",
+      "size": 1,
+      "index": "0x8db31"
+    },
+    {
+      "name": "sdk::UEngine::get_initialize_hmd_device_address::__l2::<lambda_1>",
+      "size": 1,
+      "index": "0x8db38"
+    },
+    {
+      "name": "sdk::UEngine::get_lvalue::__l2::<lambda_1>",
+      "size": 1,
+      "index": "0x8db45"
+    },
+    {
+      "name": "sdk::UEngine::get_stereo_rendering_device_offset::__l2::<lambda_1>",
+      "size": 1,
+      "index": "0x8db4b"
+    },
+    {
+      "name": "sdk::UEngine::get_world::__l2::<lambda_1>",
+      "size": 1,
+      "index": "0x8db59"
+    },
+    {
+      "name": "sdk::TArrayLite<sdk::TArrayLite<wchar_t> >",
+      "size": 16,
+      "index": "0x8fffe"
+    },
+    {
+      "name": "sdk::console54::Layout",
+      "size": null,
+      "index": "0x90006"
+    },
+    {
+      "name": "sdk::console54::Reason",
+      "size": null,
+      "index": "0x9000b"
+    },
+    {
+      "name": "sdk::console54::Decision",
+      "size": 8,
+      "index": "0x90013"
+    },
+    {
+      "name": "sdk::console54::Indices",
+      "size": 12,
+      "index": "0x90015"
+    },
+    {
+      "name": "sdk::console54::NameABI",
+      "size": null,
+      "index": "0x90017"
+    },
+    {
+      "name": "sdk::console54::ReadValue::Shape",
+      "size": null,
+      "index": "0x90019"
+    },
+    {
+      "name": "sdk::console54::ReadValue",
+      "size": 40,
+      "index": "0x9001f"
+    },
+    {
+      "name": "sdk::console54::Getter",
+      "size": null,
+      "index": "0x90021"
+    },
+    {
+      "name": "sdk::console54::GetterCursor",
+      "size": 24,
+      "index": "0x90028"
+    },
+    {
+      "name": "sdk::FakeOutputDevice",
+      "size": 264,
+      "index": "0x90039"
+    },
+    {
+      "name": "sdk::console_name::ABI",
+      "size": null,
+      "index": "0x9003d"
+    },
+    {
+      "name": "sdk::console_name::OwnedName<2>",
+      "size": 8,
+      "index": "0x90042"
+    },
+    {
+      "name": "sdk::console_name::OwnedName<1>",
+      "size": 4,
+      "index": "0x90047"
+    },
+    {
+      "name": "sdk::console_name::OwnedName<3>",
+      "size": 12,
+      "index": "0x9004c"
+    },
+    {
+      "name": "sdk::`anonymous-namespace'::ConsoleInterfaceVersion",
+      "size": null,
+      "index": "0x9004e"
+    },
+    {
+      "name": "sdk::`anonymous-namespace'::UE57ConsoleResolvedContext",
+      "size": 12,
+      "index": "0x90053"
+    },
+    {
+      "name": "sdk::`anonymous-namespace'::ResolveCVarCacheKeyHash",
+      "size": 1,
+      "index": "0x90058"
+    },
+    {
+      "name": "sdk::`anonymous-namespace'::AlternateCVarRefCacheKeyHash",
+      "size": 1,
+      "index": "0x9005d"
+    },
+    {
+      "name": "sdk::`anonymous-namespace'::ResolveCVarCacheKey",
+      "size": 48,
+      "index": "0x90070"
+    },
+    {
+      "name": "sdk::`anonymous-namespace'::Console54Probe",
+      "size": 24,
+      "index": "0x90074"
+    },
+    {
+      "name": "sdk::`anonymous-namespace'::AlternateCVarRefCacheKey",
+      "size": 48,
+      "index": "0x90084"
+    },
+    {
+      "name": "sdk::ConsoleVariableDataWrapper::set_via_console_manager::__l8::<lambda_1>",
+      "size": 16,
+      "index": "0x905ed"
+    },
+    {
+      "name": "sdk::ConsoleVariableDataWrapper::set_via_console_manager::__l15::<lambda_2>",
+      "size": 16,
+      "index": "0x905f5"
+    },
+    {
+      "name": "sdk::ConsoleVariableDataWrapper::set_via_console_manager::__l8::<lambda_1>",
+      "size": 16,
+      "index": "0x9060e"
+    },
+    {
+      "name": "sdk::ConsoleVariableDataWrapper::set_via_console_manager::__l15::<lambda_2>",
+      "size": 16,
+      "index": "0x90616"
+    },
+    {
+      "name": "sdk::find_stalker2_ue55_console_manager::__l2::<lambda_1>",
+      "size": 1,
+      "index": "0x90b17"
+    },
+    {
+      "name": "sdk::`anonymous-namespace'::get_console_interface_version::__l2::<lambda_1>",
+      "size": 1,
+      "index": "0x90b44"
+    },
+    {
+      "name": "sdk::vr::get_enable_stereo_emulation_cvar::__l2::<lambda_1>",
+      "size": 1,
+      "index": "0x90b76"
+    },
+    {
+      "name": "sdk::rendering::get_one_frame_thread_lag_cvar::__l2::<lambda_1>",
+      "size": 1,
+      "index": "0x90b7a"
+    },
+    {
+      "name": "sdk::vr::get_slate_draw_to_vr_render_target_real_cvar::__l2::<lambda_1>",
+      "size": 1,
+      "index": "0x90b7e"
+    },
+    {
+      "name": "sdk::vr::get_slate_draw_to_vr_render_target_usage_location::__l2::<lambda_1>",
+      "size": 1,
+      "index": "0x90b82"
+    },
+    {
+      "name": "sdk::IConsoleObject::locate_vtable_indices::__l53::<lambda_1>",
+      "size": 1,
+      "index": "0x90bcb"
+    },
+    {
+      "name": "sdk::IConsoleObject::locate_vtable_indices::__l76::<lambda_2>",
+      "size": 16,
+      "index": "0x90bd3"
+    },
+    {
+      "name": "sdk::console57_clang::matches_executable::__l7::<lambda_1>",
+      "size": 1,
+      "index": "0x90bdb"
+    },
+    {
+      "name": "sdk::resolve_cvar_from_address::__l80::<lambda_1>",
+      "size": 16,
+      "index": "0x90c5a"
+    },
+    {
+      "name": "sdk::set_cvar_data_float::__l6::<lambda_1>",
+      "size": 16,
+      "index": "0x90ce7"
+    },
+    {
+      "name": "sdk::set_cvar_data_float::__l12::<lambda_2>",
+      "size": 16,
+      "index": "0x90cf0"
+    },
+    {
+      "name": "sdk::set_cvar_data_int::__l6::<lambda_1>",
+      "size": 16,
+      "index": "0x90d1e"
+    },
+    {
+      "name": "sdk::set_cvar_data_int::__l12::<lambda_2>",
+      "size": 16,
+      "index": "0x90d26"
+    },
+    {
+      "name": "sdk::set_cvar_float::__l3::<lambda_2>",
+      "size": 32,
+      "index": "0x90d4e"
+    },
+    {
+      "name": "sdk::set_cvar_float::__l6::<lambda_1>",
+      "size": 16,
+      "index": "0x90d56"
+    },
+    {
+      "name": "sdk::set_cvar_int::__l3::<lambda_2>",
+      "size": 32,
+      "index": "0x90d7b"
+    },
+    {
+      "name": "sdk::set_cvar_int::__l6::<lambda_1>",
+      "size": 16,
+      "index": "0x90d9e"
+    },
+    {
+      "name": "sdk::should_use_stalker2_ue55_console_manager_interface::__l2::<lambda_1>",
+      "size": 1,
+      "index": "0x90dd7"
+    },
+    {
+      "name": "sdk::should_use_ue57_console_manager_interface::__l2::<lambda_1>",
+      "size": 1,
+      "index": "0x90dde"
+    },
+    {
+      "name": "sdk::`anonymous-namespace'::try_locate_ue57_console_variable_vtable::__l2::<lambda_1>",
+      "size": 1,
+      "index": "0x90e03"
+    },
+    {
+      "name": "sdk::`anonymous-namespace'::uses_source_console54_candidate::__l2::<lambda_1>",
+      "size": 1,
+      "index": "0x90e11"
+    },
+    {
+      "name": "sdk::UProperty",
+      "size": 1,
+      "index": "0x92dd2"
+    },
+    {
+      "name": "sdk::ScriptMatrix",
+      "size": 1,
+      "index": "0x92de3"
+    },
+    {
+      "name": "sdk::`anonymous-namespace'::DetectedEngineVersion",
+      "size": 4,
+      "index": "0x92df2"
+    },
+    {
+      "name": "sdk::`anonymous-namespace'::detected_engine_version::__l2::<lambda_1>",
+      "size": 1,
+      "index": "0x93320"
+    },
+    {
+      "name": "sdk::AController::is_local_player_controller::__l2::<unnamed-type-params>",
+      "size": 1,
+      "index": "0x9380b"
+    },
+    {
+      "name": "sdk::`anonymous-namespace'::is_ue4_14_through_4_17::__l2::<lambda_1>",
+      "size": 1,
+      "index": "0x9382c"
+    },
+    {
+      "name": "sdk::UCameraComponent",
+      "size": 1,
+      "index": "0x93d1b"
+    },
+    {
+      "name": "sdk::TArray<sdk::AActor *>",
+      "size": 16,
+      "index": "0x93d65"
+    },
+    {
+      "name": "sdk::FTransform",
+      "size": 48,
+      "index": "0x93d75"
+    },
+    {
+      "name": "sdk::FTransformUE5",
+      "size": 96,
+      "index": "0x93d89"
+    },
+    {
+      "name": "sdk::TArray<sdk::UActorComponent *>",
+      "size": 16,
+      "index": "0x93dd3"
+    },
+    {
+      "name": "sdk::AActor::destroy_actor::__l2::<unnamed-type-params>",
+      "size": 16,
+      "index": "0x93ec8"
+    },
+    {
+      "name": "sdk::AActor::destroy_component::__l2::<unnamed-type-params>",
+      "size": 8,
+      "index": "0x93ecb"
+    },
+    {
+      "name": "sdk::AActor::get_component_by_class::__l2::<unnamed-type-params>",
+      "size": 16,
+      "index": "0x93f04"
+    },
+    {
+      "name": "sdk::AActor::get_components_by_class::__l2::Params_K2_GetComponentsByClass",
+      "size": 24,
+      "index": "0x93f21"
+    },
+    {
+      "name": "sdk::AActor::get_level::__l2::<unnamed-type-params>",
+      "size": 8,
+      "index": "0x93f4d"
+    },
+    {
+      "name": "sdk::AActor::get_overlapping_actors::__l2::<unnamed-type-params>",
+      "size": 24,
+      "index": "0x93f6a"
+    },
+    {
+      "name": "sdk::AActor::get_overlapping_components::__l2::<unnamed-type-params>",
+      "size": 16,
+      "index": "0x93f88"
+    },
+    {
+      "name": "sdk::UMotionControllerComponent::get_hand::__l2::<lambda_1>",
+      "size": 1,
+      "index": "0x946ad"
+    },
+    {
+      "name": "sdk::UMotionControllerComponent::get_motion_source::__l2::<lambda_1>",
+      "size": 1,
+      "index": "0x946cc"
+    },
+    {
+      "name": "sdk::UMotionControllerComponent::get_player_index::__l2::<lambda_1>",
+      "size": 1,
+      "index": "0x946e5"
+    },
+    {
+      "name": "sdk::UMotionControllerComponent::has_motion_source::__l2::<lambda_1>",
+      "size": 1,
+      "index": "0x946f8"
+    },
+    {
+      "name": "sdk::`anonymous-namespace'::is_ue4_11_through_4_17::__l2::<lambda_1>",
+      "size": 1,
+      "index": "0x94712"
+    },
+    {
+      "name": "sdk::globals::get_near_clipping_plane::__l2::<lambda_1>::()::__l2::<lambda_2>",
+      "size": 32,
+      "index": "0x94966"
+    },
+    {
+      "name": "sdk::globals::get_near_clipping_plane::__l2::<lambda_1>::()::__l2::<lambda_1>",
+      "size": 16,
+      "index": "0x9497e"
+    },
+    {
+      "name": "sdk::globals::get_near_clipping_plane::__l2::<lambda_1>",
+      "size": 1,
+      "index": "0x94abf"
+    },
+    {
+      "name": "sdk::APlayerCameraManager::get_owning_player_controller::__l2::<unnamed-type-params>",
+      "size": 8,
+      "index": "0x94c96"
+    },
+    {
+      "name": "sdk::slate::locate_draw_window_renderthread_fn::__l2::<lambda_1>",
+      "size": 1,
+      "index": "0x951c4"
+    },
+    {
+      "name": "sdk::slate::locate_draw_window_renderthread_fn_alternate::__l2::<lambda_1>",
+      "size": 1,
+      "index": "0x951cf"
+    },
+    {
+      "name": "sdk::FViewportInfo::get_rt_provider::__l2::<lambda_1>",
+      "size": 8,
+      "index": "0x9554c"
+    },
+    {
+      "name": "sdk::FViewport::get_scene_viewport_render_target_texture_direct::__l2::<lambda_2>",
+      "size": 1,
+      "index": "0x95f39"
+    },
+    {
+      "name": "sdk::FViewport::get_scene_viewport_render_target_texture_direct::__l2::<lambda_1>",
+      "size": 1,
+      "index": "0x95f42"
+    },
+    {
+      "name": "sdk::detail::update::__l3::<lambda_1>",
+      "size": 1,
+      "index": "0x95f51"
+    },
+    {
+      "name": "sdk::detail::update::__l3::<lambda_2>",
+      "size": 32,
+      "index": "0x95f80"
+    },
+    {
+      "name": "sdk::TArray<sdk::FSceneView *>",
+      "size": 16,
+      "index": "0x96332"
+    },
+    {
+      "name": "sdk::`anonymous-namespace'::is_medium_ue425plus_layout::__l2::<lambda_1>",
+      "size": 1,
+      "index": "0x9663a"
+    },
+    {
+      "name": "sdk::FSceneViewFamily::resolve_offsets::__l3::<lambda_2>",
+      "size": 16,
+      "index": "0x9668f"
+    },
+    {
+      "name": "sdk::FSceneViewFamily::resolve_offsets::__l3::<lambda_1>",
+      "size": 8,
+      "index": "0x966a7"
+    },
+    {
+      "name": "sdk::`anonymous-namespace'::try_resolve_source_order_layout::__l2::<lambda_1>",
+      "size": 32,
+      "index": "0x966f8"
+    },
+    {
+      "name": "sdk::FSceneViewFamily::update_offsets::__l3::<lambda_1>",
+      "size": 24,
+      "index": "0x96711"
+    },
+    {
+      "name": "sdk::ScriptTransform",
+      "size": 1,
+      "index": "0x96d13"
+    },
+    {
+      "name": "sdk::FEnumProperty",
+      "size": 1,
+      "index": "0x96e81"
+    },
+    {
+      "name": "sdk::FName::get_constructor::__l2::<lambda_1>::()::__l2::Candidate",
+      "size": 32,
+      "index": "0x9aa40"
+    },
+    {
+      "name": "sdk::detail::configure_direct_name_pool::__l2::<lambda_1>",
+      "size": 8,
+      "index": "0x9aa7a"
+    },
+    {
+      "name": "sdk::detail::configure_direct_name_pool::__l2::<lambda_2>",
+      "size": 24,
+      "index": "0x9aa89"
+    },
+    {
+      "name": "sdk::FName::get_constructor::__l2::<lambda_1>",
+      "size": 1,
+      "index": "0x9aa93"
+    },
+    {
+      "name": "sdk::FName::get_to_string::__l2::<lambda_1>",
+      "size": 1,
+      "index": "0x9aaa8"
+    },
+    {
+      "name": "sdk::detail::inlined_find_to_string::__l10::<lambda_1>",
+      "size": 1,
+      "index": "0x9aab2"
+    },
+    {
+      "name": "sdk::detail::is_deadzone2_ue56::__l2::<lambda_1>",
+      "size": 1,
+      "index": "0x9aabe"
+    },
+    {
+      "name": "sdk::detail::is_ue58_or_newer::__l2::<lambda_1>",
+      "size": 1,
+      "index": "0x9aac6"
+    },
+    {
+      "name": "sdk::detail::is_valid_name_pool::__l2::<lambda_1>",
+      "size": 8,
+      "index": "0x9aad7"
+    },
+    {
+      "name": "sdk::detail::standard_find_to_string::__l2::<lambda_1>",
+      "size": 32,
+      "index": "0x9aafb"
+    },
+    {
+      "name": "sdk::detail::standard_find_to_string::__l18::<lambda_2>",
+      "size": 8,
+      "index": "0x9ab00"
+    },
+    {
+      "name": "sdk::detail::standard_find_to_string::__l25::<lambda_3>",
+      "size": 1,
+      "index": "0x9ab01"
+    },
+    {
+      "name": "sdk::FName::to_string::__l2::<lambda_1>",
+      "size": 8,
+      "index": "0x9ab0e"
+    },
+    {
+      "name": "sdk::townfall::detail::fuzzy_find_console_objects::__l2::<lambda_1>",
+      "size": 1,
+      "index": "0x9b367"
+    },
+    {
+      "name": "sdk::townfall::detail::fuzzy_find_console_objects::__l2::NamedElement",
+      "size": 64,
+      "index": "0x9b378"
+    },
+    {
+      "name": "sdk::townfall::`anonymous-namespace'::contains_icase::__l2::<lambda_2>",
+      "size": 8,
+      "index": "0x9b648"
+    },
+    {
+      "name": "sdk::townfall::`anonymous-namespace'::contains_icase::__l2::<lambda_1>",
+      "size": 1,
+      "index": "0x9b651"
+    },
+    {
+      "name": "sdk::FConsoleManager::get::__l2::<lambda_1>",
+      "size": 1,
+      "index": "0x9b6b0"
+    },
+    {
+      "name": "sdk::townfall::is_ue56_console_runtime::__l2::<lambda_1>",
+      "size": 1,
+      "index": "0x9b6d3"
+    },
+    {
+      "name": "sdk::townfall::`anonymous-namespace'::read_table::__l2::Header",
+      "size": 24,
+      "index": "0x9b6f7"
+    },
+    {
+      "name": "sdk::townfall::uses_ue56_console_discovery::__l2::<lambda_1>",
+      "size": 1,
+      "index": "0x9b758"
+    },
+    {
+      "name": "sdk::FUObjectArray::get::__l12::<lambda_2>::()::__l2::<lambda_1>::()::__l2::<lambda_3>",
+      "size": 24,
+      "index": "0x9c19a"
+    },
+    {
+      "name": "sdk::FUObjectArray::get::__l12::<lambda_2>::()::__l2::<lambda_1>::()::__l2::<lambda_4>",
+      "size": 24,
+      "index": "0x9c1b8"
+    },
+    {
+      "name": "sdk::FUObjectArray::get::__l12::<lambda_2>::()::__l2::<lambda_1>::()::__l2::<lambda_2>",
+      "size": 40,
+      "index": "0x9c1f3"
+    },
+    {
+      "name": "sdk::FUObjectArray::get::__l12::<lambda_2>::()::__l2::<lambda_1>::()::__l2::<lambda_1>",
+      "size": 8,
+      "index": "0x9c206"
+    },
+    {
+      "name": "sdk::FUObjectArray::get::__l12::<lambda_2>::()::__l2::<lambda_1>::()::__l71::<lambda_5>",
+      "size": 1,
+      "index": "0x9c20d"
+    },
+    {
+      "name": "sdk::FUObjectArray::get::__l12::<lambda_2>::()::__l2::<lambda_1>",
+      "size": 16,
+      "index": "0x9c22e"
+    },
+    {
+      "name": "sdk::FUObjectArray::get::__l12::<lambda_2>::()::__l2::<lambda_2>",
+      "size": 16,
+      "index": "0x9c263"
+    },
+    {
+      "name": "sdk::find_uobject::__l2::CachedObject",
+      "size": 64,
+      "index": "0x9c358"
+    },
+    {
+      "name": "sdk::FUObjectArray::get::__l12::<lambda_2>",
+      "size": 1,
+      "index": "0x9c386"
+    },
+    {
+      "name": "sdk::FUObjectArray::get::__l12::<lambda_1>",
+      "size": 1,
+      "index": "0x9c38c"
+    },
+    {
+      "name": "sdk::FUObjectArray::get::__l18::<lambda_3>",
+      "size": 1,
+      "index": "0x9c393"
+    },
+    {
+      "name": "sdk::FUObjectArray::get::__l27::<lambda_4>",
+      "size": 8,
+      "index": "0x9c39d"
+    },
+    {
+      "name": "sdk::`anonymous-namespace'::is_ktjl_process::__l2::<lambda_1>",
+      "size": 1,
+      "index": "0x9c3e5"
+    },
+    {
+      "name": "sdk::UObjectBase::publish_header::__l5::<lambda_1>",
+      "size": 1,
+      "index": "0x9c422"
+    },
+    {
+      "name": "sdk::object_array::read_header::__l13::<lambda_1>",
+      "size": 8,
+      "index": "0x9c44d"
+    },
+    {
+      "name": "sdk::`anonymous-namespace'::should_use_deadzone2_ue56_pdb_layout::__l2::<lambda_1>",
+      "size": 1,
+      "index": "0x9c46b"
+    },
+    {
+      "name": "sdk::`anonymous-namespace'::should_use_deadzone_ue56_pdb_layout::__l2::<lambda_1>",
+      "size": 1,
+      "index": "0x9c47d"
+    },
+    {
+      "name": "sdk::`anonymous-namespace'::should_use_payday3_ue427_pdb_layout::__l2::<lambda_1>",
+      "size": 1,
+      "index": "0x9c48f"
+    },
+    {
+      "name": "sdk::`anonymous-namespace'::should_use_ue414_to_ue417_source_layout::__l2::<lambda_1>",
+      "size": 1,
+      "index": "0x9c499"
+    },
+    {
+      "name": "sdk::UGameplayStatics::get_player_controller::__l2::<unnamed-type-params>",
+      "size": 24,
+      "index": "0x9c7ab"
+    },
+    {
+      "name": "sdk::`anonymous-namespace'::log_begin_spawn_layout_once::__l2::<lambda_1>",
+      "size": 1,
+      "index": "0x9c7b7"
+    },
+    {
+      "name": "sdk::UGameplayStatics::spawn_object::__l2::<unnamed-type-params>",
+      "size": 24,
+      "index": "0x9c7c7"
+    },
+    {
+      "name": "sdk::TArray<unsigned char>",
+      "size": 16,
+      "index": "0x9c908"
+    },
+    {
+      "name": "sdk::TArrayLite<unsigned char>",
+      "size": 16,
+      "index": "0x9c90d"
+    },
+    {
+      "name": "sdk::USceneComponent::detach_from_parent::__l2::<unnamed-type-params>",
+      "size": 2,
+      "index": "0x9c936"
+    },
+    {
+      "name": "sdk::USceneComponent::set_hidden_in_game::__l2::<unnamed-type-params>",
+      "size": 2,
+      "index": "0x9c954"
+    },
+    {
+      "name": "sdk::USceneComponent::set_visibility::__l2::<unnamed-type-params>",
+      "size": 2,
+      "index": "0x9c95f"
+    },
+    {
+      "name": "sdk::UGameViewportClient::get_draw_function::__l2::<lambda_1>::()::__l44::<lambda_1>",
+      "size": 24,
+      "index": "0x9cbe0"
+    },
+    {
+      "name": "sdk::UGameViewportClient::exec::__l2::<lambda_1>",
+      "size": 8,
+      "index": "0x9cbf0"
+    },
+    {
+      "name": "sdk::UGameViewportClient::get_draw_function::__l2::<lambda_1>",
+      "size": 1,
+      "index": "0x9cc03"
+    },
+    {
+      "name": "sdk::`anonymous-namespace'::validates_as_ue58_game_viewport_draw::__l2::LoadedVfunc",
+      "size": 8,
+      "index": "0x9cc2f"
+    },
+    {
+      "name": "sdk::`anonymous-namespace'::validates_as_ue58_game_viewport_draw::__l2::<lambda_2>",
+      "size": 1,
+      "index": "0x9cc34"
+    },
+    {
+      "name": "sdk::`anonymous-namespace'::validates_as_ue58_game_viewport_draw::__l2::<lambda_1>",
+      "size": 1,
+      "index": "0x9cc3e"
+    },
+    {
+      "name": "sdk::UActorComponent::register_component_with_world::__l2::<lambda_2>::()::__l2::<lambda_1>",
+      "size": 8,
+      "index": "0x9cd3b"
+    },
+    {
+      "name": "sdk::UActorComponent::get_owner::__l2::<unnamed-type-params>",
+      "size": 8,
+      "index": "0x9cd3d"
+    },
+    {
+      "name": "sdk::UActorComponent::register_component_with_world::__l2::<lambda_2>",
+      "size": 1,
+      "index": "0x9cd52"
+    },
+    {
+      "name": "sdk::UActorComponent::register_component_with_world::__l5::<lambda_1>",
+      "size": 1,
+      "index": "0x9cd58"
+    },
+    {
+      "name": "sdk::UPrimitiveComponent::set_owner_no_see::__l2::<unnamed-type-params>",
+      "size": 8,
+      "index": "0x9ce25"
+    },
+    {
+      "name": "sdk::UPrimitiveComponent::set_render_custom_depth::__l2::<unnamed-type-params>",
+      "size": 8,
+      "index": "0x9ce30"
+    },
+    {
+      "name": "sdk::UPrimitiveComponent::set_render_in_main_pass::__l2::<unnamed-type-params>",
+      "size": 8,
+      "index": "0x9ce35"
+    },
+    {
+      "name": "sdk::`anonymous-namespace'::DiscoveryCacheState",
+      "size": 104,
+      "index": "0x9ce55"
+    },
+    {
+      "name": "sdk::`anonymous-namespace'::VFuncPatternCacheKeyHash",
+      "size": 1,
+      "index": "0x9dc02"
+    },
+    {
+      "name": "sdk::`anonymous-namespace'::ModuleFingerprint",
+      "size": 96,
+      "index": "0x9dc0f"
+    },
+    {
+      "name": "sdk::`anonymous-namespace'::VFuncPatternCacheKey",
+      "size": 40,
+      "index": "0x9dc1f"
+    },
+    {
+      "name": "sdk::galactic_racer::current_game::__l2::<lambda_1>",
+      "size": 1,
+      "index": "0x9e193"
+    },
+    {
+      "name": "sdk::mafia::is_ue544_runtime::__l2::<lambda_1>",
+      "size": 1,
+      "index": "0x9e361"
+    },
+    {
+      "name": "sdk::mafia::recover_console_manager::__l2::<lambda_1>",
+      "size": 1,
+      "index": "0x9e365"
+    },
+    {
+      "name": "sdk::mafia::uses_ue544_discovery::__l2::<lambda_1>",
+      "size": 1,
+      "index": "0x9e369"
+    },
+    {
+      "name": "sdk::UGameEngine::get_tick_address::__l2::<lambda_1>::()::__l2::<lambda_1>",
+      "size": 8,
+      "index": "0x9e42b"
+    },
+    {
+      "name": "sdk::UGameEngine::get_tick_address::__l2::<lambda_1>::()::__l2::<lambda_2>",
+      "size": 8,
+      "index": "0x9e43b"
+    },
+    {
+      "name": "sdk::UGameEngine::get_tick_address::__l2::<lambda_1>",
+      "size": 1,
+      "index": "0x9e43f"
+    },
+    {
+      "name": "sdk::scene_view_layout::FSceneViewInitLayout",
+      "size": null,
+      "index": "0x9e47b"
+    },
+    {
+      "name": "sdk::FSceneView::get_constructor_address::__l2::<lambda_1>::()::__l2::<lambda_2>",
+      "size": 1,
+      "index": "0x9e69f"
+    },
+    {
+      "name": "sdk::FSceneView::get_constructor_address::__l2::<lambda_1>::()::__l2::FunctionRef",
+      "size": 16,
+      "index": "0x9e6a3"
+    },
+    {
+      "name": "sdk::FSceneView::get_constructor_address::__l2::<lambda_1>::()::__l35::<lambda_1>",
+      "size": 56,
+      "index": "0x9e7d8"
+    },
+    {
+      "name": "sdk::FSceneView::get_constructor_address::__l2::<lambda_1>::()::__l35::<lambda_1>::()::__l15::<lambda_1>",
+      "size": 16,
+      "index": "0x9e7f7"
+    },
+    {
+      "name": "sdk::FSceneView::get_constructor_address::__l2::<lambda_1>",
+      "size": 1,
+      "index": "0x9e814"
+    },
+    {
+      "name": "sdk::detail::validate_init_retry::__l2::<lambda_1>",
+      "size": 8,
+      "index": "0x9e85f"
+    },
+    {
+      "name": "sdk::detail::validate_init_retry::__l2::<lambda_2>",
+      "size": 24,
+      "index": "0x9e871"
+    },
+    {
+      "name": "sdk::FSceneViewInitOptionsBase::update_offsets::__l3::<lambda_1>",
+      "size": 8,
+      "index": "0x9e886"
+    },
+    {
+      "name": "sdk::FSceneViewInitOptionsBase::update_offsets::__l3::<lambda_5>",
+      "size": 8,
+      "index": "0x9e88e"
+    },
+    {
+      "name": "sdk::FSceneViewInitOptionsBase::update_offsets::__l18::<lambda_2>",
+      "size": 8,
+      "index": "0x9e896"
+    },
+    {
+      "name": "sdk::FSceneViewInitOptionsBase::update_offsets::__l26::<lambda_3>",
+      "size": 8,
+      "index": "0x9e89e"
+    },
+    {
+      "name": "sdk::FSceneViewInitOptionsBase::update_offsets::__l74::<lambda_4>",
+      "size": 8,
+      "index": "0x9e8a6"
+    },
+    {
+      "name": "sdk::FRenderTarget::update_offsets::__l14::<lambda_1>",
+      "size": 8,
+      "index": "0x9ea3b"
+    },
+    {
+      "name": "sdk::FRenderTarget::update_offsets::__l14::<lambda_2>",
+      "size": 8,
+      "index": "0x9ea57"
+    },
+    {
+      "name": "sdk::FScene::update_offsets::__l2::CacheValidationResult",
+      "size": null,
+      "index": "0x9ed06"
+    },
+    {
+      "name": "sdk::FScene::update_offsets::__l2::<lambda_1>",
+      "size": 24,
+      "index": "0x9ed37"
+    },
+    {
+      "name": "sdk::FScene::update_offsets::__l2::<lambda_3>",
+      "size": 8,
+      "index": "0x9ed4a"
+    },
+    {
+      "name": "sdk::FScene::update_offsets::__l2::<lambda_2>",
+      "size": 1,
+      "index": "0x9ed6e"
+    },
+    {
+      "name": "sdk::FScene::update_offsets::__l39::<lambda_4>",
+      "size": 48,
+      "index": "0x9ed76"
+    },
+    {
+      "name": "sdk::FRenderTargetPool::get_find_free_element_fn::__l2::<lambda_1>::()::__l31::<lambda_1>",
+      "size": 8,
+      "index": "0x9eed9"
+    },
+    {
+      "name": "sdk::FRenderTargetPool::get_find_free_element_fn::__l2::<lambda_1>",
+      "size": 1,
+      "index": "0x9eee5"
+    }
+  ]
+}

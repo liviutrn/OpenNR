@@ -1,0 +1,130 @@
+{
+  "dll_sha256": "19e91cc8c22a02e2a97996e1523604ab202b4540d954ebc95e07e6b233970966",
+  "pdb": {
+    "sha256": "9d90e575d3e3d4b131be08809cb232c782afb267b15584c431fcb04ef9143a17",
+    "guid": "b9d7af12-4a42-4336-bdab-dbcb3a011af2",
+    "age": 1
+  },
+  "functions": [
+    {
+      "name": "sdk::discovery::executable_image",
+      "rva": "0xd8560",
+      "size": 183,
+      "sha256": "7aab2ca2ee78b5183702c0486ff610b9e3ac9179934806ce5009ccfccf0250de",
+      "imports": [
+        {
+          "displacement": 75,
+          "name": "VirtualQuery"
+        }
+      ],
+      "disassembly": [
+        "0000: mov qword ptr [rsp + 8], rbx",
+        "0005: push rdi",
+        "0006: sub rsp, 0x50",
+        "000a: xorps xmm0, xmm0",
+        "000d: mov rdi, r8",
+        "0010: mov rbx, rdx",
+        "0013: movups xmmword ptr [rsp + 0x20], xmm0",
+        "0018: movups xmmword ptr [rsp + 0x30], xmm0",
+        "001d: movups xmmword ptr [rsp + 0x40], xmm0",
+        "0022: cmp rdx, 0x10000",
+        "0029: jb 0x1800d860a",
+        "002b: test r8, r8",
+        "002e: je 0x1800d860a",
+        "0030: mov rax, r8",
+        "0033: not rax",
+        "0036: cmp rdx, rax",
+        "0039: ja 0x1800d860a",
+        "003b: mov r8d, 0x30",
+        "0041: lea rdx, [rsp + 0x20]",
+        "0046: mov rcx, rbx",
+        "0049: call qword ptr [rip + 0xa76bf9]",
+        "004f: cmp rax, 0x30",
+        "0053: jne 0x1800d860a",
+        "0055: cmp dword ptr [rsp + 0x40], 0x1000",
+        "005d: jne 0x1800d860a",
+        "005f: cmp dword ptr [rsp + 0x48], 0x1000000",
+        "0067: jne 0x1800d860a",
+        "0069: mov eax, dword ptr [rsp + 0x44]",
+        "006d: test eax, 0x101",
+        "0072: jne 0x1800d860a",
+        "0074: movzx eax, al",
+        "0077: cmp eax, 0x20",
+        "007a: je 0x1800d85e6",
+        "007c: add eax, -0x40",
+        "007f: test eax, 0xffffffbf",
+        "0084: jne 0x1800d860a",
+        "0086: sub rbx, qword ptr [rsp + 0x20]",
+        "008b: mov rax, qword ptr [rsp + 0x38]",
+        "0090: cmp rbx, rax",
+        "0093: ja 0x1800d860a",
+        "0095: sub rax, rbx",
+        "0098: cmp rdi, rax",
+        "009b: ja 0x1800d860a",
+        "009d: mov al, 1",
+        "009f: mov rbx, qword ptr [rsp + 0x60]",
+        "00a4: add rsp, 0x50",
+        "00a8: pop rdi",
+        "00a9: ret ",
+        "00aa: mov rbx, qword ptr [rsp + 0x60]",
+        "00af: xor al, al",
+        "00b1: add rsp, 0x50",
+        "00b5: pop rdi",
+        "00b6: ret "
+      ]
+    },
+    {
+      "name": "sdk::discovery::read_process",
+      "rva": "0x816d0",
+      "size": 123,
+      "sha256": "4fede9113772f494c8c1c4930bf359914f32b56e0f10647b4843f1bc7ad3e91f",
+      "imports": [
+        {
+          "displacement": 44,
+          "name": "GetCurrentProcess"
+        },
+        {
+          "displacement": 72,
+          "name": "ReadProcessMemory"
+        }
+      ],
+      "disassembly": [
+        "0000: mov qword ptr [rsp + 8], rbx",
+        "0005: mov qword ptr [rsp + 0x18], rsi",
+        "000a: push rdi",
+        "000b: sub rsp, 0x30",
+        "000f: mov qword ptr [rsp + 0x48], 0",
+        "0018: mov rbx, r9",
+        "001b: mov rsi, r8",
+        "001e: mov rdi, rdx",
+        "0021: cmp rdx, 0x10000",
+        "0028: jb 0x180081739",
+        "002a: call qword ptr [rip + 0xacda10]",
+        "0030: mov r9, rbx",
+        "0033: mov r8, rsi",
+        "0036: mov rcx, rax",
+        "0039: mov rdx, rdi",
+        "003c: lea rax, [rsp + 0x48]",
+        "0041: mov qword ptr [rsp + 0x20], rax",
+        "0046: call qword ptr [rip + 0xacda74]",
+        "004c: test eax, eax",
+        "004e: je 0x180081739",
+        "0050: cmp qword ptr [rsp + 0x48], rbx",
+        "0055: jne 0x180081739",
+        "0057: mov al, 1",
+        "0059: mov rbx, qword ptr [rsp + 0x40]",
+        "005e: mov rsi, qword ptr [rsp + 0x50]",
+        "0063: add rsp, 0x30",
+        "0067: pop rdi",
+        "0068: ret ",
+        "0069: mov rbx, qword ptr [rsp + 0x40]",
+        "006e: xor al, al",
+        "0070: mov rsi, qword ptr [rsp + 0x50]",
+        "0075: add rsp, 0x30",
+        "0079: pop rdi",
+        "007a: ret "
+      ]
+    }
+  ],
+  "scope": "Offline test reference only; not a runtime binary hook or SDK source recovery"
+}

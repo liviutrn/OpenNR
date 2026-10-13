@@ -1,0 +1,120 @@
+# Exact current Joey SDK recovery
+
+The target remains the official latest release `101226HELLRAISERp1`, Mono
+backend `5ac7edc207866569334175e4ed8a7517971547f6`, and original SDK
+`3cffbc82429b6165ceec2714f0f0d9ae48f55596`. No other backend revision is used.
+The Joey renderer, XR lifecycle, game compatibility and frontend are unchanged.
+
+## Recovered evidence
+
+The exact SDK repository is still inaccessible. Repository-name searches
+including forks, exact code searches, direct Git access and the accessible
+public SDK's commit lookup did not recover that source.
+
+However, the official successful Windows build published its full symbols:
+
+- [Run 38150970046](https://github.com/joeyhodge/UEVR/actions/runs/38150970046)
+- [Artifact 11707171949](https://github.com/joeyhodge/UEVR/actions/runs/38150970046/artifacts/11707171949)
+- Artifact SHA-256: `e9b245a6bb53fc0f8545f1f360ca35c6a15d3f40356e5823b98712269603a4d2`
+- The archived DLL SHA-256 exactly matches the smooth official baseline:
+  `19e91cc8c22a02e2a97996e1523604ab202b4540d954ebc95e07e6b233970966`.
+- PDB SHA-256: `9d90e575d3e3d4b131be08809cb232c782afb267b15584c431fcb04ef9143a17`.
+- DLL and PDB both identify GUID `b9d7af12-4a42-4336-bdab-dbcb3a011af2`, age 1.
+
+The independent first artifact from run `38196846646` used the same source
+commit but had a different DLL hash. It was rejected as the reference for the
+official release. Do not substitute its symbols or machine code.
+
+`recover_sdk_symbols.py` verifies the official DLL digest and its actual PE
+debug directory, validates the PDB GUID/age, then reads the type and module
+symbol streams. It extracted 357 defined SDK types and 5,249 SDK procedure
+records from 63 relevant modules. Procedure records include templates and
+exception helpers; this is not a count of independent missing functions.
+Unrecognized field records remain explicit raw evidence rather than guesses.
+
+`evidence/SDK_CONTRACTS.json` retains the complete type-name inventory and
+the detailed core contracts. The full extraction is reproducible from the
+matching public artifact. Debug symbols provide types and machine-code
+locations; **they are not the original SDK source or proof of equivalence**.
+
+## Architectural findings
+
+The latest SDK publishes immutable layout snapshots. `FamilyLayout`,
+`InitOptionsLayout`, `object_array::Layout` and `HeaderLayout` have distinct
+publication state. SDK identity records also retain the array-layout and
+header-layout pointers, plus registration index, serial and vtable.
+
+Recreating only the old July declarations would therefore miss meaningful
+behavior. In particular, stale/recycled objects and readers holding previous
+layout snapshots need the current contracts. These behaviors must be recovered
+before the SDK is integrated into the backend.
+
+## First reconstructed module
+
+`include/sdk/DiscoveryMemory.hpp` and `src/DiscoveryMemory.cpp` implement the
+first module independently. Its memory callback layout matches the PDB:
+24 bytes, context/read/executable at offsets 0/8/16. The two process helpers
+are reconstructed from the actual official machine code, not from the old SDK.
+
+The original `read_process` rejects addresses below 64 KiB, calls
+`ReadProcessMemory(GetCurrentProcess())`, and requires an exact byte count.
+The original `executable_image` requires a nonempty, nonoverflowing range,
+committed `MEM_IMAGE`, readable executable protection, no guard/no-access,
+and a range wholly inside the single `VirtualQuery` region. That last rule
+is deliberately preserved; accepting an arbitrary collection of adjacent
+regions would change the baseline's discovery behavior.
+
+`Memory::load` is reconstructed from the current callers and their emitted
+code. Its ABI is verified, but its full template-level equivalence is still
+pending broader original SDK tests.
+
+The standalone module is **not integrated into the backend**. All remaining
+missing declarations, original SDK changes and test sources stay visible as
+blockers. No empty SDK headers or disabled game compatibility paths are added.
+
+## Differential verification
+
+`generate_memory_reference.py` extracts only the two original memory helpers
+from the verified DLL. It fully decodes each slice, checks its imports and
+rejects external direct calls/jumps or other RIP-relative dependencies.
+It emits the byte arrays and a provenance/disassembly report.
+
+The Windows test maps those two small slices into test-owned memory and
+resolves their three Windows imports. It never loads or initializes the UEVR
+backend. This is an offline oracle, not a production hook or extension.
+
+The test compares return values and output bytes on real valid, invalid,
+unreadable, crossing-page and overflowing addresses. It also compares image
+classification against real module code, executable private allocations,
+guard/no-access pages, empty ranges and memory-region boundaries. Typed
+callback layout and bounds have separate checks.
+
+Run on Windows x64:
+
+```powershell
+cmake -S duoview/clean_restart/sdk_reconstruction -B sdk-build -A x64
+cmake --build sdk-build --config Release
+ctest --test-dir sdk-build -C Release --verbose --output-on-failure
+```
+
+This CI uploads **test evidence only**. A green run does not mean a rebuilt
+SDK, a rebuilt backend, or a headset-ready baseline. `[sdk-only]` commits
+skip unrelated baseline jobs without changing their previously recorded
+failed full-build result.
+
+## Remaining work, in dependency order
+
+1. Recover bounded instruction discovery and render-target-manager selection
+   using the exact function records, constants and official code.
+2. Recover array/header layouts, object identity/liveness and immutable
+   scene-layout publication, including layout discovery/retry behavior.
+3. Recover reflected-name calls and title-specific contracts without removing
+   existing game checks. Audit differences in already-existing SDK headers
+   and implementations, not only the 15 absent headers.
+4. Recover the original SDK test sources where possible and validate the
+   complete original backend compatibility suite. Then compile the complete
+   unchanged current Joey backend and matching frontend.
+5. Package a clearly labelled reconstructed-SDK baseline for Native Stereo and
+   Mono stability testing. Only after that passes can DuoView integration begin.
+
+There is no new installable baseline or DuoView build at this checkpoint.

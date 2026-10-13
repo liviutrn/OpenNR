@@ -1,0 +1,44 @@
+name: DuoView exact Joey SDK reconstruction checks
+on:
+  push:
+    branches: [experiments/duoview-joey-current-clean-v1]
+    paths:
+      - 'duoview/clean_restart/sdk_reconstruction/**'
+      - '.github/workflows/duoview-sdk-reconstruction.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: duoview-sdk-reconstruction-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  sdk-memory-differential-tests:
+    runs-on: windows-2022
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build isolated SDK reconstruction tests
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory evidence -Force | Out-Null
+          cmake -S duoview/clean_restart/sdk_reconstruction -B sdk-build -G 'Visual Studio 17 2022' -A x64 *> evidence/configure.log
+          $code=$LASTEXITCODE; Get-Content evidence/configure.log
+          if ($code -ne 0) { throw "SDK test configuration failed ($code)" }
+          cmake --build sdk-build --config Release --parallel 2 *> evidence/build.log
+          $code=$LASTEXITCODE; Get-Content evidence/build.log
+          if ($code -ne 0) { throw "SDK memory reconstruction failed to compile ($code)" }
+      - name: Compare reconstructed functions with exact official machine code
+        shell: pwsh
+        run: |
+          ctest --test-dir sdk-build -C Release --verbose --output-on-failure --no-tests=error *> evidence/tests.log
+          $code=$LASTEXITCODE; Get-Content evidence/tests.log
+          if ($code -ne 0) { throw "SDK differential validation failed ($code)" }
+          'ISOLATED SDK MEMORY TESTS ONLY. Full SDK, full backend and headset stability remain unverified. No installable baseline.' | Set-Content evidence/SCOPE.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Joey-exact-SDK-memory-test-evidence-${{ github.run_number }}
+          path: |
+            evidence/
+            sdk-build/Testing/Temporary/LastTest.log
+          if-no-files-found: error

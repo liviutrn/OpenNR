@@ -11,6 +11,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   original-offline-tests:
+    if: ${{ !contains(github.event.head_commit.message, '[sdk-only]') }}
     runs-on: windows-2022
     timeout-minutes: 20
     steps:
@@ -70,7 +71,7 @@ jobs:
             offline-build/Testing/Temporary/LastTest.log
           if-no-files-found: error
   official-release-evidence:
-    if: ${{ !contains(github.event.head_commit.message, '[offline-only]') }}
+    if: ${{ !contains(github.event.head_commit.message, '[offline-only]') && !contains(github.event.head_commit.message, '[sdk-only]') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -83,7 +84,7 @@ jobs:
           path: official/
           if-no-files-found: error
   current-source-sdk-diagnostic:
-    if: ${{ !contains(github.event.head_commit.message, '[offline-only]') }}
+    if: ${{ !contains(github.event.head_commit.message, '[offline-only]') && !contains(github.event.head_commit.message, '[sdk-only]') }}
     runs-on: windows-2022
     timeout-minutes: 60
     steps:

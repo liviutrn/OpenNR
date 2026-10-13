@@ -43,5 +43,15 @@
     "official_dibr": "User reports smooth JoeyOriginal; no timed per-mode benchmark supplied",
     "source_rebuild": "Not yet built or headset tested",
     "duoview_on_this_baseline": "Not implemented; baseline stability gate must pass first"
+  },
+  "official_symbols": {
+    "repository": "joeyhodge/UEVR",
+    "workflow_run": 38150970046,
+    "artifact_id": 11707171949,
+    "artifact_sha256": "e9b245a6bb53fc0f8545f1f360ca35c6a15d3f40356e5823b98712269603a4d2",
+    "dll_matches_official_baseline": true,
+    "pdb_sha256": "9d90e575d3e3d4b131be08809cb232c782afb267b15584c431fcb04ef9143a17",
+    "pdb_guid": "b9d7af12-4a42-4336-bdab-dbcb3a011af2",
+    "pdb_age": 1
   }
 }
