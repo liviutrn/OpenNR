@@ -15,6 +15,7 @@ cbuffer C : register(b0) {
     float maxChange;
     float fxaaBias;
     float maximumColour;
+    float thinProtection;
     uint flags;     // bit0 edge protection; bit2 side-by-side; bit3 red test grid
     uint layer;
     uint colourMode; // 0=hardware sRGB/linear; 1=manual sRGB; 2=scRGB
@@ -66,7 +67,7 @@ float3 ReadAt(float2 uv, float2 offset) {
 // luminance-based edge protection, and smoothly limited correction.
 // radius 0.5 uses Glamarye's normal averaging; radius >=1.4 uses Bigger mode.
 float3 SharpenScale(float2 uv, float3 c, float radius, float amount,
-                    bool wide, float edgeDistance) {
+                    bool wide, float edgeDistance, float thinMask) {
     float3 ne = ReadAt(uv,float2( radius, radius));
     float3 sw = ReadAt(uv,float2(-radius,-radius));
     float3 se = ReadAt(uv,float2( radius,-radius));
@@ -105,7 +106,34 @@ float3 SharpenScale(float2 uv, float3 c, float radius, float amount,
     possible=clamp(possible,0.00001,maxChange);
     float3 change=diff/(1.0/max(amount,0.00001)+abs(diff)/possible);
     if ((flags&1u)!=0u) change*=(1.0-edgeRatio);
-    return change;
+    // Isolated 1px features are NOT necessarily classified as jagged edges
+    // by Glamarye FXAA; separate targeted protection prevents bright/dark
+    // halos around subpixel foliage, wires and thin high-contrast geometry.
+    return change*(1.0-thinProtection*thinMask);
+}
+// Detect thin horizontal/vertical features with matching colors on both
+// opposite sides. At the same time require meaningful center-vs-side contrast.
+// This is optional and separate from original Glamarye jagged edge protection.
+float ThinLineMask(float2 uv, float3 c) {
+    if (thinProtection <= 0.00001) return 0.0;
+    float3 left  = ReadAt(uv,float2(-1,0));
+    float3 right = ReadAt(uv,float2( 1,0));
+    float3 up    = ReadAt(uv,float2(0,-1));
+    float3 down  = ReadAt(uv,float2(0, 1));
+    float lc=dot(luma,c);
+    float a=dot(luma,left), b=dot(luma,right);
+    float d=dot(luma,up), e=dot(luma,down);
+    float horizontalLine=abs(lc-0.5*(d+e));
+    float verticalLine=abs(lc-0.5*(a+b));
+    float horizontalBalance=abs(d-e);
+    float verticalBalance=abs(a-b);
+    // High contrast vs nearly equal neighbors on both sides indicates
+    // center-isolated one-pixel geometry, not an ordinary single-sided edge.
+    float horizontal=saturate((horizontalLine-0.035)*12.0)
+                    *saturate(1.0-horizontalBalance*18.0);
+    float vertical=saturate((verticalLine-0.035)*12.0)
+                  *saturate(1.0-verticalBalance*18.0);
+    return max(horizontal,vertical);
 }
 float4 PSMain(VSOut input) : SV_Target {
     float2 uv=input.pos.xy/imageSize;
@@ -117,15 +145,16 @@ float4 PSMain(VSOut input) : SV_Target {
         extraStrength<=0.00001 && ultraStrength<=0.00001)
         return original;
     float3 c=DecodeColour(original.rgb);
+    float thinMask=ThinLineMask(uv,c);
     float3 sum=0;
     if (smallStrength>0.00001)
-        sum+=SharpenScale(uv,c,0.5,smallStrength,false,3.5);
+        sum+=SharpenScale(uv,c,0.5,smallStrength,false,3.5,thinMask);
     if (bigStrength>0.00001)
-        sum+=SharpenScale(uv,c,1.4,bigStrength,true,3.5);
+        sum+=SharpenScale(uv,c,1.4,bigStrength,true,3.5,thinMask);
     if (extraStrength>0.00001)
-        sum+=SharpenScale(uv,c,2.5,extraStrength,true,6.25);
+        sum+=SharpenScale(uv,c,2.5,extraStrength,true,6.25,thinMask);
     if (ultraStrength>0.00001)
-        sum+=SharpenScale(uv,c,5.0,ultraStrength,true,12.5);
+        sum+=SharpenScale(uv,c,5.0,ultraStrength,true,12.5,thinMask);
     // Global safety limiter for four simultaneous sharpening bands.
     // For a single band this does not materially change the original formula.
     sum=clamp(sum,-maxChange,maxChange);
