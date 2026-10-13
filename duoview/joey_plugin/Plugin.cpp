@@ -5,6 +5,7 @@
 #include <openxr/openxr_platform.h>
 #include "JoeyCopyABI.hpp"
 #include "CopyFlow.hpp"
+#include "LiveFrameSafety.hpp"
 #include <openxr/openxr.h>
 #include <glm/gtx/euler_angles.hpp>
 #include <glm/gtc/quaternion.hpp>
@@ -160,7 +161,13 @@ bool native_mode() {
         if (std::string_view(value) == "true" || std::string_view(value) == "1") return false;
     }
     value[0]=0; api->vr->get_mod_value("VR_FrameDelayCompensation",value,sizeof(value));
-    if (std::string_view(value)!="0") return false;
+    // Some released Joey variants do not expose this optional setting. Do
+    // not fail closed solely because the option is absent or formatted "0.0".
+    if (value[0]) {
+        char* end{};
+        const float delay=std::strtof(value,&end);
+        if(end==value || !std::isfinite(delay) || std::abs(delay)>0.0001f) return false;
+    }
     return true;
 }
 std::optional<dv::ViewFrame> current_frame() {
@@ -222,6 +229,7 @@ struct Gpu {
     ComPtr<ID3D12CommandQueue> queue;
     uint32_t width{}, height{};
     DXGI_FORMAT format{};
+    size_t prewarmed{};
     std::array<std::shared_ptr<Slot>,4> slots;
 };
 std::shared_ptr<Gpu> gpu;
@@ -247,9 +255,11 @@ thread_local Scope* copy_scope{};
 void stop(const char* reason) {
     armed=false; faulted=true; set_reason(reason); report(reason);
 }
+bool fence_drained(const std::shared_ptr<Slot>& slot) {
+    return !slot || !slot->fence || slot->fence->GetCompletedValue()>=slot->fence_value;
+}
 bool retired(const std::shared_ptr<Slot>& slot) {
-    return slot && !slot->quarantined && (!slot->fence ||
-        slot->fence->GetCompletedValue()>=slot->fence_value);
+    return slot && !slot->quarantined && fence_drained(slot);
 }
 std::shared_ptr<Slot> reserve_slot() {
     std::scoped_lock lock(gpu_mutex);
@@ -281,7 +291,20 @@ bool prepare_gpu(ID3D12Resource* source) {
         sd.Get()!=device || qd.Get()!=device) return false;
     std::scoped_lock lock(gpu_mutex);
     if (gpu && gpu->device.Get()==device && gpu->queue.Get()==queue && gpu->width==desc.Width &&
-        gpu->height==desc.Height && gpu->format==desc.Format) return true;
+        gpu->height==desc.Height && gpu->format==desc.Format) {
+        // Warm only one slot per original Native Stereo frame. The producer
+        // remains unchanged until all four PSOs/resources have been built.
+        if (gpu->prewarmed < gpu->slots.size()) {
+            auto& next_slot=gpu->slots[gpu->prewarmed];
+            next_slot=std::make_shared<Slot>();
+            if (!next_slot->compositor.prewarm(device,gpu->width/2,gpu->height,
+                    desc.Format==DXGI_FORMAT_B8G8R8A8_UNORM_SRGB)) {
+                next_slot.reset(); return false;
+            }
+            ++gpu->prewarmed;
+        }
+        return gpu->prewarmed==gpu->slots.size();
+    }
     // Resolution/device changes first return producer views to the original
     // renderer. All allocations happen during this unmodified observation phase.
     armed=false;
@@ -292,19 +315,15 @@ bool prepare_gpu(ID3D12Resource* source) {
     D3D12_HEAP_PROPERTIES heap{}; heap.Type=D3D12_HEAP_TYPE_DEFAULT;
     heap.CreationNodeMask=heap.VisibleNodeMask=1;
 
-    for (auto& slot:next->slots) {
-        slot=std::make_shared<Slot>();
-        if (!slot->compositor.prewarm(device,next->width/2,next->height,
-                desc.Format==DXGI_FORMAT_B8G8R8A8_UNORM_SRGB)) return false;
-
-    }
     gpu=next;
     std::erase_if(retiring,[](const auto& old) {
         if (FAILED(old->device->GetDeviceRemovedReason())) return true;
-        for (const auto& slot:old->slots) if (!retired(slot)) return false;
+        // A quarantined slot may not be reused, but it must be reclaimable
+        // after its actual GPU fence drains or on device removal.
+        for (const auto& slot:old->slots) if (!fence_drained(slot)) return false;
         return true;
     });
-    return true;
+    return false; // First compatible native frame initializes metadata only.
 }
 // Copy only compatible owned/native images, using the state supplied by Joey's
 // actual selected-scene boundary. Never replace an engine-owned scene resource.
@@ -551,7 +570,10 @@ XrResult XRAPI_CALL end_hook(XrSession session,const XrFrameEndInfo* info) {
         if(p->viewCount!=2 || !p->views || p->space!=reinterpret_cast<XrSpace>(api->openxr->get_stage_space())) {layers.push_back(layer);continue;}
         const auto handle=p->views[0].subImage.swapchain;
         bool exact=scope.image && scope.image->swapchain==handle;
-        {std::scoped_lock lock(gpu_mutex);if(scope.failed && known_scene_handle==handle) exact=true;}
+        {std::scoped_lock lock(gpu_mutex);
+            if((scope.failed || (scope.producer && scope.producer->modified && !scope.verified)) &&
+               known_scene_handle==handle) exact=true;
+        }
         if(!exact && scope.destination && p->views[1].subImage.swapchain==handle &&
             p->views[0].subImage.imageArrayIndex==0 && p->views[1].subImage.imageArrayIndex==0)
             exact=image_in_swapchain(handle,scope.destination);
@@ -559,7 +581,10 @@ XrResult XRAPI_CALL end_hook(XrSession session,const XrFrameEndInfo* info) {
         if(!scope.verified || !scope.image || scope.image->epoch!=generation.load()) {
             // Only an actual unrecoverable copy failure suppresses an image;
             // missing producer packets normally use the retained coherent hold.
-            if(scope.failed) {++rejected_layers;continue;}
+            if(duoview_joey::LiveFrameSafety::suppress_scene(true,
+                    scope.failed || (scope.producer && scope.producer->modified),false)) {
+                ++rejected_layers;continue;
+            }
             layers.push_back(layer);continue;
         }
         auto pair=std::array{p->views[0],p->views[1]};
@@ -595,12 +620,13 @@ XrResult XRAPI_CALL end_hook(XrSession session,const XrFrameEndInfo* info) {
     // from the exact copied producer (including an intentional coherent hold),
     // not from a comparison with xrLocateViews pose sample time.
     const auto result=original_end(session,&end);
-    if(scene && XR_SUCCEEDED(result)) {
+    if(duoview_joey::LiveFrameSafety::accept_image(scene,scope.verified,
+            XR_SUCCEEDED(result),scope.image && scope.image->epoch==generation.load())) {
         ++xr_accepted;
         std::scoped_lock lock(gpu_mutex);
         if(held_image) held_image->slot->held=false;
         scope.image->slot->held=true; held_image=*scope.image;
-        if(!faulted && scope.image->epoch==generation.load()) armed=true;
+        if(duoview_joey::LiveFrameSafety::arm_next(true,faulted.load())) armed=true;
         set_reason(scope.image->mono ? "DuoView scene copied and XR accepted; headset validation pending" :
             faulted ? "Coherent native fallback; restart to retry DuoView" : "Native copy verified; DuoView activates at next complete producer frame");
     } else if(scene || scope.failed) {
@@ -749,7 +775,8 @@ public:
         if(!optical) return;
         const auto serial=++draw_serial;
         auto slot=armed && !faulted ? reserve_slot() : std::shared_ptr<Slot>{};
-        draw=Draw{{generation.load(),serial},*optical,bool(slot),false,slot};
+        draw=Draw{{generation.load(),serial},*optical,
+            duoview_joey::LiveFrameSafety::may_crop(true,armed.load(),faulted.load(),true,bool(slot)),false,slot};
         if(!slot) return; // Busy slots leave this producer fully unmodified.
         slot->destination.Reset(); // Retired native snapshot; active frames retain only the owned Mono image.
         std::array<float,16> projection{};
