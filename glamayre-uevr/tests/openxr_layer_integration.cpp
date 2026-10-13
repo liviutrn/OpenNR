@@ -266,7 +266,7 @@ int main(){
     rb->Unmap(0,nullptr);
     TEST(red,"Pixel from genuine API-layer projection image contains red diagnostic grid");
     TEST(destroySwap(uiSc)==XR_SUCCESS&&destroySwap(color)==XR_SUCCESS,"Swapchain shutdown");
-    TEST(destroySession(ses)==XR_SUCCESS&&destroyInstance(inst)==XR_SUCCESS,"OpenXR shutdown");
+    TEST(destroySession(ses)==XR_SUCCESS&&destroyInstance(instance)==XR_SUCCESS,"OpenXR shutdown");
     printf("PASS: real layer negotiation + image dispatch + projection-only classification + WARP red pixels\n");
     return 0;
 }
