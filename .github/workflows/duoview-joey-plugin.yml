@@ -54,7 +54,7 @@ jobs:
         run: |
           cmake -S workspace/duoview -B tests -G 'Visual Studio 17 2022' -A x64 -DGLM_SOURCE="$pwd/glm" -DJOEY_SOURCE="$pwd/joey-exact"
           if ($LASTEXITCODE -ne 0) { throw 'Test configure failed' }
-          cmake --build tests --config Release --target DuoViewGeometryTests DuoViewGazeTests DuoViewFrameTests DuoViewConfigTests DuoViewStateTests DuoViewSubmissionTests DuoViewActivationTests DuoViewOpticsTests DuoViewProductionWarpTests DuoViewCopyFlowTests DuoViewCopyABIFixture DuoViewCopyABITests
+          cmake --build tests --config Release --target DuoViewGeometryTests DuoViewGazeTests DuoViewFrameTests DuoViewConfigTests DuoViewStateTests DuoViewSubmissionTests DuoViewActivationTests DuoViewOpticsTests DuoViewProductionWarpTests DuoViewCopyFlowTests DuoViewLiveSafetyTests DuoViewCopyABIFixture DuoViewCopyABITests
           if ($LASTEXITCODE -ne 0) { throw 'Test build failed' }
           ctest --test-dir tests -C Release --output-on-failure
           if ($LASTEXITCODE -ne 0) { throw 'Tests failed' }
@@ -135,7 +135,7 @@ jobs:
 
           Original Joey preserved byte-for-byte. Corrected released DX12 copy
           boundary, owned Mono output, prewarmed slots, copy/fence proof and
-          pose-preserving fallback. Eleven Windows tests, including cross-DLL
+          pose-preserving fallback. Twelve Windows tests, including production-used frame gates, cross-DLL
           copy ABI and D3D12 debug-layer WARP.
 
           Headset visuals, gaze and performance remain unverified. First check:
