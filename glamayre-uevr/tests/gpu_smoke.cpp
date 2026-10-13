@@ -70,6 +70,11 @@ int main() {
     host.renderer = &renderer;
     if (!record || !init(&host) || !g_custom) { fprintf(stderr, "Plugin adapter registration failed\n"); return 2; }
 
+    // Enable DX12 validation when the runner provides the optional debug layer.
+    // This reports invalid resource states and descriptor/view usage.
+    ComPtr<ID3D12Debug> debug;
+    if (SUCCEEDED(D3D12GetDebugInterface(IID_PPV_ARGS(&debug))))
+        debug->EnableDebugLayer();
     ComPtr<IDXGIFactory4> factory;
     CHECK(CreateDXGIFactory1(IID_PPV_ARGS(&factory)), "DXGI factory");
     ComPtr<IDXGIAdapter> warp;
