@@ -3,8 +3,12 @@
 // openxr_loader.dll. UEVR/Joey may statically link their loader; this layer is
 // loaded by THAT loader through the standard API-layer mechanism.
 // OpenXR-layer code is separate from the sharpening/UEVR settings DLL.
+#ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
 #define NOMINMAX
+#endif
 #define XR_USE_PLATFORM_WIN32
 #define XR_USE_GRAPHICS_API_D3D12
 #include <windows.h>
@@ -189,11 +193,17 @@ XrResult XRAPI_CALL onCreateSession(XrInstance inst,const XrSessionCreateInfo* i
 XrResult XRAPI_CALL onDestroySession(XrSession session) {
     PFN_xrDestroySession next{};
     {std::lock_guard lock(mutex);auto d=fromSession(session);if(!d)return XR_ERROR_HANDLE_INVALID;next=d->destroySession;}
+    // Ensure our GPU work retires before downstream runtime frees its
+    // swapchain image resources on session destruction.
+    {
+        std::lock_guard lock(mutex);
+        for(auto& [_,s]:swaps) if(s.session==session)drain(s);
+    }
     auto r=next?next(session):XR_ERROR_FUNCTION_UNSUPPORTED;
     if(XR_SUCCEEDED(r)) {
         std::lock_guard lock(mutex);
         for(auto it=swaps.begin();it!=swaps.end();) {
-            if(it->second.session==session) {drain(it->second);it=swaps.erase(it);}
+            if(it->second.session==session)it=swaps.erase(it);
             else ++it;
         }
         sessions.erase(session);
@@ -373,6 +383,9 @@ extern "C" __declspec(dllexport) XrResult XRAPI_CALL xrNegotiateLoaderApiLayerIn
     const XrNegotiateLoaderInfo* li,const char* name,XrNegotiateApiLayerRequest* req) {
     if(!li||!req||!name||std::strcmp(name,kName)!=0||
        li->structType!=XR_LOADER_INTERFACE_STRUCT_LOADER_INFO||
+       li->structVersion!=XR_LOADER_INFO_STRUCT_VERSION||
+       req->structVersion!=XR_API_LAYER_INFO_STRUCT_VERSION||
+       li->maxApiVersion<XR_MAKE_VERSION(1,0,0)||
        li->structSize<sizeof(XrNegotiateLoaderInfo)||
        req->structSize<sizeof(XrNegotiateApiLayerRequest)||
        req->structType!=XR_LOADER_INTERFACE_STRUCT_API_LAYER_REQUEST||
@@ -380,7 +393,7 @@ extern "C" __declspec(dllexport) XrResult XRAPI_CALL xrNegotiateLoaderApiLayerIn
        li->maxInterfaceVersion<XR_CURRENT_LOADER_API_LAYER_VERSION)
         return XR_ERROR_INITIALIZATION_FAILED;
     req->layerInterfaceVersion=XR_CURRENT_LOADER_API_LAYER_VERSION;
-    req->layerApiVersion=XR_CURRENT_API_VERSION;
+    req->layerApiVersion=std::min(li->maxApiVersion,XR_CURRENT_API_VERSION);
     req->createApiLayerInstance=&LayerCreateInstance;
     req->getInstanceProcAddr=&LayerGetInstanceProcAddr;
     return XR_SUCCESS;
