@@ -20,6 +20,14 @@ jobs:
         run: cmake --build glamayre-uevr/build --config Release --parallel
       - name: Compile embedded HLSL with Windows D3D compiler
         run: ctest --test-dir glamayre-uevr/build -C Release --output-on-failure
+      - name: Validate Khronos implicit layer manifest
+        shell: pwsh
+        run: |
+          $m = Get-Content glamayre-uevr/layer/glamayre_openxr.json -Raw | ConvertFrom-Json
+          if ($m.api_layer.name -ne 'XR_APILAYER_Glamarye_sharpen') { throw 'Bad OpenXR layer name' }
+          if ($m.api_layer.library_path -ne '.\GlamaryeOpenXRLayer.dll') { throw 'Wrong manifest DLL path' }
+          if ($m.api_layer.disable_environment -ne 'GLAMARYE_OPENXR_LAYER_DISABLE') { throw 'Missing mandatory implicit layer disable_environment' }
+          Write-Host 'Khronos implicit API layer manifest passed'
       - name: Verify DLL exists
         shell: pwsh
         run: |
