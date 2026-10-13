@@ -34,7 +34,16 @@ def scenario(with_fs: bool):
             requests.append(data)
 
     if with_fs:
-        env.fs = lua.table_from({"read":fsread, "write":fswrite})
+        # Python callables appear as userdata in Lua; wrap them in Lua
+        # functions to model the real UEVR fs.read/fs.write C bindings.
+        env.fs = lua.eval("""
+            function(pyread, pywrite)
+                return {
+                    read = function(name) return pyread(name) end,
+                    write = function(name, data) return pywrite(name, data) end
+                }
+            end
+        """)(fsread, fswrite)
     else:
         env.fs = None
 
