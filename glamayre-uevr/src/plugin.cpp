@@ -122,8 +122,12 @@ struct Pass {
     DXGI_FORMAT viewFormat = DXGI_FORMAT_UNKNOWN;
     ComPtr<ID3D12Resource> scratch;
     ComPtr<ID3D12DescriptorHeap> srvHeap;
-    ComPtr<ID3D12DescriptorHeap> rtvHeap;
     ComPtr<ID3D12PipelineState> pso;
+    struct TargetViews {
+        ID3D12Resource* target = nullptr;
+        ComPtr<ID3D12DescriptorHeap> heap;
+    };
+    std::vector<TargetViews> targets;
 };
 std::vector<Pass> g_passes;
 
@@ -196,7 +200,7 @@ bool setupRootAndShaders(ID3D12Device* device) {
     return succeeded(device->CreateRootSignature(0, sigBlob->GetBufferPointer(),
         sigBlob->GetBufferSize(), IID_PPV_ARGS(&g_root)), "Create root signature");
 }
-bool makePass(ID3D12Device* device, const D3D12_RESOURCE_DESC& d, DXGI_FORMAT format, ID3D12Resource* target, Pass& pass) {
+bool makePass(ID3D12Device* device, const D3D12_RESOURCE_DESC& d, DXGI_FORMAT format, Pass& pass) {
     pass.desc = d; pass.viewFormat = format;
     D3D12_HEAP_PROPERTIES heap{};
     heap.Type = D3D12_HEAP_TYPE_DEFAULT;
@@ -216,20 +220,6 @@ bool makePass(ID3D12Device* device, const D3D12_RESOURCE_DESC& d, DXGI_FORMAT fo
     srv.Texture2DArray.ArraySize = d.DepthOrArraySize;
     srv.Texture2DArray.MipLevels = 1;
     device->CreateShaderResourceView(pass.scratch.Get(), &srv, pass.srvHeap->GetCPUDescriptorHandleForHeapStart());
-    desc.NumDescriptors = d.DepthOrArraySize;
-    desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
-    desc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
-    if (!succeeded(device->CreateDescriptorHeap(&desc, IID_PPV_ARGS(&pass.rtvHeap)),
-         "Create RTV heap")) return false;
-    auto handle = pass.rtvHeap->GetCPUDescriptorHandleForHeapStart();
-    unsigned increment = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
-    for (unsigned i = 0; i < d.DepthOrArraySize; ++i) {
-        D3D12_RENDER_TARGET_VIEW_DESC rtv{};
-        rtv.Format = format; rtv.ViewDimension = D3D12_RTV_DIMENSION_TEXTURE2DARRAY;
-        rtv.Texture2DArray.ArraySize = 1; rtv.Texture2DArray.FirstArraySlice = i;
-        D3D12_CPU_DESCRIPTOR_HANDLE slot{handle.ptr + SIZE_T(increment) * i};
-        device->CreateRenderTargetView(target, &rtv, slot);
-    }
     D3D12_GRAPHICS_PIPELINE_STATE_DESC state{};
     state.pRootSignature = g_root.Get();
     state.VS = {g_vs->GetBufferPointer(), g_vs->GetBufferSize()};
@@ -266,7 +256,7 @@ void barrier(ID3D12GraphicsCommandList* cmd, ID3D12Resource* res,
     b.Transition.StateBefore = before; b.Transition.StateAfter = after;
     cmd->ResourceBarrier(1, &b);
 }
-void onPostDX12(void* list, void* resource, void* /*rtv*/) {
+void onPostDX12(void* list, void* resource, void* rtvHandle) {
     if (!g_enabled || g_strength.load() <= 0 || !list || !resource || g_gpuError) return;
     auto* cmd = static_cast<ID3D12GraphicsCommandList*>(list);
     auto* target = static_cast<ID3D12Resource*>(resource);
@@ -295,7 +285,7 @@ void onPostDX12(void* list, void* resource, void* /*rtv*/) {
     if (!pass) {
         if (g_passes.size() >= 16) return;  // bound persistent allocations across resize events
         Pass p;
-        if (!makePass(device.Get(), desc, format, target, p)) return;
+        if (!makePass(device.Get(), desc, format, p)) return;
         g_passes.push_back(std::move(p));
         pass = &g_passes.back();
     }
@@ -317,8 +307,40 @@ void onPostDX12(void* list, void* resource, void* /*rtv*/) {
     D3D12_RECT scissor{0, 0, LONG(desc.Width), LONG(desc.Height)};
     cmd->RSSetViewports(1, &vp);
     cmd->RSSetScissorRects(1, &scissor);
-    auto start = pass->rtvHeap->GetCPUDescriptorHandleForHeapStart();
+    // The supplied UEVR RTV is correct for the current swapchain image.
+    // For texture arrays, cache immutable per-resource RTV descriptors so rotating
+    // headset images never point at the wrong target and GPU in-flight descriptors
+    // are not rewritten.
+    D3D12_CPU_DESCRIPTOR_HANDLE output{};
     unsigned step = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
+    if (desc.DepthOrArraySize == 1 && rtvHandle) {
+        output = *static_cast<D3D12_CPU_DESCRIPTOR_HANDLE*>(rtvHandle);
+    } else {
+        Pass::TargetViews* views = nullptr;
+        for (auto& v : pass->targets) if (v.target == target) { views = &v; break; }
+        if (!views) {
+            if (pass->targets.size() >= 16) return;
+            D3D12_DESCRIPTOR_HEAP_DESC rdesc{};
+            rdesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
+            rdesc.NumDescriptors = desc.DepthOrArraySize;
+            Pass::TargetViews v;
+            v.target = target;
+            if (!succeeded(device->CreateDescriptorHeap(&rdesc, IID_PPV_ARGS(&v.heap)),
+                           "Create per-resource RTV heap")) return;
+            auto base = v.heap->GetCPUDescriptorHandleForHeapStart();
+            for (unsigned i=0; i < desc.DepthOrArraySize; ++i) {
+                D3D12_RENDER_TARGET_VIEW_DESC dsv{};
+                dsv.ViewDimension = D3D12_RTV_DIMENSION_TEXTURE2DARRAY;
+                dsv.Format = format; dsv.Texture2DArray.ArraySize=1;
+                dsv.Texture2DArray.FirstArraySlice = i;
+                D3D12_CPU_DESCRIPTOR_HANDLE slot{base.ptr + SIZE_T(step) * i};
+                device->CreateRenderTargetView(target, &dsv, slot);
+            }
+            pass->targets.push_back(std::move(v));
+            views = &pass->targets.back();
+        }
+        output = views->heap->GetCPUDescriptorHandleForHeapStart();
+    }
     Constants constants{float(desc.Width), float(desc.Height),
         g_strength.load(), g_maxChange.load(), g_bias.load(),
         (format == DXGI_FORMAT_R16G16B16A16_FLOAT || format == DXGI_FORMAT_R11G11B10_FLOAT
@@ -327,7 +349,7 @@ void onPostDX12(void* list, void* resource, void* /*rtv*/) {
     for (uint32_t eye = 0; eye < desc.DepthOrArraySize; ++eye) {
         constants.layer = eye;
         cmd->SetGraphicsRoot32BitConstants(0, 8, &constants, 0);
-        D3D12_CPU_DESCRIPTOR_HANDLE out{start.ptr + SIZE_T(step) * eye};
+        D3D12_CPU_DESCRIPTOR_HANDLE out{output.ptr + SIZE_T(step) * eye};
         cmd->OMSetRenderTargets(1, &out, FALSE, nullptr);
         cmd->DrawInstanced(3, 1, 0, 0);
     }
