@@ -93,6 +93,11 @@ uevr.sdk.callbacks.on_draw_ui(function()
     end
 
     imgui.text("Native plugin: "..(status.Hooks or "No native status"))
+    if status.FrameCopyContract=="UNVERIFIED" then
+        imgui.text("SAFETY LOCK: foveated rendering disabled until Joey's exact XR copy path is verified.")
+        imgui.text("This integration checkpoint does NOT provide working DuoView views.")
+    end
+    imgui.text("Requested mode: "..(status.RequestedMode or "?").."; applied mode: "..(status.Mode or "?"))
     imgui.text("Reason: "..(status.Reason or "Waiting for native plugin initial state"))
     imgui.text("Applied mode: "..(status.Mode or "?").."; menu selected: "..tostring(config.Mode))
     imgui.text("Present callbacks: "..(status.PresentCallbacks or "0").." / Engine ticks: "..(status.EngineTicks or "0"))
