@@ -2,12 +2,7 @@
 #include "DuoViewConfig.hpp"
 #include "DuoViewMonoCopyD3D12.hpp"
 #include "DuoViewShaderSource.hpp"
-#include <d3dcompiler.h>
-#include <cstring>
 #include <string>
-#ifdef _MSC_VER
-#pragma comment(lib, "d3dcompiler.lib")
-#endif
 
 namespace uevr::duoview::dx12 {
 using Microsoft::WRL::ComPtr;
@@ -147,13 +142,6 @@ private:
         error_ = std::string(operation) + " HRESULT " + std::to_string(static_cast<uint32_t>(hr));
         return false;
     }
-    bool compile(ComPtr<ID3DBlob>& blob, const char* entry, const char* profile) {
-        ComPtr<ID3DBlob> errors;
-        const auto hr = D3DCompile(shader_source, std::strlen(shader_source), "DuoViewCompositeRaster.hlsl",
-            nullptr, nullptr, entry, profile, D3DCOMPILE_OPTIMIZATION_LEVEL3, 0, &blob, &errors);
-        if (FAILED(hr) && errors) error_.assign(static_cast<const char*>(errors->GetBufferPointer()), errors->GetBufferSize());
-        return SUCCEEDED(hr);
-    }
     bool prepare(ID3D12Device* device, UINT width, UINT height, bool srgb) {
         if (device_.Get() == device && output_ && pipeline_ && root_ && srv_ && rtv_ && width == width_ && height == height_ && srgb == srgb_) return true;
         output_.Reset(); pipeline_.Reset(); root_.Reset(); srv_.Reset(); rtv_.Reset();
@@ -180,13 +168,12 @@ private:
         ComPtr<ID3DBlob> serialized, errors;
         if (!check(D3D12SerializeRootSignature(&desc, D3D_ROOT_SIGNATURE_VERSION_1, &serialized, &errors), "Root signature") ||
             !check(device->CreateRootSignature(0, serialized->GetBufferPointer(), serialized->GetBufferSize(), IID_PPV_ARGS(&root_)), "Create root signature")) return false;
-        ComPtr<ID3DBlob> vertex, pixel;
-        if (!compile(vertex, "VSMain", "vs_5_0") || !compile(pixel, "PSMain", "ps_5_0")) return false;
+        // Compile shaders in CI and load DXBC directly. Never invoke HLSL compiler on a live XR frame.
         const auto output_format = srgb ? DXGI_FORMAT_B8G8R8A8_UNORM_SRGB : DXGI_FORMAT_B8G8R8A8_UNORM;
         D3D12_GRAPHICS_PIPELINE_STATE_DESC graphics{};
         graphics.pRootSignature = root_.Get();
-        graphics.VS = {vertex->GetBufferPointer(), vertex->GetBufferSize()};
-        graphics.PS = {pixel->GetBufferPointer(), pixel->GetBufferSize()};
+        graphics.VS = {vertex_shader_bytecode, sizeof(vertex_shader_bytecode)};
+        graphics.PS = {pixel_shader_bytecode, sizeof(pixel_shader_bytecode)};
         auto& blend = graphics.BlendState.RenderTarget[0];
         blend.SrcBlend = blend.SrcBlendAlpha = D3D12_BLEND_ONE;
         blend.DestBlend = blend.DestBlendAlpha = D3D12_BLEND_ZERO;

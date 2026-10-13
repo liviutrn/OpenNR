@@ -47,6 +47,13 @@ def main():
  if fdiff - (EDITED_FRONTEND|GENERATED_FRONTEND) or not EDITED_FRONTEND.issubset(fdiff):
   raise RuntimeError(f"Unexpected frontend tracked changes: {fdiff}")
  if untracked(a.frontend): raise RuntimeError("Unexpected untracked frontend source")
+ # A shipping DuoView must never compile shaders on the OpenXR copy path.
+ compositor=(a.backend/"src/mods/vr/DuoViewD3D12.hpp").read_text(encoding="utf-8")
+ shaders=(a.backend/"src/mods/vr/DuoViewShaderSource.hpp").read_text(encoding="utf-8")
+ if "D3DCompile(" in compositor or "shader_source" in compositor:
+  raise RuntimeError("Runtime shader compiler still in production compositor")
+ if "vertex_shader_bytecode[]" not in shaders or "pixel_shader_bytecode[]" not in shaders:
+  raise RuntimeError("Precompiled DXBC shader arrays missing")
  inputs = sorted(EDITED_BACKEND | ADDED_BACKEND)
  hashes = {"backend":{k:sha(a.backend/k) for k in inputs},
            "frontend":{k:sha(a.frontend/k) for k in sorted(EDITED_FRONTEND)}}

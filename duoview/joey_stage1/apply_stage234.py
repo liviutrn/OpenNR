@@ -8,6 +8,8 @@ All original-source anchors must match exactly or the build fails.
 from pathlib import Path
 import argparse
 import shutil
+import subprocess
+import sys
 
 def replace(text,old,new,name):
     count=text.count(old)
@@ -273,11 +275,10 @@ void VR::duoview_abort(const char* reason) {
             # needs prewarming before a production release.
             pass
         target.write_text(text,encoding="utf-8",newline="")
-    shader=(src/"DuoViewCompositeRaster.hlsl").read_text(encoding="utf-8").replace(
-        '#include "DuoViewComposite.hlsl"',(src/"DuoViewComposite.hlsl").read_text(encoding="utf-8"))
-    (root/"src/mods/vr/DuoViewShaderSource.hpp").write_text(
-        '#pragma once\nnamespace uevr::duoview::dx12 {\ninline constexpr char shader_source[] = R"DUOVIEW_SHADER('+
-        shader+')DUOVIEW_SHADER";\n}\n',encoding="utf-8",newline="")
+    # A reproducible Windows CI build compiles HLSL to DXBC, preventing D3DCompile
+    # and its potentially long shader-compiler stall during live XR submission.
+    subprocess.run([sys.executable, str(src/"embed_shader.py"),
+        str(root/"src/mods/vr/DuoViewShaderSource.hpp")], check=True)
     for path,text in changed.items():
         (source_root(path)/path).write_text(text,encoding="utf-8",newline="")
     print("Applied true fixed-center two-view geometry, common camera, same-frame state and DX12 compositor (experimental).")

@@ -156,12 +156,17 @@ jobs:
           Modes 0 and 5 are routed to ORIGINAL JOEY. Experimental mode ID6 is active ONLY in STALKER 2 DX12 OpenXR.
           ID6 creates two actual UE scene views, full field periphery at 0.25x, center fovea 0.30x0.30 at 2.5x linear density.
           Uses same Mono camera, off-axis foveal projection, DX12 raster composition and original XR submission.
-          Failure requests original Mono ID5 and still attempts current-frame original Mono XR copy.
-          IMPORTANT: a one-time shader PSO initialization may occur on first activation/resize; monitor frame pacing.
+          On failure, DuoView is QUARANTINED internally inside ID6; the next frame uses Joey original Mono.
+          The fault frame attempts a current-frame original Mono copy but may show incomplete atlas contents.
+          Shaders are precompiled into the DLL during CI. Initial PSO/texture creation still occurs on first use or resize; monitor frame pacing.
           Experimental: Source/test/CI passing cannot prove exact game GPU producer completion or headset stability.
           NEVER overwrite 30-minute-proven Build3! Extract this ZIP into a SEPARATE TEST DIRECTORY.
           Stage 5 PSVR2 gaze is not implemented; fovea stays fixed center.
           '@ | Set-Content package/READ_FIRST.txt
+          $needed=@('uevr.dll','UEVRPluginNullifier.dll','LuaVR.dll','READ_FIRST.txt','duoview-stage234-hashes.json','exact-baseline-source.json')
+          foreach ($name in $needed) { if (!(Test-Path ("package/" + $name))) { throw "Missing critical package file: $name" } }
+          if (@(Get-ChildItem package -File -Filter *.exe).Count -lt 1) { throw "Missing Joey frontend executable" }
+          if ((Get-Content package/READ_FIRST.txt -Raw) -notmatch 'QUARANTINED internally') { throw 'Stale fallback instructions' }
           Get-ChildItem package -Recurse -File | Get-FileHash -Algorithm SHA256 | ConvertTo-Json | Set-Content evidence/package-sha256.json
           $zip="Joey-DuoView-FixedCenter-Stage234-${{ github.run_number }}.zip"
           Compress-Archive -Path package/* -DestinationPath $zip -Force
