@@ -341,6 +341,62 @@ Result handleRelease(ReleaseFn original,Swapchain sc,const void* info) {
 }
 Result WINAPI onRelease(Swapchain sc,const void* info) { return handleRelease(g_release,sc,info); }
 Result WINAPI onReleaseResolved(Swapchain sc,const void* info) { return handleRelease(g_releaseResolved,sc,info); }
+
+void tryHookResolvedDispatch(const UEVR_PluginInitializeParam* api) {
+    if (g_resolvedHookAttempted || !api || !api->openxr || !api->openxr->get_xr_instance ||
+        !api->functions || !api->functions->register_inline_hook ||
+        !api->functions->unregister_inline_hook) return;
+    auto instance = api->openxr->get_xr_instance();
+    if (!instance) return;
+    HMODULE loader = GetModuleHandleW(L"openxr_loader.dll");
+    if (!loader) return;
+    using GetProcFn = Result(WINAPI*)(void*,const char*,void**);
+    auto gipa = reinterpret_cast<GetProcFn>(GetProcAddress(loader,"xrGetInstanceProcAddr"));
+    if (!gipa) return;
+    void* resolved[4]{};
+    const char* names[4] = {"xrAcquireSwapchainImage","xrReleaseSwapchainImage",
+                             "xrEndFrame","xrDestroySwapchain"};
+    for (int i=0;i<4;++i) {
+        if (gipa(reinterpret_cast<void*>(instance), names[i], &resolved[i]) != XR_SUCCESS ||
+            !resolved[i]) return;
+    }
+    g_resolvedHookAttempted = true;
+    const void* destination[4] = {reinterpret_cast<void*>(&onAcquireResolved),
+        reinterpret_cast<void*>(&onReleaseResolved),
+        reinterpret_cast<void*>(&onEndFrameResolved),
+        reinterpret_cast<void*>(&onDestroyResolved)};
+    void** originals[4] = {reinterpret_cast<void**>(&g_acquireResolved),
+        reinterpret_cast<void**>(&g_releaseResolved),
+        reinterpret_cast<void**>(&g_endframeResolved),
+        reinterpret_cast<void**>(&g_destroyResolved)};
+    int* handles[4] = {&g_resolvedAcquireHook,&g_resolvedReleaseHook,
+                       &g_resolvedEndHook,&g_resolvedDestroyHook};
+    int installed=0;
+    bool allGood=true;
+    for (int i=0;i<4;++i) {
+        // Do not patch the same loader export twice.
+        if (resolved[i] == reinterpret_cast<void*>(GetProcAddress(loader,names[i])))
+            continue;
+        *handles[i] = api->functions->register_inline_hook(
+            resolved[i],const_cast<void*>(destination[i]),originals[i]);
+        if (*handles[i]<0 || !*originals[i]) { allGood=false; break; }
+        ++installed;
+    }
+    if (!allGood) {
+        for (auto h : handles) {
+            if (*h >= 0) api->functions->unregister_inline_hook(*h);
+            *h=-1;
+        }
+        g_acquireResolved=nullptr; g_releaseResolved=nullptr;
+        g_endframeResolved=nullptr; g_destroyResolved=nullptr;
+        log("Runtime dispatch fallback hook failed; continuing without modifying runtime functions.");
+        return;
+    }
+    g_resolvedHooked.store(installed>0,std::memory_order_release);
+    log(installed>0
+        ? "Runtime OpenXR xrGetInstanceProcAddr dispatch hooks installed (loader exports were bypassed)."
+        : "Runtime dispatch matches loader export addresses; no second hook necessary.");
+}
 } // namespace
 
 extern "C" unsigned long long glamayre_xr_acquire_count() { return g_acquireCalls.load(); }
@@ -353,6 +409,7 @@ extern "C" unsigned long long glamayre_xr_enum_failed() { return g_enumerateFail
 extern "C" unsigned long long glamayre_xr_processed_count() {
     return g_frames.load(std::memory_order_relaxed);
 }
+extern "C" bool glamayre_xr_resolved_hooks_ready() { return g_resolvedHooked.load(); }
 extern "C" bool glamayre_xr_hooks_ready() {
     return g_hooked.load(std::memory_order_acquire);
 }
@@ -367,8 +424,20 @@ extern "C" void glamayre_xr_reset_buffers() {
     g_swapchains.clear();
 }
 extern "C" void glamayre_xr_tick(const UEVR_PluginInitializeParam* api) {
-    if (g_hooked.load(std::memory_order_acquire) || !api ||
-        !api->renderer || api->renderer->renderer_type != UEVR_RENDERER_D3D12 ||
+    if (g_hooked.load(std::memory_order_acquire)) {
+        // Only hook the cached/runtime dispatch functions if the exported loader
+        // route has delivered ZERO xrRelease calls for four seconds.
+        if (api && !g_resolvedHookAttempted && g_primaryInstalledTime &&
+            GetTickCount64() - g_primaryInstalledTime >= 4000 &&
+            g_releaseCalls.load(std::memory_order_relaxed) == 0) {
+            std::lock_guard guard(g_lock);
+            if (!g_resolvedHookAttempted &&
+                g_releaseCalls.load(std::memory_order_relaxed) == 0)
+                tryHookResolvedDispatch(api);
+        }
+        return;
+    }
+    if (!api || !api->renderer || api->renderer->renderer_type != UEVR_RENDERER_D3D12 ||
         !api->vr || !api->vr->is_openxr || !api->vr->is_openxr() ||
         !api->functions || !api->functions->register_inline_hook) return;
     std::lock_guard guard(g_lock);
@@ -417,5 +486,6 @@ extern "C" void glamayre_xr_tick(const UEVR_PluginInitializeParam* api) {
         reinterpret_cast<void**>(&g_destroy));
     if (g_hookDestroy < 0 || !g_destroy) { rollback(); return; }
     g_hooked.store(true,std::memory_order_release);
+    g_primaryInstalledTime = GetTickCount64();
     log("OpenXR hooks installed. Scene identified by projection layer or exact HMD-color extent; counters in Lua.");
 }
