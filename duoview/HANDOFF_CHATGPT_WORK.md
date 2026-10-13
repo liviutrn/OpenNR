@@ -1,6 +1,6 @@
 # Current status — injection crash / Joey recovery
 
-The prior compiled public-backend injector crashed in STALKER 2. Continue from `CRASH_RECOVERY_2026-10-13.md` and `joey_plugin/README.md`. The historical build-success text below does not establish game compatibility.
+The prior compiled public-backend injector crashed in STALKER 2. Continue from `CRASH_RECOVERY_2026-10-13.md` and `joey_plugin/README.md`. The historical build-success text below does not establish game compatibility. The Joey-preserving plugin Windows build and six tests passed on run `38360520420`, compiled commit `5da78be30c11b2b209fb0596a5cb9e7fe6446f3d`. Download the experimental package at https://github.com/liviutrn/OpenNR/releases/tag/duoview-joey-plugin-v08-build-3 . Its ZIP was downloaded and checked; STALKER 2/PSVR2 testing is still required.
 
 ---
 

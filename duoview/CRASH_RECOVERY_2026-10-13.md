@@ -7,3 +7,6 @@ Both supplied minidumps were parsed directly using their ModuleListStream. Both 
 The replacement preserves the official latest Joey Mono release binary byte for byte and builds only an adjunct plugin against public API headers. It does not compile a substitute UESDK, edit main, or fabricate private headers. There are four startup modes: diagnostics, same-pose full views, fixed foveal atlas/composite, and Toolkit gaze. Stage 0 deliberately makes no renderer hooks; later stages require the exact inspected DLL hash and isolate Cheeky/ReShade layers.
 
 Release pin and disassembly evidence: `joey_plugin/BINARY_ADAPTER.md`. Exact binary-contract verification passed locally. Windows compilation and game validation must be recorded with actual run results; implementation alone is not a successful crash fix.
+
+
+Final Windows run `38360520420` passed for source `5da78be30c11b2b209fb0596a5cb9e7fe6446f3d`: all six tests, plugin compilation, DLL loading and ABI exports. The published 14-entry ZIP passed downloaded CRC/hash/source checks. Prerelease: https://github.com/liviutrn/OpenNR/releases/tag/duoview-joey-plugin-v08-build-3 . Runtime game acceptance is still pending.
