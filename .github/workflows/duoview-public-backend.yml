@@ -96,6 +96,7 @@ jobs:
           'Source: https://github.com/liviutrn/OpenNR/tree/${{ github.sha }}' | Set-Content package/BUILD_SOURCE.txt
           if (Test-Path workspace/duoview/TESTING.md) { Copy-Item workspace/duoview/TESTING.md package/ }
           Copy-Item workspace/duoview/FRAME_PACING_V14.md package/FRAME_PACING_V14.md
+          if (!(Test-Path package/FRAME_PACING_V14.md)) { throw 'Missing v14 runtime acceptance handoff' }
           Copy-Item backend/LICENSE package/UEVR-LICENSE.txt
           Get-ChildItem package -Recurse -File | Get-FileHash -Algorithm SHA256 | Format-Table -AutoSize | Out-String -Width 300 | Set-Content package/HASHES.txt
       - name: Upload complete experimental injector
