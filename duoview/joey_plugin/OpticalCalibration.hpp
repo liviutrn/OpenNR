@@ -16,6 +16,7 @@ inline std::optional<glm::quat> synchronized_left_eye_offset(glm::quat left, glm
     };
     if(!valid(left)||!valid(right)) return {};
     left=glm::normalize(left);right=glm::normalize(right);
+    if (glm::dot(left,right)<0.f) right=-right;
     const glm::quat relative=glm::normalize(glm::inverse(left)*right);
     // Grossly different eye rotations cannot form a reliable cyclopean HMD
     // basis and should not control foveated cropping.
