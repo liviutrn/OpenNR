@@ -1,8 +1,8 @@
-name: Glamarye UEVR Windows Build v04 Verified
+name: Glamarye OpenXR API Layer Windows Build v01
 on:
   push:
     branches:
-      - "experiments/glamayre-sharpen-uevr-v04-verified"
+      - "experiments/glamayre-openxr-layer-v01"
     paths:
       - "glamayre-uevr/**"
       - ".github/workflows/glamayre-uevr-build.yml"
@@ -34,10 +34,15 @@ jobs:
           New-Item -ItemType Directory -Force glamayre-uevr/package/scripts | Out-Null
           Copy-Item glamayre-uevr/build/Release/GlamaryeSharpenUEVR.dll glamayre-uevr/package/plugins/
           Copy-Item glamayre-uevr/scripts/glamayre_sharpen.lua glamayre-uevr/package/scripts/
+          New-Item -ItemType Directory -Force glamayre-uevr/package/layer | Out-Null
+          Copy-Item glamayre-uevr/build/Release/GlamaryeOpenXRLayer.dll glamayre-uevr/package/layer/
+          Copy-Item glamayre-uevr/layer/glamayre_openxr.json glamayre-uevr/package/layer/
+          Copy-Item glamayre-uevr/install-layer.ps1 glamayre-uevr/package/
+          Copy-Item glamayre-uevr/uninstall-layer.ps1 glamayre-uevr/package/
           Copy-Item glamayre-uevr/README.md glamayre-uevr/package/
           Copy-Item glamayre-uevr/LICENSE-GLAMARYE.txt glamayre-uevr/package/
       - uses: actions/upload-artifact@v4
         with:
-          name: Glamarye-Sharpen-UEVR-v04-Verified
+          name: Glamarye-OpenXR-Layer-v01
           path: glamayre-uevr/package/
           retention-days: 30
