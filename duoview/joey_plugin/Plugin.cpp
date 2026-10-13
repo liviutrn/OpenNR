@@ -33,6 +33,7 @@ thread_local std::optional<Draw> draw;
 dv::SubmissionMailbox<Packet> submissions;
 std::atomic<uint64_t> last_report{}, last_success{}, last_status_write{}, last_status_check{}, last_wait_report{}, present_callbacks{};
 std::atomic<uint64_t> engine_ticks{}, locate_calls{}, producer_pairs{}, render_callbacks{}, matched_packets{}, composite_queued{}, end_calls{}, submitted_layers{}, rejected_layers{}, xr_accepted{}, xr_failed{};
+std::atomic<uint32_t> output_width{}, output_height{};
 std::mutex status_mutex;
 std::string status_reason{"Not initialized"};
 std::filesystem::path status_path, status_request_path;
@@ -60,6 +61,8 @@ void publish_status(bool force=false) {
     out << "Mode=" << mode.load() << "\n"
         << "Hooks=" << (installed.load() ? "active" : "inactive") << "\n"
         << "Reason=" << reason << "\n"
+        << "OutputWidth=" << output_width.load() << "\n"
+        << "OutputHeight=" << output_height.load() << "\n"
         << "EngineTicks=" << engine_ticks.load() << "\n"
         << "PresentCallbacks=" << present_callbacks.load() << "\n"
         << "LocateViews=" << locate_calls.load() << "\n"
@@ -524,6 +527,8 @@ public:
     }
     void on_pre_viewport_client_draw(UEVR_UGameViewportClientHandle,UEVR_FViewportHandle,UEVR_FCanvasHandle) override {
         draw.reset();
+        output_width.store(api->vr->get_hmd_width());
+        output_height.store(api->vr->get_hmd_height());
         if (!native_mode()) return;
         std::optional<Optics> optical;
         { std::scoped_lock lock(optics_mutex); optical=optics; }
