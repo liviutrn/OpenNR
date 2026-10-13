@@ -88,5 +88,21 @@ int main() try {
     for(UINT y=0;y<32;++y) for(UINT x=0;x<32;++x)
         if(std::memcmp(sample(x,y),sample(x+32,y),4)) throw std::runtime_error("Reused mono copy mismatch");
     readback->Unmap(0,nullptr);
-    std::cout << "Production shader, BGRA8 raster, moved gaze, retired-slot reuse, GPU timestamps: 2048 exact pixel pairs PASS\n";
+    check(allocator->Reset());check(cmd->Reset(allocator.Get(),nullptr));
+    transition(cmd.Get(),stereo.Get(),D3D12_RESOURCE_STATE_COPY_SOURCE,D3D12_RESOURCE_STATE_RENDER_TARGET);
+    auto staging_desc=texture(64,32,D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET); staging_desc.Format=DXGI_FORMAT_B8G8R8A8_TYPELESS;
+    auto staging=resource(device.Get(),staging_desc,D3D12_HEAP_TYPE_DEFAULT,D3D12_RESOURCE_STATE_RENDER_TARGET);
+    if (!uevr::duoview::dx12::record_atlas_replacement(compositor,device.Get(),cmd.Get(),atlas.Get(),staging.Get(),frame,frequency))
+        throw std::runtime_error("Joey in-place atlas replacement failed");
+    transition(cmd.Get(),atlas.Get(),D3D12_RESOURCE_STATE_RENDER_TARGET,D3D12_RESOURCE_STATE_COPY_SOURCE);
+    from={atlas.Get(),D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX};
+    cmd->CopyTextureRegion(&to,0,0,0,&from,nullptr);check(cmd->Close());queue->ExecuteCommandLists(1,lists);check(queue->Signal(fence.Get(),3));
+    event=CreateEventW(nullptr,FALSE,FALSE,nullptr);check(fence->SetEventOnCompletion(3,event));
+    if(WaitForSingleObject(event,30000)!=WAIT_OBJECT_0)throw std::runtime_error("Atlas replacement GPU timeout");CloseHandle(event);
+    check(readback->Map(0,&read,&mapped));
+    if(sample(24,16)[2]<240 || sample(8,16)[0]<240) throw std::runtime_error("Replaced atlas pixels wrong");
+    for(UINT y=0;y<32;++y) for(UINT x=0;x<32;++x)
+        if(std::memcmp(sample(x,y),sample(x+32,y),4)) throw std::runtime_error("Replaced atlas eye-copy mismatch");
+    readback->Unmap(0,nullptr);
+    std::cout << "Production compositor, moved gaze, fence reuse and Joey in-place atlas replacement: 3072 exact pixel pairs PASS\n";
 } catch(const std::exception& e) { std::cerr<<e.what()<<'\n';return 1; }

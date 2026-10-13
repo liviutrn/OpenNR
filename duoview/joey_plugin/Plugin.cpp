@@ -30,7 +30,7 @@ std::map<uint32_t, Packet> packets;
 struct Draw { dv::FrameKey key; Optics optical; };
 thread_local std::optional<Draw> draw;
 thread_local std::optional<Packet> submitted;
-std::atomic<uint64_t> last_report{};
+std::atomic<uint64_t> last_report{}, last_success{};
 
 bool readable(uintptr_t address, size_t size) {
     MEMORY_BASIC_INFORMATION info{};
@@ -97,6 +97,8 @@ bool native_mode() {
         value[0] = 0; api->vr->get_mod_value(key, value, sizeof(value));
         if (std::string_view(value) == "true" || std::string_view(value) == "1") return false;
     }
+    value[0]=0; api->vr->get_mod_value("VR_FrameDelayCompensation",value,sizeof(value));
+    if (std::string_view(value)!="0") return false;
     return true;
 }
 std::optional<dv::ViewFrame> current_frame() {
@@ -164,10 +166,6 @@ void pre_render_hook(void* extension,void* commands,void* family) {
     auto packet = packets.find(*producer);
     if (packet != packets.end() && packet->second.frame.config.key.generation == generation.load()) packet->second.render_seen = true;
 }
-void transition(ID3D12GraphicsCommandList* commands,ID3D12Resource* resource,D3D12_RESOURCE_STATES from,D3D12_RESOURCE_STATES to) {
-    D3D12_RESOURCE_BARRIER barrier{}; barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-    barrier.Transition = {resource,D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES,from,to}; commands->ResourceBarrier(1,&barrier);
-}
 struct Slot {
     ComPtr<ID3D12CommandAllocator> allocator;
     ComPtr<ID3D12GraphicsCommandList> commands;
@@ -219,24 +217,28 @@ bool compose(const Packet& packet,ID3D12Resource* source) {
         slot.destination->SetName(L"DuoViewJoey::DoubleWideComposite");
     }
     UINT64 frequency{}; queue->GetTimestampFrequency(&frequency);
-    const auto recorded=slot.compositor.record(device,slot.commands.Get(),source,slot.destination.Get(),D3D12_RESOURCE_STATE_RENDER_TARGET,packet.frame.config,frequency);
-    if (!recorded) { slot.commands->Close(); return false; }
-    transition(slot.commands.Get(),source,D3D12_RESOURCE_STATE_RENDER_TARGET,D3D12_RESOURCE_STATE_COPY_DEST);
-    transition(slot.commands.Get(),slot.destination.Get(),D3D12_RESOURCE_STATE_RENDER_TARGET,D3D12_RESOURCE_STATE_COPY_SOURCE);
-    slot.commands->CopyResource(source,slot.destination.Get());
-    transition(slot.commands.Get(),source,D3D12_RESOURCE_STATE_COPY_DEST,D3D12_RESOURCE_STATE_RENDER_TARGET);
-    transition(slot.commands.Get(),slot.destination.Get(),D3D12_RESOURCE_STATE_COPY_SOURCE,D3D12_RESOURCE_STATE_RENDER_TARGET);
+    if (!dv::dx12::record_atlas_replacement(slot.compositor,device,slot.commands.Get(),source,slot.destination.Get(),packet.frame.config,frequency)) {
+        slot.commands->Close(); return false;
+    }
     if (FAILED(slot.commands->Close())) return false;
     ID3D12CommandList* lists[]{slot.commands.Get()}; queue->ExecuteCommandLists(1,lists);
     slot.fence=++gpu->signal;
     if (FAILED(queue->Signal(gpu->fence.Get(),slot.fence))) { report("DuoView queue fence signal failed"); return false; }
+    const auto now=GetTickCount64(); auto previous=last_success.load();
+    if (now-previous>=3000 && last_success.compare_exchange_strong(previous,now)) {
+        const auto& l=packet.frame.config.layout;
+        api->functions->log_info("[DuoViewJoey] Composite queued producer=%u fovea=%ux%u periphery=%ux%u output=%ux%u gaze=%s %.3f,%.3f previous-slot-GPU=%.3fms",
+            packet.producer,l.fovea.width,l.fovea.height,l.periphery.width,l.periphery.height,l.atlas_width/2,l.atlas_height,
+            packet.frame.gaze_valid ? "valid" : "fixed",packet.frame.config.gaze.u,packet.frame.config.gaze.v,slot.compositor.gpu_milliseconds());
+    }
     return true;
 }
 int frame_hook(void* component,void* vr) {
     submitted.reset();
     if (native_mode()) {
         const auto openxr = read<uintptr_t>(reinterpret_cast<uintptr_t>(vr)+0xa0);
-        const auto consumer = openxr ? read<uint32_t>(*openxr+0x32c) : std::nullopt;
+        const auto handoff=openxr ? read<uint8_t>(*openxr+0x330) : std::nullopt;
+        const auto consumer = openxr && handoff && *handoff ? read<uint32_t>(*openxr+0x32c) : std::nullopt;
         std::optional<Packet> packet;
         if (consumer) {
             std::scoped_lock lock(packets_mutex);
@@ -284,9 +286,18 @@ XrResult XRAPI_CALL end_hook(XrSession session,const XrFrameEndInfo* info) {
         const auto* layer=info->layers[i];
         if (!layer || layer->type!=XR_TYPE_COMPOSITION_LAYER_PROJECTION) { layers.push_back(layer); continue; }
         const auto* projection=reinterpret_cast<const XrCompositionLayerProjection*>(layer);
-        if (!submitted || submitted->optical.time!=info->displayTime || projection->viewCount!=2) { report("Withholding unpaired OpenXR scene layer"); continue; }
-        const auto& g=submitted->optical.geometry;
+        if (!submitted || projection->viewCount!=2) { report("Withholding unpaired OpenXR scene layer"); continue; }
         auto pair=std::array{projection->views[0],projection->views[1]};
+        std::array<uevr::mono::Eye,2> eyes;
+        for (size_t eye=0;eye<2;++eye) {
+            const auto& v=pair[eye]; eyes[eye]={{v.pose.orientation.x,v.pose.orientation.y,v.pose.orientation.z,v.pose.orientation.w},
+                {v.pose.position.x,v.pose.position.y,v.pose.position.z},
+                {std::tan(v.fov.angleLeft),std::tan(v.fov.angleRight),std::tan(v.fov.angleUp),std::tan(v.fov.angleDown)}};
+        }
+        const auto geometry=uevr::mono::geometry(eyes);
+        if (!geometry || std::abs(geometry->horizontal-submitted->optical.geometry.horizontal)>0.0001f ||
+            std::abs(geometry->vertical-submitted->optical.geometry.vertical)>0.0001f) { report("Optical geometry changed between producer and submit"); continue; }
+        const auto& g=*geometry;
         const auto width=submitted->frame.config.layout.atlas_width/2, height=submitted->frame.config.layout.atlas_height;
         bool valid_pair=true;
         for(size_t eye=0;eye<2;++eye) {

@@ -234,4 +234,23 @@ private:
     bool srgb_{};
     std::string error_;
 };
+
+inline bool record_atlas_replacement(Compositor& compositor, ID3D12Device* device,
+    ID3D12GraphicsCommandList* commands, ID3D12Resource* atlas,
+    ID3D12Resource* staging, const FrameConfig& frame, UINT64 frequency = 0) {
+    if (!atlas || !staging || !bgra8(atlas->GetDesc().Format) ||
+        !compositor.record(device, commands, atlas, staging,
+            D3D12_RESOURCE_STATE_RENDER_TARGET, frame, frequency)) return false;
+    D3D12_RESOURCE_BARRIER barriers[2]{};
+    for (auto& barrier : barriers) barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+    barriers[0].Transition = {atlas, D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES,
+        D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_COPY_DEST};
+    barriers[1].Transition = {staging, D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES,
+        D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_COPY_SOURCE};
+    commands->ResourceBarrier(2, barriers);
+    commands->CopyResource(atlas, staging);
+    for (auto& barrier : barriers) std::swap(barrier.Transition.StateBefore, barrier.Transition.StateAfter);
+    commands->ResourceBarrier(2, barriers);
+    return true;
+}
 }
