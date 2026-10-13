@@ -20,7 +20,7 @@ def scenario(with_fs: bool):
 
     store = {
         "DuoViewJoey.ini": "[DuoView]\\nMode=2\\nCropWidth=0.50\\nCropHeight=0.50\\nPeripheralScale=0.2\\nFovealDensity=1.0\\nFeather=0.08\\nDebugBorder=1\\n".replace("\\n", "\n"),
-        "DuoViewJoey.status": "Mode=2\\nHooks=active\\nReason=Waiting for paired views\\nEngineTicks=14\\nPresentCallbacks=25\\n".replace("\\n", "\n"),
+        "DuoViewJoey.status": "Mode=2\\nHooks=active\\nReason=Waiting for paired views\\nEngineTicks=14\\nPresentCallbacks=25\\nOutputWidth=3000\\nOutputHeight=3000\\n".replace("\\n", "\n"),
     }
     requests = []
     controls = {"mode": False, "save": False, "crop": False}
@@ -60,6 +60,8 @@ def scenario(with_fs: bool):
     def drag(label, current, speed, low, high, fmt):
         if label == "Crop width" and controls["crop"]:
             return True, 0.3
+        if label == "Foveal density" and controls.get("density_invalid"):
+            return True, 4.0
         return False, current
     def checkbox(label, current):
         return False,current
@@ -86,6 +88,13 @@ def scenario(with_fs: bool):
     callback[0]()
     assert "Mode=3" in store["DuoViewJoey.ini"], "Save mode failed"
     assert "CropWidth=0.3" in store["DuoViewJoey.ini"], "Save crop failed"
+    # Verify actual output-bound validation refuses an atlas overflow.
+    config_before_invalid = store["DuoViewJoey.ini"]
+    controls["crop"] = False
+    controls["density_invalid"] = True
+    callback[0]()
+    assert store["DuoViewJoey.ini"] == config_before_invalid, "Invalid density must not save"
+    controls["density_invalid"] = False
     assert len(requests)==1, "Status request was written every frame"
     for _ in range(44): callback[0]()
     assert len(requests)==2, "Periodic-on-menu-visible status request missing"
