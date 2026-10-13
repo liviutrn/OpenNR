@@ -75,6 +75,18 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Stage 2-4 source anchors did not match original Joey' }
           python workspace/duoview/joey_stage1/verify_stage234.py backend frontend evidence
           if ($LASTEXITCODE -ne 0) { throw 'Stage 2-4 violated original-source or SDK boundaries' }
+      - name: Verify pinned production geometry and pair-state contracts
+        shell: pwsh
+        run: |
+          cmake -S workspace/duoview/joey_stage1 -B duo_pinned_tests -G 'Visual Studio 17 2022' -A x64 "-DJOYEY_BACKEND_DIR=$((Resolve-Path backend).Path)" *> evidence/pinned-config.log
+          $code=$LASTEXITCODE; Get-Content evidence/pinned-config.log | Select-Object -Last 40
+          if ($code -ne 0) { throw "Pinned production test configuration failed ($code)" }
+          cmake --build duo_pinned_tests --config Release --parallel 2 *> evidence/pinned-build.log
+          $code=$LASTEXITCODE; Get-Content evidence/pinned-build.log | Select-Object -Last 80
+          if ($code -ne 0) { throw "Pinned production tests failed compilation ($code)" }
+          ctest --test-dir duo_pinned_tests -C Release --output-on-failure --no-tests=error *> evidence/pinned-results.log
+          $code=$LASTEXITCODE; Get-Content evidence/pinned-results.log
+          if ($code -ne 0) { throw "Pinned production contract failed ($code)" }
       - name: Configure independent DuoView geometric, state, and GPU WARP tests
         shell: pwsh
         run: |
