@@ -35,7 +35,7 @@ struct FrameConfig {
     UV gaze{};
     Settings settings{};
     uint64_t settings_revision{};
-    UV history_sample_offset{}; // crop-local foveal source sampling shift (0=original)
+    UV history_sample_offset{0.f,0.f}; // MUST be zero: UV's gaze default is (.5,.5)!
 };
 class ConfigLatch {
 public:
