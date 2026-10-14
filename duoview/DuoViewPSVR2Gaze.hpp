@@ -80,6 +80,17 @@ inline std::optional<UV> projection_uv(const Ray& r,const std::array<float,16>& 
     return UV{std::clamp(u,0.f,1.f),std::clamp(v,0.f,1.f)};
 }
 
+// Read-only metadata. Device timestamp clock domain is deliberately UNKNOWN:
+// do not convert it to OpenXR XrTime or assume it represents HMD pose time.
+struct GazeObservation {
+    uint64_t host_arrival_ms{};
+    int64_t device_timestamp_raw{};
+    uint32_t device_frame_counter{};
+    bool seen{}, valid{};
+};
+inline GazeObservation describe_gaze_sample(const Status& status, uint64_t arrival_ms, bool valid) {
+    return {arrival_ms,status.raw.timestamp,status.raw.frame_counter,true,valid};
+}
 struct Counters {
     uint64_t fresh{}, reused{}, invalid{}, expired{}, unavailable{};
     uint32_t age_ms{};
@@ -87,6 +98,11 @@ struct Counters {
 class Reader {
 public:
     bool active() const { return active_.load(std::memory_order_acquire); }
+    // Read from the UI only when diagnostics are enabled; no render polling/logging.
+    GazeObservation observation() const {
+        std::scoped_lock lock{mutex_};
+        return last_observation_;
+    }
     Counters counters() const {
         return {fresh_.load(std::memory_order_relaxed),reused_.load(std::memory_order_relaxed),
             invalid_.load(std::memory_order_relaxed),expired_.load(std::memory_order_relaxed),
@@ -111,6 +127,7 @@ public:
             const auto ray=calibrated_ray(candidate);
             const auto optical=ray ? optical_ray(*ray,optical_rotation) : std::optional<Ray>{};
             const auto uv=optical ? projection_uv(*optical,projection) : std::optional<UV>{};
+            last_observation_=describe_gaze_sample(candidate,now,uv.has_value());
             if(uv) {
                 cached_uv_=*uv; fresh_time_=now; fresh_.fetch_add(1,std::memory_order_relaxed);
             } else {
@@ -170,5 +187,6 @@ private:
     ReadFn read_{};
     uint64_t next_attempt_{},fresh_time_{};
     std::optional<UV> cached_uv_{};
+    GazeObservation last_observation_{};
 };
 } // namespace uevr::duoview::psvr2
