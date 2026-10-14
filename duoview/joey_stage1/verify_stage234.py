@@ -13,6 +13,7 @@ EDITED_BACKEND = {
 ADDED_BACKEND = {
  "src/mods/vr/DuoViewGeometry.hpp", "src/mods/vr/DuoViewGaze.hpp",
  "src/mods/vr/DuoViewPSVR2Gaze.hpp", "src/mods/vr/DuoViewCropStability.hpp",
+ "src/mods/vr/DuoViewHistoryCorrection.hpp",
  "src/mods/vr/DuoViewFrame.hpp", "src/mods/vr/DuoViewConfig.hpp",
  "src/mods/vr/DuoViewState.hpp", "src/mods/vr/DuoViewD3D12.hpp",
  "src/mods/vr/DuoViewMonoCopyD3D12.hpp", "src/mods/vr/DuoViewShaderSource.hpp",
@@ -81,6 +82,21 @@ def main():
   raise RuntimeError("Unsafe NVIDIA NGX interception unexpectedly restored")
  if "DuoViewPSVR2Gaze.hpp" not in vrh:
   raise RuntimeError("Production VR headers missing native PSVR2 gaze integration")
+ correction=(a.backend/"src/mods/vr/DuoViewHistoryCorrection.hpp").read_text(encoding="utf-8")
+ if "previous.key.frame + 1u != current.key.frame" not in correction or (
+     "current.layout.u0-previous.layout.u0" not in correction):
+  raise RuntimeError("History compensation does not check strict prev key / Cheeky sign")
+ if "accept_composite(frame->config.key)" not in d3d:
+  raise RuntimeError("DuoView does not record only successful XR source copies")
+ if "frame.history_sample_offset.u" not in compositor or (
+     "frame.history_sample_offset.v" not in compositor):
+  raise RuntimeError("Compositor does not consume latched history sampling offsets")
+ if "HistorySampleOffset" not in (a.backend/"src/mods/vr/DuoViewShaderSource.hpp").read_text(
+        encoding="utf-8",errors="ignore"):
+  # Packed DXBC does not contain source text; check authored HLSL at checkout below instead.
+  pass
+ if "m_duo_history_shift->draw(" not in vr or "m_duo_history_strength->draw(" not in vr:
+  raise RuntimeError("A/B compositor correction controls absent from generated VR UI")
  sensor=(a.backend/"src/mods/vr/DuoViewPSVR2Gaze.hpp").read_text(encoding="utf-8")
  if ("struct GazeObservation" not in sensor or
      "status.raw.timestamp,status.raw.frame_counter" not in sensor or
