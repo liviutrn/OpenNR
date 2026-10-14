@@ -4,6 +4,7 @@
 // path separately crops a matrix using production apply_foveal_crop.
 // A deliberate missing-crop and double-correction path MUST fail.
 #include "../DuoViewGeometry.hpp"
+#include "../DuoViewHistoryCorrection.hpp"
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -137,6 +138,14 @@ static void negative_controls() {
     // Historical sign-reversed diagnostic must be rejected.
     const double inverted=(prev.u0-now.u0)*now.fovea.width/now.crop_width;
     check(std::abs(inverted+correct)<.001,"wrong-sign diagnostic not detected");
+    FrameConfig prior{{1,1},prev}, current{{1,2},now};
+    current.settings.history_sample_correction=true;
+    const auto shift=compositor_history_shift(prior,true,current,true);
+    check(shift.has_value(),"legacy correction counterexample not exercised");
+    const double unshifted=now.u0+now.crop_width*cur.u;
+    const double displaced=now.u0+now.crop_width*(cur.u-shift->u);
+    check(std::abs((displaced-unshifted)*3000.+60.)<.001,
+          "legacy RGB shift must expose 60px world displacement");
     // Also assert the half-width static case, independent of density.
     const auto a=layout(3000,3000,.50f,1.f,.25f,.25f);
     const auto b=layout(3000,3000,.50f,1.f,.26f,.25f);

@@ -26,8 +26,8 @@ struct Settings {
     float smoothing_ms{85.f};   // exponential temporal follow in milliseconds
     bool independent_shading{};
     bool temporal_audit{}; // optional observation; no private UE history writes
-    bool history_sample_correction{true}; // experimental compositor-only A/B
-    float history_sample_strength{1.f}; // 0=baseline, 1=full Cheeky-sign shift
+    bool history_sample_correction{}; // legacy experimental input, not used by rendering
+    float history_sample_strength{1.f};
 };
 struct FrameConfig {
     FrameKey key{};
@@ -35,7 +35,7 @@ struct FrameConfig {
     UV gaze{};
     Settings settings{};
     uint64_t settings_revision{};
-    UV history_sample_offset{0.f,0.f}; // MUST be zero: UV's gaze default is (.5,.5)!
+    UV history_sample_offset{0.f,0.f}; // legacy packet field; color sampling ignores it
 };
 class ConfigLatch {
 public:

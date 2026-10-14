@@ -1,0 +1,45 @@
+{
+  "src/mods/vr/FFakeStereoRenderingHook.cpp": {
+    "sha256": "d5cc04928a6cbc70b2a2fba883de08ac130fd8bc942c12f5cf56c3447f490b4b",
+    "bytes": 1940535,
+    "lines": 43966,
+    "anchors": {
+      "vr->duoview_state().camera(key, 1, *pose)": 30060,
+      "vr->duoview_state().camera(key, 0, pose)": 30504,
+      "const auto controller_camera_guard_active = vr->is_controller_camera_conflict_guard_active();": 30509,
+      "uevr::duoview::apply_frame_projection(double_matrix,*frame": 30802,
+      "reconcile(init_options_ue5->projection_matrix)": 23174,
+      "vr->duoview_state().scene(key,index,state,applied)": 23257
+    }
+  },
+  "src/mods/VR.cpp": {
+    "sha256": "b74861b33d9f9f06b375f6d8b1526fc7396d83d4f64c2cc3b9bbe38b1f7c608b",
+    "bytes": 819900,
+    "lines": 17962,
+    "anchors": {
+      "std::optional<uevr::duoview::ViewFrame> VR::duoview_begin_frame()": 17933,
+      "return m_duoview_gaze.read_uv(frozen,optical)": 17952
+    }
+  },
+  "src/mods/vr/D3D12Component.cpp": {
+    "sha256": "6f5619ef058e44b8ff6d508a1ef078dc34c16034a8fb0ce80fae1113a1b01d73",
+    "bytes": 357294,
+    "lines": 8068,
+    "anchors": {
+      "vr->duoview_state().consume(": 5259,
+      "duo_recorded = item->record(": 5285,
+      "vr->duoview_abort(\"XR copy/composite fault; safe original Mono requested\")": 5310
+    }
+  },
+  "src/mods/vr/runtimes/OpenXR.cpp": {
+    "sha256": "32b6796d70fb0377e9da82e417d17e568ed65248b44b4d6520e62bdba76833d3",
+    "bytes": 194342,
+    "lines": 4379,
+    "anchors": {
+      "bool OpenXR::restore_duoview_bootstrap_scale(float target) {": 453
+    }
+  },
+  "previous_unreal_projection_consumed": "NOT_OBSERVED",
+  "active_upscaler": "NOT_OBSERVED",
+  "temporal_gate": "BLOCKED_UNTIL_VALIDATED_CONSUMER"
+}

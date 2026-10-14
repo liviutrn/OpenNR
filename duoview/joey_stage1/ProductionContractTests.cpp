@@ -190,8 +190,7 @@ int main() try {
     d=audit.temporal_audit();
     require(d && d->distinct_view_states && !d->stable_view_states,
             "Changed temporal identity across frames must be flagged");
-    // v41: Cheeky-sign output correction uses ONLY last accepted XR copy;
-    // the compositor must never use a mere consumed CPU packet as history.
+    // Current rendered color stays world-aligned, including legacy settings.
     State history;
     Settings hs{}; hs.crop_width=hs.crop_height=.30f;
     hs.history_sample_correction=true; hs.history_sample_strength=1.f;
@@ -213,9 +212,9 @@ int main() try {
             history.accept_composite({61,1}),
             "First copy must be unshifted; only correct copy can seed history");
     auto shifted=make_complete({61,2},{.52f,.49f});
-    require(shifted && std::abs(shifted->config.history_sample_offset.u-.02f/.30f)<1e-5f &&
-            std::abs(shifted->config.history_sample_offset.v+.01f/.30f)<1e-5f,
-            "Accepted adjacent crop should compensate with current-minus-previous sign");
+    require(shifted && shifted->config.history_sample_offset.u==0.f &&
+            shifted->config.history_sample_offset.v==0.f,
+            "Accepted adjacent crop must not displace current color");
     // Deliberately do NOT accept frame 2; next frame must reject frame 1 history.
     auto gap=make_complete({61,3},{.53f,.5f});
     require(gap && gap->config.history_sample_offset.u==0.f &&
@@ -235,8 +234,8 @@ int main() try {
     require(history.configure(hs),"v41 strength adjustment rejected");
     require(history.accept_composite({61,5}),"v41 accept frame5 rejected");
     auto half=make_complete({61,6},{.82f,.5f});
-    require(half && std::abs(half->config.history_sample_offset.u-.5f*.01f/.30f)<1e-5f,
-            "v41 source sampling gain must be applied exactly once");
+    require(half && half->config.history_sample_offset.u==0.f && half->config.history_sample_offset.v==0.f,
+            "Legacy sampling gain must not move current rendered detail");
     require(history.accept_composite({61,6}),"Frame6 accepted copy missing");
     auto changed=history.begin({61,7},3000,3000,p,
         []()->std::optional<UV>{return UV{.83f,.5f};},1077);

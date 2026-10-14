@@ -131,10 +131,7 @@ int main() try {
                 throw std::runtime_error("Diagnostic eye-copy pixel mismatch");
         readback->Unmap(0,nullptr);
     }
-    // v41: actual compiled raster shader/WARP pixel regression. A horizontal
-    // RED gradient makes +0.125 crop-local sampling move by exactly TWO
-    // foveal source texels (16px FoveaRect x .125). Blue periphery must be
-    // unaffected; stereo copies must be bit identical. OFF remains baseline.
+    // Legacy offsets must not shift the production color raster.
     check(upload->Map(0,&zero,&mapped));std::memset(mapped,0,bytes);
     for(UINT y=0;y<32;++y) for(UINT x=0;x<16;++x) {
         auto* pixel=static_cast<uint8_t*>(mapped)+y*foot.Footprint.RowPitch+x*4;
@@ -182,7 +179,69 @@ int main() try {
             throw std::runtime_error("History correction broke mono stereo-copy parity");
         readback->Unmap(0,nullptr);
     }
-    if(shift_red <= base_red+18 || shift_red >= base_red+47)
-        throw std::runtime_error("Cheeky positive history shift must sample 2 texels to right");
-    std::cout << "Production normal/moved gaze/diagnostics and v41 Cheeky-sign WARP gradient raster PASS\n";
+    if(shift_red != base_red)
+        throw std::runtime_error("Legacy crop-motion input displaced current color");
+    UINT64 world_signal=7;
+    for (float extent : {.3f,.5f}) for (float density : {1.f,1.5f,2.5f}) {
+        for (float gaze_u : {.5f,.625f,.45f}) {
+            const auto moving=uevr::duoview::make_layout(32,32,extent,extent,.25f,density,gaze_u,.5f);
+            if (!moving) continue;
+            frame.layout=*moving;
+            frame.key.frame++;
+            frame.settings.diagnostic_view=0;
+            frame.history_sample_offset={.125f,-.125f};
+            check(upload->Map(0,&zero,&mapped));
+            std::memset(mapped,0,bytes);
+            const auto encode_world=[&](uevr::duoview::Rect r,bool foveal) {
+                for(UINT y=0;y<r.height;++y) for(UINT x=0;x<r.width;++x) {
+                    const float u=(x+.5f)/r.width;
+                    const float v=(y+.5f)/r.height;
+                    const float full_u=foveal ? moving->u0+u*extent : u;
+                    const float full_v=foveal ? moving->v0+v*extent : v;
+                    auto* pixel=static_cast<uint8_t*>(mapped)+
+                        (y+r.y)*foot.Footprint.RowPitch+(x+r.x)*4;
+                    pixel[0]=0;
+                    pixel[1]=static_cast<uint8_t>(std::lround(32.f+160.f*full_v));
+                    pixel[2]=static_cast<uint8_t>(std::lround(32.f+160.f*full_u));
+                    pixel[3]=255;
+                }
+            };
+            encode_world(moving->fovea,true);
+            encode_world(moving->periphery,false);
+            upload->Unmap(0,nullptr);
+            check(allocator->Reset());check(cmd->Reset(allocator.Get(),nullptr));
+            transition(cmd.Get(),stereo.Get(),D3D12_RESOURCE_STATE_COPY_SOURCE,D3D12_RESOURCE_STATE_RENDER_TARGET);
+            transition(cmd.Get(),atlas.Get(),D3D12_RESOURCE_STATE_RENDER_TARGET,D3D12_RESOURCE_STATE_COPY_DEST);
+            D3D12_TEXTURE_COPY_LOCATION destination{atlas.Get(),D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX};
+            D3D12_TEXTURE_COPY_LOCATION source{upload.Get(),D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT};
+            source.PlacedFootprint=foot;
+            cmd->CopyTextureRegion(&destination,0,0,0,&source,nullptr);
+            transition(cmd.Get(),atlas.Get(),D3D12_RESOURCE_STATE_COPY_DEST,D3D12_RESOURCE_STATE_RENDER_TARGET);
+            if(!compositor.record(device.Get(),cmd.Get(),atlas.Get(),stereo.Get(),
+                    D3D12_RESOURCE_STATE_RENDER_TARGET,frame))
+                throw std::runtime_error("Moving-world raster record failed: "+compositor.error());
+            transition(cmd.Get(),stereo.Get(),D3D12_RESOURCE_STATE_RENDER_TARGET,D3D12_RESOURCE_STATE_COPY_SOURCE);
+            cmd->CopyTextureRegion(&to,0,0,0,&from,nullptr);
+            check(cmd->Close());queue->ExecuteCommandLists(1,lists);
+            check(queue->Signal(fence.Get(),world_signal));
+            event=CreateEventW(nullptr,FALSE,FALSE,nullptr);
+            check(fence->SetEventOnCompletion(world_signal++,event));
+            if(WaitForSingleObject(event,30000)!=WAIT_OBJECT_0)
+                throw std::runtime_error("Moving-world GPU fence timeout");
+            CloseHandle(event);
+            check(readback->Map(0,&read,&mapped));
+            for(UINT y=15;y<=17;++y) for(UINT x=16;x<=18;++x) {
+                const auto* pixel=sample(x,y);
+                const auto red=std::lround(32.+160.*(x+.5)/32.);
+                const auto green=std::lround(32.+160.*(y+.5)/32.);
+                if(std::abs(int(pixel[2])-int(red))>2 ||
+                   std::abs(int(pixel[1])-int(green))>2)
+                    throw std::runtime_error("Moving fovea displaced a stationary world pattern");
+                if(std::memcmp(pixel,sample(x+32,y),4))
+                    throw std::runtime_error("Moving-world stereo-copy mismatch");
+            }
+            readback->Unmap(0,nullptr);
+        }
+    }
+    std::cout << "Production normal/moved gaze/diagnostics and world-aligned WARP gradient raster PASS\n";
 } catch(const std::exception& e) { std::cerr<<e.what()<<'\n';return 1; }

@@ -78,8 +78,6 @@ def main():
     const ModToggle::Ptr m_duo_shading{ModToggle::create(generate_name("DuoViewIndependentShading"), false)};
     const ModToggle::Ptr m_duo_history_audit{ModToggle::create(generate_name("DuoViewTemporalAudit"), false)};
     // Rendered source stays instantaneous; this shifts only displayed UV for A/B.
-    const ModToggle::Ptr m_duo_history_shift{ModToggle::create(generate_name("DuoViewHistorySampleCorrection"), true)};
-    const ModSlider::Ptr m_duo_history_strength{ModSlider::create(generate_name("DuoViewHistorySampleStrength"), 0.f, 1.f, 1.f)};
     const ModToggle::Ptr m_duo_timing{ModToggle::create(generate_name("DuoViewGpuTiming"), false)};
     std::atomic<float> m_duo_gpu_ms{-1.f};
     uevr::duoview::State m_duoview;
@@ -94,7 +92,7 @@ def main():
             *m_duo_width, *m_duo_height, *m_duo_periphery, *m_duo_density,
             *m_duo_feather, *m_duo_gaze, *m_duo_border, *m_duo_debug_source,
             *m_duo_fovea_view, *m_duo_timing, *m_duo_stabilize, *m_duo_guard,
-            *m_duo_smoothing, *m_duo_history_audit, *m_duo_history_shift, *m_duo_history_strength,''')
+            *m_duo_smoothing, *m_duo_history_audit,''')
     cpp="src/mods/VR.cpp"
     edit(cpp,
         'ImGui::TextWrapped("DuoView Stage 1: rendering uses original Joey Mono unchanged. Two-view foveation and gaze are NOT active.");',
@@ -121,8 +119,6 @@ def main():
                 m_duo_debug_source->draw("Source diagnostic: 0 Blend / 1 Periphery / 2 Fovea");
                 m_duo_fovea_view->draw("Fovea UE source view (0 or 1)");
                 ImGui::TextWrapped("v24: Eye tracking is INSTANT. Old crop guard/smoothing settings are ignored, including values stored in older profiles. No velocity cap or quantization.");
-                m_duo_history_shift->draw("Experimental gaze image motion correction (Cheeky sign)");
-                m_duo_history_strength->draw("Crop-history source shift strength (0 original / 1 full)");
                 ImGui::TextWrapped("Only foveal image sampling changes; eye crop remains instant. Turn correction OFF for original Build37 behavior. Does NOT patch Unreal motion vectors or TSR.");
                 m_duo_history_audit->draw("Diagnostic: projection/history continuity (logs, OFF by default)");
                 if (m_duo_history_audit->value()) {
@@ -212,8 +208,8 @@ void VR::configure_duoview() {
         .guard_fraction=0.f, .smoothing_ms=0.f,
         .independent_shading=m_duo_shading->value(),
         .temporal_audit=m_duo_history_audit->value(),
-        .history_sample_correction=m_duo_history_shift->value(),
-        .history_sample_strength=m_duo_history_strength->value()};
+        .history_sample_correction=false,
+        .history_sample_strength=0.f};
     const auto current=m_duoview.settings();
     if (current.crop_width==candidate.crop_width && current.crop_height==candidate.crop_height &&
         current.peripheral_scale==candidate.peripheral_scale && current.foveal_density==candidate.foveal_density &&

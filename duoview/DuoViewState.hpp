@@ -1,7 +1,6 @@
 #pragma once
 #include "DuoViewConfig.hpp"
 #include "DuoViewCropStability.hpp"
-#include "DuoViewHistoryCorrection.hpp"
 #include <array>
 #include <functional>
 
@@ -137,30 +136,6 @@ public:
         last_audit_=result;
         last_completed_=slot; // diagnostic only; not proof of successful XR copy
         ViewFrame packet=*slot;
-        if (last_accepted_) {
-            // Never apply crop history from an unrelated UE ViewState or
-            // a camera cut. Rotations are UE degrees; positions UE units.
-            // These wide limits reject discontinuities without slowing gaze
-            // or ordinary head yaw/pitch. No private UE memory is accessed.
-            const unsigned foveal=packet.config.settings.fovea_view;
-            const auto state_now=packet.scene_states[foveal];
-            const auto state_old=last_accepted_->scene_states[foveal];
-            bool compatible=state_now && state_old && state_now==state_old &&
-                packet.camera_valid && last_accepted_->camera_valid;
-            for (unsigned axis=0;compatible && axis<3;axis++) {
-                if(std::abs(packet.camera.rotation[axis]-
-                            last_accepted_->camera.rotation[axis])>45.0 ||
-                   std::abs(packet.camera.position[axis]-
-                            last_accepted_->camera.position[axis])>500.0)
-                    compatible=false;
-            }
-            if (compatible) {
-                if (auto shift=compositor_history_shift(
-                    last_accepted_->config,last_accepted_->gaze_valid,
-                    packet.config,packet.gaze_valid))
-                    packet.config.history_sample_offset=*shift;
-            }
-        }
         return packet;
     }
     // Compositor was recorded and accepted by XR copy. This is not a

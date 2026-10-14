@@ -65,7 +65,7 @@ public:
             {l.periphery.x, l.periphery.y, l.periphery.width, l.periphery.height},
             {l.u0, l.v0, l.u1, l.v1}, frame.settings.feather_fraction,
             frame.settings.debug_border ? 1u : 0u, frame.settings.diagnostic_view, 0.f,
-            {frame.history_sample_offset.u, frame.history_sample_offset.v}};
+            {0.f, 0.f}};
         D3D12_SHADER_RESOURCE_VIEW_DESC view{};
         view.Format = format;
         view.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;

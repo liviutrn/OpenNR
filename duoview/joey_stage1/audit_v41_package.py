@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""v41 independent post-package verification. No shared-library execution.
+"""Independent post-package verification. No shared-library execution.
 
 Verifies the exact ZIP that is uploaded, PE architecture, payload hashes,
 provenance and clear experimental identification. Fails closed.
@@ -44,8 +44,8 @@ def main():
         machine=struct.unpack_from("<H",data,offset+4)[0]
         check(machine==0x8664,"Non-x64 binary: "+name)
     readme=(package/"READ_FIRST.txt").read_text(encoding="utf-8-sig")
-    check("v41" in readme and "QUARANTINED internally" in readme,
-          "Read-first must identify experimental v41 and safe fallback")
+    check("v42" in readme and "QUARANTINED internally" in readme,
+          "Read-first must identify v42 engineering checkpoint and safe fallback")
     check("NOT a TSR/motion-vector hook" in readme,
           "Must not misrepresent compositor correction as engine temporal fix")
     with zipfile.ZipFile(zip_path) as archive:
@@ -66,11 +66,12 @@ def main():
     summary={"artifact":zip_path.name,"sha256":sha256(zip_path.read_bytes()),
              "zip_file_count":len(entries),"files":entries,
              "engine_previous_clip_verified":False,
-             "experimental_compositor_ab_test":True}
+             "experimental_compositor_ab_test":False,
+             "headset_candidate_recommended":False}
     evidence.mkdir(parents=True,exist_ok=True)
-    (evidence/"v41-package-audit.json").write_text(
+    (evidence/"v42-package-audit.json").write_text(
          json.dumps(summary,indent=2)+"\n",encoding="utf-8")
-    print("v41 PE x64, ZIP round-trip SHA256, identity, documentation: PASS")
+    print("v42 PE x64, ZIP round-trip SHA256, identity, documentation: PASS")
     print("ZIP SHA256:",summary["sha256"])
     print("ZIP FILE COUNT:",len(entries))
     print("NOT a proof of headset/Unreal TSR correction.")

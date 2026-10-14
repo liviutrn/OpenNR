@@ -88,15 +88,17 @@ def main():
   raise RuntimeError("History compensation does not check strict prev key / Cheeky sign")
  if "accept_composite(frame->config.key)" not in d3d:
   raise RuntimeError("DuoView does not record only successful XR source copies")
- if "frame.history_sample_offset.u" not in compositor or (
-     "frame.history_sample_offset.v" not in compositor):
-  raise RuntimeError("Compositor does not consume latched history sampling offsets")
- if "HistorySampleOffset" not in (a.backend/"src/mods/vr/DuoViewShaderSource.hpp").read_text(
-        encoding="utf-8",errors="ignore"):
-  # Packed DXBC does not contain source text; check authored HLSL at checkout below instead.
-  pass
- if "m_duo_history_shift->draw(" not in vr or "m_duo_history_strength->draw(" not in vr:
-  raise RuntimeError("A/B compositor correction controls absent from generated VR UI")
+ if "{frame.history_sample_offset.u, frame.history_sample_offset.v}" in compositor:
+  raise RuntimeError("Current color must not receive the temporal history displacement")
+ if "{0.f, 0.f}};" not in compositor:
+  raise RuntimeError("Reserved legacy color-shift constants must be zero")
+ if "m_duo_history_shift" in vr or "m_duo_history_strength" in vr:
+  raise RuntimeError("Invalid final-color displacement controls must not be exposed")
+ if ".history_sample_correction=false" not in vr:
+  raise RuntimeError("Legacy saved settings must not reenable current-color displacement")
+ state=(a.backend/"src/mods/vr/DuoViewState.hpp").read_text(encoding="utf-8")
+ if "compositor_history_shift(" in state:
+  raise RuntimeError("Temporal crop vector cannot be applied to current color packets")
  sensor=(a.backend/"src/mods/vr/DuoViewPSVR2Gaze.hpp").read_text(encoding="utf-8")
  if ("struct GazeObservation" not in sensor or
      "status.raw.timestamp,status.raw.frame_counter" not in sensor or

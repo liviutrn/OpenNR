@@ -27,14 +27,9 @@ float4 PSMain(VertexOut i) : SV_TARGET0 {
     float4 result = DebugViewMode == 2 ? float4(.04,.04,.04,1) : peripheralColor;
     if (weight > 0.0 && DebugViewMode != 1) {
         const float2 foveaUV = (fullUv - CropUv.xy) / (CropUv.zw - CropUv.xy);
-        const float2 correctedLocal = foveaUV + HistorySampleOffset;
-        const float2 foveaSample = AtlasSampleUV(FoveaRect, correctedLocal);
+        const float2 foveaSample = AtlasSampleUV(FoveaRect, foveaUV);
         const float4 foveaColor = SourceAtlas.SampleLevel(LinearClamp, foveaSample, 0.0);
-        const float edge = min(min(correctedLocal.x, correctedLocal.y),
-                               min(1.0-correctedLocal.x, 1.0-correctedLocal.y));
-        const float sampleCoverage = any(HistorySampleOffset != 0.0)
-            ? saturate(edge / 0.025) : 1.0;
-        result = DebugViewMode == 2 ? foveaColor : lerp(peripheralColor, foveaColor, weight * sampleCoverage);
+        result = DebugViewMode == 2 ? foveaColor : lerp(peripheralColor, foveaColor, weight);
     }
     if (DebugBorder && weight > 0.01 && weight < 0.1) {
         result.rgb = float3(1.0, 0.3, 0.0);

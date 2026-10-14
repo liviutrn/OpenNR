@@ -1,8 +1,6 @@
 #pragma once
-// DuoView v41: OPTIONAL post-temporal SOURCE-SAMPLING correction.
-// This is a compositor-space experiment motivated by Cheeky's
-// currentOrigin-previousOrigin convention. It DOES NOT patch Unreal
-// TSR, its motion vectors, or engine-owned previous matrices.
+// Retained for the regression counterexample; production color never uses it.
+// Temporal crop displacement belongs in history lookup, not current RGB sampling.
 #include "DuoViewConfig.hpp"
 #include <algorithm>
 #include <cmath>
