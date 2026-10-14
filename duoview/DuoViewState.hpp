@@ -9,6 +9,12 @@ struct CameraPose {
     std::array<double, 3> rotation{}, position{};
     bool operator==(const CameraPose&) const = default;
 };
+struct TemporalAudit {
+    FrameKey key{};
+    bool previous_frame{}, same_pose{}, distinct_view_states{}, stable_view_states{}, moving_fovea{};
+    double expected_crop_motion_px_x{}, expected_crop_motion_px_y{};
+    std::array<uintptr_t,2> current_states{}, previous_states{};
+};
 struct ViewFrame {
     FrameConfig config;
     std::array<float, 16> projection{};
@@ -104,11 +110,38 @@ public:
             !slot->camera_valid || !slot->rectangles[0] || !slot->rectangles[1] ||
             !slot->projections[0] || !slot->projections[1] || !slot->cameras[0] || !slot->cameras[1]) return {};
         slot->consumed = true;
+        TemporalAudit result{};
+        result.key=key;
+        result.current_states=slot->scene_states;
+        result.distinct_view_states=slot->scene_states[0] && slot->scene_states[1] &&
+                                    slot->scene_states[0]!=slot->scene_states[1];
+        if (last_completed_ && last_completed_->config.key.generation==key.generation &&
+            last_completed_->config.key.frame+1==key.frame) {
+            result.previous_frame=true;
+            result.previous_states=last_completed_->scene_states;
+            result.same_pose=last_completed_->camera==slot->camera;
+            result.stable_view_states=result.distinct_view_states &&
+                result.current_states==result.previous_states;
+            const auto& old=last_completed_->config.layout;
+            const auto& now=slot->config.layout;
+            result.expected_crop_motion_px_x=
+                (static_cast<double>(old.u0)-now.u0)/now.crop_width*now.fovea.width;
+            result.expected_crop_motion_px_y=
+                (static_cast<double>(old.v0)-now.v0)/now.crop_height*now.fovea.height;
+            result.moving_fovea=std::abs(result.expected_crop_motion_px_x)>.1 ||
+                                  std::abs(result.expected_crop_motion_px_y)>.1;
+        }
+        last_audit_=result;
+        last_completed_=slot;
         return slot;
+    }
+    std::optional<TemporalAudit> temporal_audit() const {
+        std::scoped_lock lock{mutex_}; return last_audit_;
     }
     void retire() {
         std::scoped_lock lock{mutex_};
         frames_ = {}; config_.retire(); stability_.reset(); last_begin_={};
+        last_completed_.reset(); last_audit_.reset();
     }
 private:
     bool observe(FrameKey key, unsigned view, int kind) {
@@ -123,5 +156,7 @@ private:
     CropStability stability_;
     FrameKey last_begin_{};
     std::array<std::optional<ViewFrame>, 16> frames_{};
+    std::optional<ViewFrame> last_completed_{};
+    std::optional<TemporalAudit> last_audit_{};
 };
 }

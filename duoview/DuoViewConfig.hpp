@@ -25,6 +25,7 @@ struct Settings {
     float guard_fraction{.08f}; // continuous, wide spatial deadzone
     float smoothing_ms{85.f};   // exponential temporal follow in milliseconds
     bool independent_shading{};
+    bool temporal_audit{}; // optional observation; no private UE history writes
 };
 struct FrameConfig {
     FrameKey key{};
