@@ -20,6 +20,7 @@ struct Settings {
     bool eye_tracked{true};
     uint32_t fovea_view{};
     uint32_t diagnostic_view{}; // 0 composite, 1 periphery, 2 fovea
+    bool gpu_timing{};
 };
 struct FrameConfig {
     FrameKey key{};

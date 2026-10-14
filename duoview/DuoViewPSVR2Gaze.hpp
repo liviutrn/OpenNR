@@ -93,7 +93,8 @@ public:
             unavailable_.load(std::memory_order_relaxed),age_ms_.load(std::memory_order_relaxed)};
     }
     // Called ONLY for a new DuoView source-frame snapshot, not per eye or compositor.
-    std::optional<UV> read_uv(const std::array<float,16>& projection) {
+    std::optional<UV> read_uv(const std::array<float,16>& projection,
+                              const std::array<float,9>& optical_rotation) {
         std::scoped_lock lock{mutex_};
         const uint64_t now=GetTickCount64();
         if(!read_ && now>=next_attempt_) { initialize(); next_attempt_=now+1000; }
@@ -120,7 +121,8 @@ public:
         }
         age_ms_.store(static_cast<uint32_t>(now-fresh_time_),std::memory_order_relaxed);
         if(!fresh) reused_.fetch_add(1,std::memory_order_relaxed);
-        const auto uv=projection_uv(*cached_,projection);
+        const auto ray=optical_ray(*cached_,optical_rotation);
+        const auto uv=ray ? projection_uv(*ray,projection) : std::optional<UV>{};
         active_.store(uv.has_value(),std::memory_order_release);
         return uv;
     }

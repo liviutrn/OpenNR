@@ -1,12 +1,15 @@
-name: DuoView Joey Quality v20 - Source Isolation and Settings
-run-name: DuoView Joey Quality v20 with exact SDK (${{ github.run_number }})
+name: DuoView Joey Old Behavior v21 - Source Isolation and Settings
+run-name: DuoView Joey Old Behavior v21 with exact SDK (${{ github.run_number }})
 on:
   push:
-    branches: [experiments/duoview-joey-quality-v20]
+    branches: [experiments/duoview-old-logic-investigation-v21]
     paths:
       - '.github/workflows/duoview-joey-stage234.yml'
       - 'duoview/joey_stage1/**'
       - 'duoview/DuoViewPSVR2Gaze.hpp'
+      - 'duoview/DuoViewGaze.hpp'
+      - 'duoview/production_warp_test.cpp'
+      - 'duoview/stage4_gaze_tests.cpp'
       - 'duoview/DuoViewConfig.hpp'
       - 'duoview/DuoViewD3D12.hpp'
       - 'duoview/DuoViewComposite.hlsl'
@@ -154,13 +157,16 @@ jobs:
           Copy-Item evidence/duoview-stage1-source-hashes.json package/
           Copy-Item evidence/duoview-stage234-hashes.json package/
           @'
-          DUOVIEW QUALITY v20 — REAL TWO-VIEW DIAGNOSTIC BUILD. HEADSET QUALITY BEHAVIOR UNVERIFIED.
+          DUOVIEW OLD BEHAVIOR v21 — LEGACY VISUAL INTEGRATION ON EXACT JOEY. HEADSET QUALITY UNVERIFIED.
           Backend: exact Joey 5ac7edc207866569334175e4ed8a7517971547f6 + guarded DuoView modifications.
           Restricted SDK unchanged: joeyhodge/UESDK 3cffbc82429b6165ceec2714f0f0d9ae48f55596.
           Matching frontend source: 60be4b0f9a646109fd9fdf448bacd41477234091, plus ID 6.
           Modes 0 and 5 are routed to ORIGINAL JOEY. Experimental mode ID6 is active ONLY in STALKER 2 DX12 OpenXR.
           ID6 restores persistent per-profile crop width/height, fovea density, peripheral scale, blend feather and gaze controls.
-          Defaults: 0.30x0.30 crop at 2.5x density, 0.25x periphery resolution, eye tracking ON, fovea source view1.
+          Old source defaults: 0.50x0.50 crop at 1.0x density, 0.20x periphery, gaze ON, fovea UE0/periphery UE1.
+          Press Restore old DuoView settings once if an existing profile retains newer settings. Increase density to match your old preferred tuning; exact historical tuning is unknown.
+          Foveal atlas rectangle starts at x=0, matching Injector-5. Gaze uses the inverse left optical rotation, matching the old coordinate path.
+          Optional GPU timing is OFF by default. Query resources prewarm at swapchain creation; no GPU waits or render-callback allocation for timing.
           Debug source 0=blended output, 1=periphery only, 2=fovea only (dark outside ROI).
           Source view0 is the first UE pass (old prototype default), view1 is the second (Build19 default).
           Both source passes share exactly the same Mono camera.
@@ -176,7 +182,7 @@ jobs:
           NEVER overwrite 30-minute-proven Build3! Extract this ZIP into a SEPARATE TEST DIRECTORY.
           Built-in gaze freshness/age counters are read from the UI; no smoothing/deadzone forced.
           Stage5 gaze requires installed PSVR2 Toolkit CAPI and still requires headset calibration validation.
-          Lumen/shadow/exposure parity is NOT FIXED, only isolated by the diagnostic modes.
+          Restored engine view order and optical gaze mapping are source verified. Actual Lumen/shadow/exposure and visual parity require a headset test; no gamma correction applied.
           The eye-tracked source/compositor and first-use pacing are NOT headset verified.
           '@ | Set-Content package/READ_FIRST.txt
           $needed=@('UEVRBackend.dll','UEVRPluginNullifier.dll','LuaVR.dll','READ_FIRST.txt','duoview-stage234-hashes.json','exact-baseline-source.json')
@@ -184,16 +190,16 @@ jobs:
           if (@(Get-ChildItem package -File -Filter *.exe).Count -lt 1) { throw "Missing Joey frontend executable" }
           if ((Get-Content package/READ_FIRST.txt -Raw) -notmatch 'QUARANTINED internally') { throw 'Stale fallback instructions' }
           Get-ChildItem package -Recurse -File | Get-FileHash -Algorithm SHA256 | ConvertTo-Json | Set-Content evidence/package-sha256.json
-          $zip="Joey-DuoView-Quality-v20-${{ github.run_number }}.zip"
+          $zip="Joey-DuoView-OldBehavior-v21-${{ github.run_number }}.zip"
           Compress-Archive -Path package/* -DestinationPath $zip -Force
           (Get-FileHash $zip -Algorithm SHA256).Hash | Set-Content "$zip.sha256"
       - uses: actions/upload-artifact@v4
         if: success()
         with:
-          name: Joey-DuoView-Quality-v20-${{ github.run_number }}
+          name: Joey-DuoView-OldBehavior-v21-${{ github.run_number }}
           path: |
-            Joey-DuoView-Quality-v20-*.zip
-            Joey-DuoView-Quality-v20-*.zip.sha256
+            Joey-DuoView-OldBehavior-v21-*.zip
+            Joey-DuoView-OldBehavior-v21-*.zip.sha256
           if-no-files-found: error
           retention-days: 90
       - name: Record public source and dependency provenance

@@ -29,6 +29,12 @@ int main() try {
     require(c && std::abs(c->u-.5f)<1e-5f && std::abs(c->v-.5f)<1e-5f,"forward mapped to center");
     auto r=psvr2::projection_uv({.5f,.5f,1},p);
     require(r && std::abs(r->u-.75f)<1e-5f && std::abs(r->v-.25f)<1e-5f,"right/up projection");
+    const float angle=.2f, cosine=std::cos(angle), sine=std::sin(angle);
+    const auto optical=optical_ray({0,0,1},{cosine,0,-sine,0,1,0,sine,0,cosine});
+    require(optical.has_value(),"left optical yaw produces a forward ray");
+    const auto corrected=psvr2::projection_uv(*optical,p);
+    require(corrected && std::abs(corrected->u-(.5f+.5f*std::tan(angle)))<1e-5f,
+            "native calibrated gaze is projected after inverse optical yaw");
     // Joey uses GLM column-major [column][row] storage and +Z-forward Mono.
     // x_clip=p[0]*right+p[8]*forward, w_clip=p[11]*forward:
     // +0.2 shifts the optical center to U=0.6; -0.2 shifts it to U=0.4.

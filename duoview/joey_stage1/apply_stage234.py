@@ -58,19 +58,22 @@ def main():
     }
     bool duoview_gaze_active() const { return m_duoview_gaze.active(); }
     void configure_duoview();
+    void note_duoview_gpu_ms(float ms) { m_duo_gpu_ms.store(ms, std::memory_order_relaxed); }
     std::optional<uevr::duoview::ViewFrame> duoview_begin_frame();
     void duoview_abort(const char* reason);''')
     edit(header,'    std::atomic<const char*> m_mono_status{"Not selected"};',
         '''    // Legacy-style persistent options; never sampled by the XR compositor.
-    const ModSlider::Ptr m_duo_width{ModSlider::create(generate_name("DuoViewCropWidth"), .10f, .95f, .30f)};
-    const ModSlider::Ptr m_duo_height{ModSlider::create(generate_name("DuoViewCropHeight"), .10f, .95f, .30f)};
-    const ModSlider::Ptr m_duo_periphery{ModSlider::create(generate_name("DuoViewPeripheralScale"), .05f, .50f, .25f)};
-    const ModSlider::Ptr m_duo_density{ModSlider::create(generate_name("DuoViewFovealDensity"), .25f, 4.0f, 2.5f)};
+    const ModSlider::Ptr m_duo_width{ModSlider::create(generate_name("DuoViewCropWidth"), .10f, 1.f, .50f)};
+    const ModSlider::Ptr m_duo_height{ModSlider::create(generate_name("DuoViewCropHeight"), .10f, 1.f, .50f)};
+    const ModSlider::Ptr m_duo_periphery{ModSlider::create(generate_name("DuoViewPeripheralScale"), .05f, .50f, .20f)};
+    const ModSlider::Ptr m_duo_density{ModSlider::create(generate_name("DuoViewFovealDensity"), .25f, 4.0f, 1.f)};
     const ModSlider::Ptr m_duo_feather{ModSlider::create(generate_name("DuoViewFeather"), 0.f, .45f, .08f)};
     const ModToggle::Ptr m_duo_gaze{ModToggle::create(generate_name("DuoViewEyeTracking"), true)};
     const ModToggle::Ptr m_duo_border{ModToggle::create(generate_name("DuoViewDebugBorder"), false)};
     const ModInt32::Ptr m_duo_debug_source{ModSliderInt32::create(generate_name("DuoViewDebugSource"), 0, 2, 0)};
-    const ModInt32::Ptr m_duo_fovea_view{ModSliderInt32::create(generate_name("DuoViewFoveaSourceView"), 0, 1, 1)};
+    const ModInt32::Ptr m_duo_fovea_view{ModSliderInt32::create(generate_name("DuoViewFoveaSourceView"), 0, 1, 0)};
+    const ModToggle::Ptr m_duo_timing{ModToggle::create(generate_name("DuoViewGpuTiming"), false)};
+    std::atomic<float> m_duo_gpu_ms{-1.f};
     uevr::duoview::State m_duoview;
     uevr::duoview::psvr2::Reader m_duoview_gaze;
     std::atomic<bool> m_duoview_quarantined{false};
@@ -82,7 +85,7 @@ def main():
         '''        m_options = {
             *m_duo_width, *m_duo_height, *m_duo_periphery, *m_duo_density,
             *m_duo_feather, *m_duo_gaze, *m_duo_border, *m_duo_debug_source,
-            *m_duo_fovea_view,''')
+            *m_duo_fovea_view, *m_duo_timing,''')
     cpp="src/mods/VR.cpp"
     edit(cpp,
         'ImGui::TextWrapped("DuoView Stage 1: rendering uses original Joey Mono unchanged. Two-view foveation and gaze are NOT active.");',
@@ -92,6 +95,13 @@ def main():
     '''        if (is_using_duoview_mono() || requested_rendering_method() == RenderingMethod::DUOVIEW_MONO) {
             if (ImGui::TreeNode("DuoView Mono — quality and diagnostics")) {
                 ImGui::TextWrapped("Settings are frozen once per new UE frame. The original Joey Mono ID5 is untouched.");
+                if (ImGui::Button("Restore old DuoView settings")) {
+                    m_duo_width->value()=.50f; m_duo_height->value()=.50f;
+                    m_duo_periphery->value()=.20f; m_duo_density->value()=1.f;
+                    m_duo_feather->value()=.08f; m_duo_gaze->value()=true;
+                    m_duo_border->value()=false; m_duo_fovea_view->value()=0;
+                    m_duo_debug_source->value()=0;
+                }
                 m_duo_width->draw("Fovea width / full FOV");
                 m_duo_height->draw("Fovea height / full FOV");
                 m_duo_periphery->draw("Peripheral resolution scale");
@@ -101,6 +111,12 @@ def main():
                 m_duo_border->draw("Blend border highlight");
                 m_duo_debug_source->draw("Source diagnostic: 0 Blend / 1 Periphery / 2 Fovea");
                 m_duo_fovea_view->draw("Fovea UE source view (0 or 1)");
+                m_duo_timing->draw("GPU timing: composite + both eye copies");
+                if (m_duo_timing->value()) {
+                    const float ms=m_duo_gpu_ms.load(std::memory_order_relaxed);
+                    if (ms >= 0.f) ImGui::Text("Composite + eye copies: %.3f ms GPU (last retired slot)", ms);
+                    else ImGui::TextUnformatted("GPU timing: waiting for a completed command slot");
+                }
                 const auto counts=m_duoview_gaze.counters();
                 ImGui::Text("PSVR2 gaze: fresh=%llu held=%llu invalid=%llu expired=%llu unavailable=%llu",
                     static_cast<unsigned long long>(counts.fresh),
@@ -117,6 +133,9 @@ def main():
                         layout.fovea.width,layout.fovea.height,
                         layout.periphery.width,layout.periphery.height,
                         layout.atlas_width/2,layout.atlas_height);
+                    ImGui::Text("Fovea UE%u; periphery UE%u; gaze %s",
+                        snap->config.settings.fovea_view,1u-snap->config.settings.fovea_view,
+                        snap->gaze_valid ? "tracking" : "fixed center / unavailable");
                     ImGui::Text("Frame gaze (%.3f, %.3f), scene pixels: %.2f million",
                         snap->config.gaze.u,snap->config.gaze.v,
                         uevr::duoview::rendered_pixels(layout)/1000000.);
@@ -143,13 +162,14 @@ void VR::configure_duoview() {
         .peripheral_scale=m_duo_periphery->value(), .foveal_density=m_duo_density->value(),
         .feather_fraction=m_duo_feather->value(), .debug_border=m_duo_border->value(),
         .eye_tracked=m_duo_gaze->value(), .fovea_view=static_cast<uint32_t>(m_duo_fovea_view->value()),
-        .diagnostic_view=static_cast<uint32_t>(m_duo_debug_source->value())};
+        .diagnostic_view=static_cast<uint32_t>(m_duo_debug_source->value()),
+        .gpu_timing=m_duo_timing->value()};
     const auto current=m_duoview.settings();
     if (current.crop_width==candidate.crop_width && current.crop_height==candidate.crop_height &&
         current.peripheral_scale==candidate.peripheral_scale && current.foveal_density==candidate.foveal_density &&
         current.feather_fraction==candidate.feather_fraction && current.debug_border==candidate.debug_border &&
         current.eye_tracked==candidate.eye_tracked && current.fovea_view==candidate.fovea_view &&
-        current.diagnostic_view==candidate.diagnostic_view) return;
+        current.diagnostic_view==candidate.diagnostic_view && current.gpu_timing==candidate.gpu_timing) return;
     if (!m_duoview.configure(candidate))
         SPDLOG_WARNING_EVERY_N_SEC(2, "[DuoView] Requested quality settings exceed atlas geometry; preserving previous valid settings");
 }
@@ -176,8 +196,15 @@ std::optional<uevr::duoview::ViewFrame> VR::duoview_begin_frame() {
     const auto projection = get_projection_matrix(VRRuntime::Eye::LEFT);
     std::array<float, 16> frozen{};
     std::memcpy(frozen.data(), &projection[0][0], sizeof(frozen));
+    const auto eye=get_eye_transform(0);
+    const std::array<float,9> optical{
+        eye[0][0],eye[0][1],eye[0][2],
+        eye[1][0],eye[1][1],eye[1][2],
+        eye[2][0],eye[2][1],eye[2][2]};
     return m_duoview.begin(key, get_hmd_width(), get_hmd_height(), frozen,
-        [this, frozen]() -> std::optional<uevr::duoview::UV> { return m_duoview_gaze.read_uv(frozen); });
+        [this, frozen, optical]() -> std::optional<uevr::duoview::UV> {
+            return m_duoview_gaze.read_uv(frozen,optical);
+        });
 }
 
 void VR::duoview_abort(const char* reason) {
@@ -305,11 +332,14 @@ void VR::duoview_abort(const char* reason) {
             auto& duo_ctx = this->contexts[(uint32_t)runtimes::OpenXR::SwapchainIndex::DOUBLE_WIDE];
             const bool duo_srgb = backbuffer_desc.Format == DXGI_FORMAT_B8G8R8A8_UNORM_SRGB ||
                                   backbuffer_desc.Format == DXGI_FORMAT_R8G8B8A8_UNORM_SRGB;
+            UINT64 duo_frequency{};
+            if (const auto queue=g_framework->get_d3d12_hook()->get_command_queue(); queue)
+                queue->GetTimestampFrequency(&duo_frequency);
             for (auto& tc : duo_ctx.texture_contexts) {
                 if (!tc) continue;
                 auto& comp = this->duoview_compositors[&tc->commands];
                 if (!comp) comp = std::make_unique<uevr::duoview::dx12::Compositor>();
-                if (!comp->prewarm(device, vr->get_hmd_width(), vr->get_hmd_height(), duo_srgb)) {
+                if (!comp->prewarm(device, vr->get_hmd_width(), vr->get_hmd_height(), duo_srgb, duo_frequency)) {
                     SPDLOG_WARNING_EVERY_N_SEC(2,
                         "[DuoView] DX12 prewarm failed; guarded compositing/fallback remains available");
                 }
@@ -339,7 +369,10 @@ void VR::duoview_abort(const char* reason) {
                                     auto& item = m_openxr.duoview_compositors[&commands];
                                     if (!item) item = std::make_unique<uevr::duoview::dx12::Compositor>();
                                     duo_recorded = item->record(device, commands.cmd_list.Get(),
-                                        source.Get(), destination, scene_source_state, frame->config);
+                                        source.Get(), destination, scene_source_state, frame->config,
+                                        frame->config.settings.gpu_timing ? item->timing_frequency() : 0);
+                                    if (frame->config.settings.gpu_timing)
+                                        VR::get()->note_duoview_gpu_ms(item->gpu_milliseconds());
                                     if (item->recorded_commands()) commands.has_commands = true;
                                 }
                                 if (!duo_recorded) {
@@ -366,10 +399,6 @@ void VR::duoview_abort(const char* reason) {
         target=root/"src/mods/vr"/name
         if target.exists(): raise RuntimeError("Refusing to overwrite prior source: "+str(target))
         text=(src/name).read_text(encoding="utf-8")
-        if name=="DuoViewGeometry.hpp":
-            # Put the full-FOV peripheral view first in atlas/camera order.
-            text=replace(text,'.fovea = {0, 0, fw, fh},','.fovea = {pw, 0, fw, fh},',name)
-            text=replace(text,'.periphery = {fw, 0, pw, ph},','.periphery = {0, 0, pw, ph},',name)
         if name=="DuoViewConfig.hpp":
             text=replace(text,
                 '        cached_.reset();\n    }',

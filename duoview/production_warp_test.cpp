@@ -57,9 +57,10 @@ int main() try {
     transition(cmd.Get(),atlas.Get(),D3D12_RESOURCE_STATE_COPY_DEST,D3D12_RESOURCE_STATE_RENDER_TARGET);
     uevr::duoview::FrameConfig frame{{1,1},*layout,{.5f,.5f},{},1};frame.settings.feather_fraction=.12f;
     uevr::duoview::dx12::Compositor compositor;
+    if (!compositor.prewarm(device.Get(),32,32,false,frequency)) throw std::runtime_error("Timing prewarm failed");
+    UINT64 frequency{};check(queue->GetTimestampFrequency(&frequency));
     if (compositor.record(device.Get(),cmd.Get(),atlas.Get(),bad.Get(),D3D12_RESOURCE_STATE_RENDER_TARGET,frame)) throw std::runtime_error("Invalid destination accepted");
     if (compositor.recorded_commands()) throw std::runtime_error("Rejected input recorded GPU commands");
-    UINT64 frequency{};check(queue->GetTimestampFrequency(&frequency));
     if (!compositor.record(device.Get(),cmd.Get(),atlas.Get(),stereo.Get(),D3D12_RESOURCE_STATE_RENDER_TARGET,frame,frequency)) throw std::runtime_error(compositor.error());
     transition(cmd.Get(),stereo.Get(),D3D12_RESOURCE_STATE_RENDER_TARGET,D3D12_RESOURCE_STATE_COPY_SOURCE);
     from={stereo.Get(),D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX};to={readback.Get(),D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT};to.PlacedFootprint=foot;

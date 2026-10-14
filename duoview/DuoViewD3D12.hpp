@@ -19,9 +19,11 @@ class Compositor {
 public:
     // Prebuild the per-slot PSO, descriptors and output outside OpenXR frame copy.
     // Called after swapchain images and their command contexts are constructed.
-    bool prewarm(ID3D12Device* device, UINT width, UINT height, bool srgb) {
+    bool prewarm(ID3D12Device* device, UINT width, UINT height, bool srgb, UINT64 frequency = 0) {
         if (!device || !width || !height || FAILED(device->GetDeviceRemovedReason())) return false;
-        return prepare(device, width, height, srgb);
+        if (!prepare(device, width, height, srgb)) return false;
+        setup_timing(device, frequency);
+        return true;
     }
     // One instance per retired OpenXR command slot; descriptors/resources must
     // stay alive until that slot's GPU fence completes.
@@ -54,8 +56,8 @@ public:
             sd.Get() != device || dd.Get() != device || cd.Get() != device) return false;
         const bool srgb = format == DXGI_FORMAT_B8G8R8A8_UNORM_SRGB || format == DXGI_FORMAT_R8G8B8A8_UNORM_SRGB;
         if (!prepare(device, l.atlas_width / 2, l.atlas_height, srgb)) return false;
-        read_timing();
-        setup_timing(device, frequency);
+        const bool timed = frequency && frequency == frequency_ && queries_ && timestamps_;
+        if (timed) read_timing();
         ShaderConstants constants{
             {l.atlas_width / 2, l.atlas_height}, {l.atlas_width, l.atlas_height},
             {l.fovea.x, l.fovea.y, l.fovea.width, l.fovea.height},
@@ -71,7 +73,7 @@ public:
         source_ = atlas;
         transition(cmd, atlas, atlas_state, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
         recorded_commands_ = true;
-        if (queries_) cmd->EndQuery(queries_.Get(), D3D12_QUERY_TYPE_TIMESTAMP, 0);
+        if (timed) cmd->EndQuery(queries_.Get(), D3D12_QUERY_TYPE_TIMESTAMP, 0);
         cmd->BeginEvent(0, "DuoView::Composite", 18);
         ID3D12DescriptorHeap* heaps[]{srv_.Get()};
         cmd->SetDescriptorHeaps(1, heaps);
@@ -91,7 +93,7 @@ public:
         transition(cmd, atlas, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, atlas_state);
         const auto copied = copy_composite_to_stereo(cmd, device, output_.Get(), destination,
             D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_RENDER_TARGET);
-        if (queries_) {
+        if (timed) {
             cmd->EndQuery(queries_.Get(), D3D12_QUERY_TYPE_TIMESTAMP, 1);
             cmd->ResolveQueryData(queries_.Get(), D3D12_QUERY_TYPE_TIMESTAMP, 0, 2, timestamps_.Get(), 0);
             timing_pending_ = true;
@@ -101,6 +103,7 @@ public:
     const std::string& error() const { return error_; }
     bool recorded_commands() const { return recorded_commands_; }
     float gpu_milliseconds() const { return gpu_ms_; }
+    UINT64 timing_frequency() const { return frequency_; }
 private:
     void read_timing() {
         if (!timing_pending_ || !timestamps_ || !frequency_) return;

@@ -15,10 +15,10 @@ int main() try {
         const auto l=make_layout(wh[0],wh[1],.30f,.30f,.25f,2.5f,.5f,.5f);
         require(l.has_value(), "Pinned fixed-center geometry not admitted");
         require(layout_valid(*l), "Pinned geometry not valid");
-        require(l->periphery.x == 0 && l->periphery.y == 0,
-                "Primary FULL-FOV peripheral view MUST occupy the beginning of atlas");
-        require(l->fovea.x == l->periphery.width && l->fovea.y == 0,
-                "Second focused view must not overwrite primary view");
+        require(l->fovea.x == 0 && l->fovea.y == 0,
+                "Legacy high-resolution fovea must begin at atlas origin");
+        require(l->periphery.x == l->fovea.width && l->periphery.y == 0,
+                "Peripheral rectangle must not overwrite legacy fovea");
         require(l->fovea.x + l->fovea.width <= l->atlas_width &&
                 l->periphery.width <= wh[0] && l->atlas_width == wh[0]*2,
                 "Atlas bounds or original double-wide XR allocation changed");
@@ -75,13 +75,14 @@ int main() try {
     require(!state.consume({3,100}),"Wrong renderer generation must not compose");
     require(state.consume(key).has_value(),"Current coherent pair rejected");
     require(!state.consume(key),"Double submission of a frame must be rejected");
-    settings.diagnostic_view=1;
+    settings.diagnostic_view=1; settings.gpu_timing=true;
     require(state.configure(settings),"Quality settings change rejected");
-    require(state.snapshot(key)->config.settings.diagnostic_view==0,
-            "In-flight source view changed when UI settings updated");
+    require(state.snapshot(key)->config.settings.diagnostic_view==0 &&
+            !state.snapshot(key)->config.settings.gpu_timing,
+            "In-flight diagnostic/timing changed when UI settings updated");
     auto new_frame=state.begin({4,101},3000,3000,m,
         []()->std::optional<UV>{return UV{.5f,.5f};});
-    require(new_frame && new_frame->config.settings.diagnostic_view==1,
+    require(new_frame && new_frame->config.settings.diagnostic_view==1 && new_frame->config.settings.gpu_timing,
             "Updated preview diagnostic not applied on NEXT UE frame");
     require(state.snapshot(key)->config.settings.diagnostic_view==0,
             "Late settings invalidated prior view pair");

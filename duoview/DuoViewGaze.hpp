@@ -18,6 +18,16 @@ struct UV {
     float u{.5f}, v{.5f};
 };
 
+inline std::optional<Ray> optical_ray(Ray ray, const std::array<float, 9>& rotation) {
+    for (float x : rotation) if (!std::isfinite(x)) return {};
+    // Transpose the orthonormal eye rotation in OpenXR's -Z basis, then return to Mono +Z.
+    const float x = rotation[0]*ray.right + rotation[1]*ray.up - rotation[2]*ray.forward;
+    const float y = rotation[3]*ray.right + rotation[4]*ray.up - rotation[5]*ray.forward;
+    const float z = rotation[6]*ray.right + rotation[7]*ray.up - rotation[8]*ray.forward;
+    if (!std::isfinite(x) || !std::isfinite(y) || !std::isfinite(z) || z >= -.1f) return {};
+    return Ray{x, y, -z};
+}
+
 // Input: eye ray in the *shared calibrated Mono optical basis*.
 // Output: normalized full-frustum tangent-plane coordinates (not angles).
 inline std::optional<UV> ray_to_uv(Ray gaze, const Tans& full) {

@@ -48,6 +48,9 @@ def main():
  if fdiff - (EDITED_FRONTEND|GENERATED_FRONTEND) or not EDITED_FRONTEND.issubset(fdiff):
   raise RuntimeError(f"Unexpected frontend tracked changes: {fdiff}")
  if untracked(a.frontend): raise RuntimeError("Unexpected untracked frontend source")
+ geometry=(a.backend/"src/mods/vr/DuoViewGeometry.hpp").read_text(encoding="utf-8")
+ if '.fovea = {0, 0, fw, fh}' not in geometry or '.periphery = {fw, 0, pw, ph}' not in geometry:
+  raise RuntimeError("Legacy atlas order must be preserved in applied source")
  # A shipping DuoView must never compile shaders on the OpenXR copy path.
  compositor=(a.backend/"src/mods/vr/DuoViewD3D12.hpp").read_text(encoding="utf-8")
  shaders=(a.backend/"src/mods/vr/DuoViewShaderSource.hpp").read_text(encoding="utf-8")
@@ -57,7 +60,7 @@ def main():
   raise RuntimeError("Production VR headers missing native PSVR2 gaze integration")
  vr_cpp=(a.backend/"src/mods/VR.cpp").read_text(encoding="utf-8")
  vr_header=(a.backend/"src/mods/VR.hpp").read_text(encoding="utf-8")
- if ".eye_tracked=m_duo_gaze->value()" not in vr_cpp or "m_duoview_gaze.read_uv(frozen)" not in vr_cpp:
+ if ".eye_tracked=m_duo_gaze->value()" not in vr_cpp or "m_duoview_gaze.read_uv(frozen,optical)" not in vr_cpp:
   raise RuntimeError("Stage5 gaze control is not connected to frame source")
  for token in ('m_duo_width->draw(', 'm_duo_height->draw(', 'm_duo_periphery->draw(',
                'm_duo_density->draw(', 'm_duo_feather->draw(', 'm_duo_debug_source->draw('):
