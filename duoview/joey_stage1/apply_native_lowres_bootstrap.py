@@ -156,6 +156,15 @@ def main():
 
 void VR::configure_duoview() {''')
 
+    # The Build33 UE scene-view constructor hook was only armed for Native Fix
+    # or other compatibility toggles; entering ID6 after vanilla Native0
+    # otherwise risks missing the required projection/view-state hook.
+    # Activate this ONE existing hook for ID6 itself (no ID0-dependent state).
+    hook="src/mods/vr/FFakeStereoRenderingHook.cpp"
+    edit(hook,
+         'if (!vr->is_ghosting_fix_enabled() && !vr->is_splitscreen_compatibility_enabled() && !vr->is_sceneview_compatibility_enabled() && !vr->is_native_stereo_fix_enabled()) {',
+         'if (!vr->is_using_duoview_mono() && !vr->is_ghosting_fix_enabled() && !vr->is_splitscreen_compatibility_enabled() && !vr->is_sceneview_compatibility_enabled() && !vr->is_native_stereo_fix_enabled()) {')
+
     dx="src/mods/vr/D3D12Component.cpp"
     edit(dx,
          '''                        vr->m_openxr->note_mono_copy(static_cast<uint32_t>(frame_count), submitted && recorded);
