@@ -25,7 +25,7 @@ TARGETS = {
  "src/mods/vr/D3D12Component.cpp": [
    "vr->duoview_state().consume(",
    "duo_recorded = item->record(",
-   "vr->m_openxr->note_mono_copy(static_cast<uint32_t>(frame_count), submitted && recorded)",
+   "vr->duoview_abort(\"XR copy/composite fault; safe original Mono requested\")",
  ],
  "src/mods/vr/runtimes/OpenXR.cpp": [
    "on_openxr_resolution_scale_changed(",
