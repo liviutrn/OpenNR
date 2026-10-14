@@ -4,12 +4,27 @@
 #include <iostream>
 #include <stdexcept>
 #include "DuoViewState.hpp"
+#include "MonoRenderingPolicy.hpp"
 
 using namespace uevr::duoview;
 static void require(bool test, const char* what) {
     if (!test) throw std::runtime_error(what);
 }
 int main() try {
+    // No Native Stereo (0) frame or allocation may precede this dedicated
+    // recovery branch's startup. Transition through Joey's existing retire gate.
+    uevr::mono::Selection bootstrap;
+    bootstrap.initialize_duoview_safe_bootstrap();
+    require(bootstrap.active()==5 && bootstrap.requested()==5 && !bootstrap.pending(),
+            "Recovery must begin directly in safe original Joey Mono 5");
+    bootstrap.request(6);
+    require(bootstrap.active()==5 && bootstrap.pending(),
+            "ID6 request must not replace live Mono5 before retirement");
+    require(!bootstrap.commit_at_game_frame_boundary(),
+            "Unretired producer/consumer must not transition to ID6");
+    bootstrap.consumers_retired(bootstrap.request_token());
+    require(bootstrap.commit_at_game_frame_boundary() && bootstrap.active()==6,
+            "Retired mono resources must permit guarded ID5 to ID6 transition");
     for (auto wh: {std::array{2000u,2000u},std::array{3000u,3000u},
                    std::array{3400u,3172u},std::array{4096u,2160u}}) {
         const auto l=make_layout(wh[0],wh[1],.30f,.30f,.25f,2.5f,.5f,.5f);
