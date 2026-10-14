@@ -30,9 +30,9 @@ def main():
 
     setting="src/mods/vr/RenderingMethodSetting.hpp"
     edit(setting, 'm_selection.initialize(defaults ? 0 : cfg.get<int32_t>(m_name).value_or(requested_value()));',
-         '''// Recovery always starts with ORIGINAL Joey Native Stereo 0.
-        // Do not honor persisted ID6 at injection: it needs warmed UE views.
-        m_selection.initialize(0);''')
+         '''// Preserve active ID6 through profile reloads, but on first load always
+        // initialize real Native0 rather than allowing saved ID6 at injection.
+        if (!m_bootstrap_released.load(std::memory_order_acquire)) m_selection.initialize(0);''')
     # Suppress premature profile/front-end requests until the prepared native
     # initialization has completed, without bypassing Joey's retirement gate.
     edit(setting,'void request(int32_t value) { m_selection.request(value); }',
@@ -49,7 +49,8 @@ def main():
     std::atomic<bool> m_bootstrap_released{false};''')
     edit(setting,'void config_save(utility::Config& cfg) override { cfg.set<int32_t>(m_name, requested_value()); }',
          '''void config_save(utility::Config& cfg) override {
-        cfg.set<int32_t>(m_name, uevr::mono::duoview_method_id);
+        cfg.set<int32_t>(m_name, m_bootstrap_released.load(std::memory_order_acquire)
+            ? requested_value() : uevr::mono::duoview_method_id);
     }''')
 
     header="src/mods/VR.hpp"
