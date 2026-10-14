@@ -1,8 +1,8 @@
-name: DuoView v39 Temporal Source and Oracle Audit — NOT RELEASED
-run-name: DuoView v39 pinned temporal audits (candidate NOT RELEASED) (${{ github.run_number }})
+name: DuoView v40 Sensor Coherence Audit — NOT RELEASED
+run-name: DuoView v40 gaze metadata + temporal audit (NOT RELEASED) (${{ github.run_number }})
 on:
   push:
-    branches: [experiments/duoview-gaze-temporal-audit-v39]
+    branches: [experiments/duoview-gaze-sensor-coherence-v40]
     paths:
       - '.github/workflows/duoview-joey-stage234.yml'
       - 'duoview/joey_stage1/**'
