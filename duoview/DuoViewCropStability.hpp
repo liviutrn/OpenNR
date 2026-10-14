@@ -53,7 +53,9 @@ public:
                     : value;
             };
             if (first) return align(desired);
-            const float guard=extent*s.guard_fraction;
+            // Tracking loss must converge to center rather than getting stuck
+            // in the normal fixation deadzone.
+            const float guard=valid ? extent*s.guard_fraction : 0.f;
             const float diff=desired-old;
             const float excess=(std::max)(0.f,std::abs(diff)-guard);
             if (excess==0.f) return old;
