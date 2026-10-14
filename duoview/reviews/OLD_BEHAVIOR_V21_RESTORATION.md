@@ -82,3 +82,15 @@ and long-session frame pacing cannot be claimed before headset testing.
    there is still a shading mismatch.
 5. GPU timing is optional. It measures the compositor and eye copies,
    not the full Unreal scene-rendering cost.
+
+## CI checkpoint — 2026-10-14
+
+Initial restoration commit: 975d3580df9d540e1d60d68888d139c2aa822af4.
+Run 38543434962 (25) passed the three pinned production tests but stopped
+in independent GPU test compilation: timestamp frequency declaration was
+after its prewarm use in production_warp_test.cpp. No build was delivered.
+
+Test-only correction: 28dae2e13666b4f5513b6666546e8620d0926ce4.
+Full Windows run 38543842360 (26) is the active candidate. Production tests
+have passed again. All further gates and package inspection remain required.
+https://github.com/liviutrn/OpenNR/actions/runs/38543842360
