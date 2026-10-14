@@ -50,3 +50,11 @@
 7. Keep Build3 rollback intact; do not ask for repeated headset tests.
 
 **Operator constraint:** Current green Build37 CI proves compilation, not gaze stability. A v39 Windows result will likewise not prove the UE historical matrix fix because such a fix is not yet implemented. This report is intentionally explicit about that limitation.
+
+## Subsequent audit findings — source vs runtime
+- Dedicated v39 Actions run `38632220956` at SHA `4d073b6749fcb8a7ffc71891c966432d98980d55` passed baseline/source verification, all generated patched-hook anchor SHA checks, pinned production contract tests, the independent CPU + WARP DuoView CTest stage (includes `temporal-world-oracle`), and original backend CMake configuration. At this checkpoint the original Joey full compatibility target compilation was still running. Check final run; **do not infer final success**.
+- The two early v39 Actions failures were **new overly strict evidence-script anchor duplication**, one `note_mono_copy` occurrence pattern and one `on_openxr_resolution_scale_changed` pattern. They were changed to exact unique quarantine / scale-restoration function anchors; the passing generated audit in run `38632220956` confirms these script blockers are resolved. Those earlier failures did NOT establish a production renderer failure.
+- Public Epic Unreal 5.5 `FSceneView` documentation explicitly includes `ClipToPrevClipOverride` (`TOptional<FMatrix>`), described as overriding the previous view-to-clip matrix in the view uniform buffer. See https://dev.epicgames.com/documentation/en-us/unreal-engine/API/Runtime/Engine/FSceneView?application_version=5.5 . This is a **research lead ONLY**: no validated UESDK accessor/offset/callback and no demonstration that this field controls STALKER's relevant TSR/DLSS/velocity consumer. Never write to it via guessed offsets.
+- STALKER 2 2.0 rollout is publicly reported to use modified UE 5.5.4: https://overclock3d.net/reviews/software/stalker-2-patch-2-0-tested-huge-improvements/ . Verify installed executable and active temporal technique, not just this general release reporting.
+
+**Current stop condition remains active:** Unreal prior consumed projection/jitter/viewport and actual source history epoch are unobserved. Do not implement Case D2/D3 until their exact source and timing can be validated. A passing oracle does not close B1/D0.
