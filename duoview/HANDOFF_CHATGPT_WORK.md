@@ -1,4 +1,4 @@
-> Current candidate: [v26 OpenNR controls and DLSS history protection](reviews/DUOVIEW_V26_OPENNR_HISTORY_HANDOFF_2026-10-14.md). Publication/build explicitly authorized; Windows CI pending. Hardware acceptance remains unverified.
+> Current candidate: [v26 OpenNR controls and DLSS history protection](reviews/DUOVIEW_V26_OPENNR_HISTORY_HANDOFF_2026-10-14.md). [Build34 download](https://github.com/liviutrn/OpenNR/actions/runs/38605029465/artifacts/11916511828):53/53 Windows tests passed; backend/frontend and all14 package hashes verified. Source310b505b1e430baf3981c5c79a9805bc752a5c54. Hardware acceptance remains unverified.
 
 > Latest active candidate: [v25 always-on startup and gaze camera](reviews/DUOVIEW_V25_ALWAYS_ON_HANDOFF_2026-10-14.md). Branch `experiments/duoview-v25-gaze-camera-always-on`. Windows CI pending; headset unverified. Earlier Build33 crop fix was rejected.
 
