@@ -5,7 +5,7 @@ from pathlib import Path
 
 EDITED_BACKEND = {
  "src/mods/vr/MonoRenderingPolicy.hpp", "src/mods/vr/CompatibilityPolicy.hpp",
- "src/mods/VR.hpp", "src/mods/VR.cpp",
+ "src/mods/VR.hpp", "src/mods/VR.cpp", "src/mods/vr/RenderingMethodSetting.hpp",
  "src/mods/vr/FFakeStereoRenderingHook.cpp", "src/mods/vr/D3D12Component.hpp",
  "src/mods/vr/D3D12Component.cpp", "tests/MonoRenderingTests.hpp",
 }
@@ -56,6 +56,17 @@ def main():
  shaders=(a.backend/"src/mods/vr/DuoViewShaderSource.hpp").read_text(encoding="utf-8")
  if "D3DCompile(" in compositor or "shader_source" in compositor:
   raise RuntimeError("Runtime shader compiler still in production compositor")
+ # Reject regressions into immediate ID6 bootstrap or compact-atlas/NGX startup.
+ setting=(a.backend/"src/mods/vr/RenderingMethodSetting.hpp").read_text(encoding="utf-8")
+ policy=(a.backend/"src/mods/vr/MonoRenderingPolicy.hpp").read_text(encoding="utf-8")
+ if "initialize_duoview_safe_bootstrap()" not in setting or "m_active=pack(method_id,1)" not in policy:
+  raise RuntimeError("Mono5 safe startup has been bypassed")
+ if "service_duoview_bootstrap();" not in (a.backend/"src/mods/VR.cpp").read_text(encoding="utf-8"):
+  raise RuntimeError("Safe guarded ID6 transition missing")
+ if "DuoViewSceneLayout.hpp" in (a.backend/"src/mods/VR.hpp").read_text(encoding="utf-8"):
+  raise RuntimeError("Compact atlas accidentally enabled")
+ if "DuoViewDlssHistory" in (a.backend/"src/mods/VR.cpp").read_text(encoding="utf-8"):
+  raise RuntimeError("Unsupported NGX intercept reinstated")
  if "DuoViewPSVR2Gaze.hpp" not in (a.backend/"src/mods/VR.hpp").read_text(encoding="utf-8"):
   raise RuntimeError("Production VR headers missing native PSVR2 gaze integration")
  vr_cpp=(a.backend/"src/mods/VR.cpp").read_text(encoding="utf-8")
