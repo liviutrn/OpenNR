@@ -168,8 +168,16 @@ void VR::configure_duoview() {''')
     dx="src/mods/vr/D3D12Component.cpp"
     edit(dx,
          '''                        vr->m_openxr->note_mono_copy(static_cast<uint32_t>(frame_count), submitted && recorded);
+                        // Only a successfully accepted two-view XR copy may seed
+                        // the NEXT compositor sample shift. Quarantine on failure.
+                        if (frame && submitted && recorded && duo_recorded)
+                            vr->duoview_state().accept_composite(frame->config.key);
                         if (duo_failed || !submitted || !recorded)''',
          '''                        vr->m_openxr->note_mono_copy(static_cast<uint32_t>(frame_count), submitted && recorded);
+                        // Only a successfully accepted two-view XR copy may seed
+                        // the NEXT compositor sample shift. Quarantine on failure.
+                        if (frame && submitted && recorded && duo_recorded)
+                            vr->duoview_state().accept_composite(frame->config.key);
                         if (submitted && recorded && duo_recorded) vr->note_duoview_bootstrap_composite();
                         if (duo_failed || !submitted || !recorded)''')
 
