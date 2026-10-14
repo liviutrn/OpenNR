@@ -77,6 +77,9 @@ def main():
     const ModSlider::Ptr m_duo_smoothing{ModSlider::create(generate_name("DuoViewCropSmoothingMs"), 0.f, 250.f, 85.f)};
     const ModToggle::Ptr m_duo_shading{ModToggle::create(generate_name("DuoViewIndependentShading"), false)};
     const ModToggle::Ptr m_duo_history_audit{ModToggle::create(generate_name("DuoViewTemporalAudit"), false)};
+    // Rendered source stays instantaneous; this shifts only displayed UV for A/B.
+    const ModToggle::Ptr m_duo_history_shift{ModToggle::create(generate_name("DuoViewHistorySampleCorrection"), true)};
+    const ModSlider::Ptr m_duo_history_strength{ModSlider::create(generate_name("DuoViewHistorySampleStrength"), 0.f, 1.f, 1.f)};
     const ModToggle::Ptr m_duo_timing{ModToggle::create(generate_name("DuoViewGpuTiming"), false)};
     std::atomic<float> m_duo_gpu_ms{-1.f};
     uevr::duoview::State m_duoview;
@@ -91,7 +94,7 @@ def main():
             *m_duo_width, *m_duo_height, *m_duo_periphery, *m_duo_density,
             *m_duo_feather, *m_duo_gaze, *m_duo_border, *m_duo_debug_source,
             *m_duo_fovea_view, *m_duo_timing, *m_duo_stabilize, *m_duo_guard,
-            *m_duo_smoothing, *m_duo_history_audit,''')
+            *m_duo_smoothing, *m_duo_history_audit, *m_duo_history_shift, *m_duo_history_strength,''')
     cpp="src/mods/VR.cpp"
     edit(cpp,
         'ImGui::TextWrapped("DuoView Stage 1: rendering uses original Joey Mono unchanged. Two-view foveation and gaze are NOT active.");',
@@ -118,6 +121,9 @@ def main():
                 m_duo_debug_source->draw("Source diagnostic: 0 Blend / 1 Periphery / 2 Fovea");
                 m_duo_fovea_view->draw("Fovea UE source view (0 or 1)");
                 ImGui::TextWrapped("v24: Eye tracking is INSTANT. Old crop guard/smoothing settings are ignored, including values stored in older profiles. No velocity cap or quantization.");
+                m_duo_history_shift->draw("Experimental gaze image motion correction (Cheeky sign)");
+                m_duo_history_strength->draw("Crop-history source shift strength (0 original / 1 full)");
+                ImGui::TextWrapped("Only foveal image sampling changes; eye crop remains instant. Turn correction OFF for original Build37 behavior. Does NOT patch Unreal motion vectors or TSR.");
                 m_duo_history_audit->draw("Diagnostic: projection/history continuity (logs, OFF by default)");
                 if (m_duo_history_audit->value()) {
                     // Bounded UI-only sensor metadata. The device clock cannot be
@@ -205,7 +211,9 @@ void VR::configure_duoview() {
         // Compatibility with saved Build32 profiles: force latency settings off.
         .guard_fraction=0.f, .smoothing_ms=0.f,
         .independent_shading=m_duo_shading->value(),
-        .temporal_audit=m_duo_history_audit->value()};
+        .temporal_audit=m_duo_history_audit->value(),
+        .history_sample_correction=m_duo_history_shift->value(),
+        .history_sample_strength=m_duo_history_strength->value()};
     const auto current=m_duoview.settings();
     if (current.crop_width==candidate.crop_width && current.crop_height==candidate.crop_height &&
         current.peripheral_scale==candidate.peripheral_scale && current.foveal_density==candidate.foveal_density &&
@@ -215,7 +223,9 @@ void VR::configure_duoview() {
         current.stabilize_crop==candidate.stabilize_crop && current.guard_fraction==candidate.guard_fraction &&
         current.smoothing_ms==candidate.smoothing_ms &&
         current.independent_shading==candidate.independent_shading &&
-        current.temporal_audit==candidate.temporal_audit) return;
+        current.temporal_audit==candidate.temporal_audit &&
+        current.history_sample_correction==candidate.history_sample_correction &&
+        current.history_sample_strength==candidate.history_sample_strength) return;
     if (!m_duoview.configure(candidate))
         SPDLOG_WARNING_EVERY_N_SEC(2, "[DuoView] Requested quality settings exceed atlas geometry; preserving previous valid settings");
 }
@@ -525,13 +535,17 @@ void VR::duoview_abort(const char* reason) {
                             }, std::nullopt, scene_source_state, nullptr,
                             std::nullopt, backbuffer.Get());
                         vr->m_openxr->note_mono_copy(static_cast<uint32_t>(frame_count), submitted && recorded);
+                        // Only a successfully accepted two-view XR copy may seed
+                        // the NEXT compositor sample shift. Quarantine on failure.
+                        if (frame && submitted && recorded && duo_recorded)
+                            vr->duoview_state().accept_composite(frame->config.key);
                         if (duo_failed || !submitted || !recorded)
                             vr->duoview_abort("XR copy/composite fault; safe original Mono requested");
                     } else if (vr->is_using_mono()) {
                         bool recorded = false;''')
     # Copy reference modules into exact checked-out Joey tree. No private SDK
     # declarations or altered SDK files.
-    for name in ("DuoViewGeometry.hpp","DuoViewGaze.hpp","DuoViewPSVR2Gaze.hpp","DuoViewCropStability.hpp","DuoViewFrame.hpp",
+    for name in ("DuoViewGeometry.hpp","DuoViewGaze.hpp","DuoViewPSVR2Gaze.hpp","DuoViewCropStability.hpp","DuoViewHistoryCorrection.hpp","DuoViewFrame.hpp",
                  "DuoViewConfig.hpp","DuoViewState.hpp","DuoViewD3D12.hpp",
                  "DuoViewMonoCopyD3D12.hpp"):
         target=root/"src/mods/vr"/name
