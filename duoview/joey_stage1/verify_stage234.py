@@ -55,8 +55,15 @@ def main():
   raise RuntimeError("Runtime shader compiler still in production compositor")
  if "DuoViewPSVR2Gaze.hpp" not in (a.backend/"src/mods/VR.hpp").read_text(encoding="utf-8"):
   raise RuntimeError("Production VR headers missing native PSVR2 gaze integration")
- if ".eye_tracked=true" not in (a.backend/"src/mods/VR.cpp").read_text(encoding="utf-8"):
-  raise RuntimeError("Stage5 gaze is not enabled")
+ vr_cpp=(a.backend/"src/mods/VR.cpp").read_text(encoding="utf-8")
+ vr_header=(a.backend/"src/mods/VR.hpp").read_text(encoding="utf-8")
+ if ".eye_tracked=m_duo_gaze->value()" not in vr_cpp or "m_duoview_gaze.read_uv(frozen)" not in vr_cpp:
+  raise RuntimeError("Stage5 gaze control is not connected to frame source")
+ for token in ('m_duo_width->draw(', 'm_duo_height->draw(', 'm_duo_periphery->draw(',
+               'm_duo_density->draw(', 'm_duo_feather->draw(', 'm_duo_debug_source->draw('):
+  if token not in vr_cpp: raise RuntimeError("DuoView quality UI missing "+token)
+ for token in ('"DuoViewCropWidth"', '"DuoViewPeripheralScale"', '"DuoViewFovealDensity"'):
+  if token not in vr_header: raise RuntimeError("Persisted DuoView setting missing "+token)
  if "vertex_shader_bytecode[]" not in shaders or "pixel_shader_bytecode[]" not in shaders:
   raise RuntimeError("Precompiled DXBC shader arrays missing")
  inputs = sorted(EDITED_BACKEND | ADDED_BACKEND)
