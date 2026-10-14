@@ -49,3 +49,8 @@ This moves the *sampling coordinate* in the high-res foveal atlas, not the crop.
 5. Genuine UE previous temporal matrices, motion vectors and TSR history are STILL unobserved. Even a strong A/B headset outcome does not magically verify UE internals. If ON overcorrects, do not double it; root cause must be investigated using validated engine instrumentation.
 
 **No claim of success without headset acceptance.**
+
+## Independent audit amendment
+- After initial v41 CI, `apply_native_lowres_bootstrap.py` failed its strict D3D12 anchor because the new accepted-copy call was inserted between two old anchor lines. **Fixed** by updating that exact replacement to preserve Build37's `note_duoview_bootstrap_composite()` after the new accepted-copy call. This was a patch generation fault; no headset binary from that run.
+- New `DuoViewState.hpp` compatibility gate additionally requires SAME NONZERO foveal `FSceneViewStateInterface*` identity and rejects per-axis camera rotation discontinuities >45 degrees or position jumps >500 Unreal units. New pinned tests explicitly check changed ViewState and camera teleports disable the optional correction.
+- v41 full source/build ZIP belongs to dedicated workflow `.github/workflows/duoview-joey-stage234.yml` (renamed per-branch) and must be checked against its own exact commit before distribution. Older v39/v40 successful CI or Build37 artifacts are not a v41 validation.
