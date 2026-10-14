@@ -22,7 +22,7 @@ struct Settings {
     uint32_t diagnostic_view{}; // 0 composite, 1 periphery, 2 fovea
     bool gpu_timing{};
     bool stabilize_crop{};
-    float fixation_ms{12.f};
+    float guard_fraction{.05f};
     bool independent_shading{};
 };
 struct FrameConfig {
@@ -39,7 +39,7 @@ public:
         if (!std::isfinite(proposed.feather_fraction) ||
             proposed.feather_fraction < 0.f || proposed.feather_fraction > .45f ||
             proposed.fovea_view > 1 || proposed.diagnostic_view > 2 ||
-            !std::isfinite(proposed.fixation_ms) || proposed.fixation_ms<0.f || proposed.fixation_ms>50.f)
+            !std::isfinite(proposed.guard_fraction) || proposed.guard_fraction<0.f || proposed.guard_fraction>.05f)
             return false;
         // Validate without trusting in-game UI, config files or Lua requests.
         if (!make_layout(1024,1024,proposed.crop_width,proposed.crop_height,

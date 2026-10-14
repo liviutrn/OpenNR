@@ -169,7 +169,7 @@ jobs:
           Old source defaults: 0.50x0.50 crop at 1.0x density, 0.20x periphery, gaze ON, fovea UE0/periphery UE1.
           Press Restore old DuoView settings once if an existing profile retains newer settings. Increase density to match your old preferred tuning; exact historical tuning is unknown.
           Foveal atlas rectangle starts at x=0, matching Injector-5. Gaze uses the inverse left optical rotation, matching the old coordinate path.
-          Stable gaze crop is ON by default, optional OFF. OpenNR r10 guard, small-noise filtering, 4px alignment; large eye movements bypass slow filtering.
+          Stable gaze crop is ON by default, optional OFF. OpenNR r10 crop guard (adjustable 0-5% of crop), 4 foveal-source-pixel alignment; large eye movements recenter immediately without temporal smoothing.
           Missing/invalid gaze holds crop position for at most 100ms while remaining labelled unavailable. No old image is reused.
           Both UE views use the exact frozen producer projection; native engine histories/motion vectors remain engine-owned.
           Independent primary shading starts OFF on EACH injection/mode transition; toggle it in-game after DuoView settles.

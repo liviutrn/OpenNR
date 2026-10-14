@@ -28,11 +28,11 @@ CheekyPort/overrides/src/OpenNR_R10_GazeCropPolicy.h on
 experiments/cheeky-psvr2-r10. Cheeky's apply_overrides.py confirms compatible
 crop translations preserve overlapping history with backend MV handling.
 
-New DuoViewCropStability.hpp implements the same mechanisms: filtering only
-within two full-image pixels; deliberate movement bypasses the filter; retain
-the previous crop inside min(2% full image, 5% crop extent); align repositioned
-crop to a four-pixel lattice without resizing it. UI stabilization defaults
-on, has an Off toggle and 0-50 ms fixation filtering (default 12 ms).
+New DuoViewCropStability.hpp uses r10's crop-origin guard: retain the previous
+crop inside min(2% full image, 5% crop extent); align repositioned crop to a
+four-foveal-source-pixel lattice without resizing it. UI stabilization defaults
+on, has an Off toggle and an effective 0-5%-of-crop guard control. Large gaze
+moves recenter immediately. No additional temporal smoothing or slew is used.
 
 On gaze loss, the ROI position may remain fixed for 100 ms after the last
 usable gaze read. It is still labelled unavailable; no stale image or pose is
@@ -64,7 +64,7 @@ before rendering, and a second offset could double-compensate motion.
 
 Tests independently check stationary world-point reconstruction through moving
 cropped projections, the expected previous/current local-UV displacement,
-constant render dimensions, rejection of a changed live matrix, and immutable
+constant render dimensions, fractional-density sampling-grid phase, rejection of a changed live matrix, and immutable
 source/compositor settings. These prove CPU geometry/coherence, not actual
 STALKER 2 TSR/Lumen history quality. No custom engine memory offsets, guessed
 PrevViewInfo layout, raw velocity texture patch or forced per-frame camera cut
@@ -123,3 +123,9 @@ forced gamma correction, global Lumen CVar or stale-frame reuse is introduced.
    expecting it to control this ID6-specific feature.
 4. Original Mono ID5 remains the control. Record any startup crash, periodic
    hitch, quarantine, content jump or history artifact; then longer gameplay.
+
+Sampling-grid correction: quantization uses the actual rounded foveal source
+width/height, rather than full output pixels. This keeps translations aligned
+with the submitted view grid even at fractional density (tested at 1.8x and
+3400x3172 output). The crop guard caps the alignment step; clipped frustum
+edges retain bounded coordinates. No new GPU operation is added.
