@@ -77,7 +77,6 @@ def main():
     const ModSlider::Ptr m_duo_smoothing{ModSlider::create(generate_name("DuoViewCropSmoothingMs"), 0.f, 250.f, 85.f)};
     const ModToggle::Ptr m_duo_shading{ModToggle::create(generate_name("DuoViewIndependentShading"), false)};
     const ModToggle::Ptr m_duo_history_audit{ModToggle::create(generate_name("DuoViewTemporalAudit"), false)};
-    // Rendered source stays instantaneous; this shifts only displayed UV for A/B.
     const ModToggle::Ptr m_duo_timing{ModToggle::create(generate_name("DuoViewGpuTiming"), false)};
     std::atomic<float> m_duo_gpu_ms{-1.f};
     uevr::duoview::State m_duoview;
@@ -302,8 +301,7 @@ void VR::duoview_abort(const char* reason) {
         *x = 0;
         *y = 0;
     } else if (!VR::get()->is_native_stereo_fix_enabled() || swgr_ue574_dx12_runtime()) {''')
-    # A second view must receive the SAME fully processed Mono camera, not
-    # a physical right-eye offset or a second head-pose sample.
+    # Both views share one Mono origin; only the selected foveal orientation steers.
     edit(hook,'''    auto vr = VR::get();
     //std::scoped_lock _{vr->get_vr_mutex()};''',
     '''    auto vr = VR::get();

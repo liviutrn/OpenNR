@@ -110,6 +110,8 @@ def main():
  if "matrix[2][0]=0." not in steering or "matrix[2][1]=0." not in steering:
   raise RuntimeError("Tracked principal point must remain centered")
  sensor=(a.backend/"src/mods/vr/DuoViewPSVR2Gaze.hpp").read_text(encoding="utf-8")
+ if "const bool fresh=sequence_.observe(candidate)" not in sensor:
+  raise RuntimeError("CAPI sample freshness must be local to this reader, not shared notification state")
  if ("struct GazeObservation" not in sensor or
      "status.raw.timestamp,status.raw.frame_counter" not in sensor or
      "last_observation_=describe_gaze_sample(candidate,now,uv.has_value())" not in sensor):

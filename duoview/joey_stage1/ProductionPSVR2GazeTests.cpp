@@ -13,6 +13,24 @@ int main() try {
     require(!baseline.observation().seen, "Gaze observation cannot exist before CAPI reads");
     psvr2::Status s{};s.size=sizeof(s);s.magic[0]='G';s.magic[1]='S';
     s.raw.frame_counter=123456u; s.raw.timestamp=9876543210123ll;
+    psvr2::SampleSequence first_consumer,second_consumer;
+    require(first_consumer.observe(s) && !first_consumer.observe(s),
+            "Same CAPI payload must not renew sample freshness");
+    require(second_consumer.observe(s),
+            "Another CAPI consumer must not steal this reader's fresh sample");
+    auto next=s;next.raw.frame_counter++;next.raw.timestamp+=8333;
+    require(first_consumer.observe(next) && second_consumer.observe(next),
+            "Both readers must accept a new payload even when CAPI notification was already consumed");
+    next.raw.timestamp+=8333;
+    require(first_consumer.observe(next),"Timestamp change must detect a new sensor packet independently");
+    next.raw.frame_counter++;
+    require(first_consumer.observe(next),"Counter change must detect a new sensor packet independently");
+    auto malformed=next;malformed.size=0;
+    require(!first_consumer.observe(malformed) && !first_consumer.observe(next),
+            "Malformed packet cannot reset the last accepted packet identity");
+    next.raw.timestamp=0;next.raw.frame_counter=0;
+    require(first_consumer.observe(next) && !first_consumer.observe(next),
+            "Sensor restart must be detected without accepting repeated packets as fresh");
     const auto observation=psvr2::describe_gaze_sample(s,5500123ull,true);
     require(observation.seen && observation.valid &&
             observation.device_frame_counter==123456u &&

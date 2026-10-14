@@ -2,6 +2,7 @@
 #include "DuoViewConfig.hpp"
 #include "DuoViewMonoCopyD3D12.hpp"
 #include "DuoViewShaderSource.hpp"
+#include <algorithm>
 #include <string>
 
 namespace uevr::duoview::dx12 {

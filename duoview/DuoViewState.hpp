@@ -56,11 +56,11 @@ public:
         const auto center=stability.update(key,w,h,s,gaze,now_ms);
         const auto frozen = config_.for_frame(key, w, h, center);
         if (!frozen) return {};
-        stability_=stability; last_begin_=key;
         auto packet=*frozen;
         const auto steering=make_steering(projection,packet.layout,s.eye_tracked);
         if(!steering) return {};
         packet.steering=*steering;
+        stability_=stability; last_begin_=key;
         slot = ViewFrame{packet, projection};
         slot->gaze_valid = s.eye_tracked && gaze.has_value();
         return slot;

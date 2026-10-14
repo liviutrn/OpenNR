@@ -52,9 +52,27 @@ static_assert(sizeof(Status)==0x148,"PSVR2 Toolkit CAPI gaze ABI mismatch");
 using InitFn = int(__cdecl*)();
 using ReadFn = bool(__cdecl*)(Status*,uint32_t);
 
+inline bool packet_header_valid(const Status& status) {
+    return status.size==sizeof(Status) && status.magic[0]=='G' && status.magic[1]=='S';
+}
+
+class SampleSequence {
+public:
+    bool observe(const Status& status) {
+        if(!packet_header_valid(status)) return false;
+        if(seen_ && timestamp_==status.raw.timestamp && frame_==status.raw.frame_counter) return false;
+        timestamp_=status.raw.timestamp; frame_=status.raw.frame_counter; seen_=true;
+        return true;
+    }
+private:
+    int64_t timestamp_{};
+    uint32_t frame_{};
+    bool seen_{};
+};
+
 // Toolkit native basis X-left, Y-up, Z-forward -> common Mono X-right, Y-up, Z-forward.
 inline std::optional<Ray> calibrated_ray(const Status& s) {
-    if (s.size!=sizeof(Status) || s.magic[0]!='G' || s.magic[1]!='S' ||
+    if (!packet_header_valid(s) ||
         s.raw.combined_direction_valid!=Bool::yes ||
         (s.raw.left.blink_valid==Bool::yes && s.raw.left.blink==Bool::yes) ||
         (s.raw.right.blink_valid==Bool::yes && s.raw.right.blink==Bool::yes)) return {};
@@ -119,8 +137,10 @@ public:
             active_.store(false,std::memory_order_release); return {};
         }
         Status candidate{};
-        const bool fresh=read_(&candidate,0);
-        if(fresh) {
+        const bool signaled=read_(&candidate,0);
+        // CAPI's update counter is shared by DLL consumers; payload identity is reader-local.
+        const bool fresh=sequence_.observe(candidate);
+        if(fresh || (signaled && !packet_header_valid(candidate))) {
             // Keep the calibrated sample and optical transform from the SAME
             // producer frame. Reprojecting a held ray with newer eye transforms
             // can inject apparent gaze motion during head movement.
@@ -187,6 +207,7 @@ private:
     ReadFn read_{};
     uint64_t next_attempt_{},fresh_time_{};
     std::optional<UV> cached_uv_{};
+    SampleSequence sequence_{};
     GazeObservation last_observation_{};
 };
 } // namespace uevr::duoview::psvr2

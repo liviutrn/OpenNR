@@ -78,3 +78,15 @@ Local generated C++ review defers Windows HLSL compilation explicitly and never 
 User explicitly authorized autonomous work and publication after reviewing the exact v42 patch/destination. Repository ownership, public visibility and connected-account push/admin permissions were verified. Shell Git has no push credentials; the connected GitHub Git-object API successfully published v42 and started Actions run 38647538179. No credentials or restricted SDK source were included. The former approval blocker is resolved.
 
 v43 must not be advertised as a bug-free or visually confirmed fix. This is one substantive renderer candidate designed to remove gaze-dependent projection-center motion while preserving real high-resolution rendering. Record exact CI SHA, package hash and actual headset observations separately.
+
+## Additional CAPI correctness finding before release
+
+Toolkit CAPI stores `g_lastGazeStatusCounter` once per DLL, not per caller. Its zero-timeout `getGazeStatus` path returns false for an unchanged shared counter but STILL copies the latest packet; that packet can also change between its two lock acquisitions. Thus a false API notification does not establish that this particular DuoView reader has already observed the payload.
+
+v43 now determines freshness from a reader-owned `(raw.timestamp, raw.frame_counter)` sequence, after validating the packet header. Separate readers can accept the same new physical packet independently. Repeated payloads do not refresh their age, even if the shared API counter advances. Malformed signaled packets still invalidate the cache; new physical blink packets continue to clear it. The existing original mapped UV is retained for a repeated packet, avoiding reprojection with a different optical transform.
+
+Pinned CAPI tests cover duplicate packets, two consumers, timestamp-only and counter-only updates, malformed headers and sensor counter/time restart. This is an independently source-backed missed-sample bug fix; no claim is made that it alone explained all observed shaking.
+
+The local steering oracle also passed AddressSanitizer and UndefinedBehaviorSanitizer. Default LeakSanitizer cannot inspect this container's ptraced /proc state; the successful rerun disabled only leak detection and retained address/UB instrumentation. Do not count leak checking as passed.
+
+OpenNR r10 source pin checked in this review: `1a6057eef550296a7aa7efa6295fa7ad46308fc8`.
