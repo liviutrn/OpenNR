@@ -151,3 +151,41 @@ Latest source must finish all tests, backend/frontend compilation and artifact
 inspection before delivery. Build26 remains the verified previous comparison.
 The earlier 14:00–14:05 ETA was missed; compilation failure was discovered when
 checking the user's 14:32 status request. No runtime quality claims are verified.
+
+## Verified delivery — Build29 (2026-10-14 14:53 Bucharest)
+
+Source commit: bd8024c9e83debaaee6890d36c756f186e8421e1
+Branch: experiments/duoview-temporal-shading-v22
+Successful Windows run: https://github.com/liviutrn/OpenNR/actions/runs/38557341481
+Build artifact: Joey-DuoView-Temporal-v22-29, ID11891093120
+Download: https://github.com/liviutrn/OpenNR/actions/runs/38557341481/artifacts/11891093120
+Evidence artifact: ID11890993211 (not the injector).
+
+Final log independently checked: all3 pinned, all6 independent including GPU
+WARP, and all41 original compatibility tests passed (50 total). Backend and
+auxiliary DLL compilation, original frontend tests/build, source-identity
+verification and packaging/upload passed. Original SDK remained unchanged.
+
+Downloaded artifact independently inspected: outer and inner ZIP CRCs passed;
+inner checksum sidecar matched; 14 package entries and required files present.
+17 applied backend source hashes matched fresh exact-pinned patched local
+source, excluding generated shader header, and every packaged frontend source
+hash matched. All3 DLLs confirmed AMD64 PE32+. Provenance backend, SDK and
+frontend pins matched the exact original references above. Outer digest also
+matched GitHub's uploaded artifact metadata.
+
+Outer SHA256: 377023d903c336d0a0b732586a8ed1c076ac99f9a93217ee233d3910f9acba7a
+Inner injector ZIP SHA256: f01a77181fe06d41202f6dbfb484fd9d2d17a60ef7519980425d98dda3d32caa
+UEVRBackend.dll SHA256: a8811ad707387e9b2f402079fe11e0b968f9cae5ac9f36226f072a306e5fb076
+UEVRBackend.dll size:16296960 bytes
+LuaVR.dll SHA256: e73f851d029e4c9d5d13d04901b0d33dc977937d1241087fc76c8b09cb00e754
+UEVRPluginNullifier.dll SHA256:7928efdae7e2fbb5cfa47c84c684b788aef01ca1ae4763471bd3b7ed03a05b46
+
+Ready for headset testing, not headset-validated. Important remaining questions:
+actual STALKER2 shading parity with constructor-only experiment, motion-vector
+/history artifacts during head and gaze movement, and real frame pacing. No
+claim that all image jumping or shading discrepancies are eliminated.
+
+Next action: user headset test following the efficient test sequence above,
+first with shading OFF, then enable in-game after ID6 is stable. Preserve all
+prior branches/builds and exact Joey Build3. Do not replace its baseline.
