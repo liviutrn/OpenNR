@@ -151,6 +151,11 @@ public:
         std::scoped_lock lock{mutex_};
         auto& slot=frames_[key.frame % frames_.size()];
         if (!slot || slot->config.key!=key || !slot->consumed || slot->invalid) return false;
+        if (last_accepted_ &&
+            (last_accepted_->config.key.generation > key.generation ||
+             (last_accepted_->config.key.generation == key.generation &&
+              last_accepted_->config.key.frame >= key.frame)))
+            return false; // never undo a more recent accepted XR copy
         last_accepted_=slot;
         return true;
     }
