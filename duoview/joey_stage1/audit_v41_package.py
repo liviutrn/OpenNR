@@ -39,7 +39,7 @@ def main():
         data=(package/name).read_bytes()
         check(len(data)>=512 and data[:2]==b"MZ","Not a PE file: "+name)
         offset=struct.unpack_from("<I",data,0x3c)[0]
-        check(offset+6<=len(data) and data[offset:offset+4]==b"PE\\x00\\x00".replace(b"\\x00",b"\x00"),
+        check(offset+6<=len(data) and data[offset:offset+4]==bytes((80,69,0,0)),
               "Bad PE header: "+name)
         machine=struct.unpack_from("<H",data,offset+4)[0]
         check(machine==0x8664,"Non-x64 binary: "+name)
