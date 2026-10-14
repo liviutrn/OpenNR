@@ -120,6 +120,18 @@ def main():
                 ImGui::TextWrapped("v24: Eye tracking is INSTANT. Old crop guard/smoothing settings are ignored, including values stored in older profiles. No velocity cap or quantization.");
                 m_duo_history_audit->draw("Diagnostic: projection/history continuity (logs, OFF by default)");
                 if (m_duo_history_audit->value()) {
+                    // Bounded UI-only sensor metadata. The device clock cannot be
+                    // compared to XrTime until its domain and rate are validated.
+                    const auto sensor=m_duoview_gaze.observation();
+                    if (sensor.seen) {
+                        ImGui::Text("Toolkit gaze raw frame=%u timestamp=%lld hostArrivalMs=%llu valid=%s",
+                            sensor.device_frame_counter,
+                            static_cast<long long>(sensor.device_timestamp_raw),
+                            static_cast<unsigned long long>(sensor.host_arrival_ms),
+                            sensor.valid ? "yes" : "no");
+                    } else {
+                        ImGui::TextUnformatted("Toolkit gaze metadata: no sample received");
+                    }
                     ImGui::TextWrapped("Checks current/previous ViewStates and expected crop-local motion. Constructor projection is synchronized to the latched frame. See UEVR log.");
                     if (const auto report=m_duoview.temporal_audit()) {
                         ImGui::Text("Previous frame: %s | source histories: %s | persistent: %s",
