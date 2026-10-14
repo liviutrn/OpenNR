@@ -1,8 +1,8 @@
-name: DuoView Build37 Native Low-Res Bootstrap — Build33 rollback
-run-name: DuoView Build37 Low-Res Native0 to DuoView6 with exact SDK (${{ github.run_number }})
+name: DuoView v39 Temporal Source and Oracle Audit — NOT RELEASED
+run-name: DuoView v39 pinned temporal audits (candidate NOT RELEASED) (${{ github.run_number }})
 on:
   push:
-    branches: [experiments/duoview-build33-lowres-native-bootstrap-v37]
+    branches: [experiments/duoview-gaze-temporal-audit-v39]
     paths:
       - '.github/workflows/duoview-joey-stage234.yml'
       - 'duoview/joey_stage1/**'
@@ -10,6 +10,8 @@ on:
       - 'duoview/DuoViewGaze.hpp'
       - 'duoview/DuoViewCropStability.hpp'
       - 'duoview/DuoViewState.hpp'
+      - 'duoview/tests/**'
+      - 'duoview/CMakeLists.txt'
       - 'duoview/stage10_state_tests.cpp'
       - 'duoview/production_warp_test.cpp'
       - 'duoview/stage4_gaze_tests.cpp'
