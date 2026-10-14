@@ -43,6 +43,20 @@ def main():
     setting="src/mods/vr/RenderingMethodSetting.hpp"
     edit(setting, ': m_name{std::move(name)}, m_options{options} {}',
         ': m_name{std::move(name)}, m_options{options} { m_selection.initialize_duoview_safe_bootstrap(); }')
+    edit(setting, 'void request(int32_t value) { m_selection.request(value); }',
+        '''// No profile, frontend, or UI request may activate Native Stereo or ID6
+    // before the three-second Mono5 bootstrap has reached a safe frame boundary.
+    void request(int32_t value) {
+        if (!m_bootstrap_released.load(std::memory_order_acquire)) return;
+        m_selection.request(value);
+    }
+    void complete_duoview_bootstrap() {
+        m_bootstrap_released.store(true,std::memory_order_release);
+        m_selection.request(uevr::mono::duoview_method_id);
+    }''')
+    edit(setting, '    uevr::mono::Selection m_selection;',
+        '''    uevr::mono::Selection m_selection;
+    std::atomic<bool> m_bootstrap_released{false};''')
     edit(setting,
         '        m_selection.initialize(defaults ? 0 : cfg.get<int32_t>(m_name).value_or(requested_value()));',
         '''        // Dedicated recovery build always warms up Joey Mono (5), regardless
@@ -99,7 +113,7 @@ void VR::service_duoview_bootstrap() {
     // request(6) is deferred while active 5 and only commits after consumer
     // retirement at the existing game frame boundary.
     m_duoview_bootstrap_completed=true;
-    m_rendering_method->request(RenderingMethod::DUOVIEW_MONO);
+    m_rendering_method->complete_duoview_bootstrap();
     SPDLOG_INFO("[DuoView][Bootstrap] Requesting guarded Mono 5 -> DuoView 6 transition");
 }
 
