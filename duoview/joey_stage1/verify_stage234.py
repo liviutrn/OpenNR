@@ -72,6 +72,9 @@ def main():
   raise RuntimeError("Restore is not gated on true compositor success")
  if "on_openxr_resolution_scale_changed(old_width,old_height,new_width,new_height)" not in xr:
   raise RuntimeError("Restore must reuse original UEVR guarded scale callback")
+ hooked=(a.backend/"src/mods/vr/FFakeStereoRenderingHook.cpp").read_text(encoding="utf-8")
+ if "if (!vr->is_using_duoview_mono() && !vr->is_ghosting_fix_enabled()" not in hooked:
+  raise RuntimeError("ID6 requires SceneView constructor hook regardless of Native Fix")
  if "DuoViewSceneLayout.hpp" in vrh or "duoview_scene_extent" in vrh:
   raise RuntimeError("Compact startup atlas accidentally enabled")
  if "DuoViewDlssHistory" in vrh or "DuoViewDlssHistory" in vr:
