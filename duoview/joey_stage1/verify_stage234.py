@@ -81,6 +81,13 @@ def main():
   raise RuntimeError("Unsafe NVIDIA NGX interception unexpectedly restored")
  if "DuoViewPSVR2Gaze.hpp" not in vrh:
   raise RuntimeError("Production VR headers missing native PSVR2 gaze integration")
+ sensor=(a.backend/"src/mods/vr/DuoViewPSVR2Gaze.hpp").read_text(encoding="utf-8")
+ if ("struct GazeObservation" not in sensor or
+     "status.raw.timestamp,status.raw.frame_counter" not in sensor or
+     "last_observation_=describe_gaze_sample(candidate,now,uv.has_value())" not in sensor):
+  raise RuntimeError("Real CAPI sensor sample metadata is not recorded from producer frame")
+ if "m_duoview_gaze.observation()" not in vr:
+  raise RuntimeError("Bounded UI-only gaze sensor audit not present in generated production source")
  vr_cpp=(a.backend/"src/mods/VR.cpp").read_text(encoding="utf-8")
  vr_header=(a.backend/"src/mods/VR.hpp").read_text(encoding="utf-8")
  if (".eye_tracked=m_duo_gaze->value()" not in vr_cpp or
