@@ -1,0 +1,201 @@
+name: Cheeky PSVR2 OpenNR r13 DuoView eye selector
+on:
+  push:
+    branches:
+      - experiments/cheeky-psvr2-r13-duoview-eye-select
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  windows-build:
+    runs-on: windows-2022
+    timeout-minutes: 85
+    steps:
+      - name: Checkout port scripts and r10 reference
+        uses: actions/checkout@v4
+      - name: Publish CI startup heartbeat
+        shell: pwsh
+        continue-on-error: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $api = "https://api.github.com/repos/$env:GITHUB_REPOSITORY/contents/CheekyPort/ci-status.json"
+          $headers = @{
+            Authorization = "Bearer $env:GITHUB_TOKEN"
+            Accept = 'application/vnd.github+json'
+            'X-GitHub-Api-Version' = '2022-11-28'
+          }
+          $existing = Invoke-RestMethod -Uri "${api}?ref=ci%2Fcheeky-psvr2-r10-status" -Headers $headers
+          $payload = [ordered]@{
+            result = 'running'
+            run_id = $env:GITHUB_RUN_ID
+            run_url = "https://github.com/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID"
+            source_sha = $env:GITHUB_SHA
+            created_at_utc = (Get-Date).ToUniversalTime().ToString('o')
+          } | ConvertTo-Json -Depth 4
+          $body = @{
+            branch = 'ci/cheeky-psvr2-r10-status'
+            message = "Start Cheeky CI run $env:GITHUB_RUN_ID"
+            sha = $existing.sha
+            content = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($payload))
+          } | ConvertTo-Json -Compress
+          Invoke-RestMethod -Method Put -Uri $api -Headers $headers -Body $body -ContentType 'application/json' | Out-Null
+      - name: Checkout pinned Cheeky v0.5.5
+        uses: actions/checkout@v4
+        with:
+          repository: ClarkCheekyKent/CheekyFoveatedDLSS
+          ref: 4e47eefe51a512dcaf76bbdc672dcdab5251fc71
+          path: upstream-cheeky
+      - name: Apply strict port patches
+        id: patch
+        shell: pwsh
+        run: |
+          python -m py_compile CheekyPort/scripts/apply_overrides.py
+          python CheekyPort/scripts/apply_overrides.py upstream-cheeky --overrides CheekyPort/overrides
+          if ($LASTEXITCODE -ne 0) { throw "Patch step failed" }
+          python CheekyPort/scripts/apply_adaptive.py upstream-cheeky
+          if ($LASTEXITCODE -ne 0) { throw "Adaptive port failed" }
+          python CheekyPort/scripts/apply_shaping.py upstream-cheeky
+          if ($LASTEXITCODE -ne 0) { throw "NR shaping port failed" }
+          python -m py_compile CheekyPort/scripts/apply_adaptive.py CheekyPort/scripts/apply_shaping.py CheekyPort/scripts/apply_mono_dx12_test.py
+          python CheekyPort/scripts/apply_mono_dx12_test.py upstream-cheeky
+          if ($LASTEXITCODE -ne 0) { throw "Native DX12 Mono test patch failed" }
+          python -m py_compile CheekyPort/scripts/apply_r12.py
+          python CheekyPort/scripts/apply_r12.py upstream-cheeky
+          if ($LASTEXITCODE -ne 0) { throw "r12 source patch failed" }
+          python -m py_compile CheekyPort/scripts/apply_r13.py
+          python CheekyPort/scripts/apply_r13.py upstream-cheeky
+          if ($LASTEXITCODE -ne 0) { throw "r13 source-eye patch failed" }
+      - name: Regenerate Direct3D NR shaders
+        id: shader
+        working-directory: upstream-cheeky
+        shell: pwsh
+        run: |
+          $sdkBin = Join-Path ${env:ProgramFiles(x86)} 'Windows Kits/10/bin'
+          $fxc = Get-ChildItem $sdkBin -Filter fxc.exe -Recurse |
+            Where-Object { $_.Directory.Name -eq 'x64' } |
+            Sort-Object FullName -Descending | Select-Object -First 1
+          if (-not $fxc) { throw "Windows SDK fxc shader compiler unavailable" }
+          python scripts/build-d3d-shaders.py --fxc $fxc.FullName
+          if ($LASTEXITCODE -ne 0) { throw "Shader bytecode regeneration failed" }
+      - name: Compile Cheeky release
+        id: compile
+        working-directory: upstream-cheeky
+        shell: pwsh
+        run: |
+          $log = Join-Path $env:RUNNER_TEMP "cheeky-compile.log"
+          Start-Transcript -Path $log -Force | Out-Null
+          try {
+            ./scripts/build.ps1 -Configuration Release -SkipTests
+            if ($LASTEXITCODE -ne 0) { throw "MSBuild failed" }
+          } catch {
+            ($_ | Out-String) | Add-Content -Path $log
+            throw
+          } finally {
+            Stop-Transcript | Out-Null
+          }
+      - name: Run gaze and XR smoke tests
+        id: tests
+        working-directory: upstream-cheeky
+        shell: pwsh
+        run: |
+          $suites = @('--opennr-r10-gaze', '--alignment-history', '--d3d12-history', '--openxr-input', '--nr-processing', '--cheeky-r11-adaptive', '--cheeky-mono-dx12', '--cheeky-r12', '--cheeky-r13')
+          foreach ($suite in $suites) {
+            Write-Host "Running Cheeky regression suite: $suite"
+            ./bin/Release/CheekyTests.exe $suite
+            if ($LASTEXITCODE -ne 0) { throw "Cheeky $suite tests failed" }
+          }
+      - name: Install Inno Setup if absent
+        id: setup
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe")) {
+            choco install innosetup -y --no-progress
+            if ($LASTEXITCODE -ne 0) { throw "Inno Setup installation failed" }
+          }
+      - name: Build matching OpenXR installer
+        id: installer
+        working-directory: upstream-cheeky
+        shell: pwsh
+        run: |
+          ./scripts/build-installer.ps1 -SkipBuild
+          if ($LASTEXITCODE -ne 0) { throw "Installer failed" }
+      - name: Package Standalone and UEVR
+        id: packages
+        working-directory: upstream-cheeky
+        shell: pwsh
+        run: |
+          ./scripts/package-standalone.ps1 -Configuration Release -Mode Standalone -Label psvr2-r13
+          if (@(Get-ChildItem bin/Release/*-Standalone-psvr2-r13.zip).Count -ne 1) { throw "Standalone archive missing" }
+          ./scripts/package-uevr.ps1 -Configuration Release -Label psvr2-r13
+          if (@(Get-ChildItem bin/Release/*-UEVR-psvr2-r13.zip).Count -ne 1) { throw "UEVR archive missing" }
+          Get-ChildItem bin/Release/*psvr2-r13*.zip | Get-FileHash -Algorithm SHA256 | Format-Table
+      - name: Upload experimental install packages
+        id: artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Cheeky-0.5.5-PSVR2-OpenNR-r13-duoview-eye-select
+          path: |
+            upstream-cheeky/bin/Release/*psvr2-r13*.zip
+            upstream-cheeky/bin/installer/CheekyOpenXRSetup.exe
+          if-no-files-found: error
+          retention-days: 15
+
+      - name: Write persistent CI result to status branch
+        if: ${{ always() }}
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          STEP_PATCH: ${{ steps.patch.outcome }}
+          STEP_COMPILE: ${{ steps.compile.outcome }}
+          STEP_SHADER: ${{ steps.shader.outcome }}
+          STEP_TESTS: ${{ steps.tests.outcome }}
+          STEP_SETUP: ${{ steps.setup.outcome }}
+          STEP_INSTALLER: ${{ steps.installer.outcome }}
+          STEP_PACKAGES: ${{ steps.packages.outcome }}
+          STEP_ARTIFACT: ${{ steps.artifact.outcome }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $steps = [ordered]@{
+            patch = $env:STEP_PATCH
+            compile = $env:STEP_COMPILE
+            shader = $env:STEP_SHADER
+            tests = $env:STEP_TESTS
+            setup = $env:STEP_SETUP
+            installer = $env:STEP_INSTALLER
+            packages = $env:STEP_PACKAGES
+            artifact = $env:STEP_ARTIFACT
+          }
+          $allSucceeded = @($steps.Values | Where-Object { $_ -ne 'success' }).Count -eq 0
+          $buildLog = Join-Path $env:RUNNER_TEMP 'cheeky-compile.log'
+          $excerpt = if (Test-Path $buildLog) {
+            (Get-Content $buildLog -Tail 140 | Out-String)
+          } else { 'No compile transcript produced; inspect first failing workflow step.' }
+          if ($excerpt.Length -gt 17000) { $excerpt = $excerpt.Substring($excerpt.Length - 17000) }
+          $report = [ordered]@{
+            result = if ($allSucceeded) { 'success' } else { 'failure' }
+            run_id = $env:GITHUB_RUN_ID
+            run_url = "https://github.com/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID"
+            source_sha = $env:GITHUB_SHA
+            created_at_utc = (Get-Date).ToUniversalTime().ToString('o')
+            steps = $steps
+            compile_log_tail = $excerpt
+          }
+          $json = ($report | ConvertTo-Json -Depth 7) + "`n"
+          $encoded = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($json))
+          $api = "https://api.github.com/repos/$env:GITHUB_REPOSITORY/contents/CheekyPort/ci-status.json"
+          $headers = @{
+            Authorization = "Bearer $env:GITHUB_TOKEN"
+            Accept = 'application/vnd.github+json'
+            'X-GitHub-Api-Version' = '2022-11-28'
+          }
+          $existing = Invoke-RestMethod -Method Get -Uri "${api}?ref=ci%2Fcheeky-psvr2-r10-status" -Headers $headers
+          $body = @{
+            branch = 'ci/cheeky-psvr2-r10-status'
+            message = "Report Cheeky CI run $env:GITHUB_RUN_ID"
+            sha = $existing.sha
+            content = $encoded
+          } | ConvertTo-Json -Compress
+          Invoke-RestMethod -Method Put -Uri $api -Headers $headers -Body $body -ContentType 'application/json' | Out-Null
+          Write-Host "CI result published to ci/cheeky-psvr2-r10-status (success=$allSucceeded)"
