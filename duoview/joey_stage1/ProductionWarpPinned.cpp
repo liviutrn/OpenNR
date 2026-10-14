@@ -131,5 +131,58 @@ int main() try {
                 throw std::runtime_error("Diagnostic eye-copy pixel mismatch");
         readback->Unmap(0,nullptr);
     }
-    std::cout << "Production normal/moved gaze/periphery-only/fovea-only raster, per-slot GPU timestamps: 4096 pixel pairs PASS\n";
+    // v41: actual compiled raster shader/WARP pixel regression. A horizontal
+    // RED gradient makes +0.125 crop-local sampling move by exactly TWO
+    // foveal source texels (16px FoveaRect x .125). Blue periphery must be
+    // unaffected; stereo copies must be bit identical. OFF remains baseline.
+    check(upload->Map(0,&zero,&mapped));std::memset(mapped,0,bytes);
+    for(UINT y=0;y<32;++y) for(UINT x=0;x<16;++x) {
+        auto* pixel=static_cast<uint8_t*>(mapped)+y*foot.Footprint.RowPitch+x*4;
+        pixel[0]=0;pixel[1]=0;pixel[2]=static_cast<uint8_t>(x*16);pixel[3]=255;
+    }
+    for(UINT y=0;y<32;++y) for(UINT x=16;x<24;++x) {
+        auto* pixel=static_cast<uint8_t*>(mapped)+y*foot.Footprint.RowPitch+x*4;
+        pixel[0]=255;pixel[1]=0;pixel[2]=0;pixel[3]=255;
+    }
+    upload->Unmap(0,nullptr);
+    frame.layout=*uevr::duoview::make_layout(32,32,.5f,.5f,.25f,1.f,.5f,.5f);
+    frame.settings.diagnostic_view=2; // Fovea only
+    uint8_t base_red=0, shift_red=0;
+    for (int pass=0;pass<2;++pass) {
+        check(allocator->Reset());check(cmd->Reset(allocator.Get(),nullptr));
+        transition(cmd.Get(),stereo.Get(),D3D12_RESOURCE_STATE_COPY_SOURCE,D3D12_RESOURCE_STATE_RENDER_TARGET);
+        if(pass==0) {
+            transition(cmd.Get(),atlas.Get(),D3D12_RESOURCE_STATE_RENDER_TARGET,D3D12_RESOURCE_STATE_COPY_DEST);
+            D3D12_TEXTURE_COPY_LOCATION a_dest{atlas.Get(),D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX};
+            D3D12_TEXTURE_COPY_LOCATION a_upload{upload.Get(),D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT};
+            a_upload.PlacedFootprint=foot;
+            cmd->CopyTextureRegion(&a_dest,0,0,0,&a_upload,nullptr);
+            transition(cmd.Get(),atlas.Get(),D3D12_RESOURCE_STATE_COPY_DEST,D3D12_RESOURCE_STATE_RENDER_TARGET);
+        }
+        frame.key.frame=10+pass;
+        frame.history_sample_offset={pass==0 ? 0.f : .125f,0.f};
+        if(!compositor.record(device.Get(),cmd.Get(),atlas.Get(),stereo.Get(),
+                D3D12_RESOURCE_STATE_RENDER_TARGET,frame))
+            throw std::runtime_error("Cheeky correction raster record failed: "+compositor.error());
+        transition(cmd.Get(),stereo.Get(),D3D12_RESOURCE_STATE_RENDER_TARGET,D3D12_RESOURCE_STATE_COPY_SOURCE);
+        cmd->CopyTextureRegion(&to,0,0,0,&from,nullptr);
+        check(cmd->Close());queue->ExecuteCommandLists(1,lists);
+        const UINT64 signal=5+pass;check(queue->Signal(fence.Get(),signal));
+        event=CreateEventW(nullptr,FALSE,FALSE,nullptr);
+        check(fence->SetEventOnCompletion(signal,event));
+        if(WaitForSingleObject(event,30000)!=WAIT_OBJECT_0)
+            throw std::runtime_error("Cheeky correction GPU fence timeout");
+        CloseHandle(event);
+        check(readback->Map(0,&read,&mapped));
+        const auto red=sample(16,16)[2];
+        if(pass==0) base_red=red;else shift_red=red;
+        if(sample(16,16)[0]>20 || sample(1,1)[2]>20)
+            throw std::runtime_error("Gradient shader sampled wrong atlas region");
+        if(std::memcmp(sample(16,16),sample(48,16),4))
+            throw std::runtime_error("History correction broke mono stereo-copy parity");
+        readback->Unmap(0,nullptr);
+    }
+    if(shift_red <= base_red+18 || shift_red >= base_red+47)
+        throw std::runtime_error("Cheeky positive history shift must sample 2 texels to right");
+    std::cout << "Production normal/moved gaze/diagnostics and v41 Cheeky-sign WARP gradient raster PASS\n";
 } catch(const std::exception& e) { std::cerr<<e.what()<<'\n';return 1; }
