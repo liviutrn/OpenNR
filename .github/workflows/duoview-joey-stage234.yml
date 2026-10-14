@@ -217,6 +217,12 @@ jobs:
           $zip="Joey-DuoView-GazeComp-v41-${{ github.run_number }}.zip"
           Compress-Archive -Path package/* -DestinationPath $zip -Force
           (Get-FileHash $zip -Algorithm SHA256).Hash | Set-Content "$zip.sha256"
+      - name: Independently verify final candidate ZIP, PE machine IDs and unpacked hashes
+        shell: pwsh
+        run: |
+          $zip="Joey-DuoView-GazeComp-v41-${{ github.run_number }}.zip"
+          python workspace/duoview/joey_stage1/audit_v41_package.py package $zip evidence
+          if ($LASTEXITCODE -ne 0) { throw 'v41 package provenance, PE or ZIP audit failed' }
       - uses: actions/upload-artifact@v4
         if: success()
         with:
