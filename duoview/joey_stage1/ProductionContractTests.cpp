@@ -4,12 +4,27 @@
 #include <iostream>
 #include <stdexcept>
 #include "DuoViewState.hpp"
+#include "MonoRenderingPolicy.hpp"
 
 using namespace uevr::duoview;
 static void require(bool test, const char* what) {
     if (!test) throw std::runtime_error(what);
 }
 int main() try {
+    // Low-res Native0 warms UE view machinery before changing DuoView's
+    // render method. Joey's existing GPU consumer retirement must be respected.
+    uevr::mono::Selection bootstrap;
+    bootstrap.initialize(0);
+    require(bootstrap.active()==0 && !bootstrap.pending(),
+            "Bootstrap must start Native Stereo 0 without immediate ID6");
+    bootstrap.request(6);
+    require(bootstrap.active()==0 && bootstrap.pending(),
+            "DuoView request must defer while native resources remain live");
+    require(!bootstrap.commit_at_game_frame_boundary(),
+            "Unretired source copies may not activate DuoView");
+    bootstrap.consumers_retired(bootstrap.request_token());
+    require(bootstrap.commit_at_game_frame_boundary() && bootstrap.active()==6,
+            "Guarded native to DuoView transition failed");
     for (auto wh: {std::array{2000u,2000u},std::array{3000u,3000u},
                    std::array{3400u,3172u},std::array{4096u,2160u}}) {
         const auto l=make_layout(wh[0],wh[1],.30f,.30f,.25f,2.5f,.5f,.5f);
