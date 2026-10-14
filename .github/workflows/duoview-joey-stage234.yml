@@ -1,8 +1,8 @@
-name: DuoView Joey Instant Gaze + History Audit v24 - Source Isolation and Settings
-run-name: DuoView Joey Instant Gaze + History Audit v24 with exact SDK (${{ github.run_number }})
+name: DuoView Build36 Safe Mono Bootstrap (Build33 rollback)
+run-name: DuoView Build36 Safe Mono Bootstrap with exact SDK (${{ github.run_number }})
 on:
   push:
-    branches: [experiments/duoview-v24-instant-gaze-temporal-audit]
+    branches: [experiments/duoview-build33-safe-mono-bootstrap-v36]
     paths:
       - '.github/workflows/duoview-joey-stage234.yml'
       - 'duoview/joey_stage1/**'
@@ -84,8 +84,10 @@ jobs:
         run: |
           python workspace/duoview/joey_stage1/apply_stage234.py backend frontend workspace/duoview
           if ($LASTEXITCODE -ne 0) { throw 'Stage 2-4 source anchors did not match original Joey' }
+          python workspace/duoview/joey_stage1/apply_safe_bootstrap.py backend
+          if ($LASTEXITCODE -ne 0) { throw 'Safe Mono5 bootstrap patch failed' }
           python workspace/duoview/joey_stage1/verify_stage234.py backend frontend evidence
-          if ($LASTEXITCODE -ne 0) { throw 'Stage 2-4 violated original-source or SDK boundaries' }
+          if ($LASTEXITCODE -ne 0) { throw 'Stage 2-4 plus safe bootstrap violated original-source or SDK boundaries' }
       - name: Verify pinned production geometry and pair-state contracts
         shell: pwsh
         run: |
@@ -160,7 +162,7 @@ jobs:
           Copy-Item evidence/duoview-stage1-source-hashes.json package/
           Copy-Item evidence/duoview-stage234-hashes.json package/
           @'
-          DUOVIEW TEMPORAL v24 — STABLE CROP, FROZEN PROJECTION AND OPTIONAL PRIMARY SHADING. HEADSET UNVERIFIED.
+          DUOVIEW BUILD36 — BUILD33 ROLLBACK + SAFE MONO5 STARTUP / GUARDED ID6 SWITCH. HEADSET UNVERIFIED.
           Backend: exact Joey 5ac7edc207866569334175e4ed8a7517971547f6 + guarded DuoView modifications.
           Restricted SDK unchanged: joeyhodge/UESDK 3cffbc82429b6165ceec2714f0f0d9ae48f55596.
           Matching frontend source: 60be4b0f9a646109fd9fdf448bacd41477234091, plus ID 6.
