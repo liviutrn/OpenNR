@@ -28,7 +28,7 @@ TARGETS = {
    "vr->duoview_abort(\"XR copy/composite fault; safe original Mono requested\")",
  ],
  "src/mods/vr/runtimes/OpenXR.cpp": [
-   "on_openxr_resolution_scale_changed(",
+   "bool OpenXR::restore_duoview_bootstrap_scale(float target) {",
  ],
 }
 
