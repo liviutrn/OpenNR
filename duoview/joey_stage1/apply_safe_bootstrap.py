@@ -51,8 +51,8 @@ def main():
         m_selection.request(value);
     }
     void complete_duoview_bootstrap() {
-        m_bootstrap_released.store(true,std::memory_order_release);
         m_selection.request(uevr::mono::duoview_method_id);
+        m_bootstrap_released.store(true,std::memory_order_release);
     }''')
     edit(setting, '    uevr::mono::Selection m_selection;',
         '''    uevr::mono::Selection m_selection;
