@@ -42,14 +42,13 @@ int main() {
     controls.crop_width=controls.crop_height=.3f;
     auto centre=stable.update({1,1},3000,3000,controls,UV{.5f,.5f},1000);
     auto noisy=stable.update({1,2},3000,3000,controls,UV{.501f,.499f},1011);
-    assert(centre.u==noisy.u && centre.v==noisy.v);
+    assert(noisy.u==.501f && noisy.v==.499f); // no latency or guard
     auto moved=stable.update({1,3},3000,3000,controls,UV{.75f,.6f},1022);
-    assert(moved.u>.5f && moved.u<.75f && moved.v>.5f && moved.v<.6f); // deliberately gradual
-    assert(moved.u-.5f<.02f && moved.v-.5f<.02f); // no frame-scale teleport
-    auto held=stable.update({1,4},3000,3000,controls,{},1100);
+    assert(moved.u==.75f && moved.v==.6f); // deliberate movement instant
+    auto held=stable.update({1,4},3000,3000,controls,{},1055);
     assert(held.u==moved.u && held.v==moved.v);
     auto expired=stable.update({1,5},3000,3000,controls,{},1123);
-    assert(expired.u<moved.u && expired.u>.5f); // missing gaze eases home instead of jumping
+    assert(expired.u==.5f && expired.v==.5f);
     controls.stabilize_crop=false;
     auto raw=stable.update({1,6},3000,3000,controls,UV{.61123f,.42123f},1133);
     assert(raw.u==.61123f && raw.v==.42123f);
@@ -60,8 +59,8 @@ int main() {
     assert(aligned_layout);
     const float xphase=aligned_layout->u0*aligned_layout->fovea.width/controls.crop_width;
     const float yphase=aligned_layout->v0*aligned_layout->fovea.height/controls.crop_height;
-    assert(std::abs(xphase-std::round(xphase))<.005f);
-    assert(std::abs(yphase-std::round(yphase))<.005f); // one source pixel, not four
+    assert(std::abs(aligned.u-.71943f)<.00001f && std::abs(aligned.v-.61327f)<.00001f);
+    assert(std::isfinite(xphase) && std::isfinite(yphase)); // no pixel quantization
     State temporal;
     controls.independent_shading=true;
     assert(temporal.configure(controls));

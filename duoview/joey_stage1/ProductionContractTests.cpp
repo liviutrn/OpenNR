@@ -129,37 +129,56 @@ int main() try {
     require(temporal.snapshot({7,2})->config.settings.independent_shading,"Mid-frame toggle split the source pair");
     require(temporal.begin({7,3},3000,3000,p,[]()->std::optional<UV>{return UV{.6f,.5f};},1022).has_value(),"Next-frame toggle packet missing");
     require(!temporal.can_independent_shading({7,3},200),"Shading off must apply to the next producer frame");
-    // Time-domain stability contract: continuous deadzone, no gaze teleport,
-    // and bounded frame-to-frame movement even across an eye saccade.
-    CropStability smoother;
+    // v24 contract: user-tested Build32 failed because its gaze lag was
+    // mistaken for stability. Any valid new sample MUST apply immediately.
+    CropStability direct;
     Settings follow{};
-    follow.stabilize_crop=true;
     follow.crop_width=follow.crop_height=.5f;
-    follow.guard_fraction=.10f;
-    follow.smoothing_ms=85.f;
-    auto centre=smoother.update({31,1},3400,3172,follow,UV{.5f,.5f},1000);
-    auto noise=smoother.update({31,2},3400,3172,follow,UV{.51f,.49f},1011);
-    require(centre.u==noise.u && centre.v==noise.v,"Fixation noise moved stable crop");
-    auto slow=smoother.update({31,3},3400,3172,follow,UV{.9f,.8f},1022);
-    require(slow.u>centre.u && slow.u<.52f && slow.v>centre.v && slow.v<.52f,
-            "Large gaze saccade must move gradually, not jump");
-    auto last=slow;
-    for (uint64_t f=4;f<30;++f) {
-        auto next=smoother.update({31,f},3400,3172,follow,UV{.9f,.8f},1000+(f-1)*11);
-        require(next.u>=last.u && next.v>=last.v,"Smoothing must be monotonic toward a fixed target");
-        require(next.u-last.u<=.019f && next.v-last.v<=.019f,
-                "Frame-to-frame crop jump exceeds bounded tracking speed");
-        last=next;
-    }
-    auto held=smoother.update({31,30},3400,3172,follow,{},1360);
-    require(held.u==last.u && held.v==last.v,"Short CAPI gap changed crop");
-    auto back=smoother.update({31,31},3400,3172,follow,{},1420);
-    require(back.u<held.u && back.u>.5f,"Expired gaze must return gently rather than teleport");
+    follow.guard_fraction=.25f; follow.smoothing_ms=250.f;
+    follow.stabilize_crop=true; // persisted legacy values must be harmless
+    auto centre=direct.update({31,1},3400,3172,follow,UV{.5f,.5f},1000);
+    auto tiny=direct.update({31,2},3400,3172,follow,UV{.501f,.499f},1011);
+    require(centre.u==.5f && tiny.u==.501f && tiny.v==.499f,
+            "New gaze must not be swallowed by the old v23 guard");
+    auto instant=direct.update({31,3},3400,3172,follow,UV{.9f,.8f},1022);
+    require(instant.u==.9f && instant.v==.8f,
+            "Large saccade must reach target in the same render frame");
+    auto held=direct.update({31,4},3400,3172,follow,{},1044);
+    require(held.u==instant.u && held.v==instant.v,"Brief missing sample should hold last coordinate");
+    auto expired=direct.update({31,5},3400,3172,follow,{},1123);
+    require(expired.u==.5f && expired.v==.5f,"Expired gaze must restore static center");
+    State audit;
+    Settings auds{}; auds.temporal_audit=true; auds.eye_tracked=true;
+    require(audit.configure(auds),"Audit settings rejected");
+    auto mark=[&](FrameKey k, UV gaze, uintptr_t primary, uintptr_t secondary) {
+        auto f=audit.begin(k,3400,3172,p,[&]()->std::optional<UV>{return gaze;},1000+k.frame*11);
+        require(f.has_value(),"Audit frame missing");
+        for (unsigned eye=0;eye<2;++eye) {
+            require(audit.rectangle(k,eye) && audit.projection(k,eye) &&
+                    audit.camera(k,eye,camera) && audit.scene(k,eye,eye?secondary:primary),
+                    "Audit frame view observations failed");
+        }
+        require(audit.family(k,true,2) && audit.consume(k),"Audit source frame could not be consumed");
+    };
+    mark({40,1},UV{.5f,.5f},100,200);
+    mark({40,2},UV{.7f,.5f},100,200);
+    auto d=audit.temporal_audit();
+    require(d && d->previous_frame && d->distinct_view_states && d->stable_view_states &&
+            d->same_pose && d->moving_fovea && d->expected_crop_motion_px_x < -1.,
+            "Temporal moving-crop/previous-state diagnostics inconsistent");
+    mark({40,3},UV{.8f,.5f},100,100);
+    d=audit.temporal_audit();
+    require(d && !d->distinct_view_states && !d->stable_view_states,
+            "Shared temporal history must be flagged");
+    mark({40,4},UV{.8f,.5f},300,400);
+    d=audit.temporal_audit();
+    require(d && d->distinct_view_states && !d->stable_view_states,
+            "Changed temporal identity across frames must be flagged");
     follow.smoothing_ms=251.f;
     State bad_controls; require(!bad_controls.configure(follow),"Invalid smoothing must be rejected");
     follow.smoothing_ms=85.f; follow.guard_fraction=.251f;
     require(!bad_controls.configure(follow),"Invalid wide guard must be rejected");
-    std::cout<<"Pinned Joey DuoView geometry, view pairing, gradual gaze, primary fallback contract PASS\n";
+    std::cout<<"Pinned Joey DuoView geometry, instant gaze, typed projection, history audit contract PASS\n";
     return 0;
 } catch(const std::exception& e) {
     std::cerr<<"DuoView contract test failure: "<<e.what()<<"\n";
