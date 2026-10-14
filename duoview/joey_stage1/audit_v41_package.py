@@ -50,14 +50,14 @@ def main():
           "Must not misrepresent compositor correction as engine temporal fix")
     with zipfile.ZipFile(zip_path) as archive:
         info=archive.infolist()
-        check(len(info)==len(entries),"ZIP file count mismatched working package")
         zip_entries={}
         for z in info:
-            check(not z.is_dir(),"ZIP must not have untracked directories")
-            check(z.filename not in zip_entries and
-                  not z.filename.startswith("/") and
-                  ".." not in Path(z.filename).parts,"ZIP contains unsafe/duplicate path")
+            check(not z.filename.startswith("/") and
+                  ".." not in Path(z.filename).parts,"Unsafe ZIP path")
+            if z.is_dir(): continue  # PowerShell archives can contain benign dir entries.
+            check(z.filename not in zip_entries,"Duplicate ZIP payload path")
             zip_entries[z.filename]=sha256(archive.read(z))
+        check(len(zip_entries)==len(entries),"ZIP payload file count mismatched package")
         check(entries==zip_entries,"ZIP extracted content hashes differ from package")
     declared_sha=zip_path.with_name(zip_path.name+".sha256")
     check(declared_sha.is_file(),"Missing final archive SHA256")
