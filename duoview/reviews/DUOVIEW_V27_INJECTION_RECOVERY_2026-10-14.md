@@ -2,6 +2,8 @@
 
 Current branch: `experiments/duoview-v25-gaze-camera-always-on`. Windows replacement build pending. User has fully authorized publication and building and explicitly permits removal of the NGX hook.
 
+Published build source: `d2a496086e05b34318263e33a6bf7ac945ef16ee`, tree `35c9f941e3bd5f601926417af6fbabea064e725a` (exact local match). [Build35 / run38612708276](https://github.com/liviutrn/OpenNR/actions/runs/38612708276) is running. Exact baseline/SDK and patch verification passed.
+
 ## Build34 rejection and evidence
 
 User reports immediate injection CTD in STALKER2. The submitted minidump records an execute access violation at address0 on the RHI thread. Its stack passes through NVIDIA's NGX model and `_nvngx.dll`, then Build34's hook forwarding call. The exact downloaded Build34 backend maps return RVAs0x452cbc and0x453199 to SafetyHook forwarding and the new NGX evaluation wrapper.
