@@ -110,3 +110,20 @@ these defects. Prioritize retaining smooth Joey frame pacing; lighting parity
 and optional low-latency gaze stabilization can be investigated subsequently.
 The nine Windows DuoView test suites passed in run26; the original test
 compatibility targets are still compiling at this checkpoint.
+
+## Final verified Build26
+
+Source 28dae2e13666b4f5513b6666546e8620d0926ce4; run38543842360 succeeded.
+Logs independently confirm 3 + 6 + 41 tests passed. Matching backend/frontend,
+source identity and package checks passed. Downloaded archive integrity and
+16 applied-backend source hashes independently checked; all three DLLs are
+AMD64 PE32+. Artifact11884263766 has 14 package entries.
+Outer SHA256 ad7273f3527b961df2a0e64742a45207da3f4b8dc0923d1349bcd5f8c2a3d9fe.
+Inner ZIP SHA256 078ab88e39515f0b5eaeb06f7f571765d0f6ec4bf994271e7ca466d6b692f10d.
+UEVRBackend.dll SHA256 668c8b58b6ac631c3a9bfd4a906bf1b8b4db8943963f198b135d82daedd56f86.
+https://github.com/liviutrn/OpenNR/actions/runs/38543842360/artifacts/11884263766
+
+New user request: separate next build with optional gaze stabilization,
+temporal crop/image coherence and in-game independent-shading toggle default
+off, enableable after DuoView settles. Use verified OpenNR/Cheeky mechanisms.
+Build26 does not contain these later additions. Preserve it as a comparison.
