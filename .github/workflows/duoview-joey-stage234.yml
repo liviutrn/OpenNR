@@ -1,8 +1,8 @@
-name: DuoView v40 Sensor Coherence Audit — NOT RELEASED
-run-name: DuoView v40 gaze metadata + temporal audit (NOT RELEASED) (${{ github.run_number }})
+name: DuoView v41 Gaze History Compositor Correction — CANDIDATE
+run-name: DuoView v41 Cheeky-sign compositor correction full Windows audit (${{ github.run_number }})
 on:
   push:
-    branches: [experiments/duoview-gaze-sensor-coherence-v40]
+    branches: [experiments/duoview-gaze-history-compositor-v41]
     paths:
       - '.github/workflows/duoview-joey-stage234.yml'
       - 'duoview/joey_stage1/**'
@@ -10,6 +10,7 @@ on:
       - 'duoview/DuoViewGaze.hpp'
       - 'duoview/DuoViewCropStability.hpp'
       - 'duoview/DuoViewState.hpp'
+      - 'duoview/DuoViewHistoryCorrection.hpp'
       - 'duoview/tests/**'
       - 'duoview/CMakeLists.txt'
       - 'duoview/stage10_state_tests.cpp'
@@ -169,7 +170,12 @@ jobs:
           Copy-Item evidence/duoview-stage1-source-hashes.json package/
           Copy-Item evidence/duoview-stage234-hashes.json package/
           @'
-          DUOVIEW BUILD37 — Build33 rollback; Native0 at low scale then ID6 and restore OpenXR scale AFTER successful compositor submissions; headset unverified.
+          DUOVIEW v41 EXPERIMENTAL: Cheeky-sign crop-history foveal sampling correction; NOT a TSR/motion-vector hook or verified stabilization fix.
+          Starting foundation: Build37 native0 low-scale bootstrap -> ID6 -> restore OpenXR scale AFTER accepted compositions.
+          New UI: "Experimental gaze image motion correction" ON by default for comparison; strength 1.0; OFF or 0 = unshifted original behavior.
+          Correction acts on high-density UE foveal sampling in precompiled raster compositor, and is automatically bypassed on frame gaps/saccades/missing gaze/size changes.
+          A/B TEST: compare ON and OFF with small slow eye movements; check world-space anchoring, head turns, shading stability. Caution: if UE motion already correct, ON may overcorrect.
+          Do not infer native temporal history repair from passing shader WARP tests.
           Backend: exact Joey 5ac7edc207866569334175e4ed8a7517971547f6 + guarded DuoView modifications.
           Restricted SDK unchanged: joeyhodge/UESDK 3cffbc82429b6165ceec2714f0f0d9ae48f55596.
           Matching frontend source: 60be4b0f9a646109fd9fdf448bacd41477234091, plus ID 6.
@@ -208,16 +214,16 @@ jobs:
           if (@(Get-ChildItem package -File -Filter *.exe).Count -lt 1) { throw "Missing Joey frontend executable" }
           if ((Get-Content package/READ_FIRST.txt -Raw) -notmatch 'QUARANTINED internally') { throw 'Stale fallback instructions' }
           Get-ChildItem package -Recurse -File | Get-FileHash -Algorithm SHA256 | ConvertTo-Json | Set-Content evidence/package-sha256.json
-          $zip="Joey-DuoView-Temporal-v24-${{ github.run_number }}.zip"
+          $zip="Joey-DuoView-GazeComp-v41-${{ github.run_number }}.zip"
           Compress-Archive -Path package/* -DestinationPath $zip -Force
           (Get-FileHash $zip -Algorithm SHA256).Hash | Set-Content "$zip.sha256"
       - uses: actions/upload-artifact@v4
         if: success()
         with:
-          name: Joey-DuoView-Temporal-v24-${{ github.run_number }}
+          name: Joey-DuoView-GazeComp-v41-${{ github.run_number }}
           path: |
-            Joey-DuoView-Temporal-v24-*.zip
-            Joey-DuoView-Temporal-v24-*.zip.sha256
+            Joey-DuoView-GazeComp-v41-*.zip
+            Joey-DuoView-GazeComp-v41-*.zip.sha256
           if-no-files-found: error
           retention-days: 90
       - name: Record public source and dependency provenance
