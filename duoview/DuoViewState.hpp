@@ -1,6 +1,7 @@
 #pragma once
 #include "DuoViewConfig.hpp"
 #include "DuoViewCropStability.hpp"
+#include "DuoViewHistoryCorrection.hpp"
 #include <array>
 #include <functional>
 
@@ -134,8 +135,24 @@ public:
                                   std::abs(result.expected_crop_motion_px_y)>.1;
         }
         last_audit_=result;
-        last_completed_=slot;
-        return slot;
+        last_completed_=slot; // diagnostic only; not proof of successful XR copy
+        ViewFrame packet=*slot;
+        if (last_accepted_) {
+            if (auto shift=compositor_history_shift(
+                last_accepted_->config,last_accepted_->gaze_valid,
+                packet.config,packet.gaze_valid))
+                packet.config.history_sample_offset=*shift;
+        }
+        return packet;
+    }
+    // Compositor was recorded and accepted by XR copy. This is not a
+    // GPU-fence proof and MUST NOT be used as Unreal's prev-matrix source.
+    bool accept_composite(FrameKey key) {
+        std::scoped_lock lock{mutex_};
+        auto& slot=frames_[key.frame % frames_.size()];
+        if (!slot || slot->config.key!=key || !slot->consumed || slot->invalid) return false;
+        last_accepted_=slot;
+        return true;
     }
     std::optional<TemporalAudit> temporal_audit() const {
         std::scoped_lock lock{mutex_}; return last_audit_;
@@ -143,7 +160,7 @@ public:
     void retire() {
         std::scoped_lock lock{mutex_};
         frames_ = {}; config_.retire(); stability_.reset(); last_begin_={};
-        last_completed_.reset(); last_audit_.reset();
+        last_completed_.reset(); last_audit_.reset(); last_accepted_.reset();
     }
 private:
     bool observe(FrameKey key, unsigned view, int kind) {
@@ -159,6 +176,7 @@ private:
     FrameKey last_begin_{};
     std::array<std::optional<ViewFrame>, 16> frames_{};
     std::optional<ViewFrame> last_completed_{};
+    std::optional<ViewFrame> last_accepted_{}; // XR copy accepted, not UE history consumer
     std::optional<TemporalAudit> last_audit_{};
 };
 }
