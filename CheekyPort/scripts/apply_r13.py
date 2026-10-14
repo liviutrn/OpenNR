@@ -135,8 +135,9 @@ patch("src/hooks.cpp",
       "    const auto live_settings = current_settings();\n    NrPipelineTimingScope pipeline_timing",
       """    const auto live_settings = current_settings();
     const auto source_view_id = static_cast<DlssViewId>(cached_sl_options_viewport.value) + 1U;
-    register_stereo_view(source_view_id);
-    if (!cheeky_processing_allowed_for_view(live_settings, source_view_id)) {
+    if (live_settings.eye_processing_mode != 0U) {
+        register_stereo_view(source_view_id);
+        if (!cheeky_processing_allowed_for_view(live_settings, source_view_id)) {
         for (auto& history : streamline_crop_history) {
             if (history.viewport != cached_sl_options_viewport.value) continue;
             history.valid = false;
@@ -148,6 +149,7 @@ patch("src/hooks.cpp",
         const auto native_result = original(feature, frame, inputs, input_count, command_buffer);
         stamp_streamline_output(static_cast<ID3D12GraphicsCommandList*>(command_buffer), native_result);
         return native_result;
+        }
     }
     NrPipelineTimingScope pipeline_timing""")
 
