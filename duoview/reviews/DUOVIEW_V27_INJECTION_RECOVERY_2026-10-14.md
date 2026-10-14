@@ -1,8 +1,8 @@
 # DuoView v27 — injection recovery without NGX hooks
 
-Current branch: `experiments/duoview-v25-gaze-camera-always-on`. Windows replacement build pending. User has fully authorized publication and building and explicitly permits removal of the NGX hook.
+Current branch: `experiments/duoview-v25-gaze-camera-always-on`. Windows Build35 verified and ready for headset testing. User has fully authorized publication and building and explicitly permits removal of the NGX hook.
 
-Published build source: `d2a496086e05b34318263e33a6bf7ac945ef16ee`, tree `35c9f941e3bd5f601926417af6fbabea064e725a` (exact local match). [Build35 / run38612708276](https://github.com/liviutrn/OpenNR/actions/runs/38612708276) is running. Exact baseline/SDK and patch verification passed.
+Published build source: `d2a496086e05b34318263e33a6bf7ac945ef16ee`, tree `35c9f941e3bd5f601926417af6fbabea064e725a` (exact local match). [Build35 / run38612708276](https://github.com/liviutrn/OpenNR/actions/runs/38612708276) succeeded. Exact baseline/SDK and patch verification passed.
 
 ## Build34 rejection and evidence
 
@@ -24,4 +24,16 @@ Always-on ID6, no ID0 warmup, compact scene allocation, full-size mono XR output
 
 All eight local CPU executables pass with assertions enabled after exact backend/frontend patch application. New independent and pinned-production checks cover startup without a resolution, valid in-bounds source rectangles, both fovea indices and one-/zero-based indexing. Existing ray, frame, gaze and zero-settling-drift checks pass. Patch scripts compile; `git diff --check` passes. Generated production code contains no NGX service or tiny-view path, and backend CMake is unchanged from the pinned original. Local application excludes Windows shader embedding.
 
-Windows CI must rerun pinned production, independent WARP, the complete Joey compatibility suite, backend/frontend builds, final source checks and package hashing. A packaging guard rejects a backend containing the removed NGX hook/export identifiers or history-control identifier. Verified run, source and artifact hashes will be recorded below after completion. Headset injection, actual gaze jitter and startup at5000x5000 remain hardware acceptance items.
+Windows CI passed52/52 tests:3 pinned production tests,8 independent CPU/GPU tests, and41 original Joey compatibility tests. Backend and matching frontend compiled, frontend ID6-only/legacy-profile migration passed, and final source verification passed. The binary guard confirmed removal of the NGX interception identifiers. Headset injection, actual gaze jitter and startup at5000x5000 remain hardware acceptance items.
+
+## Verified Build35 package
+
+[Download Build35](https://github.com/liviutrn/OpenNR/actions/runs/38612708276/artifacts/11919646385), artifact `Joey-DuoView-OpenNR-v27-35`, ID11919646385. Evidence artifact ID11919386481. Subsequent handoff-only commits do not change build source `d2a496086e05b34318263e33a6bf7ac945ef16ee`.
+
+- Outer GitHub artifact SHA256: `018ce12629bed7a7746bd5acca3860949e15ff8819805021b1f778460c1d5ade`.
+- Inner install ZIP SHA256: `28f656782923b6e682ede90f894adfa8d21691a2d819d8a5eb7fee8e97545065`.
+- `UEVRBackend.dll`:16,312,832 bytes; SHA256 `1d0a51c8bea02f6ab9ca27a69f1de9abd81ad9f6f3b42b440e588fdefb1e3e1d`.
+
+Downloaded both artifacts and verified their GitHub digests, ZIP CRCs, inner ZIP hash, and all14 package files against the CI hash manifest. Backend is AMD64 PE. Actual DLL retains the quantization/defaults controls and contains none of the removed NGX API, hook status or history-setting identifiers. Source hashes match the locally generated exact-production camera, state, config, layout and stabilization headers; Config has the intentional retire-reset transformation from the applier. Current README and matching injector are present. No SDK source/headers are packaged.
+
+Restart STALKER2 and the injector. Extract the outer artifact ZIP, then its inner install ZIP into a fresh directory, preserving Joey Build3. Use STALKER2 DX12 and SteamVR OpenXR; ID6 is already active. Restore OpenNR r10 tracking defaults (stabilization ON, smoothing0, quantization8 source pixels). The NGX history-reset toggle is intentionally gone. Check injection first, then gaze stability and direct high-resolution startup/runtime restart. Build35 has passed software verification but has not been executed on the user's headset here.

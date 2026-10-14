@@ -1,4 +1,4 @@
-> Current candidate: [v27 injection recovery without NGX hooks](reviews/DUOVIEW_V27_INJECTION_RECOVERY_2026-10-14.md). Build34 is rejected: user reports injection CTD through NVIDIA/NGX evaluation. Direct NGX interception is removed and compact startup rectangles are corrected. Replacement Windows build pending; headset acceptance unverified.
+> Current candidate: [v27 injection recovery without NGX hooks](reviews/DUOVIEW_V27_INJECTION_RECOVERY_2026-10-14.md). [Build35 download](https://github.com/liviutrn/OpenNR/actions/runs/38612708276/artifacts/11919646385):52/52 Windows tests passed, backend/frontend built, all14 package hashes checked and NGX interception absent from actual DLL. Build34 is rejected after injection CTD. Headset acceptance remains unverified.
 
 > Previous candidate: [v26 source and Build34 evidence](reviews/DUOVIEW_V26_OPENNR_HISTORY_HANDOFF_2026-10-14.md). Its Windows tests passed, but user injection failed; do not treat it as a working baseline.
 
