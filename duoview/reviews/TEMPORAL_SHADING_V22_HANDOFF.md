@@ -129,3 +129,25 @@ width/height, rather than full output pixels. This keeps translations aligned
 with the submitted view grid even at fractional density (tested at 1.8x and
 3400x3172 output). The crop guard caps the alignment step; clipped frustum
 edges retain bounded coordinates. No new GPU operation is added.
+
+## Windows validation checkpoint — 2026-10-14 14:34 Bucharest
+
+Build28, run38550827946, source688cb6cdc147240140ef02b1c69af813263958a4:
+all 3 pinned + 6 independent + 41 original tests passed. Full backend failed
+because Windows min/max macros expanded the new std::min/std::max calls in
+DuoViewCropStability.hpp. No testable injector was produced. Evidence artifact
+11887177532 is logs/source evidence only, not a build.
+
+Fix source bd8024c9e83debaaee6890d36c756f186e8421e1 uses parenthesized
+standard min/max calls, preserving behavior while preventing macro expansion.
+Local explicit Windows-macro exposure compile and pinned production contracts
+passed. Fresh exact original backend/frontend worktrees were patched for final
+source-hash comparison (JoeyV22Verified / FrontendV22Verified). Linux shader
+compilation was mocked only for this source comparison; actual Windows fxc is
+mandatory in CI.
+
+Build29 is running: https://github.com/liviutrn/OpenNR/actions/runs/38557341481
+Latest source must finish all tests, backend/frontend compilation and artifact
+inspection before delivery. Build26 remains the verified previous comparison.
+The earlier 14:00–14:05 ETA was missed; compilation failure was discovered when
+checking the user's 14:32 status request. No runtime quality claims are verified.
