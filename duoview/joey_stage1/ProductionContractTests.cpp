@@ -237,6 +237,31 @@ int main() try {
     auto half=make_complete({61,6},{.82f,.5f});
     require(half && std::abs(half->config.history_sample_offset.u-.5f*.01f/.30f)<1e-5f,
             "v41 source sampling gain must be applied exactly once");
+    require(history.accept_composite({61,6}),"Frame6 accepted copy missing");
+    auto changed=history.begin({61,7},3000,3000,p,
+        []()->std::optional<UV>{return UV{.83f,.5f};},1077);
+    require(changed.has_value(),"ViewState-change fixture missing");
+    for(unsigned v=0;v<2;++v)
+        require(history.rectangle({61,7},v) && history.projection({61,7},v) &&
+            history.camera({61,7},v,camera) && history.scene({61,7},v,300+v),
+            "ViewState-change fixture invalid");
+    require(history.family({61,7},true,2),"ViewState-change family missing");
+    changed=history.consume({61,7});
+    require(changed && changed->config.history_sample_offset.u==0.f,
+        "Changed Unreal foveal ViewState must disable correction");
+    require(history.accept_composite({61,7}),"Frame7 accepted copy missing");
+    CameraPose teleport=camera;teleport.position[0]+=2000.0;
+    auto cut=history.begin({61,8},3000,3000,p,
+        []()->std::optional<UV>{return UV{.84f,.5f};},1088);
+    require(cut.has_value(),"Camera-cut fixture missing");
+    for(unsigned v=0;v<2;++v)
+        require(history.rectangle({61,8},v) && history.projection({61,8},v) &&
+            history.camera({61,8},v,teleport) && history.scene({61,8},v,300+v),
+            "Camera-cut fixture invalid");
+    require(history.family({61,8},true,2),"Camera-cut family missing");
+    cut=history.consume({61,8});
+    require(cut && cut->config.history_sample_offset.u==0.f,
+        "Camera teleport must disable stale compositor history correction");
     history.retire();
     require(!history.accept_composite({61,6}),"Retired copy cannot commit history");
     hs.history_sample_strength=1.01f;
