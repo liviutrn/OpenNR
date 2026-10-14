@@ -26,6 +26,8 @@ struct Settings {
     float smoothing_ms{85.f};   // exponential temporal follow in milliseconds
     bool independent_shading{};
     bool temporal_audit{}; // optional observation; no private UE history writes
+    bool history_sample_correction{true}; // experimental compositor-only A/B
+    float history_sample_strength{1.f}; // 0=baseline, 1=full Cheeky-sign shift
 };
 struct FrameConfig {
     FrameKey key{};
@@ -33,6 +35,7 @@ struct FrameConfig {
     UV gaze{};
     Settings settings{};
     uint64_t settings_revision{};
+    UV history_sample_offset{}; // crop-local foveal source sampling shift (0=original)
 };
 class ConfigLatch {
 public:
@@ -42,7 +45,9 @@ public:
             proposed.feather_fraction < 0.f || proposed.feather_fraction > .45f ||
             proposed.fovea_view > 1 || proposed.diagnostic_view > 2 ||
             !std::isfinite(proposed.guard_fraction) || proposed.guard_fraction<0.f || proposed.guard_fraction>.25f ||
-            !std::isfinite(proposed.smoothing_ms) || proposed.smoothing_ms<0.f || proposed.smoothing_ms>250.f)
+            !std::isfinite(proposed.smoothing_ms) || proposed.smoothing_ms<0.f || proposed.smoothing_ms>250.f ||
+            !std::isfinite(proposed.history_sample_strength) ||
+            proposed.history_sample_strength<0.f || proposed.history_sample_strength>1.f)
             return false;
         // Validate without trusting in-game UI, config files or Lua requests.
         if (!make_layout(1024,1024,proposed.crop_width,proposed.crop_height,
