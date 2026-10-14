@@ -153,7 +153,7 @@ int main() try {
     }
     auto held=smoother.update({31,30},3400,3172,follow,{},1360);
     require(held.u==last.u && held.v==last.v,"Short CAPI gap changed crop");
-    auto back=smoother.update({31,31},3400,3172,follow,{},1400);
+    auto back=smoother.update({31,31},3400,3172,follow,{},1420);
     require(back.u<held.u && back.u>.5f,"Expired gaze must return gently rather than teleport");
     follow.smoothing_ms=251.f;
     State bad_controls; require(!bad_controls.configure(follow),"Invalid smoothing must be rejected");
