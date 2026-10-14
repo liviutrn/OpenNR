@@ -71,6 +71,16 @@ int main() try {
     require(!state.consume({3,100}),"Wrong renderer generation must not compose");
     require(state.consume(key).has_value(),"Current coherent pair rejected");
     require(!state.consume(key),"Double submission of a frame must be rejected");
+    settings.diagnostic_view=1;
+    require(state.configure(settings),"Quality settings change rejected");
+    require(state.snapshot(key)->config.settings.diagnostic_view==0,
+            "In-flight source view changed when UI settings updated");
+    auto new_frame=state.begin({4,101},3000,3000,m,
+        []()->std::optional<UV>{return UV{.5f,.5f};});
+    require(new_frame && new_frame->config.settings.diagnostic_view==1,
+            "Updated preview diagnostic not applied on NEXT UE frame");
+    require(state.snapshot(key)->config.settings.diagnostic_view==0,
+            "Late settings invalidated prior view pair");
     state.retire();
     require(!state.consume(key),"Invalidated pair must not survive reset");
     require(state.begin({5,1},3000,3000,m,[]()->std::optional<UV>{return UV{.5f,.5f};}).has_value(),

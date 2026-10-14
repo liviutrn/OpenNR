@@ -95,5 +95,41 @@ int main() try {
     for(UINT y=0;y<32;++y) for(UINT x=0;x<32;++x)
         if(std::memcmp(sample(x,y),sample(x+32,y),4)) throw std::runtime_error("Reused mono copy mismatch");
     readback->Unmap(0,nullptr);
-    std::cout << "Production shader, BGRA8 raster, moved gaze, retired-slot reuse, GPU timestamps: 2048 exact pixel pairs PASS\n";
+    // Real production raster path: isolate EACH independent UE source view.
+    // The same GPU output must still be copied identically into both XR eyes.
+    for (unsigned mode : {1u,2u}) {
+        check(allocator->Reset());check(cmd->Reset(allocator.Get(),nullptr));
+        transition(cmd.Get(),stereo.Get(),D3D12_RESOURCE_STATE_COPY_SOURCE,D3D12_RESOURCE_STATE_RENDER_TARGET);
+        frame.key.frame=2+mode; frame.settings.diagnostic_view=mode;
+        if (!compositor.record(device.Get(),cmd.Get(),atlas.Get(),stereo.Get(),
+                D3D12_RESOURCE_STATE_RENDER_TARGET,frame,frequency))
+            throw std::runtime_error("Diagnostic mode rejected: "+compositor.error());
+        transition(cmd.Get(),stereo.Get(),D3D12_RESOURCE_STATE_RENDER_TARGET,D3D12_RESOURCE_STATE_COPY_SOURCE);
+        cmd->CopyTextureRegion(&to,0,0,0,&from,nullptr);
+        check(cmd->Close());queue->ExecuteCommandLists(1,lists);
+        const UINT64 signal=2+mode;
+        check(queue->Signal(fence.Get(),signal));
+        event=CreateEventW(nullptr,FALSE,FALSE,nullptr);
+        check(fence->SetEventOnCompletion(signal,event));
+        if(WaitForSingleObject(event,30000)!=WAIT_OBJECT_0)
+            throw std::runtime_error("Diagnostic GPU fence timeout");
+        CloseHandle(event);
+        check(readback->Map(0,&read,&mapped));
+        if(mode==1) {
+            // Periphery-only must remain blue EVERYWHERE, including foveal ROI.
+            if(sample(24,16)[0]<240 || sample(24,16)[2]>20 ||
+               sample(8,16)[0]<240 || sample(8,16)[2]>20)
+                throw std::runtime_error("Periphery-isolation pixels wrong");
+        } else {
+            // Fovea-only must show red in ROI and a dark sentinel OUTSIDE.
+            if(sample(24,16)[2]<240 || sample(24,16)[0]>20 ||
+               sample(8,16)[0]>24 || sample(8,16)[2]>24)
+                throw std::runtime_error("Fovea-isolation pixels wrong");
+        }
+        for(UINT y=0;y<32;++y) for(UINT x=0;x<32;++x)
+            if(std::memcmp(sample(x,y),sample(x+32,y),4))
+                throw std::runtime_error("Diagnostic eye-copy pixel mismatch");
+        readback->Unmap(0,nullptr);
+    }
+    std::cout << "Production normal/moved gaze/periphery-only/fovea-only raster, per-slot GPU timestamps: 4096 pixel pairs PASS\n";
 } catch(const std::exception& e) { std::cerr<<e.what()<<'\n';return 1; }
