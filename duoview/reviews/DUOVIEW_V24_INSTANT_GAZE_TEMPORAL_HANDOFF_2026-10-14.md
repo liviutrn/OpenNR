@@ -27,5 +27,19 @@ UE's previous-frame view-projection history, TSR/Lumen temporal accumulation int
 - If actual crop follows instantaneously but interior still jumps, the remaining source of instability is likely the engine temporal reconstruction / previous projection or mismatched render frame provenance. Do not add more gaze smoothing.
 - To isolate TSR where safely supported by game controls, compare temporal AA/TSR ON and OFF; restore original settings afterwards. Avoid custom patches to private UE previous-frame structures without first verifying source and a controlled test.
 
-## Validation status
-CI run 33 initially triggered from commit above and began compiling. This document is updated separately (docs-only commit) and intentionally does not re-trigger the binary build. Check CI run for final result and binary artifact.
+## Final Windows CI result — VERIFIED
+**Build 33 PASSED:** [GitHub run](https://github.com/liviutrn/OpenNR/actions/runs/38575997437), [download complete outer artifact](https://github.com/liviutrn/OpenNR/actions/runs/38575997437/artifacts/11902027824).
+
+- Exact build source SHA: `d6b0a2bcd416073c41475f717aac03265c9687fd` (later commits only update documentation).
+- 3/3 pinned production source/geometry/DX12 WARP tests passed.
+- 6/6 independent DuoView gaze/geometry/state/WARP tests passed.
+- 41/41 original Joey compatibility tests passed, including renderer policies.
+- Full backend/auxiliary DLL build, matching frontend tests/publish, final exact-source hash verification, package upload all succeeded.
+- Outer artifact ZIP SHA256 `065aa450d9b1b10d52bcb31865e0799a2868eb9a44cd6a253b90eb3d51d7a6d4` (11,515,548 bytes).
+- Inner directly extractable `Joey-DuoView-Temporal-v24-33.zip` SHA256 `d0b38c9384f55596bffc371f86297798af79dc540e08ef6c88f00eafb036b239` (11,646,783 bytes), matches sidecar.
+- `UEVRBackend.dll` SHA256 `f402e2d1f6351a8bb76ad2deb7649b1bb879dc5e93b66a92880b1dae5f15b316`.
+- Independent ZIP CRC integrity, all 14 packaged files, critical injector components and valid AMD64 DLL/EXE PE headers confirmed.
+
+**Headset status: NOT TESTED.** Current-frame FSceneView projection coherence is enforced where source-validated, but no previous-frame UE ViewState/TSR/Lumen private memory writes or per-pixel velocity modifications are made. An actual eye-motion stability fix is not verified. If crop is responsive and interior still jumps, request the opt-in temporal audit log and isolate TSR with the fovea-only diagnostic. Do not revert to slow gaze.
+
+For installation, extract the inner ZIP to a separate folder; run `UEVRInjector.exe`; test ID6 eye-tracking ON and OFF with shading OFF initially. Original Joey Build3 unchanged.
