@@ -27,12 +27,12 @@ public:
         const auto layout=make_layout(w,h,s.crop_width,s.crop_height,s.peripheral_scale,s.foveal_density);
         if (!layout) { have_=false; return {}; }
         const auto resolve=[&](float old, float gaze, float extent, uint32_t pixels) {
-            const float maximum=std::max(0.f,1.f-extent);
+            const float maximum=(std::max)(0.f,1.f-extent);
             const float desired=std::clamp(gaze-extent*.5f,0.f,maximum);
-            const float guard=std::min(.02f,extent*s.guard_fraction);
+            const float guard=(std::min)(.02f,extent*s.guard_fraction);
             if (have_ && std::abs(desired-old)<=guard) return old;
             const float pixel=pixels ? extent/pixels : 0.f;
-            const float alignment=pixel>0.f ? std::min(4.f,(guard>0.f ? std::floor(guard/pixel) : 4.f)) : 0.f;
+            const float alignment=pixel>0.f ? (std::min)(4.f,(guard>0.f ? std::floor(guard/pixel) : 4.f)) : 0.f;
             const float step=alignment>=1.f ? alignment*pixel : 0.f;
             return step>0.f ? std::clamp(std::round(desired/step)*step,0.f,maximum) : desired;
         };
