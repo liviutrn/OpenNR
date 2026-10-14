@@ -12,6 +12,8 @@ struct CameraPose {
 struct TemporalAudit {
     FrameKey key{};
     bool previous_frame{}, same_pose{}, distinct_view_states{}, stable_view_states{}, moving_fovea{};
+    // Current->previous *crop-local* source-pixel motion from ROI alone.
+    // This does NOT establish what UE velocity/TSR actually consumes.
     double expected_crop_motion_px_x{}, expected_crop_motion_px_y{};
     std::array<uintptr_t,2> current_states{}, previous_states{};
 };
@@ -125,9 +127,9 @@ public:
             const auto& old=last_completed_->config.layout;
             const auto& now=slot->config.layout;
             result.expected_crop_motion_px_x=
-                (static_cast<double>(old.u0)-now.u0)/now.crop_width*now.fovea.width;
+                (static_cast<double>(now.u0)-old.u0)/now.crop_width*now.fovea.width;
             result.expected_crop_motion_px_y=
-                (static_cast<double>(old.v0)-now.v0)/now.crop_height*now.fovea.height;
+                (static_cast<double>(now.v0)-old.v0)/now.crop_height*now.fovea.height;
             result.moving_fovea=std::abs(result.expected_crop_motion_px_x)>.1 ||
                                   std::abs(result.expected_crop_motion_px_y)>.1;
         }
