@@ -1,12 +1,16 @@
-name: DuoView Joey Stage 2-4 fixed-center two-view experimental build
-run-name: DuoView fixed-center 2-view renderer with exact SDK (${{ github.run_number }})
+name: DuoView Joey Quality v20 - Source Isolation and Settings
+run-name: DuoView Joey Quality v20 with exact SDK (${{ github.run_number }})
 on:
   push:
-    branches: [experiments/duoview-joey-fixed-center-v1]
+    branches: [experiments/duoview-joey-quality-v20]
     paths:
       - '.github/workflows/duoview-joey-stage234.yml'
       - 'duoview/joey_stage1/**'
       - 'duoview/DuoViewPSVR2Gaze.hpp'
+      - 'duoview/DuoViewConfig.hpp'
+      - 'duoview/DuoViewD3D12.hpp'
+      - 'duoview/DuoViewComposite.hlsl'
+      - 'duoview/DuoViewCompositeRaster.hlsl'
   workflow_dispatch:
 permissions:
   contents: read

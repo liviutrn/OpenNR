@@ -19,6 +19,7 @@ struct Settings {
     bool debug_border{};
     bool eye_tracked{true};
     uint32_t fovea_view{};
+    uint32_t diagnostic_view{}; // 0 composite, 1 periphery, 2 fovea
 };
 struct FrameConfig {
     FrameKey key{};
@@ -33,7 +34,7 @@ public:
         std::scoped_lock lock{mutex_};
         if (!std::isfinite(proposed.feather_fraction) ||
             proposed.feather_fraction < 0.f || proposed.feather_fraction > .45f ||
-            proposed.fovea_view > 1)
+            proposed.fovea_view > 1 || proposed.diagnostic_view > 2)
             return false;
         // Validate without trusting in-game UI, config files or Lua requests.
         if (!make_layout(1024,1024,proposed.crop_width,proposed.crop_height,

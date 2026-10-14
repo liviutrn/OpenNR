@@ -24,12 +24,12 @@ float4 PSMain(VertexOut i) : SV_TARGET0 {
     const float2 peripheralSample = AtlasSampleUV(PeripheralRect, fullUv);
     const float4 peripheralColor = SourceAtlas.SampleLevel(LinearClamp, peripheralSample, 0.0);
     const float weight = BlendWeight(fullUv);
-    float4 result = peripheralColor;
-    if (weight > 0.0) {
+    float4 result = DebugViewMode == 2 ? float4(.04,.04,.04,1) : peripheralColor;
+    if (weight > 0.0 && DebugViewMode != 1) {
         const float2 foveaUV = (fullUv - CropUv.xy) / (CropUv.zw - CropUv.xy);
         const float2 foveaSample = AtlasSampleUV(FoveaRect, foveaUV);
         const float4 foveaColor = SourceAtlas.SampleLevel(LinearClamp, foveaSample, 0.0);
-        result = lerp(peripheralColor, foveaColor, weight);
+        result = DebugViewMode == 2 ? foveaColor : lerp(peripheralColor, foveaColor, weight);
     }
     if (DebugBorder && weight > 0.01 && weight < 0.1) {
         result.rgb = float3(1.0, 0.3, 0.0);

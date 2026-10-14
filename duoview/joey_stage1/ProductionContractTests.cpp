@@ -43,6 +43,18 @@ int main() try {
     settings.eye_tracked=false;
     settings.fovea_view=1;
     require(state.configure(settings),"Fixed-center configuration rejected");
+    settings.diagnostic_view=3;
+    require(!state.configure(settings),"Invalid diagnostic accepted");
+    settings.diagnostic_view=1;
+    require(state.configure(settings),"Peripheral-only diagnostic unavailable");
+    settings.diagnostic_view=2;
+    require(state.configure(settings),"Fovea-only diagnostic unavailable");
+    settings.diagnostic_view=0;
+    require(state.configure(settings),"Composite diagnostic restore failed");
+    settings.crop_width=.95f; settings.foveal_density=4.f;
+    require(!state.configure(settings),"Oversized atlas accepted");
+    settings.crop_width=.30f; settings.foveal_density=2.5f;
+    require(state.configure(settings),"Valid atlas was not restored");
     FrameKey key{4,100};
     std::array<float,16> m{};m[0]=m[5]=m[10]=m[15]=1.0f;
     auto snap=state.begin(key,3000,3000,m,[]()->std::optional<UV>{return UV{.5f,.5f};});

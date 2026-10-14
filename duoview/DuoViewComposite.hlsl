@@ -18,7 +18,8 @@ cbuffer DuoViewCompositeConfig : register(b0)
     float4 CropUv;             // u0, v0, u1, v1 in full-frustum normalized UVs
     float FeatherFraction;     // feather as fraction of fovea width/height
     uint DebugBorder;
-    float2 _reserved;
+    uint DebugViewMode;
+    float _reserved;
 };
 
 float2 AtlasSampleUV(uint4 rect, float2 localUv)
@@ -60,15 +61,15 @@ void CSMain(uint3 threadId : SV_DispatchThreadID)
     const float4 peripheralColor = SourceAtlas.SampleLevel(LinearClamp, peripheralSample, 0.0);
 
     const float weight = BlendWeight(fullUv);
-    float4 result = peripheralColor;
-    if (weight > 0.0)
+    float4 result = DebugViewMode == 2 ? float4(.04,.04,.04,1) : peripheralColor;
+    if (weight > 0.0 && DebugViewMode != 1)
     {
         const float2 roiLocal = (fullUv - CropUv.xy) / (CropUv.zw - CropUv.xy);
         const float2 fovealSample = AtlasSampleUV(FoveaRect, roiLocal);
         const float4 fovealColor = SourceAtlas.SampleLevel(LinearClamp, fovealSample, 0.0);
         // Intended for identical color encoding in both views. Seam reduction
         // requires both UE views to use compatible exposure and temporal history.
-        result = lerp(peripheralColor, fovealColor, weight);
+        result = DebugViewMode == 2 ? fovealColor : lerp(peripheralColor, fovealColor, weight);
     }
 
     if (DebugBorder != 0 && weight > 0.01 && weight < 0.1)

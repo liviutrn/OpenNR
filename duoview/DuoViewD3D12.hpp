@@ -10,7 +10,8 @@ struct ShaderConstants {
     uint32_t output[2], atlas[2], fovea[4], periphery[4];
     float crop[4], feather;
     uint32_t border;
-    float reserved[2];
+    uint32_t diagnostic;
+    float reserved;
 };
 static_assert(sizeof(ShaderConstants) == 80);
 
@@ -60,7 +61,7 @@ public:
             {l.fovea.x, l.fovea.y, l.fovea.width, l.fovea.height},
             {l.periphery.x, l.periphery.y, l.periphery.width, l.periphery.height},
             {l.u0, l.v0, l.u1, l.v1}, frame.settings.feather_fraction,
-            frame.settings.debug_border ? 1u : 0u, {0, 0}};
+            frame.settings.debug_border ? 1u : 0u, frame.settings.diagnostic_view, 0.f};
         D3D12_SHADER_RESOURCE_VIEW_DESC view{};
         view.Format = format;
         view.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
