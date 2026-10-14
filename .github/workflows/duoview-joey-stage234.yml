@@ -90,6 +90,11 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Native low-res bootstrap source patch failed' }
           python workspace/duoview/joey_stage1/verify_stage234.py backend frontend evidence
           if ($LASTEXITCODE -ne 0) { throw 'Build33 restoration + native bootstrap violated SDK/source boundaries' }
+      - name: Preserve real generated Joey hook excerpts for independent audit
+        shell: pwsh
+        run: |
+          python workspace/duoview/joey_stage1/audit_generated.py backend evidence
+          if ($LASTEXITCODE -ne 0) { throw 'Generated source callback audit failed' }
       - name: Verify pinned production geometry and pair-state contracts
         shell: pwsh
         run: |
