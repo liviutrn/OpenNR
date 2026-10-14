@@ -23,6 +23,8 @@ struct ViewFrame {
     std::array<bool, 2> rectangles{}, projections{}, cameras{};
     std::array<uintptr_t,2> scene_states{};
     bool shading_applied{};
+    // The final sensor sample is taken after the first Mono camera pose.
+    bool gaze_finalized{true};
 };
 
 template<typename Matrix>
@@ -37,7 +39,7 @@ public:
     Settings settings() const { return config_.current_settings(); }
     std::optional<ViewFrame> begin(FrameKey key, uint32_t w, uint32_t h,
         const std::array<float, 16>& projection, const std::function<std::optional<UV>()>& read_gaze,
-        uint64_t now_ms=0) {
+        uint64_t now_ms=0, bool defer_eye_tracking=false) {
         std::scoped_lock lock{mutex_};
         auto& slot = frames_[key.frame % frames_.size()];
         if (slot && slot->config.key == key) return slot;
@@ -45,15 +47,51 @@ public:
             (key.generation==last_begin_.generation && key.frame<=last_begin_.frame)) return {};
         for (float x:projection) if (!std::isfinite(x)) return {};
         const auto s = config_.current_settings();
-        const auto gaze = s.eye_tracked ? read_gaze() : std::optional<UV>{UV{}};
+        // AdjustViewRect needs only sizes. Delay eye tracking to the completed
+        // first Mono camera, not the earlier scene-layout callback.
+        const auto gaze = s.eye_tracked && !defer_eye_tracking ? read_gaze() : std::optional<UV>{};
         auto stability=stability_;
-        const auto center=stability.update(key,w,h,s,gaze,now_ms);
+        const auto center=defer_eye_tracking ? UV{} : stability.update(key,w,h,s,gaze,now_ms);
         const auto frozen = config_.for_frame(key, w, h, center);
         if (!frozen) return {};
         stability_=stability; last_begin_=key;
         slot = ViewFrame{*frozen, projection};
         slot->gaze_valid = s.eye_tracked && gaze.has_value();
+        slot->gaze_finalized = !s.eye_tracked || !defer_eye_tracking;
         return slot;
+    }
+    // Source rect sizes are already fixed. Immediately after Joey finishes
+    // applying head pose to source view 0, freeze the gaze/crop ONCE, before
+    // any source projection, and use it unchanged for both views and composite.
+    bool finalize_gaze(FrameKey key, std::optional<UV> sample, uint64_t now_ms) {
+        std::scoped_lock lock{mutex_};
+        auto& slot=frames_[key.frame % frames_.size()];
+        if (!slot || slot->config.key!=key || slot->invalid || slot->consumed ||
+            slot->gaze_finalized || !slot->camera_valid || !slot->cameras[0] ||
+            slot->projections[0] || slot->projections[1]) return false;
+        const auto& s=slot->config.settings;
+        const auto width=slot->config.layout.atlas_width/2;
+        const auto height=slot->config.layout.atlas_height;
+        auto stability=stability_;
+        const auto center=stability.update(key,width,height,s,sample,now_ms);
+        const auto layout=make_layout(width,height,s.crop_width,s.crop_height,
+            s.peripheral_scale,s.foveal_density,center.u,center.v);
+        if (!layout || !layout_valid(*layout)) { slot->invalid=true; return false; }
+        // The gaze update must NEVER resize/move the already-allocated atlas.
+        if (layout->fovea.x!=slot->config.layout.fovea.x ||
+            layout->fovea.width!=slot->config.layout.fovea.width ||
+            layout->fovea.height!=slot->config.layout.fovea.height ||
+            layout->periphery.x!=slot->config.layout.periphery.x ||
+            layout->periphery.width!=slot->config.layout.periphery.width ||
+            layout->periphery.height!=slot->config.layout.periphery.height) {
+            slot->invalid=true; return false;
+        }
+        slot->config.layout=*layout;
+        slot->config.gaze=center;
+        slot->gaze_valid=s.eye_tracked && sample.has_value();
+        slot->gaze_finalized=true;
+        stability_=stability;
+        return true;
     }
     std::optional<ViewFrame> snapshot(FrameKey key) const {
         std::scoped_lock lock{mutex_};
@@ -106,7 +144,7 @@ public:
     std::optional<ViewFrame> consume(FrameKey key) {
         std::scoped_lock lock{mutex_};
         auto& slot = frames_[key.frame % frames_.size()];
-        if (!slot || slot->config.key != key || slot->consumed || slot->invalid || !slot->main_family ||
+        if (!slot || slot->config.key != key || slot->consumed || slot->invalid || !slot->gaze_finalized || !slot->main_family ||
             !slot->camera_valid || !slot->rectangles[0] || !slot->rectangles[1] ||
             !slot->projections[0] || !slot->projections[1] || !slot->cameras[0] || !slot->cameras[1]) return {};
         slot->consumed = true;
@@ -148,6 +186,8 @@ private:
         std::scoped_lock lock{mutex_};
         auto& slot = frames_[key.frame % frames_.size()];
         if (!slot || slot->config.key != key || view > 1 || slot->invalid || slot->consumed) return false;
+        // Fail closed when projection arrives ahead of the pose-latched gaze.
+        if (kind==1 && !slot->gaze_finalized) { slot->invalid=true; return false; }
         (kind == 0 ? slot->rectangles : slot->projections)[view] = true;
         return true;
     }
