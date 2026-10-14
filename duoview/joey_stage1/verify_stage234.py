@@ -5,7 +5,8 @@ from pathlib import Path
 
 EDITED_BACKEND = {
  "src/mods/vr/MonoRenderingPolicy.hpp", "src/mods/vr/CompatibilityPolicy.hpp",
- "src/mods/VR.hpp", "src/mods/VR.cpp",
+ "src/mods/VR.hpp", "src/mods/VR.cpp", "src/mods/vr/RenderingMethodSetting.hpp",
+ "src/mods/vr/runtimes/OpenXR.hpp", "src/mods/vr/runtimes/OpenXR.cpp",
  "src/mods/vr/FFakeStereoRenderingHook.cpp", "src/mods/vr/D3D12Component.hpp",
  "src/mods/vr/D3D12Component.cpp", "tests/MonoRenderingTests.hpp",
 }
@@ -56,7 +57,26 @@ def main():
  shaders=(a.backend/"src/mods/vr/DuoViewShaderSource.hpp").read_text(encoding="utf-8")
  if "D3DCompile(" in compositor or "shader_source" in compositor:
   raise RuntimeError("Runtime shader compiler still in production compositor")
- if "DuoViewPSVR2Gaze.hpp" not in (a.backend/"src/mods/VR.hpp").read_text(encoding="utf-8"):
+ setting=(a.backend/"src/mods/vr/RenderingMethodSetting.hpp").read_text(encoding="utf-8")
+ vrh=(a.backend/"src/mods/VR.hpp").read_text(encoding="utf-8")
+ vr=(a.backend/"src/mods/VR.cpp").read_text(encoding="utf-8")
+ xr=(a.backend/"src/mods/vr/runtimes/OpenXR.cpp").read_text(encoding="utf-8")
+ d3d=(a.backend/"src/mods/vr/D3D12Component.cpp").read_text(encoding="utf-8")
+ for token in ("m_selection.initialize(0)", "complete_duoview_bootstrap()", "m_bootstrap_released"):
+  if token not in setting: raise RuntimeError("Native0 bootstrap selection is missing "+token)
+ for token in ("m_duoview_low_resolution_applied", "m_duoview_bootstrap_composed_frames", "restore_duoview_bootstrap_scale", "std::chrono::seconds(3)"):
+  if token not in vr: raise RuntimeError("Guarded native boot scale transition missing "+token)
+ if 'm_openxr->resolution_scale->value() = 0.30f;' not in vr:
+  raise RuntimeError("Low-resolution bootstrap is not armed BEFORE initial XR initialization")
+ if "note_duoview_bootstrap_composite()" not in d3d:
+  raise RuntimeError("Restore is not gated on true compositor success")
+ if "on_openxr_resolution_scale_changed(old_width,old_height,new_width,new_height)" not in xr:
+  raise RuntimeError("Restore must reuse original UEVR guarded scale callback")
+ if "DuoViewSceneLayout.hpp" in vrh or "duoview_scene_extent" in vrh:
+  raise RuntimeError("Compact startup atlas accidentally enabled")
+ if "DuoViewDlssHistory" in vrh or "DuoViewDlssHistory" in vr:
+  raise RuntimeError("Unsafe NVIDIA NGX interception unexpectedly restored")
+ if "DuoViewPSVR2Gaze.hpp" not in vrh:
   raise RuntimeError("Production VR headers missing native PSVR2 gaze integration")
  vr_cpp=(a.backend/"src/mods/VR.cpp").read_text(encoding="utf-8")
  vr_header=(a.backend/"src/mods/VR.hpp").read_text(encoding="utf-8")
