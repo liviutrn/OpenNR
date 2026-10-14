@@ -179,7 +179,7 @@ int main() try {
     mark({40,2},UV{.7f,.5f},100,200);
     auto d=audit.temporal_audit();
     require(d && d->previous_frame && d->distinct_view_states && d->stable_view_states &&
-            d->same_pose && d->moving_fovea && d->expected_crop_motion_px_x < -1.,
+            d->same_pose && d->moving_fovea && d->expected_crop_motion_px_x > 1.,
             "Temporal moving-crop/previous-state diagnostics inconsistent");
     mark({40,3},UV{.8f,.5f},100,100);
     d=audit.temporal_audit();
