@@ -76,6 +76,7 @@ def main():
     const ModSlider::Ptr m_duo_guard{ModSlider::create(generate_name("DuoViewCropGuard"), 0.f, .25f, .08f)};
     const ModSlider::Ptr m_duo_smoothing{ModSlider::create(generate_name("DuoViewCropSmoothingMs"), 0.f, 250.f, 85.f)};
     const ModToggle::Ptr m_duo_shading{ModToggle::create(generate_name("DuoViewIndependentShading"), false)};
+    const ModToggle::Ptr m_duo_history_audit{ModToggle::create(generate_name("DuoViewTemporalAudit"), false)};
     const ModToggle::Ptr m_duo_timing{ModToggle::create(generate_name("DuoViewGpuTiming"), false)};
     std::atomic<float> m_duo_gpu_ms{-1.f};
     uevr::duoview::State m_duoview;
@@ -90,7 +91,7 @@ def main():
             *m_duo_width, *m_duo_height, *m_duo_periphery, *m_duo_density,
             *m_duo_feather, *m_duo_gaze, *m_duo_border, *m_duo_debug_source,
             *m_duo_fovea_view, *m_duo_timing, *m_duo_stabilize, *m_duo_guard,
-            *m_duo_smoothing,''')
+            *m_duo_smoothing, *m_duo_history_audit,''')
     cpp="src/mods/VR.cpp"
     edit(cpp,
         'ImGui::TextWrapped("DuoView Stage 1: rendering uses original Joey Mono unchanged. Two-view foveation and gaze are NOT active.");',
@@ -116,11 +117,18 @@ def main():
                 m_duo_border->draw("Blend border highlight");
                 m_duo_debug_source->draw("Source diagnostic: 0 Blend / 1 Periphery / 2 Fovea");
                 m_duo_fovea_view->draw("Fovea UE source view (0 or 1)");
-                m_duo_stabilize->draw("Smooth tracked crop (temporal)");
-                if (m_duo_stabilize->value()) {
-                    m_duo_guard->draw("Steady gaze guard (fraction of crop)");
-                    m_duo_smoothing->draw("Crop temporal smoothing (ms)");
-                    ImGui::TextWrapped("Continuous wide guard + exponential follow + speed cap. No hard recenter jump. Larger values calm fixation but delay intentional gaze changes.");
+                ImGui::TextWrapped("v24: Eye tracking is INSTANT. Old crop guard/smoothing settings are ignored, including values stored in older profiles. No velocity cap or quantization.");
+                m_duo_history_audit->draw("Diagnostic: projection/history continuity (logs, OFF by default)");
+                if (m_duo_history_audit->value()) {
+                    ImGui::TextWrapped("Checks current/previous ViewStates and expected crop-local motion. Constructor projection is synchronized to the latched frame. See UEVR log.");
+                    if (const auto report=m_duoview.temporal_audit()) {
+                        ImGui::Text("Previous frame: %s | source histories: %s | persistent: %s",
+                            report->previous_frame?"yes":"no",
+                            report->distinct_view_states?"separate":"shared/missing",
+                            report->stable_view_states?"yes":"no/unknown");
+                        ImGui::Text("Expected gaze-induced crop motion: X %.1f px Y %.1f px",
+                            report->expected_crop_motion_px_x,report->expected_crop_motion_px_y);
+                    }
                 }
                 m_duo_shading->draw("Independent primary shading (experimental, runtime only)");
                 ImGui::TextWrapped("Shading starts OFF on each injection or rendering-mode transition. Enable after DuoView settles; changes apply to the next complete source frame. No separate capture or Native Fix submission is enabled.");
@@ -182,8 +190,10 @@ void VR::configure_duoview() {
         .eye_tracked=m_duo_gaze->value(), .fovea_view=static_cast<uint32_t>(m_duo_fovea_view->value()),
         .diagnostic_view=static_cast<uint32_t>(m_duo_debug_source->value()),
         .gpu_timing=m_duo_timing->value(), .stabilize_crop=m_duo_stabilize->value(),
-        .guard_fraction=m_duo_guard->value(), .smoothing_ms=m_duo_smoothing->value(),
-        .independent_shading=m_duo_shading->value()};
+        // Compatibility with saved Build32 profiles: force latency settings off.
+        .guard_fraction=0.f, .smoothing_ms=0.f,
+        .independent_shading=m_duo_shading->value(),
+        .temporal_audit=m_duo_history_audit->value()};
     const auto current=m_duoview.settings();
     if (current.crop_width==candidate.crop_width && current.crop_height==candidate.crop_height &&
         current.peripheral_scale==candidate.peripheral_scale && current.foveal_density==candidate.foveal_density &&
@@ -192,7 +202,8 @@ void VR::configure_duoview() {
         current.diagnostic_view==candidate.diagnostic_view && current.gpu_timing==candidate.gpu_timing &&
         current.stabilize_crop==candidate.stabilize_crop && current.guard_fraction==candidate.guard_fraction &&
         current.smoothing_ms==candidate.smoothing_ms &&
-        current.independent_shading==candidate.independent_shading) return;
+        current.independent_shading==candidate.independent_shading &&
+        current.temporal_audit==candidate.temporal_audit) return;
     if (!m_duoview.configure(candidate))
         SPDLOG_WARNING_EVERY_N_SEC(2, "[DuoView] Requested quality settings exceed atlas geometry; preserving previous valid settings");
 }
@@ -336,6 +347,60 @@ void VR::duoview_abort(const char* reason) {
         if (vr->is_duoview_renderer_active() && views_ptr) {
             vr->duoview_state().family(vr->duoview_key(frame_count), main_family, views_ptr->count);
         }''')
+    # v24 current-frame projection coherence, at Joey's source-validated
+    # FSceneViewInitOptionsUE5/UE50To53 input before UE constructs SceneView.
+    # UE's private previous ViewState, velocity buffers, and TSR history are
+    # NOT written: unknown offsets would risk crashes and double-compensation.
+    edit(hook, '    FIntRect native_view_rect{};',
+    '''    if (vr->is_duoview_renderer_active() && g_hook->is_in_viewport_client_draw() &&
+        g_hook->m_has_double_precision && is_ue5 && init_options_view_family != nullptr &&
+        (init_options_stereo_pass == EStereoscopicPass::eSSP_PRIMARY ||
+         init_options_stereo_pass == EStereoscopicPass::eSSP_SECONDARY)) {
+        const auto rtm=g_hook->get_render_target_manager();
+        const bool main=rtm &&
+            init_options_view_family->get_render_target()==rtm->get_view_family_render_target();
+        if (main) {
+            const unsigned view=init_options_stereo_pass==EStereoscopicPass::eSSP_PRIMARY ? 0u : 1u;
+            if (const auto frame=vr->duoview_begin_frame()) {
+                Matrix4x4d expected{};
+                uevr::duoview::apply_frame_projection(expected,*frame,view);
+                const auto reconcile=[&](auto& projection) {
+                    bool mismatch=false;
+                    for (int col=0;col<4;++col) for (int row=0;row<4;++row) {
+                        if (!std::isfinite(projection[col][row]) ||
+                            std::abs(static_cast<double>(projection[col][row])-expected[col][row])>1e-6)
+                            mismatch=true;
+                    }
+                    if (mismatch) {
+                        for (int col=0;col<4;++col) for (int row=0;row<4;++row)
+                            projection[col][row]=expected[col][row];
+                        if (frame->config.settings.temporal_audit)
+                            SPDLOG_INFO_EVERY_N_SEC(1,
+                                "[DuoView][TemporalAudit] corrected FSceneViewInitOptions projection view={} frame={}",
+                                view,frame->config.key.frame);
+                    }
+                };
+                if (is_ue50_to_53) reconcile(init_options_ue50_to_53->projection_matrix);
+                else reconcile(init_options_ue5->projection_matrix);
+                if (frame->config.settings.temporal_audit) {
+                    const auto& wanted=view==frame->config.settings.fovea_view ?
+                        frame->config.layout.fovea : frame->config.layout.periphery;
+                    const auto& observed=is_ue50_to_53 ? init_options_ue50_to_53->view_rect
+                        : init_options_ue5->view_rect;
+                    if (observed[0]!=static_cast<int32_t>(wanted.x) ||
+                        observed[1]!=static_cast<int32_t>(wanted.y) ||
+                        observed[2]!=static_cast<int32_t>(wanted.x+wanted.width) ||
+                        observed[3]!=static_cast<int32_t>(wanted.y+wanted.height))
+                        SPDLOG_WARNING_EVERY_N_SEC(2,
+                            "[DuoView][TemporalAudit] rect mismatch view={} frame={} actual=[{},{},{},{}] expected=[{},{},{},{}]",
+                            view,frame->config.key.frame,
+                            observed[0],observed[1],observed[2],observed[3],
+                            wanted.x,wanted.y,wanted.x+wanted.width,wanted.y+wanted.height);
+                }
+            }
+        }
+    }
+    FIntRect native_view_rect{};''')
     edit(hook, '    std::optional<uint32_t> views_original_count{};',
     '''    if (vr->is_duoview_renderer_active() && g_hook->is_in_viewport_client_draw()) {
         const auto family=init_options_view_family;
@@ -405,6 +470,17 @@ void VR::duoview_abort(const char* reason) {
                         bool duo_failed = false;
                         const auto frame = vr->duoview_state().consume(
                             vr->duoview_key(static_cast<uint32_t>(frame_count)));
+                        if (frame && frame->config.settings.temporal_audit) {
+                            if (const auto diagnostic=vr->duoview_state().temporal_audit()) {
+                                SPDLOG_INFO_EVERY_N_SEC(1,
+                                    "[DuoView][TemporalAudit] frame={} prior={} samePose={} separateStates={} persistentStates={} gazeMoved={} expectedCropDelta=({:.1f},{:.1f}) px",
+                                    diagnostic->key.frame, diagnostic->previous_frame,
+                                    diagnostic->same_pose, diagnostic->distinct_view_states,
+                                    diagnostic->stable_view_states, diagnostic->moving_fovea,
+                                    diagnostic->expected_crop_motion_px_x,
+                                    diagnostic->expected_crop_motion_px_y);
+                            }
+                        }
                         vr->m_openxr->note_mono_copy(static_cast<uint32_t>(frame_count), false);
                         // Do not skip the OpenXR copy if pair evidence fails.
                         // Emergency copy may be an incomplete atlas; quarantine ID6
@@ -464,7 +540,7 @@ void VR::duoview_abort(const char* reason) {
         str(root/"src/mods/vr/DuoViewShaderSource.hpp")], check=True)
     for path,text in changed.items():
         (source_root(path)/path).write_text(text,encoding="utf-8",newline="")
-    print("Applied Stage 5 PSVR2 gaze with cached per-frame projection, same-pose two-view and DX12 compositor (experimental).")
+    print("Applied v24 instantaneous gaze + FSceneView constructor projection synchronization + opt-in temporal continuity diagnostics.")
 
 if __name__=="__main__":
     main()
