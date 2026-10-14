@@ -20,6 +20,7 @@ cbuffer DuoViewCompositeConfig : register(b0)
     uint DebugBorder;
     uint DebugViewMode;
     float _reserved;
+    float2 HistorySampleOffset; // crop-local Cheeky-sign sample shift; 0=original
 };
 
 float2 AtlasSampleUV(uint4 rect, float2 localUv)
@@ -65,11 +66,18 @@ void CSMain(uint3 threadId : SV_DispatchThreadID)
     if (weight > 0.0 && DebugViewMode != 1)
     {
         const float2 roiLocal = (fullUv - CropUv.xy) / (CropUv.zw - CropUv.xy);
-        const float2 fovealSample = AtlasSampleUV(FoveaRect, roiLocal);
+        const float2 correctedLocal = roiLocal + HistorySampleOffset;
+        const float2 fovealSample = AtlasSampleUV(FoveaRect, correctedLocal);
         const float4 fovealColor = SourceAtlas.SampleLevel(LinearClamp, fovealSample, 0.0);
+        // On large ROI shifts, do not smear a clamped border texel across
+        // the entire fovea. The peripheral source fills missing coverage.
+        const float edge = min(min(correctedLocal.x, correctedLocal.y),
+                               min(1.0-correctedLocal.x, 1.0-correctedLocal.y));
+        const float sampleCoverage = any(HistorySampleOffset != 0.0)
+            ? saturate(edge / 0.025) : 1.0;
         // Intended for identical color encoding in both views. Seam reduction
         // requires both UE views to use compatible exposure and temporal history.
-        result = DebugViewMode == 2 ? fovealColor : lerp(peripheralColor, fovealColor, weight);
+        result = DebugViewMode == 2 ? fovealColor : lerp(peripheralColor, fovealColor, weight * sampleCoverage);
     }
 
     if (DebugBorder != 0 && weight > 0.01 && weight < 0.1)
