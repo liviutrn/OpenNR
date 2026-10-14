@@ -70,6 +70,7 @@ def main():
     const ModToggle::Ptr m_duo_gaze{ModToggle::create(generate_name("DuoViewEyeTracking"), true)};
     const ModToggle::Ptr m_duo_border{ModToggle::create(generate_name("DuoViewDebugBorder"), false)};
     const ModInt32::Ptr m_duo_debug_source{ModSliderInt32::create(generate_name("DuoViewDebugSource"), 0, 2, 0)};
+    const ModInt32::Ptr m_duo_fovea_view{ModSliderInt32::create(generate_name("DuoViewFoveaSourceView"), 0, 1, 1)};
     uevr::duoview::State m_duoview;
     uevr::duoview::psvr2::Reader m_duoview_gaze;
     std::atomic<bool> m_duoview_quarantined{false};
@@ -80,7 +81,8 @@ def main():
     edit(header,'        m_options = {',
         '''        m_options = {
             *m_duo_width, *m_duo_height, *m_duo_periphery, *m_duo_density,
-            *m_duo_feather, *m_duo_gaze, *m_duo_border, *m_duo_debug_source,''')
+            *m_duo_feather, *m_duo_gaze, *m_duo_border, *m_duo_debug_source,
+            *m_duo_fovea_view,''')
     cpp="src/mods/VR.cpp"
     edit(cpp,
         'ImGui::TextWrapped("DuoView Stage 1: rendering uses original Joey Mono unchanged. Two-view foveation and gaze are NOT active.");',
@@ -98,6 +100,7 @@ def main():
                 m_duo_gaze->draw("Eye tracking");
                 m_duo_border->draw("Blend border highlight");
                 m_duo_debug_source->draw("Source diagnostic: 0 Blend / 1 Periphery / 2 Fovea");
+                m_duo_fovea_view->draw("Fovea UE source view (0 or 1)");
                 configure_duoview();
                 if (const auto snap=m_duoview.snapshot(duoview_key(get_runtime()->internal_frame_count))) {
                     const auto& layout=snap->config.layout;
@@ -114,7 +117,7 @@ def main():
                     active.foveal_density!=m_duo_density->value() || active.peripheral_scale!=m_duo_periphery->value())
                     ImGui::TextWrapped("Selected view sizes exceed existing atlas; previous valid settings remain in effect.");
                 ImGui::TextWrapped("Diagnostic 1 isolates the full-FOV peripheral pass. Diagnostic 2 isolates the foveal pass (dark outside crop). Compare shadows/lighting in the same scene.");
-                ImGui::TextWrapped("Source-view swap is locked to UE view1 until both UE view histories have been independently validated.");
+                ImGui::TextWrapped("View 0 = FIRST Unreal pass (old prototype default), view 1 = SECOND pass (Build19 default). Identical frozen Mono camera. Switching may reset temporal history.");
                 ImGui::TreePop();
             }
         }
@@ -128,7 +131,7 @@ void VR::configure_duoview() {
         .crop_width=m_duo_width->value(), .crop_height=m_duo_height->value(),
         .peripheral_scale=m_duo_periphery->value(), .foveal_density=m_duo_density->value(),
         .feather_fraction=m_duo_feather->value(), .debug_border=m_duo_border->value(),
-        .eye_tracked=m_duo_gaze->value(), .fovea_view=1u,
+        .eye_tracked=m_duo_gaze->value(), .fovea_view=static_cast<uint32_t>(m_duo_fovea_view->value()),
         .diagnostic_view=static_cast<uint32_t>(m_duo_debug_source->value())};
     const auto current=m_duoview.settings();
     if (current.crop_width==candidate.crop_width && current.crop_height==candidate.crop_height &&
@@ -187,7 +190,8 @@ void VR::duoview_abort(const char* reason) {
         (index == 0 || index == 1)) {
         const auto vr = VR::get();
         if (const auto frame = vr->duoview_begin_frame()) {
-            const auto& rect = index == 0 ? frame->config.layout.periphery : frame->config.layout.fovea;
+            const auto& rect = static_cast<uint32_t>(index) == frame->config.settings.fovea_view
+                ? frame->config.layout.fovea : frame->config.layout.periphery;
             if (rect.width && rect.height &&
                 uint64_t(rect.x) + rect.width <= frame->config.layout.atlas_width &&
                 uint64_t(rect.y) + rect.height <= frame->config.layout.atlas_height) {
@@ -239,8 +243,12 @@ void VR::duoview_abort(const char* reason) {
     edit(hook,'''        if (vr->is_using_mono()) { true_index = 0; }
 
         auto& double_matrix = *(Matrix4x4d*)out;''',
-    '''        const bool duo_fovea = vr->is_duoview_renderer_active() && g_hook->m_has_double_precision && view_index == 1;
-        const bool duo_full = vr->is_duoview_renderer_active() && g_hook->m_has_double_precision && view_index == 0;
+    '''        const bool duo_index=vr->is_duoview_renderer_active() && g_hook->m_has_double_precision &&
+            (view_index == 0 || view_index == 1);
+        const auto duo_frame=duo_index ? vr->duoview_begin_frame() :
+            std::optional<uevr::duoview::ViewFrame>{};
+        const bool duo_fovea=duo_frame && static_cast<uint32_t>(view_index) == duo_frame->config.settings.fovea_view;
+        const bool duo_full=duo_frame && !duo_fovea;
         if (vr->is_using_mono()) { true_index = 0; }
 
         auto& double_matrix = *(Matrix4x4d*)out;''')
@@ -250,7 +258,7 @@ void VR::duoview_abort(const char* reason) {
     '''        if (duo_fovea || duo_full) {
             if (const auto frame = vr->duoview_begin_frame()) {
                 if (duo_fovea) uevr::duoview::apply_foveal_crop(double_matrix, frame->config.layout);
-                vr->duoview_state().projection(frame->config.key, duo_fovea ? 1u : 0u);
+                vr->duoview_state().projection(frame->config.key, static_cast<unsigned>(view_index));
             } else {
                 SPDLOG_WARNING_EVERY_N_SEC(2, "[DuoView] Missing projection snapshot");
             }

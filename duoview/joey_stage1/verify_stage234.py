@@ -62,8 +62,14 @@ def main():
  for token in ('m_duo_width->draw(', 'm_duo_height->draw(', 'm_duo_periphery->draw(',
                'm_duo_density->draw(', 'm_duo_feather->draw(', 'm_duo_debug_source->draw('):
   if token not in vr_cpp: raise RuntimeError("DuoView quality UI missing "+token)
- for token in ('"DuoViewCropWidth"', '"DuoViewPeripheralScale"', '"DuoViewFovealDensity"'):
+ for token in ('"DuoViewCropWidth"', '"DuoViewPeripheralScale"', '"DuoViewFovealDensity"',
+               '"DuoViewFoveaSourceView"'):
   if token not in vr_header: raise RuntimeError("Persisted DuoView setting missing "+token)
+ hook=(a.backend/"src/mods/vr/FFakeStereoRenderingHook.cpp").read_text(encoding="utf-8")
+ if "frame->config.settings.fovea_view" not in hook or "duo_frame->config.settings.fovea_view" not in hook:
+  raise RuntimeError("Actual source index and UE projection must follow frozen source-view selection")
+ if ".fovea_view=static_cast<uint32_t>(m_duo_fovea_view->value())" not in vr_cpp:
+  raise RuntimeError("UE source selector must be connected to immutable frame settings")
  if "vertex_shader_bytecode[]" not in shaders or "pixel_shader_bytecode[]" not in shaders:
   raise RuntimeError("Precompiled DXBC shader arrays missing")
  inputs = sorted(EDITED_BACKEND | ADDED_BACKEND)
