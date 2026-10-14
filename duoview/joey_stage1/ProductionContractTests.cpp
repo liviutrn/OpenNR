@@ -2,6 +2,7 @@
 #include <cmath>
 #include <cstdint>
 #include <iostream>
+#include <limits>
 #include <stdexcept>
 #include "DuoViewState.hpp"
 #include "MonoRenderingPolicy.hpp"
@@ -189,6 +190,65 @@ int main() try {
     d=audit.temporal_audit();
     require(d && d->distinct_view_states && !d->stable_view_states,
             "Changed temporal identity across frames must be flagged");
+    // v41: Cheeky-sign output correction uses ONLY last accepted XR copy;
+    // the compositor must never use a mere consumed CPU packet as history.
+    State history;
+    Settings hs{}; hs.crop_width=hs.crop_height=.30f;
+    hs.history_sample_correction=true; hs.history_sample_strength=1.f;
+    require(history.configure(hs),"v41 compositor settings rejected");
+    auto make_complete=[&](FrameKey k, UV gaze) {
+        auto f=history.begin(k,3000,3000,p,[&]()->std::optional<UV>{ return gaze; },1000+k.frame*11);
+        require(f.has_value(),"v41 missing frozen frame");
+        for(unsigned view=0;view<2;view++) {
+            require(history.rectangle(k,view) && history.projection(k,view) &&
+                    history.camera(k,view,camera) && history.scene(k,view,100+view),
+                    "v41 incomplete pair");
+        }
+        require(history.family(k,true,2),"v41 missing main family");
+        return history.consume(k);
+    };
+    auto first=make_complete({61,1},{.5f,.5f});
+    require(first && first->config.history_sample_offset.u==0.f &&
+            !history.accept_composite({61,0}) &&
+            history.accept_composite({61,1}),
+            "First copy must be unshifted; only correct copy can seed history");
+    auto shifted=make_complete({61,2},{.52f,.49f});
+    require(shifted && std::abs(shifted->config.history_sample_offset.u-.02f/.30f)<1e-5f &&
+            std::abs(shifted->config.history_sample_offset.v+.01f/.30f)<1e-5f,
+            "Accepted adjacent crop should compensate with current-minus-previous sign");
+    // Deliberately do NOT accept frame 2; next frame must reject frame 1 history.
+    auto gap=make_complete({61,3},{.53f,.5f});
+    require(gap && gap->config.history_sample_offset.u==0.f &&
+            gap->config.history_sample_offset.v==0.f,
+            "A failed/skipped composition must not seed a stale crop offset");
+    require(history.accept_composite({61,3}),"v41 accepted frame 3 rejected");
+    auto jump=make_complete({61,4},{.80f,.5f});
+    require(jump && jump->config.history_sample_offset.u==0.f,
+            "Large saccade must bypass sampling correction, not delay gaze");
+    require(history.accept_composite({61,4}),"v41 accepted frame 4 rejected");
+    hs.history_sample_correction=false;
+    require(history.configure(hs),"v41 toggle off rejected");
+    auto off=make_complete({61,5},{.81f,.5f});
+    require(off && off->config.history_sample_offset.u==0.f,
+            "A/B disabled must be exactly original compositor sampling");
+    hs.history_sample_correction=true;hs.history_sample_strength=.5f;
+    require(history.configure(hs),"v41 strength adjustment rejected");
+    require(history.accept_composite({61,5}),"v41 accept frame5 rejected");
+    auto half=make_complete({61,6},{.82f,.5f});
+    require(half && std::abs(half->config.history_sample_offset.u-.5f*.01f/.30f)<1e-5f,
+            "v41 source sampling gain must be applied exactly once");
+    history.retire();
+    require(!history.accept_composite({61,6}),"Retired copy cannot commit history");
+    hs.history_sample_strength=1.01f;
+    require(!history.configure(hs),"Out-of-range source shift gain accepted");
+    hs.history_sample_strength=std::numeric_limits<float>::quiet_NaN();
+    require(!history.configure(hs),"NaN source shift gain accepted");
+    // Fixed-center remains completely untouched when configured with A/B ON.
+    hs.history_sample_strength=1.f;hs.eye_tracked=false;
+    require(history.configure(hs),"Fixed-center v41 settings rejected");
+    auto fixed=history.begin({62,1},3000,3000,p,[]()->std::optional<UV>{return UV{.87f,.33f};},1400);
+    require(fixed && fixed->config.gaze.u==.5f,
+            "Fixed-center must not follow sensor when tracking is OFF");
     follow.smoothing_ms=251.f;
     State bad_controls; require(!bad_controls.configure(follow),"Invalid smoothing must be rejected");
     follow.smoothing_ms=85.f; follow.guard_fraction=.251f;
