@@ -24,8 +24,19 @@ int main() try {
     require(c && std::abs(c->u-.5f)<1e-5f && std::abs(c->v-.5f)<1e-5f,"forward mapped to center");
     auto r=psvr2::projection_uv({.5f,.5f,1},p);
     require(r && std::abs(r->u-.75f)<1e-5f && std::abs(r->v-.25f)<1e-5f,"right/up projection");
+    // Joey uses GLM column-major [column][row] storage and +Z-forward Mono.
+    // x_clip=p[0]*right+p[8]*forward, w_clip=p[11]*forward:
+    // +0.2 shifts the optical center to U=0.6; -0.2 shifts it to U=0.4.
     p[8]=.2f;c=psvr2::projection_uv({0,0,1},p);
-    require(c && std::abs(c->u-.4f)<1e-5f,"asymmetric Mono optical projection");
+    require(c && std::abs(c->u-.6f)<1e-5f,"positive asymmetric Mono projection");
+    p[8]=-.2f;c=psvr2::projection_uv({0,0,1},p);
+    require(c && std::abs(c->u-.4f)<1e-5f,"negative asymmetric Mono projection");
+    p[8]=.2f;p[9]=.1f;c=psvr2::projection_uv({0,0,1},p);
+    require(c && std::abs(c->u-.6f)<1e-5f &&
+        std::abs(c->v-.45f)<1e-5f,"combined horizontal/vertical optical offset");
+    r=psvr2::projection_uv({.5f,-.25f,1},p);
+    require(r && std::abs(r->u-.85f)<1e-5f &&
+        std::abs(r->v-.575f)<1e-5f,"off-axis ray with offset optical center");
     p[11]=-1;require(!psvr2::projection_uv({0,0,1},p),"unsupported negative-w projection fails closed");
     require(!psvr2::projection_uv({0,0,0},p),"invalid forward ray");
     std::cout<<"PSVR2 CAPI ABI, ray validity, blink, mapping and projection PASS\n";
