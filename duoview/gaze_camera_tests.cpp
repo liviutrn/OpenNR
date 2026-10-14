@@ -1,8 +1,26 @@
 #include "DuoViewState.hpp"
+#include "DuoViewSceneLayout.hpp"
 #include <cassert>
 #include <iostream>
 using namespace uevr::duoview;
 int main() {
+    for (unsigned source:{0u,1u}) {
+        Settings settings;settings.fovea_view=source;
+        for (auto extent:{std::array{0u,0u},std::array{5000u,5000u}}) {
+            const auto startup=scene_layout(extent[0],extent[1],settings);
+            assert(layout_valid(startup));
+            for (int index:{0,1}) {
+                const auto rect=scene_rectangle(startup,source,index,true);
+                assert(rect.width>=128 && rect.height>=128);
+                assert(uint64_t(rect.x)+rect.width<=startup.atlas_width &&
+                    uint64_t(rect.y)+rect.height<=startup.atlas_height);
+                const auto legacy=scene_rectangle(startup,source,index+1,false);
+                assert(rect.x==legacy.x && rect.y==legacy.y && rect.width==legacy.width && rect.height==legacy.height);
+            }
+            if (extent[0]) assert(startup.atlas_width==3504 && startup.atlas_height==2504);
+            else assert(startup.atlas_width==256 && startup.atlas_height==128);
+        }
+    }
     const std::array<float,16> projection{
         .55f,0,0,0, 0,.75f,0,0, .03f,-.02f,0,1, 0,0,.1f,0};
     const auto full_height=make_layout(3400,3172,.5f,.5f,.2f,2.f,.5f,.5f,true);

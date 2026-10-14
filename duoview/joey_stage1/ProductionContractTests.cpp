@@ -4,6 +4,7 @@
 #include <iostream>
 #include <stdexcept>
 #include "DuoViewState.hpp"
+#include "DuoViewSceneLayout.hpp"
 #include "MonoRenderingPolicy.hpp"
 
 using namespace uevr::duoview;
@@ -17,6 +18,14 @@ int main() try {
         "DuoView must be active before a native frame or consumer retirement is possible");
     startup.initialize_duoview();
     require(startup.active()==6 && startup.generation()==1,"Reload must not reset startup to native stereo");
+    const auto boot=scene_layout(0,0,Settings{});
+    require(layout_valid(boot) && boot.atlas_width==256 && boot.atlas_height==128,
+        "Unknown startup dimensions need a valid compact allocation");
+    for (int index:{0,1}) {
+        const auto rect=scene_rectangle(boot,0,index,true);
+        require(rect.width==128 && rect.height==128 && rect.x+rect.width<=boot.atlas_width,
+            "Startup must not send tiny or out-of-bounds views to the game's upscaler");
+    }
     for (auto wh: {std::array{2000u,2000u},std::array{3000u,3000u},
                    std::array{3400u,3172u},std::array{4096u,2160u}}) {
         const auto l=make_layout(wh[0],wh[1],.30f,.30f,.25f,2.5f,.5f,.5f);

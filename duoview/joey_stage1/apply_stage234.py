@@ -520,7 +520,7 @@ void VR::duoview_abort(const char* reason) {
     # Copy reference modules into exact checked-out Joey tree. No private SDK
     # declarations or altered SDK files.
     for name in ("DuoViewGeometry.hpp","DuoViewFovealCamera.hpp","DuoViewGaze.hpp","DuoViewPSVR2Gaze.hpp","DuoViewCropStability.hpp","DuoViewFrame.hpp",
-                 "DuoViewOpenNRCropPolicy.hpp","DuoViewDlssHistoryPolicy.hpp","DuoViewDlssHistory.hpp","DuoViewDlssHistory.cpp","DuoViewNgxParameters.hpp",
+                 "DuoViewOpenNRCropPolicy.hpp","DuoViewSceneLayout.hpp",
                  "DuoViewConfig.hpp","DuoViewState.hpp","DuoViewD3D12.hpp",
                  "DuoViewMonoCopyD3D12.hpp"):
         target=root/"src/mods/vr"/name

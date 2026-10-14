@@ -1,17 +1,11 @@
 #include "DuoViewState.hpp"
-#include "DuoViewDlssHistoryPolicy.hpp"
 #include <cassert>
 #include <iostream>
 using namespace uevr::duoview;
-struct Parameters {
-    unsigned value{},writes{};bool available{true};
-    bool get_reset(unsigned& x) { x=value;return available; }
-    void set_reset(unsigned x) { value=x;++writes; }
-};
 int main() {
     Settings settings;settings.r10_crop_policy=true;settings.quantization_pixels=8;
     settings.smoothing_ms=0;settings.compact_atlas=true;settings.hold_tracking_loss=true;
-    settings.gaze_camera=true;settings.dlss_history_protection=true;
+    settings.gaze_camera=true;
     CropStability crop;
     const auto first=crop.update({1,1},5000,5000,settings,UV{.5f,.5f},1000,.5f,.5f);
     const auto noise=crop.update({1,2},5000,5000,settings,UV{.501f,.499f},1010,.5f,.5f);
@@ -36,26 +30,20 @@ int main() {
     auto begin=[&](unsigned n,UV gaze) {
         return state.begin({2,n},5000,5000,projection,[gaze]()->std::optional<UV>{return gaze;},3000+n*10);
     };
-    assert(begin(1,{.5f,.5f})->config.foveal_history_reset);
-    assert(begin(2,{.5f,.5f})->config.foveal_history_reset);
-    assert(!begin(3,{.501f,.499f})->config.foveal_history_reset);
-    const auto changed=begin(4,{.7f,.3f});assert(changed->config.foveal_history_reset);
-    assert(begin(5,{.7f,.3f})->config.foveal_history_reset);
-    assert(!begin(6,{.7f,.3f})->config.foveal_history_reset);
-    assert(protect_dlss_history(changed->config,2504,2504));
-    assert(!protect_dlss_history(changed->config,1000,1000));
-    assert(!protect_dlss_history(changed->config,5000,5000));
-    Parameters parameters;
-    { DlssResetScope reset{parameters,true};assert(reset.active() && parameters.value==1); }
-    assert(parameters.value==0 && parameters.writes==2);
-    parameters.value=1;parameters.writes=0;
-    { DlssResetScope reset{parameters,true};assert(!reset.active() && parameters.value==1); }
-    assert(parameters.value==1 && parameters.writes==0);
-    parameters.value=0;parameters.available=false;
-    { DlssResetScope reset{parameters,true};assert(!reset.active()); }
-    assert(parameters.value==0 && parameters.writes==0);
+    const auto initial=begin(1,{.5f,.5f});assert(initial);
+    const auto held=begin(2,{.501f,.499f});assert(held);
+    assert(initial->config.layout.u0==held->config.layout.u0 &&
+        initial->config.foveal_camera.forward==held->config.foveal_camera.forward);
+    const auto changed=begin(3,{.7f,.3f});assert(changed);
+    assert(changed->config.layout.u0!=held->config.layout.u0);
+    for (unsigned n=4;n<100;++n) {
+        const auto stopped=begin(n,{.7f,.3f});assert(stopped);
+        assert(stopped->config.layout.u0==changed->config.layout.u0 &&
+            stopped->config.layout.v0==changed->config.layout.v0 &&
+            stopped->config.foveal_camera.forward==changed->config.foveal_camera.forward);
+    }
     settings.eye_tracked=false;assert(state.configure(settings));
-    assert(begin(7,{.5f,.5f})->config.foveal_history_reset);
-    assert(!begin(8,{.5f,.5f})->config.foveal_history_reset);
-    std::cout << "OpenNR quantized fixation, instant saccades, zero settling drift, fovea-only history and SDK-reset restoration passed\n";
+    const auto fixed=begin(100,{.7f,.3f});assert(fixed && !fixed->config.foveal_camera.enabled);
+    assert(fixed->config.layout.u0==.25f && fixed->config.layout.v0==.25f);
+    std::cout << "OpenNR quantized fixation, instant saccades, zero camera settling drift and fixed-center restoration passed\n";
 }

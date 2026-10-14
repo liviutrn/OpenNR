@@ -54,7 +54,7 @@ public:
         const auto s = config_.current_settings();
         const auto gaze = s.eye_tracked ? read_gaze() : std::optional<UV>{UV{}};
         auto stability=stability_;
-        const auto center=stability.update(key,w,h,s,gaze,now_ms,input_scale_x_,input_scale_y_);
+        const auto center=stability.update(key,w,h,s,gaze,now_ms);
         const auto frozen = config_.for_frame(key, w, h, center);
         if (!frozen) return {};
         stability_=stability; last_begin_=key;
@@ -65,26 +65,7 @@ public:
             slot->config.foveal_camera=*camera;
         }
         slot->gaze_valid = s.eye_tracked && gaze.has_value();
-        const bool changed=!last_produced_ || last_produced_->config.key.generation!=key.generation ||
-            last_produced_->config.key.frame+1!=key.frame ||
-            last_produced_->config.layout.u0!=slot->config.layout.u0 ||
-            last_produced_->config.layout.v0!=slot->config.layout.v0 ||
-            last_produced_->config.layout.crop_width!=slot->config.layout.crop_width ||
-            last_produced_->config.layout.crop_height!=slot->config.layout.crop_height ||
-            last_produced_->config.settings.eye_tracked!=s.eye_tracked ||
-            last_produced_->config.settings.fovea_view!=s.fovea_view ||
-            last_produced_->config.foveal_camera.scale_x!=slot->config.foveal_camera.scale_x ||
-            last_produced_->config.foveal_camera.scale_y!=slot->config.foveal_camera.scale_y;
-        slot->config.foveal_history_reset=s.dlss_history_protection &&
-            (s.eye_tracked || (last_produced_ && last_produced_->config.settings.eye_tracked)) &&
-            (changed || previous_crop_changed_);
-        previous_crop_changed_=changed && s.eye_tracked;
-        last_produced_=slot;
         return slot;
-    }
-    void note_dlss_input_scale(float x,float y) {
-        if (!std::isfinite(x) || !std::isfinite(y) || x<.1f || x>1.f || y<.1f || y>1.f) return;
-        std::scoped_lock lock{mutex_}; input_scale_x_=x; input_scale_y_=y;
     }
     std::optional<ViewFrame> snapshot(FrameKey key) const {
         std::scoped_lock lock{mutex_};
@@ -183,7 +164,6 @@ public:
         std::scoped_lock lock{mutex_};
         frames_ = {}; config_.retire(); stability_.reset(); last_begin_={};
         last_completed_.reset(); last_audit_.reset();
-        last_produced_.reset(); previous_crop_changed_=false; input_scale_x_=input_scale_y_=1.f;
     }
 private:
     bool observe(FrameKey key, unsigned view, int kind) {
@@ -199,9 +179,6 @@ private:
     FrameKey last_begin_{};
     std::array<std::optional<ViewFrame>, 16> frames_{};
     std::optional<ViewFrame> last_completed_{};
-    std::optional<ViewFrame> last_produced_{};
-    bool previous_crop_changed_{};
-    float input_scale_x_{1.f},input_scale_y_{1.f};
     std::optional<TemporalAudit> last_audit_{};
 };
 }

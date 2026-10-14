@@ -28,7 +28,7 @@ struct Settings {
     bool independent_shading{};
     bool temporal_audit{}; // optional observation; no private UE history writes
     bool gaze_camera{}, compact_atlas{}, hold_tracking_loss{};
-    bool r10_crop_policy{}, dlss_history_protection{};
+    bool r10_crop_policy{};
     uint32_t quantization_pixels{8};
 };
 struct FrameConfig {
@@ -38,7 +38,6 @@ struct FrameConfig {
     Settings settings{};
     uint64_t settings_revision{};
     FovealCamera foveal_camera{};
-    bool foveal_history_reset{};
 };
 class ConfigLatch {
 public:

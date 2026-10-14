@@ -1,4 +1,6 @@
-> Current candidate: [v26 OpenNR controls and DLSS history protection](reviews/DUOVIEW_V26_OPENNR_HISTORY_HANDOFF_2026-10-14.md). [Build34 download](https://github.com/liviutrn/OpenNR/actions/runs/38605029465/artifacts/11916511828):53/53 Windows tests passed; backend/frontend and all14 package hashes verified. Source310b505b1e430baf3981c5c79a9805bc752a5c54. Hardware acceptance remains unverified.
+> Current candidate: [v27 injection recovery without NGX hooks](reviews/DUOVIEW_V27_INJECTION_RECOVERY_2026-10-14.md). Build34 is rejected: user reports injection CTD through NVIDIA/NGX evaluation. Direct NGX interception is removed and compact startup rectangles are corrected. Replacement Windows build pending; headset acceptance unverified.
+
+> Previous candidate: [v26 source and Build34 evidence](reviews/DUOVIEW_V26_OPENNR_HISTORY_HANDOFF_2026-10-14.md). Its Windows tests passed, but user injection failed; do not treat it as a working baseline.
 
 > Latest active candidate: [v25 always-on startup and gaze camera](reviews/DUOVIEW_V25_ALWAYS_ON_HANDOFF_2026-10-14.md). Branch `experiments/duoview-v25-gaze-camera-always-on`. Windows CI pending; headset unverified. Earlier Build33 crop fix was rejected.
 

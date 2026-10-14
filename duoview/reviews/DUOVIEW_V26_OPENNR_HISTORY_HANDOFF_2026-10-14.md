@@ -1,5 +1,7 @@
 # DuoView v26 — OpenNR controls and DLSS history protection
 
+Superseded after user injection CTD. Continue with [v27 injection recovery](DUOVIEW_V27_INJECTION_RECOVERY_2026-10-14.md); Build34 is not a working headset baseline.
+
 Branch: `experiments/duoview-v25-gaze-camera-always-on`. Windows Build34 verified and ready for headset testing.
 Published build source: `310b505b1e430baf3981c5c79a9805bc752a5c54`.
 Its tree `ede7269d4c0e2b9f168238774a6b7aa554f6db68` exactly matches the locally verified tree.
