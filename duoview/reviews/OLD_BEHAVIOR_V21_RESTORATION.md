@@ -94,3 +94,19 @@ Test-only correction: 28dae2e13666b4f5513b6666546e8620d0926ce4.
 Full Windows run 38543842360 (26) is the active candidate. Production tests
 have passed again. All further gates and package inspection remain required.
 https://github.com/liviutrn/OpenNR/actions/runs/38543842360
+
+## Authoritative user retest — 2026-10-14, 12:45 Bucharest
+
+After downloading and retesting old Injector-5, the user reports:
+- good foveal shading;
+- worse peripheral shading;
+- twitchy gaze movement.
+
+This supersedes the earlier recollection of perfect shading in both sources.
+Old/new peripheral shading and twitching are shared limitations, not proven
+new-backend regressions. The user accepts them for the upcoming test and
+wants to see how the restored version behaves. Do not claim v21 eliminates
+these defects. Prioritize retaining smooth Joey frame pacing; lighting parity
+and optional low-latency gaze stabilization can be investigated subsequently.
+The nine Windows DuoView test suites passed in run26; the original test
+compatibility targets are still compiling at this checkpoint.
