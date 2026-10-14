@@ -1,5 +1,5 @@
-name: DuoView Joey Temporal Stability v22 - Source Isolation and Settings
-run-name: DuoView Joey Temporal Stability v22 with exact SDK (${{ github.run_number }})
+name: DuoView Joey Temporal Stability v23 - Source Isolation and Settings
+run-name: DuoView Joey Temporal Stability v23 with exact SDK (${{ github.run_number }})
 on:
   push:
     branches: [experiments/duoview-temporal-shading-v22]
@@ -160,7 +160,7 @@ jobs:
           Copy-Item evidence/duoview-stage1-source-hashes.json package/
           Copy-Item evidence/duoview-stage234-hashes.json package/
           @'
-          DUOVIEW TEMPORAL v22 — STABLE CROP, FROZEN PROJECTION AND OPTIONAL PRIMARY SHADING. HEADSET UNVERIFIED.
+          DUOVIEW TEMPORAL v23 — STABLE CROP, FROZEN PROJECTION AND OPTIONAL PRIMARY SHADING. HEADSET UNVERIFIED.
           Backend: exact Joey 5ac7edc207866569334175e4ed8a7517971547f6 + guarded DuoView modifications.
           Restricted SDK unchanged: joeyhodge/UESDK 3cffbc82429b6165ceec2714f0f0d9ae48f55596.
           Matching frontend source: 60be4b0f9a646109fd9fdf448bacd41477234091, plus ID 6.
@@ -169,8 +169,8 @@ jobs:
           Old source defaults: 0.50x0.50 crop at 1.0x density, 0.20x periphery, gaze ON, fovea UE0/periphery UE1.
           Press Restore old DuoView settings once if an existing profile retains newer settings. Increase density to match your old preferred tuning; exact historical tuning is unknown.
           Foveal atlas rectangle starts at x=0, matching Injector-5. Gaze uses the inverse left optical rotation, matching the old coordinate path.
-          Stable gaze crop is ON by default, optional OFF. OpenNR r10 crop guard (adjustable 0-5% of crop), 4 foveal-source-pixel alignment; large eye movements recenter immediately without temporal smoothing.
-          Missing/invalid gaze holds crop position for at most 100ms while remaining labelled unavailable. No old image is reused.
+          Smooth gaze crop is ON by default, optional OFF. Continuous guard 0-25% (default 8%), smoothing 0-250ms (default 85ms), max 1.4 full-UV/s, single source-pixel alignment. Deliberate saccades move gradually, no recenter teleport.
+          Missing/invalid gaze holds the crop 100ms then eases toward center. Reused CAPI gaze UV is frozen together with its original optical transform, preventing stale-ray head-motion reprojection. No old image is reused.
           Both UE views use the exact frozen producer projection; native engine histories/motion vectors remain engine-owned.
           Independent primary shading starts OFF on EACH injection/mode transition; toggle it in-game after DuoView settles.
           The shading toggle temporarily constructs the SECONDARY source as PRIMARY only with proven distinct source ViewStates and matching main family. It does not enable the full Native Fix capture/submission path.
@@ -189,7 +189,7 @@ jobs:
           Changing source formats or unexpected swapchain lifecycle may still cause reconstruction. Monitor frame pacing.
           Experimental: Source/test/CI passing cannot prove exact game GPU producer completion or headset stability.
           NEVER overwrite 30-minute-proven Build3! Extract this ZIP into a SEPARATE TEST DIRECTORY.
-          Built-in gaze freshness/age counters are read from the UI; no smoothing/deadzone forced.
+          Built-in gaze freshness/age counters are read from the UI; smooth crop is configurable and OFF when tracking is OFF.
           Stage5 gaze requires installed PSVR2 Toolkit CAPI and still requires headset calibration validation.
           Restored engine view order and optical gaze mapping are source verified. Actual Lumen/shadow/exposure and visual parity require a headset test; no gamma correction applied.
           The eye-tracked source/compositor and first-use pacing are NOT headset verified.
@@ -199,16 +199,16 @@ jobs:
           if (@(Get-ChildItem package -File -Filter *.exe).Count -lt 1) { throw "Missing Joey frontend executable" }
           if ((Get-Content package/READ_FIRST.txt -Raw) -notmatch 'QUARANTINED internally') { throw 'Stale fallback instructions' }
           Get-ChildItem package -Recurse -File | Get-FileHash -Algorithm SHA256 | ConvertTo-Json | Set-Content evidence/package-sha256.json
-          $zip="Joey-DuoView-Temporal-v22-${{ github.run_number }}.zip"
+          $zip="Joey-DuoView-Temporal-v23-${{ github.run_number }}.zip"
           Compress-Archive -Path package/* -DestinationPath $zip -Force
           (Get-FileHash $zip -Algorithm SHA256).Hash | Set-Content "$zip.sha256"
       - uses: actions/upload-artifact@v4
         if: success()
         with:
-          name: Joey-DuoView-Temporal-v22-${{ github.run_number }}
+          name: Joey-DuoView-Temporal-v23-${{ github.run_number }}
           path: |
-            Joey-DuoView-Temporal-v22-*.zip
-            Joey-DuoView-Temporal-v22-*.zip.sha256
+            Joey-DuoView-Temporal-v23-*.zip
+            Joey-DuoView-Temporal-v23-*.zip.sha256
           if-no-files-found: error
           retention-days: 90
       - name: Record public source and dependency provenance

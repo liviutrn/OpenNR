@@ -60,13 +60,14 @@ def main():
   raise RuntimeError("Production VR headers missing native PSVR2 gaze integration")
  vr_cpp=(a.backend/"src/mods/VR.cpp").read_text(encoding="utf-8")
  vr_header=(a.backend/"src/mods/VR.hpp").read_text(encoding="utf-8")
- if ".eye_tracked=m_duo_gaze->value()" not in vr_cpp or "m_duoview_gaze.read_uv(frozen,optical)" not in vr_cpp:
+ if ".eye_tracked=m_duo_gaze->value()" not in vr_cpp or "m_duoview_gaze.read_uv(frozen,optical)" not in vr_cpp or
+   ".smoothing_ms=m_duo_smoothing->value()" not in vr_cpp:
   raise RuntimeError("Stage5 gaze control is not connected to frame source")
- for token in ('m_duo_stabilize->draw(', 'm_duo_shading->draw(', 'm_duo_width->draw(', 'm_duo_height->draw(', 'm_duo_periphery->draw(',
+ for token in ('m_duo_stabilize->draw(', 'm_duo_smoothing->draw(', 'm_duo_shading->draw(', 'm_duo_width->draw(', 'm_duo_height->draw(', 'm_duo_periphery->draw(',
                'm_duo_density->draw(', 'm_duo_feather->draw(', 'm_duo_debug_source->draw('):
   if token not in vr_cpp: raise RuntimeError("DuoView quality UI missing "+token)
  for token in ('"DuoViewCropWidth"', '"DuoViewPeripheralScale"', '"DuoViewFovealDensity"',
-               '"DuoViewFoveaSourceView"'):
+               '"DuoViewFoveaSourceView"', '"DuoViewCropSmoothingMs"'):
   if token not in vr_header: raise RuntimeError("Persisted DuoView setting missing "+token)
  hook=(a.backend/"src/mods/vr/FFakeStereoRenderingHook.cpp").read_text(encoding="utf-8")
  if "frame->config.settings.fovea_view" not in hook or "duo_frame->config.settings.fovea_view" not in hook:

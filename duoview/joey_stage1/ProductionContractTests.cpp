@@ -129,7 +129,37 @@ int main() try {
     require(temporal.snapshot({7,2})->config.settings.independent_shading,"Mid-frame toggle split the source pair");
     require(temporal.begin({7,3},3000,3000,p,[]()->std::optional<UV>{return UV{.6f,.5f};},1022).has_value(),"Next-frame toggle packet missing");
     require(!temporal.can_independent_shading({7,3},200),"Shading off must apply to the next producer frame");
-    std::cout<<"Pinned Joey DuoView geometry, view pairing, generation, primary fallback contract PASS\n";
+    // Time-domain stability contract: continuous deadzone, no gaze teleport,
+    // and bounded frame-to-frame movement even across an eye saccade.
+    CropStability smoother;
+    Settings follow{};
+    follow.stabilize_crop=true;
+    follow.crop_width=follow.crop_height=.5f;
+    follow.guard_fraction=.10f;
+    follow.smoothing_ms=85.f;
+    auto centre=smoother.update({31,1},3400,3172,follow,UV{.5f,.5f},1000);
+    auto noise=smoother.update({31,2},3400,3172,follow,UV{.51f,.49f},1011);
+    require(centre.u==noise.u && centre.v==noise.v,"Fixation noise moved stable crop");
+    auto slow=smoother.update({31,3},3400,3172,follow,UV{.9f,.8f},1022);
+    require(slow.u>centre.u && slow.u<.52f && slow.v>centre.v && slow.v<.52f,
+            "Large gaze saccade must move gradually, not jump");
+    auto last=slow;
+    for (uint64_t f=4;f<30;++f) {
+        auto next=smoother.update({31,f},3400,3172,follow,UV{.9f,.8f},1000+(f-1)*11);
+        require(next.u>=last.u && next.v>=last.v,"Smoothing must be monotonic toward a fixed target");
+        require(next.u-last.u<=.019f && next.v-last.v<=.019f,
+                "Frame-to-frame crop jump exceeds bounded tracking speed");
+        last=next;
+    }
+    auto held=smoother.update({31,30},3400,3172,follow,{},1360);
+    require(held.u==last.u && held.v==last.v,"Short CAPI gap changed crop");
+    auto back=smoother.update({31,31},3400,3172,follow,{},1400);
+    require(back.u<held.u && back.u>.5f,"Expired gaze must return gently rather than teleport");
+    follow.smoothing_ms=251.f;
+    State bad_controls; require(!bad_controls.configure(follow),"Invalid smoothing must be rejected");
+    follow.smoothing_ms=85.f; follow.guard_fraction=.251f;
+    require(!bad_controls.configure(follow),"Invalid wide guard must be rejected");
+    std::cout<<"Pinned Joey DuoView geometry, view pairing, gradual gaze, primary fallback contract PASS\n";
     return 0;
 } catch(const std::exception& e) {
     std::cerr<<"DuoView contract test failure: "<<e.what()<<"\n";

@@ -73,7 +73,8 @@ def main():
     const ModInt32::Ptr m_duo_debug_source{ModSliderInt32::create(generate_name("DuoViewDebugSource"), 0, 2, 0)};
     const ModInt32::Ptr m_duo_fovea_view{ModSliderInt32::create(generate_name("DuoViewFoveaSourceView"), 0, 1, 0)};
     const ModToggle::Ptr m_duo_stabilize{ModToggle::create(generate_name("DuoViewCropStability"), true)};
-    const ModSlider::Ptr m_duo_guard{ModSlider::create(generate_name("DuoViewCropGuard"), 0.f, .05f, .05f)};
+    const ModSlider::Ptr m_duo_guard{ModSlider::create(generate_name("DuoViewCropGuard"), 0.f, .25f, .08f)};
+    const ModSlider::Ptr m_duo_smoothing{ModSlider::create(generate_name("DuoViewCropSmoothingMs"), 0.f, 250.f, 85.f)};
     const ModToggle::Ptr m_duo_shading{ModToggle::create(generate_name("DuoViewIndependentShading"), false)};
     const ModToggle::Ptr m_duo_timing{ModToggle::create(generate_name("DuoViewGpuTiming"), false)};
     std::atomic<float> m_duo_gpu_ms{-1.f};
@@ -88,7 +89,8 @@ def main():
         '''        m_options = {
             *m_duo_width, *m_duo_height, *m_duo_periphery, *m_duo_density,
             *m_duo_feather, *m_duo_gaze, *m_duo_border, *m_duo_debug_source,
-            *m_duo_fovea_view, *m_duo_timing, *m_duo_stabilize, *m_duo_guard,''')
+            *m_duo_fovea_view, *m_duo_timing, *m_duo_stabilize, *m_duo_guard,
+            *m_duo_smoothing,''')
     cpp="src/mods/VR.cpp"
     edit(cpp,
         'ImGui::TextWrapped("DuoView Stage 1: rendering uses original Joey Mono unchanged. Two-view foveation and gaze are NOT active.");',
@@ -114,8 +116,12 @@ def main():
                 m_duo_border->draw("Blend border highlight");
                 m_duo_debug_source->draw("Source diagnostic: 0 Blend / 1 Periphery / 2 Fovea");
                 m_duo_fovea_view->draw("Fovea UE source view (0 or 1)");
-                m_duo_stabilize->draw("Stable gaze crop (OpenNR r10 policy)");
-                if (m_duo_stabilize->value()) m_duo_guard->draw("Crop centre guard (fraction of crop)");
+                m_duo_stabilize->draw("Smooth tracked crop (temporal)");
+                if (m_duo_stabilize->value()) {
+                    m_duo_guard->draw("Steady gaze guard (fraction of crop)");
+                    m_duo_smoothing->draw("Crop temporal smoothing (ms)");
+                    ImGui::TextWrapped("Continuous wide guard + exponential follow + speed cap. No hard recenter jump. Larger values calm fixation but delay intentional gaze changes.");
+                }
                 m_duo_shading->draw("Independent primary shading (experimental, runtime only)");
                 ImGui::TextWrapped("Shading starts OFF on each injection or rendering-mode transition. Enable after DuoView settles; changes apply to the next complete source frame. No separate capture or Native Fix submission is enabled.");
                 m_duo_timing->draw("GPU timing: composite + both eye copies");
@@ -176,7 +182,8 @@ void VR::configure_duoview() {
         .eye_tracked=m_duo_gaze->value(), .fovea_view=static_cast<uint32_t>(m_duo_fovea_view->value()),
         .diagnostic_view=static_cast<uint32_t>(m_duo_debug_source->value()),
         .gpu_timing=m_duo_timing->value(), .stabilize_crop=m_duo_stabilize->value(),
-        .guard_fraction=m_duo_guard->value(), .independent_shading=m_duo_shading->value()};
+        .guard_fraction=m_duo_guard->value(), .smoothing_ms=m_duo_smoothing->value(),
+        .independent_shading=m_duo_shading->value()};
     const auto current=m_duoview.settings();
     if (current.crop_width==candidate.crop_width && current.crop_height==candidate.crop_height &&
         current.peripheral_scale==candidate.peripheral_scale && current.foveal_density==candidate.foveal_density &&
@@ -184,6 +191,7 @@ void VR::configure_duoview() {
         current.eye_tracked==candidate.eye_tracked && current.fovea_view==candidate.fovea_view &&
         current.diagnostic_view==candidate.diagnostic_view && current.gpu_timing==candidate.gpu_timing &&
         current.stabilize_crop==candidate.stabilize_crop && current.guard_fraction==candidate.guard_fraction &&
+        current.smoothing_ms==candidate.smoothing_ms &&
         current.independent_shading==candidate.independent_shading) return;
     if (!m_duoview.configure(candidate))
         SPDLOG_WARNING_EVERY_N_SEC(2, "[DuoView] Requested quality settings exceed atlas geometry; preserving previous valid settings");

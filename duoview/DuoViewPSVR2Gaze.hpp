@@ -105,15 +105,21 @@ public:
         Status candidate{};
         const bool fresh=read_(&candidate,0);
         if(fresh) {
-            if(auto ray=calibrated_ray(candidate)) {
-                cached_=*ray; fresh_time_=now; fresh_.fetch_add(1,std::memory_order_relaxed);
+            // Keep the calibrated sample and optical transform from the SAME
+            // producer frame. Reprojecting a held ray with newer eye transforms
+            // can inject apparent gaze motion during head movement.
+            const auto ray=calibrated_ray(candidate);
+            const auto optical=ray ? optical_ray(*ray,optical_rotation) : std::optional<Ray>{};
+            const auto uv=optical ? projection_uv(*optical,projection) : std::optional<UV>{};
+            if(uv) {
+                cached_uv_=*uv; fresh_time_=now; fresh_.fetch_add(1,std::memory_order_relaxed);
             } else {
-                cached_.reset(); // blink/invalid sample immediately invalidates old gaze
+                cached_uv_.reset(); // blink/bad frame invalidates immediately
                 invalid_.fetch_add(1,std::memory_order_relaxed);
             }
         }
-        if(!cached_||now<fresh_time_||now-fresh_time_>50) {
-            cached_.reset();
+        if(!cached_uv_||now<fresh_time_||now-fresh_time_>50) {
+            cached_uv_.reset();
             age_ms_.store(UINT32_MAX,std::memory_order_relaxed);
             expired_.fetch_add(1,std::memory_order_relaxed);
             active_.store(false,std::memory_order_release);
@@ -121,10 +127,8 @@ public:
         }
         age_ms_.store(static_cast<uint32_t>(now-fresh_time_),std::memory_order_relaxed);
         if(!fresh) reused_.fetch_add(1,std::memory_order_relaxed);
-        const auto ray=optical_ray(*cached_,optical_rotation);
-        const auto uv=ray ? projection_uv(*ray,projection) : std::optional<UV>{};
-        active_.store(uv.has_value(),std::memory_order_release);
-        return uv;
+        active_.store(true,std::memory_order_release);
+        return cached_uv_;
     }
 private:
     void initialize() {
@@ -165,6 +169,6 @@ private:
     HMODULE module_{};
     ReadFn read_{};
     uint64_t next_attempt_{},fresh_time_{};
-    std::optional<Ray> cached_{};
+    std::optional<UV> cached_uv_{};
 };
 } // namespace uevr::duoview::psvr2
