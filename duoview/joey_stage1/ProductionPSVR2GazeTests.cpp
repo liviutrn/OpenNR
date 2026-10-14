@@ -5,6 +5,11 @@
 using namespace uevr::duoview;
 static void require(bool b,const char* msg){if(!b)throw std::runtime_error(msg);}
 int main() try {
+    const psvr2::Reader baseline{};
+    auto stats=baseline.counters();
+    require(!stats.fresh && !stats.reused && !stats.invalid &&
+            !stats.expired && !stats.unavailable,
+            "Gaze counters must remain zero until DuoView renders");
     psvr2::Status s{};s.size=sizeof(s);s.magic[0]='G';s.magic[1]='S';
     s.raw.combined_direction_valid=psvr2::Bool::yes;
     s.raw.combined_direction={0,0,1};

@@ -101,6 +101,15 @@ def main():
                 m_duo_border->draw("Blend border highlight");
                 m_duo_debug_source->draw("Source diagnostic: 0 Blend / 1 Periphery / 2 Fovea");
                 m_duo_fovea_view->draw("Fovea UE source view (0 or 1)");
+                const auto counts=m_duoview_gaze.counters();
+                ImGui::Text("PSVR2 gaze: fresh=%llu held=%llu invalid=%llu expired=%llu unavailable=%llu",
+                    static_cast<unsigned long long>(counts.fresh),
+                    static_cast<unsigned long long>(counts.reused),
+                    static_cast<unsigned long long>(counts.invalid),
+                    static_cast<unsigned long long>(counts.expired),
+                    static_cast<unsigned long long>(counts.unavailable));
+                if (counts.age_ms == UINT32_MAX) ImGui::TextUnformatted("Last gaze sample: unavailable");
+                else ImGui::Text("Last gaze sample: %u ms", counts.age_ms);
                 configure_duoview();
                 if (const auto snap=m_duoview.snapshot(duoview_key(get_runtime()->internal_frame_count))) {
                     const auto& layout=snap->config.layout;
@@ -122,6 +131,8 @@ def main():
             }
         }
         if (rendering_method_changed && !is_mono_transition_pending() && get_runtime() != nullptr) {''')
+    edit(cpp,'    // Load camera offsets\n    load_cameras();',
+        '    // Load camera offsets\n    load_cameras();\n    configure_duoview();')
     edit(cpp,'    m_mono_main_view_token = 0;\n    m_mono_attachment_token = 0;',
         '    m_duoview.retire();\n    if (selection.active() == RenderingMethod::DUOVIEW_MONO) m_duoview_quarantined.store(false, std::memory_order_release);\n    m_mono_main_view_token = 0;\n    m_mono_attachment_token = 0;')
     changed[cpp]+='''

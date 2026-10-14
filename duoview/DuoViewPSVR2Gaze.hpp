@@ -80,26 +80,46 @@ inline std::optional<UV> projection_uv(const Ray& r,const std::array<float,16>& 
     return UV{std::clamp(u,0.f,1.f),std::clamp(v,0.f,1.f)};
 }
 
+struct Counters {
+    uint64_t fresh{}, reused{}, invalid{}, expired{}, unavailable{};
+    uint32_t age_ms{};
+};
 class Reader {
 public:
     bool active() const { return active_.load(std::memory_order_acquire); }
+    Counters counters() const {
+        return {fresh_.load(std::memory_order_relaxed),reused_.load(std::memory_order_relaxed),
+            invalid_.load(std::memory_order_relaxed),expired_.load(std::memory_order_relaxed),
+            unavailable_.load(std::memory_order_relaxed),age_ms_.load(std::memory_order_relaxed)};
+    }
     // Called ONLY for a new DuoView source-frame snapshot, not per eye or compositor.
     std::optional<UV> read_uv(const std::array<float,16>& projection) {
         std::scoped_lock lock{mutex_};
         const uint64_t now=GetTickCount64();
         if(!read_ && now>=next_attempt_) { initialize(); next_attempt_=now+1000; }
-        if(!read_) { active_.store(false,std::memory_order_release); return {}; }
+        if(!read_) {
+            unavailable_.fetch_add(1,std::memory_order_relaxed);
+            active_.store(false,std::memory_order_release); return {};
+        }
         Status candidate{};
         const bool fresh=read_(&candidate,0);
         if(fresh) {
-            if(auto ray=calibrated_ray(candidate)) { cached_=*ray; fresh_time_=now; }
-            else cached_.reset(); // blink/invalid sample immediately invalidates old gaze
+            if(auto ray=calibrated_ray(candidate)) {
+                cached_=*ray; fresh_time_=now; fresh_.fetch_add(1,std::memory_order_relaxed);
+            } else {
+                cached_.reset(); // blink/invalid sample immediately invalidates old gaze
+                invalid_.fetch_add(1,std::memory_order_relaxed);
+            }
         }
         if(!cached_||now<fresh_time_||now-fresh_time_>50) {
             cached_.reset();
+            age_ms_.store(UINT32_MAX,std::memory_order_relaxed);
+            expired_.fetch_add(1,std::memory_order_relaxed);
             active_.store(false,std::memory_order_release);
             return {};
         }
+        age_ms_.store(static_cast<uint32_t>(now-fresh_time_),std::memory_order_relaxed);
+        if(!fresh) reused_.fetch_add(1,std::memory_order_relaxed);
         const auto uv=projection_uv(*cached_,projection);
         active_.store(uv.has_value(),std::memory_order_release);
         return uv;
@@ -138,6 +158,8 @@ private:
     }
     mutable std::mutex mutex_{};
     std::atomic<bool> active_{false};
+    std::atomic<uint64_t> fresh_{0},reused_{0},invalid_{0},expired_{0},unavailable_{0};
+    std::atomic<uint32_t> age_ms_{UINT32_MAX};
     HMODULE module_{};
     ReadFn read_{};
     uint64_t next_attempt_{},fresh_time_{};
