@@ -11,7 +11,7 @@ EDITED_BACKEND = {
 }
 ADDED_BACKEND = {
  "src/mods/vr/DuoViewGeometry.hpp", "src/mods/vr/DuoViewGaze.hpp",
- "src/mods/vr/DuoViewPSVR2Gaze.hpp",
+ "src/mods/vr/DuoViewPSVR2Gaze.hpp", "src/mods/vr/DuoViewCropStability.hpp",
  "src/mods/vr/DuoViewFrame.hpp", "src/mods/vr/DuoViewConfig.hpp",
  "src/mods/vr/DuoViewState.hpp", "src/mods/vr/DuoViewD3D12.hpp",
  "src/mods/vr/DuoViewMonoCopyD3D12.hpp", "src/mods/vr/DuoViewShaderSource.hpp",
@@ -62,7 +62,7 @@ def main():
  vr_header=(a.backend/"src/mods/VR.hpp").read_text(encoding="utf-8")
  if ".eye_tracked=m_duo_gaze->value()" not in vr_cpp or "m_duoview_gaze.read_uv(frozen,optical)" not in vr_cpp:
   raise RuntimeError("Stage5 gaze control is not connected to frame source")
- for token in ('m_duo_width->draw(', 'm_duo_height->draw(', 'm_duo_periphery->draw(',
+ for token in ('m_duo_stabilize->draw(', 'm_duo_shading->draw(', 'm_duo_width->draw(', 'm_duo_height->draw(', 'm_duo_periphery->draw(',
                'm_duo_density->draw(', 'm_duo_feather->draw(', 'm_duo_debug_source->draw('):
   if token not in vr_cpp: raise RuntimeError("DuoView quality UI missing "+token)
  for token in ('"DuoViewCropWidth"', '"DuoViewPeripheralScale"', '"DuoViewFovealDensity"',
@@ -71,6 +71,8 @@ def main():
  hook=(a.backend/"src/mods/vr/FFakeStereoRenderingHook.cpp").read_text(encoding="utf-8")
  if "frame->config.settings.fovea_view" not in hook or "duo_frame->config.settings.fovea_view" not in hook:
   raise RuntimeError("Actual source index and UE projection must follow frozen source-view selection")
+ if "apply_frame_projection(double_matrix,*frame" not in hook or "can_independent_shading(key,state)" not in hook:
+  raise RuntimeError("Frozen producer projection and guarded shading constructor are required")
  if ".fovea_view=static_cast<uint32_t>(m_duo_fovea_view->value())" not in vr_cpp:
   raise RuntimeError("UE source selector must be connected to immutable frame settings")
  if "vertex_shader_bytecode[]" not in shaders or "pixel_shader_bytecode[]" not in shaders:

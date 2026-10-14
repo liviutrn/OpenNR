@@ -72,6 +72,9 @@ def main():
     const ModToggle::Ptr m_duo_border{ModToggle::create(generate_name("DuoViewDebugBorder"), false)};
     const ModInt32::Ptr m_duo_debug_source{ModSliderInt32::create(generate_name("DuoViewDebugSource"), 0, 2, 0)};
     const ModInt32::Ptr m_duo_fovea_view{ModSliderInt32::create(generate_name("DuoViewFoveaSourceView"), 0, 1, 0)};
+    const ModToggle::Ptr m_duo_stabilize{ModToggle::create(generate_name("DuoViewCropStability"), true)};
+    const ModSlider::Ptr m_duo_fixation{ModSlider::create(generate_name("DuoViewFixationMs"), 0.f, 50.f, 12.f)};
+    const ModToggle::Ptr m_duo_shading{ModToggle::create(generate_name("DuoViewIndependentShading"), false)};
     const ModToggle::Ptr m_duo_timing{ModToggle::create(generate_name("DuoViewGpuTiming"), false)};
     std::atomic<float> m_duo_gpu_ms{-1.f};
     uevr::duoview::State m_duoview;
@@ -85,11 +88,11 @@ def main():
         '''        m_options = {
             *m_duo_width, *m_duo_height, *m_duo_periphery, *m_duo_density,
             *m_duo_feather, *m_duo_gaze, *m_duo_border, *m_duo_debug_source,
-            *m_duo_fovea_view, *m_duo_timing,''')
+            *m_duo_fovea_view, *m_duo_timing, *m_duo_stabilize, *m_duo_fixation,''')
     cpp="src/mods/VR.cpp"
     edit(cpp,
         'ImGui::TextWrapped("DuoView Stage 1: rendering uses original Joey Mono unchanged. Two-view foveation and gaze are NOT active.");',
-        'ImGui::TextWrapped(is_duoview_renderer_active() ? (duoview_gaze_active() ? "DuoView ID6: eye-tracked two-view Mono (PSVR2 Toolkit active)" : "DuoView ID6: two-view CENTER fallback (no fresh PSVR2 gaze)") : "DuoView ID6: original Joey Mono fallback / DuoView inactive");')
+        'ImGui::TextWrapped(is_duoview_renderer_active() ? (duoview_gaze_active() ? "DuoView ID6: eye-tracked two-view Mono (PSVR2 Toolkit active)" : "DuoView ID6: held crop / center fallback (gaze unavailable)") : "DuoView ID6: original Joey Mono fallback / DuoView inactive");')
     edit(cpp, '#include "VR.hpp"', '#include "VR.hpp"\n#include <cstring>')
     edit(cpp,'        if (rendering_method_changed && !is_mono_transition_pending() && get_runtime() != nullptr) {',
     '''        if (is_using_duoview_mono() || requested_rendering_method() == RenderingMethod::DUOVIEW_MONO) {
@@ -111,6 +114,10 @@ def main():
                 m_duo_border->draw("Blend border highlight");
                 m_duo_debug_source->draw("Source diagnostic: 0 Blend / 1 Periphery / 2 Fovea");
                 m_duo_fovea_view->draw("Fovea UE source view (0 or 1)");
+                m_duo_stabilize->draw("Stable gaze crop (OpenNR r10 policy)");
+                if (m_duo_stabilize->value()) m_duo_fixation->draw("Fixation noise filtering (ms)");
+                m_duo_shading->draw("Independent primary shading (experimental, runtime only)");
+                ImGui::TextWrapped("Shading starts OFF on each injection or rendering-mode transition. Enable after DuoView settles; changes apply to the next complete source frame. No separate capture or Native Fix submission is enabled.");
                 m_duo_timing->draw("GPU timing: composite + both eye copies");
                 if (m_duo_timing->value()) {
                     const float ms=m_duo_gpu_ms.load(std::memory_order_relaxed);
@@ -135,8 +142,13 @@ def main():
                         layout.atlas_width/2,layout.atlas_height);
                     ImGui::Text("Fovea UE%u; periphery UE%u; gaze %s",
                         snap->config.settings.fovea_view,1u-snap->config.settings.fovea_view,
-                        snap->gaze_valid ? "tracking" : "fixed center / unavailable");
-                    ImGui::Text("Frame gaze (%.3f, %.3f), scene pixels: %.2f million",
+                        snap->gaze_valid ? "tracking" : "held crop / center fallback");
+                    ImGui::Text("View histories: %s; primary shading constructor: %s",
+                        snap->scene_states[0] && snap->scene_states[1]
+                            ? (snap->scene_states[0]!=snap->scene_states[1] ? "separate" : "shared") : "unobserved",
+                        snap->shading_applied ? "applied" :
+                            (snap->config.settings.independent_shading ? "requested / waiting for safe pair" : "OFF"));
+                    ImGui::Text("Applied crop centre (%.3f, %.3f), scene pixels: %.2f million",
                         snap->config.gaze.u,snap->config.gaze.v,
                         uevr::duoview::rendered_pixels(layout)/1000000.);
                 }
@@ -153,7 +165,7 @@ def main():
     edit(cpp,'    // Load camera offsets\n    load_cameras();',
         '    // Load camera offsets\n    load_cameras();\n    configure_duoview();')
     edit(cpp,'    m_mono_main_view_token = 0;\n    m_mono_attachment_token = 0;',
-        '    m_duoview.retire();\n    if (selection.active() == RenderingMethod::DUOVIEW_MONO) m_duoview_quarantined.store(false, std::memory_order_release);\n    m_mono_main_view_token = 0;\n    m_mono_attachment_token = 0;')
+        '    m_duoview.retire();\n    m_duo_shading->value()=false;\n    configure_duoview();\n    if (selection.active() == RenderingMethod::DUOVIEW_MONO) m_duoview_quarantined.store(false, std::memory_order_release);\n    m_mono_main_view_token = 0;\n    m_mono_attachment_token = 0;')
     changed[cpp]+='''
 // Update the immutable state from persisted controls only on changes.
 void VR::configure_duoview() {
@@ -163,13 +175,16 @@ void VR::configure_duoview() {
         .feather_fraction=m_duo_feather->value(), .debug_border=m_duo_border->value(),
         .eye_tracked=m_duo_gaze->value(), .fovea_view=static_cast<uint32_t>(m_duo_fovea_view->value()),
         .diagnostic_view=static_cast<uint32_t>(m_duo_debug_source->value()),
-        .gpu_timing=m_duo_timing->value()};
+        .gpu_timing=m_duo_timing->value(), .stabilize_crop=m_duo_stabilize->value(),
+        .fixation_ms=m_duo_fixation->value(), .independent_shading=m_duo_shading->value()};
     const auto current=m_duoview.settings();
     if (current.crop_width==candidate.crop_width && current.crop_height==candidate.crop_height &&
         current.peripheral_scale==candidate.peripheral_scale && current.foveal_density==candidate.foveal_density &&
         current.feather_fraction==candidate.feather_fraction && current.debug_border==candidate.debug_border &&
         current.eye_tracked==candidate.eye_tracked && current.fovea_view==candidate.fovea_view &&
-        current.diagnostic_view==candidate.diagnostic_view && current.gpu_timing==candidate.gpu_timing) return;
+        current.diagnostic_view==candidate.diagnostic_view && current.gpu_timing==candidate.gpu_timing &&
+        current.stabilize_crop==candidate.stabilize_crop && current.fixation_ms==candidate.fixation_ms &&
+        current.independent_shading==candidate.independent_shading) return;
     if (!m_duoview.configure(candidate))
         SPDLOG_WARNING_EVERY_N_SEC(2, "[DuoView] Requested quality settings exceed atlas geometry; preserving previous valid settings");
 }
@@ -193,7 +208,10 @@ std::optional<uevr::duoview::ViewFrame> VR::duoview_begin_frame() {
     std::call_once(m_duoview_settings_once, [this] { configure_duoview(); });
     const auto key = duoview_producer_key();
     if (auto found = m_duoview.snapshot(key)) return found;
-    const auto projection = get_projection_matrix(VRRuntime::Eye::LEFT);
+    auto projection = get_projection_matrix(VRRuntime::Eye::LEFT);
+    const float near_plane=sdk::globals::get_near_clipping_plane();
+    if (!std::isfinite(near_plane) || near_plane<=0.f) return {};
+    projection[3][2]=near_plane;
     std::array<float, 16> frozen{};
     std::memcpy(frozen.data(), &projection[0][0], sizeof(frozen));
     const auto eye=get_eye_transform(0);
@@ -204,7 +222,7 @@ std::optional<uevr::duoview::ViewFrame> VR::duoview_begin_frame() {
     return m_duoview.begin(key, get_hmd_width(), get_hmd_height(), frozen,
         [this, frozen, optical]() -> std::optional<uevr::duoview::UV> {
             return m_duoview_gaze.read_uv(frozen,optical);
-        });
+        }, GetTickCount64());
 }
 
 void VR::duoview_abort(const char* reason) {
@@ -295,7 +313,7 @@ void VR::duoview_abort(const char* reason) {
         }''',
     '''        if (duo_fovea || duo_full) {
             if (const auto frame = vr->duoview_begin_frame()) {
-                if (duo_fovea) uevr::duoview::apply_foveal_crop(double_matrix, frame->config.layout);
+                uevr::duoview::apply_frame_projection(double_matrix,*frame,static_cast<unsigned>(view_index));
                 vr->duoview_state().projection(frame->config.key, static_cast<unsigned>(view_index));
             } else {
                 SPDLOG_WARNING_EVERY_N_SEC(2, "[DuoView] Missing projection snapshot");
@@ -310,6 +328,30 @@ void VR::duoview_abort(const char* reason) {
         if (vr->is_duoview_renderer_active() && views_ptr) {
             vr->duoview_state().family(vr->duoview_key(frame_count), main_family, views_ptr->count);
         }''')
+    edit(hook, '    std::optional<uint32_t> views_original_count{};',
+    '''    if (vr->is_duoview_renderer_active() && g_hook->is_in_viewport_client_draw()) {
+        const auto family=init_options_view_family;
+        const auto rtm=g_hook->get_render_target_manager();
+        const auto views=family ? family->get_views() : nullptr;
+        const bool main=family && rtm && family->get_render_target()==rtm->get_view_family_render_target();
+        const bool source_pass=init_options_original_stereo_pass==EStereoscopicPass::eSSP_PRIMARY ||
+                               init_options_original_stereo_pass==EStereoscopicPass::eSSP_SECONDARY;
+        if (main && views && source_pass) {
+            const unsigned index=init_options_original_stereo_pass==EStereoscopicPass::eSSP_PRIMARY ? 0u : 1u;
+            const auto key=vr->duoview_producer_key();
+            const auto state=reinterpret_cast<uintptr_t>(init_options_scene_state);
+            bool applied=false;
+            if (index==1 && views->count==1 &&
+                is_readable_process_range(state,sizeof(uintptr_t)) &&
+                vr->duoview_state().can_independent_shading(key,state)) {
+                set_effective_stereo_pass(EStereoscopicPass::eSSP_PRIMARY);
+                restore_init_options_after_constructor=true;
+                applied=get_effective_stereo_pass()==EStereoscopicPass::eSSP_PRIMARY;
+            }
+            vr->duoview_state().scene(key,index,state,applied);
+        }
+    }
+    std::optional<uint32_t> views_original_count{};''')
     # Engine construction observes camera/rect/projection; a complete pair is
     # required before composition, not before we let the engine build its views.
     dxh="src/mods/vr/D3D12Component.hpp"
@@ -393,7 +435,7 @@ void VR::duoview_abort(const char* reason) {
                         bool recorded = false;''')
     # Copy reference modules into exact checked-out Joey tree. No private SDK
     # declarations or altered SDK files.
-    for name in ("DuoViewGeometry.hpp","DuoViewGaze.hpp","DuoViewPSVR2Gaze.hpp","DuoViewFrame.hpp",
+    for name in ("DuoViewGeometry.hpp","DuoViewGaze.hpp","DuoViewPSVR2Gaze.hpp","DuoViewCropStability.hpp","DuoViewFrame.hpp",
                  "DuoViewConfig.hpp","DuoViewState.hpp","DuoViewD3D12.hpp",
                  "DuoViewMonoCopyD3D12.hpp"):
         target=root/"src/mods/vr"/name

@@ -90,6 +90,45 @@ int main() try {
     require(!state.consume(key),"Invalidated pair must not survive reset");
     require(state.begin({5,1},3000,3000,m,[]()->std::optional<UV>{return UV{.5f,.5f};}).has_value(),
             "New generation after reset must be supported");
+    State temporal;
+    Settings stable; stable.crop_width=stable.crop_height=.30f;
+    stable.independent_shading=true;
+    require(temporal.configure(stable),"Temporal settings rejected");
+    std::array<float,16> p{}; p[0]=p[5]=2; p[11]=1; p[14]=.1f;
+    auto previous=temporal.begin({7,1},3000,3000,p,[]()->std::optional<UV>{return UV{.5f,.5f};},1000);
+    auto current=temporal.begin({7,2},3000,3000,p,[]()->std::optional<UV>{return UV{.6f,.5f};},1011);
+    require(previous && current,"Moving-crop projection packets missing");
+    std::array<std::array<double,4>,4> previous_matrix{},current_matrix{};
+    for(auto& column:current_matrix) for(auto& value:column) value=99.;
+    apply_frame_projection(previous_matrix,*previous,0);
+    apply_frame_projection(current_matrix,*current,0);
+    const auto project=[](const auto& matrix,double x) {
+        const double clip=matrix[0][0]*x+matrix[2][0];
+        const double w=matrix[0][3]*x+matrix[2][3];
+        return .5*(clip/w+1.);
+    };
+    const double world_x=.05, full_u=.55;
+    const auto previous_u=project(previous_matrix,world_x),current_u=project(current_matrix,world_x);
+    require(std::abs(current->config.layout.u0+current_u*stable.crop_width-full_u)<1e-6,
+            "Moving crop must reconstruct the SAME stationary world point in compositor coordinates");
+    require(std::abs(previous_u-current_u-
+            (current->config.layout.u0-previous->config.layout.u0)/stable.crop_width)<1e-6,
+            "Previous/current cropped projections must encode the correct temporal reprojection displacement");
+    require(previous->config.layout.fovea.width==current->config.layout.fovea.width &&
+            previous->config.layout.fovea.height==current->config.layout.fovea.height,
+            "Compatible gaze translation must not resize the render target/history");
+    apply_frame_projection(current_matrix,*current,1);
+    for(int col=0;col<4;++col) for(int row=0;row<4;++row)
+        require(current_matrix[col][row]==p[col*4+row],"Peripheral projection reread live runtime data");
+    require(temporal.rectangle({7,2},0) && temporal.rectangle({7,2},1) &&
+            temporal.projection({7,2},0) && temporal.projection({7,2},1) &&
+            temporal.camera({7,2},0,camera) && temporal.scene({7,2},0,100),"Shading source contract rejected");
+    require(!temporal.can_independent_shading({7,2},100),"Shared ViewState must block primary adaptation");
+    require(temporal.can_independent_shading({7,2},200),"Distinct ViewStates should permit guarded adaptation");
+    stable.independent_shading=false; require(temporal.configure(stable),"Shading off rejected");
+    require(temporal.snapshot({7,2})->config.settings.independent_shading,"Mid-frame toggle split the source pair");
+    require(temporal.begin({7,3},3000,3000,p,[]()->std::optional<UV>{return UV{.6f,.5f};},1022).has_value(),"Next-frame toggle packet missing");
+    require(!temporal.can_independent_shading({7,3},200),"Shading off must apply to the next producer frame");
     std::cout<<"Pinned Joey DuoView geometry, view pairing, generation, primary fallback contract PASS\n";
     return 0;
 } catch(const std::exception& e) {
