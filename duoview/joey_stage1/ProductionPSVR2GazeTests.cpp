@@ -10,7 +10,18 @@ int main() try {
     require(!stats.fresh && !stats.reused && !stats.invalid &&
             !stats.expired && !stats.unavailable,
             "Gaze counters must remain zero until DuoView renders");
+    require(!baseline.observation().seen, "Gaze observation cannot exist before CAPI reads");
     psvr2::Status s{};s.size=sizeof(s);s.magic[0]='G';s.magic[1]='S';
+    s.raw.frame_counter=123456u; s.raw.timestamp=9876543210123ll;
+    const auto observation=psvr2::describe_gaze_sample(s,5500123ull,true);
+    require(observation.seen && observation.valid &&
+            observation.device_frame_counter==123456u &&
+            observation.device_timestamp_raw==9876543210123ll &&
+            observation.host_arrival_ms==5500123ull,
+            "Raw sensor metadata must be preserved, not converted to XR clock");
+    const auto bad_sample=psvr2::describe_gaze_sample(s,5500124ull,false);
+    require(bad_sample.seen && !bad_sample.valid,
+            "Invalid new CAPI frames must still be visible to gated diagnostics");
     s.raw.combined_direction_valid=psvr2::Bool::yes;
     s.raw.combined_direction={0,0,1};
     auto straight=psvr2::calibrated_ray(s);
