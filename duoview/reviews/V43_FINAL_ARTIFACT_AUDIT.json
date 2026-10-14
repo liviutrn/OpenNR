@@ -1,0 +1,35 @@
+{
+  "code_commit": "ebee6feae18e4dec437ca173b74a67f5fec8f9d5",
+  "run_id": 38649697690,
+  "release_zip": "Joey-DuoView-GazeCamera-v43-66.zip",
+  "release_sha256": "772b5070c3a7d8e7d654daa3d299c8dab2ef535f6a2a09e64a3fcbe4cd2e79a7",
+  "github_outer_artifact_sha256": "adc313d632e4ae31b151712eb382d80bea0890bafea28504f19f6ce3063e8e24",
+  "payload_files": 14,
+  "source_headers_verified": [
+    "DuoViewSteering.hpp",
+    "DuoViewState.hpp",
+    "DuoViewD3D12.hpp",
+    "DuoViewPSVR2Gaze.hpp",
+    "DuoViewCropStability.hpp",
+    "DuoViewGeometry.hpp",
+    "DuoViewGaze.hpp",
+    "DuoViewConfig.hpp"
+  ],
+  "native_pe_machines": {
+    "UEVRBackend.dll": "0x8664",
+    "UEVRPluginNullifier.dll": "0x8664",
+    "LuaVR.dll": "0x8664",
+    "openvr_api.dll": "0x8664",
+    "openxr_loader.dll": "0x8664"
+  },
+  "backend_dll_sha256": "bd00c02cd883ed09515bc54a5d3fc63008f4559a59b30fed16cea8e698bf873d",
+  "test_counts": {
+    "pinned-results.log": 3,
+    "duo-test-results.log": 8,
+    "compatibility-tests.log": 41
+  },
+  "test_count_total": 52,
+  "binary_ui_and_shader_identity_verified": true,
+  "headset_validated": false,
+  "actual_unreal_temporal_consumer_observed": false
+}
