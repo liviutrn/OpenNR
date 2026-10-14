@@ -118,18 +118,12 @@ int main() try {
     for(auto& column:current_matrix) for(auto& value:column) value=99.;
     apply_frame_projection(previous_matrix,*previous,0);
     apply_frame_projection(current_matrix,*current,0);
-    const auto project=[](const auto& matrix,double x) {
-        const double clip=matrix[0][0]*x+matrix[2][0];
-        const double w=matrix[0][3]*x+matrix[2][3];
-        return .5*(clip/w+1.);
-    };
-    const double world_x=.05, full_u=.55;
-    const auto previous_u=project(previous_matrix,world_x),current_u=project(current_matrix,world_x);
-    require(std::abs(current->config.layout.u0+current_u*stable.crop_width-full_u)<1e-6,
-            "Moving crop must reconstruct the SAME stationary world point in compositor coordinates");
-    require(std::abs(previous_u-current_u-
-            (current->config.layout.u0-previous->config.layout.u0)/stable.crop_width)<1e-6,
-            "Previous/current cropped projections must encode the correct temporal reprojection displacement");
+    require(previous_matrix==current_matrix && current_matrix[2][0]==0. &&
+            current_matrix[2][1]==0.,
+            "Tracked gaze must move the camera, not the projection principal point");
+    require(previous->config.steering.active && current->config.steering.active &&
+            previous->config.steering.basis!=current->config.steering.basis,
+            "Moving gaze must have a real renderer camera rotation");
     require(previous->config.layout.fovea.width==current->config.layout.fovea.width &&
             previous->config.layout.fovea.height==current->config.layout.fovea.height,
             "Compatible gaze translation must not resize the render target/history");

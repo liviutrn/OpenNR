@@ -21,6 +21,7 @@ struct ViewFrame {
     FrameConfig config;
     std::array<float, 16> projection{};
     CameraPose camera{};
+    std::array<CameraPose,2> source_cameras{};
     bool camera_valid{}, main_family{}, consumed{}, gaze_valid{}, invalid{};
     std::array<bool, 2> rectangles{}, projections{}, cameras{};
     std::array<uintptr_t,2> scene_states{};
@@ -31,7 +32,10 @@ template<typename Matrix>
 void apply_frame_projection(Matrix& matrix, const ViewFrame& frame, unsigned view) {
     for (int col=0;col<4;++col) for (int row=0;row<4;++row)
         matrix[col][row]=frame.projection[col*4+row];
-    if (view==frame.config.settings.fovea_view) apply_foveal_crop(matrix,frame.config.layout);
+    if (view==frame.config.settings.fovea_view) {
+        if(frame.config.steering.active) apply_steering_projection(matrix,frame.config.layout);
+        else apply_foveal_crop(matrix,frame.config.layout);
+    }
 }
 class State {
 public:
@@ -53,7 +57,11 @@ public:
         const auto frozen = config_.for_frame(key, w, h, center);
         if (!frozen) return {};
         stability_=stability; last_begin_=key;
-        slot = ViewFrame{*frozen, projection};
+        auto packet=*frozen;
+        const auto steering=make_steering(projection,packet.layout,s.eye_tracked);
+        if(!steering) return {};
+        packet.steering=*steering;
+        slot = ViewFrame{packet, projection};
         slot->gaze_valid = s.eye_tracked && gaze.has_value();
         return slot;
     }
@@ -85,7 +93,7 @@ public:
         std::scoped_lock lock{mutex_};
         const auto& slot = frames_[key.frame % frames_.size()];
         if (!slot || slot->config.key != key || view > 1 || slot->invalid || !slot->camera_valid) return {};
-        return slot->camera;
+        return slot->source_cameras[view];
     }
     bool camera(FrameKey key, unsigned view, const CameraPose& pose) {
         std::scoped_lock lock{mutex_};
@@ -93,8 +101,16 @@ public:
         if (!slot || slot->config.key != key || view > 1 || slot->invalid) return false;
         for (auto x : pose.rotation) if (!std::isfinite(x)) return false;
         for (auto x : pose.position) if (!std::isfinite(x)) return false;
-        if (!slot->camera_valid) { slot->camera = pose; slot->camera_valid = true; }
-        else if (slot->camera != pose) { slot->invalid = true; return false; }
+        if (!slot->camera_valid) {
+            if(view!=0) return false;
+            slot->camera = pose; slot->camera_valid = true;
+            slot->source_cameras={pose,pose};
+            slot->source_cameras[slot->config.settings.fovea_view]=
+                steering_camera(pose,slot->config.steering);
+        } else {
+            const auto& expected=view==0 ? slot->camera : slot->source_cameras[view];
+            if(expected!=pose) { slot->invalid=true; return false; }
+        }
         slot->cameras[view] = true;
         return true;
     }

@@ -1,7 +1,5 @@
 #pragma once
-// v24: instantaneous, frame-atomic gaze. No spatial guard, smoothing,
-// speed cap or source-pixel quantization. Brief acquisition gaps hold the
-// last good *coordinate*, not any previous rendered image or projection.
+// Frame-atomic gaze with a one-output-pixel fixation guard and instant saccades.
 #include "DuoViewConfig.hpp"
 #include <cmath>
 #include <cstdint>
@@ -20,7 +18,11 @@ public:
     if (!s.eye_tracked) { have_=false; return {}; }
     if (sample && std::isfinite(sample->u) && std::isfinite(sample->v) &&
         sample->u>=0.f && sample->u<=1.f && sample->v>=0.f && sample->v<=1.f) {
-        last_valid_=now; current_=*sample; have_=true;
+        last_valid_=now;
+        if(have_ && s.stabilize_crop && w && h &&
+           std::abs(sample->u-current_.u)*w<=1.f &&
+           std::abs(sample->v-current_.v)*h<=1.f) return current_;
+        current_=*sample; have_=true;
         return current_; // new valid eye sample always wins instantly
     }
     if (have_ && now>=last_valid_ && now-last_valid_<=50)

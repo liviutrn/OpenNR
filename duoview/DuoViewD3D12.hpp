@@ -12,9 +12,10 @@ struct ShaderConstants {
     uint32_t border;
     uint32_t diagnostic;
     float reserved;
-    float history_sample_offset[2];
+    float fovea_uv_rows[12];
+    uint32_t steering_mode, steering_padding[3];
 };
-static_assert(sizeof(ShaderConstants) == 88);
+static_assert(sizeof(ShaderConstants) == 144);
 
 class Compositor {
 public:
@@ -65,7 +66,8 @@ public:
             {l.periphery.x, l.periphery.y, l.periphery.width, l.periphery.height},
             {l.u0, l.v0, l.u1, l.v1}, frame.settings.feather_fraction,
             frame.settings.debug_border ? 1u : 0u, frame.settings.diagnostic_view, 0.f,
-            {0.f, 0.f}};
+            {}, frame.steering.active ? 1u : 0u, {}};
+        std::copy(frame.steering.full_to_local.begin(), frame.steering.full_to_local.end(), constants.fovea_uv_rows);
         D3D12_SHADER_RESOURCE_VIEW_DESC view{};
         view.Format = format;
         view.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;

@@ -19,7 +19,11 @@ cbuffer DuoViewCompositeConfig : register(b0)
     uint DebugBorder;
     uint DebugViewMode;
     float _reserved;
-    float2 HistorySampleOffset; // reserved legacy ABI, never displace current color
+    float4 FoveaUvRow0;
+    float4 FoveaUvRow1;
+    float4 FoveaUvRow2;
+    uint SteeringMode;
+    uint3 _steeringPadding;
 };
 
 float2 AtlasSampleUV(uint4 rect, float2 localUv)
@@ -34,16 +38,26 @@ float2 AtlasSampleUV(uint4 rect, float2 localUv)
     return clamp(uv, lo, hi);
 }
 
+float2 FoveaLocal(float2 fullUv)
+{
+    if (SteeringMode != 0) {
+        const float3 uv = float3(fullUv, 1.0);
+        const float3 projected = float3(dot(FoveaUvRow0.xyz, uv),
+            dot(FoveaUvRow1.xyz, uv), dot(FoveaUvRow2.xyz, uv));
+        return projected.z > 0.0 ? projected.xy / projected.z : float2(-1.0, -1.0);
+    }
+    const float2 cropSize = CropUv.zw - CropUv.xy;
+    return (fullUv - CropUv.xy) / cropSize;
+}
+
 float BlendWeight(float2 fullUv)
 {
-    const float2 cropSize = CropUv.zw - CropUv.xy;
-    if (any(fullUv < CropUv.xy) || any(fullUv > CropUv.zw))
-        return 0.0;
+    const float2 local = FoveaLocal(fullUv);
+    if (any(local < 0.0) || any(local > 1.0)) return 0.0;
 
     if (FeatherFraction <= 0.0)
         return 1.0;
 
-    const float2 local = (fullUv - CropUv.xy) / cropSize;
     const float2 toBorder = min(local, 1.0 - local);
     const float relativeDistance = min(toBorder.x, toBorder.y);
     const float t = saturate(relativeDistance / FeatherFraction);
@@ -64,7 +78,7 @@ void CSMain(uint3 threadId : SV_DispatchThreadID)
     float4 result = DebugViewMode == 2 ? float4(.04,.04,.04,1) : peripheralColor;
     if (weight > 0.0 && DebugViewMode != 1)
     {
-        const float2 roiLocal = (fullUv - CropUv.xy) / (CropUv.zw - CropUv.xy);
+        const float2 roiLocal = FoveaLocal(fullUv);
         const float2 fovealSample = AtlasSampleUV(FoveaRect, roiLocal);
         const float4 fovealColor = SourceAtlas.SampleLevel(LinearClamp, fovealSample, 0.0);
         // Intended for identical color encoding in both views. Seam reduction

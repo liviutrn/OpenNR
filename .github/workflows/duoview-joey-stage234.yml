@@ -1,13 +1,14 @@
-name: DuoView v42 World Alignment — ENGINE FIX PENDING
-run-name: DuoView v42 current-color world-alignment Windows audit (${{ github.run_number }})
+name: DuoView v43 Gaze Camera Steering — CANDIDATE
+run-name: DuoView v43 gaze camera steering Windows audit (${{ github.run_number }})
 on:
   push:
-    branches: [experiments/duoview-gaze-correctness-v42]
+    branches: [experiments/duoview-gaze-camera-steering-v43]
     paths:
       - '.github/workflows/duoview-joey-stage234.yml'
       - 'duoview/joey_stage1/**'
       - 'duoview/DuoViewPSVR2Gaze.hpp'
       - 'duoview/DuoViewGaze.hpp'
+      - 'duoview/DuoViewSteering.hpp'
       - 'duoview/DuoViewCropStability.hpp'
       - 'duoview/DuoViewState.hpp'
       - 'duoview/DuoViewHistoryCorrection.hpp'
@@ -170,12 +171,16 @@ jobs:
           Copy-Item evidence/duoview-stage1-source-hashes.json package/
           Copy-Item evidence/duoview-stage234-hashes.json package/
           @'
-          DUOVIEW v42 ENGINEERING CHECKPOINT: current-color world alignment restored. NOT a verified gaze stabilization fix.
-          Removes v41 final-color displacement, including legacy persisted correction controls.
-          Adds stationary-world raster WARP tests across gaze origins, crop sizes and source densities.
-          Real Unreal previous projection/velocity consumer remains unverified. NOT a TSR/motion-vector hook.
+          DUOVIEW v43 CANDIDATE: real gaze-directed high-resolution camera with exact same-origin perspective composition.
+          Tracked mode keeps the foveal projection principal point fixed; eye movement rotates only the actual foveal camera.
+          The compositor uses the matching current-frame ray homography, not a previous-frame RGB displacement.
+          This represents gaze as ordinary Unreal camera motion, avoiding moving off-axis projection centers.
+          Foveal source pixel count/density settings and periphery render allocation remain unchanged; no extra render pass or resource readback.
+          Tracked crop is a constant angular frustum; its outline can be perspective-shaped on the full Mono image away from center.
+          Optional fixation guard holds only changes within one output pixel; larger movement is immediate, with no smoothing or velocity cap.
+          Fixed-center Eye Tracking OFF uses the prior off-axis projection/camera path unchanged.
+          No private previous-matrix memory writes. NOT a TSR/motion-vector hook. Actual STALKER2/PSVR2 acceptance is pending.
           Starting foundation: Build37 native0 low-scale bootstrap -> ID6 -> restore OpenXR scale AFTER accepted compositions.
-          No headset acceptance; this package is an engineering checkpoint, not a recommended new headset test.
           Backend: exact Joey 5ac7edc207866569334175e4ed8a7517971547f6 + guarded DuoView modifications.
           Restricted SDK unchanged: joeyhodge/UESDK 3cffbc82429b6165ceec2714f0f0d9ae48f55596.
           Matching frontend source: 60be4b0f9a646109fd9fdf448bacd41477234091, plus ID 6.
@@ -184,16 +189,16 @@ jobs:
           Old source defaults: 0.50x0.50 crop at 1.0x density, 0.20x periphery, gaze ON, fovea UE0/periphery UE1.
           Press Restore old DuoView settings once if an existing profile retains newer settings. Increase density to match your old preferred tuning; exact historical tuning is unknown.
           Foveal atlas rectangle starts at x=0, matching Injector-5. Gaze uses the inverse left optical rotation, matching the old coordinate path.
-          v24 tracks valid native gaze immediately each render frame, without smoothing, guard, velocity cap or pixel quantization. Persisted v23 latency controls are ignored.
+          v43 tracks valid native gaze per producer frame without smoothing or velocity caps. The optional one-pixel fixation guard replaces old broad latency controls.
           Missing CAPI samples briefly hold the last mapped gaze coordinate (<=50ms), then return to center. Fresh gaze wins immediately. Never reuse rendered images.
-          Both UE views use the exact frozen producer projection; v24 additionally reconciles the actual typed FSceneViewInitOptions current projection at construction. Private previous ViewState, TSR, Lumen and velocity buffers remain Unreal-owned and NOT secretly patched. Optional temporal audit checks ViewState stability and expected gaze motion, OFF by default.
+          Both UE views use frozen producer data; the tracked fovea uses a centered narrow projection plus its own camera rotation and exact current-frame homography. Current typed FSceneViewInitOptions projection is reconciled at construction. Private previous ViewState, TSR, Lumen and velocity buffers remain Unreal-owned and NOT secretly patched. Optional temporal audit checks ViewState stability and expected gaze motion, OFF by default.
           Independent primary shading starts OFF on EACH injection/mode transition; toggle it in-game after DuoView settles.
           The shading toggle temporarily constructs the SECONDARY source as PRIMARY only with proven distinct source ViewStates and matching main family. It does not enable the full Native Fix capture/submission path.
           Toggle OFF to return to the existing shading path on the next producer frame. Actual shading parity and temporal stability require headset testing.
           Optional GPU timing is OFF by default. Query resources prewarm at swapchain creation; no GPU waits or render-callback allocation for timing.
           Debug source 0=blended output, 1=periphery only, 2=fovea only (dark outside ROI).
           Source view0 is the first UE pass (old prototype default), view1 is the second (Build19 default).
-          Both source passes share exactly the same Mono camera.
+          Both source passes share exactly the same Mono optical origin. In tracked mode only the high-resolution view orientation follows gaze.
           Stage5 reads combined calibrated PSVR2 Toolkit CAPI gaze ONCE per frame. No DLL bundled.
           If CAPI is unavailable/invalid or blinked, ID6 stays at fixed center; no OpenXR gaze layer required.
           Menu shows whether PSVR2 gaze is fresh, center fallback, or Mono quarantine.
@@ -206,7 +211,7 @@ jobs:
           NEVER overwrite 30-minute-proven Build3! Extract this ZIP into a SEPARATE TEST DIRECTORY.
           Built-in gaze freshness/age counters are read from UI; v24 diagnostics are optional and no lag is injected in gaze coordinates.
           Stage5 gaze requires installed PSVR2 Toolkit CAPI and still requires headset calibration validation.
-          Restored engine view order and optical gaze mapping are source verified. Actual Lumen/shadow/exposure and visual parity require a headset test; no gamma correction applied.
+          Engine view order and optical gaze mapping are source verified. Actual Lumen/shadow/exposure and visual parity require a headset test; no gamma correction applied.
           The eye-tracked source/compositor and first-use pacing are NOT headset verified.
           '@ | Set-Content package/READ_FIRST.txt
           $needed=@('UEVRBackend.dll','UEVRPluginNullifier.dll','LuaVR.dll','READ_FIRST.txt','duoview-stage234-hashes.json','exact-baseline-source.json')
@@ -214,22 +219,22 @@ jobs:
           if (@(Get-ChildItem package -File -Filter *.exe).Count -lt 1) { throw "Missing Joey frontend executable" }
           if ((Get-Content package/READ_FIRST.txt -Raw) -notmatch 'QUARANTINED internally') { throw 'Stale fallback instructions' }
           Get-ChildItem package -Recurse -File | Get-FileHash -Algorithm SHA256 | ConvertTo-Json | Set-Content evidence/package-sha256.json
-          $zip="Joey-DuoView-WorldAlignment-v42-${{ github.run_number }}.zip"
+          $zip="Joey-DuoView-GazeCamera-v43-${{ github.run_number }}.zip"
           Compress-Archive -Path package/* -DestinationPath $zip -Force
           (Get-FileHash $zip -Algorithm SHA256).Hash | Set-Content "$zip.sha256"
       - name: Independently verify final candidate ZIP, PE machine IDs and unpacked hashes
         shell: pwsh
         run: |
-          $zip="Joey-DuoView-WorldAlignment-v42-${{ github.run_number }}.zip"
+          $zip="Joey-DuoView-GazeCamera-v43-${{ github.run_number }}.zip"
           python workspace/duoview/joey_stage1/audit_v41_package.py package $zip evidence
           if ($LASTEXITCODE -ne 0) { throw 'v41 package provenance, PE or ZIP audit failed' }
       - uses: actions/upload-artifact@v4
         if: success()
         with:
-          name: Joey-DuoView-WorldAlignment-v42-${{ github.run_number }}
+          name: Joey-DuoView-GazeCamera-v43-${{ github.run_number }}
           path: |
-            Joey-DuoView-WorldAlignment-v42-*.zip
-            Joey-DuoView-WorldAlignment-v42-*.zip.sha256
+            Joey-DuoView-GazeCamera-v43-*.zip
+            Joey-DuoView-GazeCamera-v43-*.zip.sha256
           if-no-files-found: error
           retention-days: 90
       - name: Record public source and dependency provenance

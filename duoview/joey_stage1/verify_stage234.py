@@ -12,6 +12,7 @@ EDITED_BACKEND = {
 }
 ADDED_BACKEND = {
  "src/mods/vr/DuoViewGeometry.hpp", "src/mods/vr/DuoViewGaze.hpp",
+ "src/mods/vr/DuoViewSteering.hpp",
  "src/mods/vr/DuoViewPSVR2Gaze.hpp", "src/mods/vr/DuoViewCropStability.hpp",
  "src/mods/vr/DuoViewHistoryCorrection.hpp",
  "src/mods/vr/DuoViewFrame.hpp", "src/mods/vr/DuoViewConfig.hpp",
@@ -90,8 +91,8 @@ def main():
   raise RuntimeError("DuoView does not record only successful XR source copies")
  if "{frame.history_sample_offset.u, frame.history_sample_offset.v}" in compositor:
   raise RuntimeError("Current color must not receive the temporal history displacement")
- if "{0.f, 0.f}};" not in compositor:
-  raise RuntimeError("Reserved legacy color-shift constants must be zero")
+ if "constants.fovea_uv_rows" not in compositor or "frame.steering.active" not in compositor:
+  raise RuntimeError("Rendered gaze camera requires matching current-frame homography")
  if "m_duo_history_shift" in vr or "m_duo_history_strength" in vr:
   raise RuntimeError("Invalid final-color displacement controls must not be exposed")
  if ".history_sample_correction=false" not in vr:
@@ -99,6 +100,15 @@ def main():
  state=(a.backend/"src/mods/vr/DuoViewState.hpp").read_text(encoding="utf-8")
  if "compositor_history_shift(" in state:
   raise RuntimeError("Temporal crop vector cannot be applied to current color packets")
+ steering=(a.backend/"src/mods/vr/DuoViewSteering.hpp").read_text(encoding="utf-8")
+ if "apply_steering_projection(matrix,frame.config.layout)" not in state or (
+     "steering_camera(pose,slot->config.steering)" not in state):
+  raise RuntimeError("Tracked fovea must use the real centered-projection gaze camera")
+ if "output->pitch=rendered->rotation[0]" not in hooked or (
+     "output->yaw=rendered->rotation[1]" not in hooked):
+  raise RuntimeError("View0 actual renderer output does not consume the gaze camera")
+ if "matrix[2][0]=0." not in steering or "matrix[2][1]=0." not in steering:
+  raise RuntimeError("Tracked principal point must remain centered")
  sensor=(a.backend/"src/mods/vr/DuoViewPSVR2Gaze.hpp").read_text(encoding="utf-8")
  if ("struct GazeObservation" not in sensor or
      "status.raw.timestamp,status.raw.frame_counter" not in sensor or

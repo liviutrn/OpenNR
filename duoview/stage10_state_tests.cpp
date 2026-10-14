@@ -6,7 +6,7 @@ int main() {
     State state;
     const FrameKey first{1,100}, second{1,101};
     std::array<float,16> matrix{};
-    matrix[0]=matrix[5]=matrix[10]=matrix[15]=1;
+    matrix[0]=matrix[5]=1; matrix[11]=1; matrix[14]=.1f;
     int gaze_reads{};
     auto read = [&]() -> std::optional<UV> { ++gaze_reads; return UV{.25f,.75f}; };
     auto a=state.begin(first,3000,3000,matrix,read);
@@ -43,6 +43,8 @@ int main() {
     auto centre=stable.update({1,1},3000,3000,controls,UV{.5f,.5f},1000);
     auto noisy=stable.update({1,2},3000,3000,controls,UV{.501f,.499f},1011);
     assert(noisy.u==.501f && noisy.v==.499f); // no latency or guard
+    auto fixation=stable.update({1,20},3000,3000,controls,UV{.5011f,.4991f},1012);
+    assert(fixation.u==noisy.u && fixation.v==noisy.v);
     auto moved=stable.update({1,3},3000,3000,controls,UV{.75f,.6f},1022);
     assert(moved.u==.75f && moved.v==.6f); // deliberate movement instant
     auto held=stable.update({1,4},3000,3000,controls,{},1055);

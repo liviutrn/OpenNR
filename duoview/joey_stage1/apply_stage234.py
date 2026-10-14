@@ -118,8 +118,8 @@ def main():
                 m_duo_border->draw("Blend border highlight");
                 m_duo_debug_source->draw("Source diagnostic: 0 Blend / 1 Periphery / 2 Fovea");
                 m_duo_fovea_view->draw("Fovea UE source view (0 or 1)");
-                ImGui::TextWrapped("v24: Eye tracking is INSTANT. Old crop guard/smoothing settings are ignored, including values stored in older profiles. No velocity cap or quantization.");
-                ImGui::TextWrapped("Only foveal image sampling changes; eye crop remains instant. Turn correction OFF for original Build37 behavior. Does NOT patch Unreal motion vectors or TSR.");
+                m_duo_stabilize->draw("Fixation noise guard (1 output pixel; no smoothing)");
+                ImGui::TextWrapped("Eye tracking steers the real high-resolution camera around the same Mono origin. The image maps back to the full view using the matching camera transform. Larger eye movements remain immediate.");
                 m_duo_history_audit->draw("Diagnostic: projection/history continuity (logs, OFF by default)");
                 if (m_duo_history_audit->value()) {
                     // Bounded UI-only sensor metadata. The device clock cannot be
@@ -185,7 +185,7 @@ def main():
                     active.foveal_density!=m_duo_density->value() || active.peripheral_scale!=m_duo_periphery->value())
                     ImGui::TextWrapped("Selected view sizes exceed existing atlas; previous valid settings remain in effect.");
                 ImGui::TextWrapped("Diagnostic 1 isolates the full-FOV peripheral pass. Diagnostic 2 isolates the foveal pass (dark outside crop). Compare shadows/lighting in the same scene.");
-                ImGui::TextWrapped("View 0 = FIRST Unreal pass (old prototype default), view 1 = SECOND pass (Build19 default). Identical frozen Mono camera. Switching may reset temporal history.");
+                ImGui::TextWrapped("View 0 = FIRST Unreal pass (old prototype default), view 1 = SECOND pass (Build19 default). Same Mono optical origin; tracked fovea uses a steered camera. Switching may reset temporal history.");
                 ImGui::TreePop();
             }
         }
@@ -329,6 +329,12 @@ void VR::duoview_abort(const char* reason) {
             vr->duoview_begin_frame();
             if (!vr->duoview_state().camera(key, 0, pose))
                 SPDLOG_WARNING_EVERY_N_SEC(2, "[DuoView] First scene pose not captured");
+            if (const auto rendered=vr->duoview_state().camera(key,0)) {
+                auto* output=reinterpret_cast<Rotator<double>*>(view_rotation);
+                output->pitch=rendered->rotation[0];
+                output->yaw=rendered->rotation[1];
+                output->roll=rendered->rotation[2];
+            }
         }
 
         // Modify Player Control Rotation
@@ -541,7 +547,7 @@ void VR::duoview_abort(const char* reason) {
                         bool recorded = false;''')
     # Copy reference modules into exact checked-out Joey tree. No private SDK
     # declarations or altered SDK files.
-    for name in ("DuoViewGeometry.hpp","DuoViewGaze.hpp","DuoViewPSVR2Gaze.hpp","DuoViewCropStability.hpp","DuoViewHistoryCorrection.hpp","DuoViewFrame.hpp",
+    for name in ("DuoViewGeometry.hpp","DuoViewGaze.hpp","DuoViewSteering.hpp","DuoViewPSVR2Gaze.hpp","DuoViewCropStability.hpp","DuoViewHistoryCorrection.hpp","DuoViewFrame.hpp",
                  "DuoViewConfig.hpp","DuoViewState.hpp","DuoViewD3D12.hpp",
                  "DuoViewMonoCopyD3D12.hpp"):
         target=root/"src/mods/vr"/name
