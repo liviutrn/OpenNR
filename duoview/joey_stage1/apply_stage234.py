@@ -519,7 +519,8 @@ void VR::duoview_abort(const char* reason) {
                         bool recorded = false;''')
     # Copy reference modules into exact checked-out Joey tree. No private SDK
     # declarations or altered SDK files.
-    for name in ("DuoViewGeometry.hpp","DuoViewGaze.hpp","DuoViewPSVR2Gaze.hpp","DuoViewCropStability.hpp","DuoViewFrame.hpp",
+    for name in ("DuoViewGeometry.hpp","DuoViewFovealCamera.hpp","DuoViewGaze.hpp","DuoViewPSVR2Gaze.hpp","DuoViewCropStability.hpp","DuoViewFrame.hpp",
+                 "DuoViewOpenNRCropPolicy.hpp","DuoViewDlssHistoryPolicy.hpp","DuoViewDlssHistory.hpp","DuoViewDlssHistory.cpp","DuoViewNgxParameters.hpp",
                  "DuoViewConfig.hpp","DuoViewState.hpp","DuoViewD3D12.hpp",
                  "DuoViewMonoCopyD3D12.hpp"):
         target=root/"src/mods/vr"/name
@@ -538,6 +539,8 @@ void VR::duoview_abort(const char* reason) {
     # and its potentially long shader-compiler stall during live XR submission.
     subprocess.run([sys.executable, str(src/"embed_shader.py"),
         str(root/"src/mods/vr/DuoViewShaderSource.hpp")], check=True)
+    from apply_stage25 import apply
+    apply(root,a.frontend,changed)
     for path,text in changed.items():
         (source_root(path)/path).write_text(text,encoding="utf-8",newline="")
     print("Applied v24 instantaneous gaze + FSceneView constructor projection synchronization + opt-in temporal continuity diagnostics.")

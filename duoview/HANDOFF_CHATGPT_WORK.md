@@ -1,3 +1,7 @@
+> Current candidate: [v26 OpenNR controls and DLSS history protection](reviews/DUOVIEW_V26_OPENNR_HISTORY_HANDOFF_2026-10-14.md). Publication/build explicitly authorized; Windows CI pending. Hardware acceptance remains unverified.
+
+> Latest active candidate: [v25 always-on startup and gaze camera](reviews/DUOVIEW_V25_ALWAYS_ON_HANDOFF_2026-10-14.md). Branch `experiments/duoview-v25-gaze-camera-always-on`. Windows CI pending; headset unverified. Earlier Build33 crop fix was rejected.
+
 # Current continuation status (2026-10-13)
 
 The initial handoff below is retained as historical evidence. Continue from the active **public backend Windows injector** workflow and `duoview/WORK_LOG.md`, not the earlier private-SDK compile probe. Current source pins and render integration are documented in `duoview/UEVR_INTEGRATION.md`. Public Mono/DuoView patches, native Toolkit gaze, immutable camera/frame settings, real DX12 composition and matching injector packaging are implemented. Windows policy and production WARP tests have passed; consult the latest workflow for the full-DLL/injector result. No actual headset testing has been performed here.

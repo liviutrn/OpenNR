@@ -24,6 +24,7 @@ struct Layout {
     float u0{}, u1{}, v0{}, v1{}; // ROI on the full Mono image, top-left UV convention
     float peripheral_scale{};
     float crop_width{}, crop_height{};
+    uint32_t output_width{}, output_height{};
 };
 struct Tans {
     // Left < right; top > bottom. Represent tangent-space extent of the
@@ -37,7 +38,7 @@ inline std::optional<Layout> make_layout(
     uint32_t output_width, uint32_t output_height,
     float crop_width = 0.50f, float crop_height = 0.50f,
     float peripheral_scale = 0.20f, float foveal_density = 1.0f,
-    float gaze_u = 0.50f, float gaze_v = 0.50f)
+    float gaze_u = 0.50f, float gaze_v = 0.50f, bool compact = false)
 {
     if (!output_width || !output_height || output_width > 8192 || output_height > 16384 ||
         !std::isfinite(crop_width) || !std::isfinite(crop_height) ||
@@ -51,8 +52,9 @@ inline std::optional<Layout> make_layout(
     {
         return {};
     }
-    const auto round_size = [](float x) -> uint32_t {
-        return static_cast<uint32_t>((std::max)(1.0f, std::round(x)));
+    const auto round_size = [compact](float x) -> uint32_t {
+        const auto size=static_cast<uint32_t>((std::max)(1.0f, std::round(x)));
+        return compact ? (size+7u)&~7u : size;
     };
     const auto fw = round_size(output_width * crop_width * foveal_density);
     const auto fh = round_size(output_height * crop_height * foveal_density);
@@ -60,22 +62,25 @@ inline std::optional<Layout> make_layout(
     const auto ph = round_size(output_height * peripheral_scale);
     // Match Joey's existing 2*W by H scene allocation for the initial
     // diagnostic. A more compact atlas is possible after DX12 validation.
+    const auto height_limit=compact ? (output_height+7u)&~7u : output_height;
     if (static_cast<uint64_t>(fw) + pw > 2ull * output_width ||
-        (std::max)(fh, ph) > output_height) { return {}; }
+        (std::max)(fh, ph) > height_limit) { return {}; }
     const float cu = std::clamp(gaze_u, crop_width * .5f, 1.f - crop_width * .5f);
     const float cv = std::clamp(gaze_v, crop_height * .5f, 1.f - crop_height * .5f);
     return Layout{
         .fovea = {0, 0, fw, fh},
         .periphery = {fw, 0, pw, ph},
-        .atlas_width = output_width * 2,
-        .atlas_height = output_height,
+        .atlas_width = compact ? fw + pw : output_width * 2,
+        .atlas_height = compact ? (std::max)(fh,ph) : output_height,
         .u0 = cu - crop_width * .5f,
         .u1 = cu + crop_width * .5f,
         .v0 = cv - crop_height * .5f,
         .v1 = cv + crop_height * .5f,
         .peripheral_scale = peripheral_scale,
         .crop_width = crop_width,
-        .crop_height = crop_height
+        .crop_height = crop_height,
+        .output_width = output_width,
+        .output_height = output_height
     };
 }
 

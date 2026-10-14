@@ -5,6 +5,7 @@
 // subsequent shader blend into different crop positions or densities.
 #include "DuoViewFrame.hpp"
 #include "DuoViewGaze.hpp"
+#include "DuoViewFovealCamera.hpp"
 #include <cstdint>
 #include <mutex>
 #include <optional>
@@ -26,6 +27,9 @@ struct Settings {
     float smoothing_ms{85.f};   // exponential temporal follow in milliseconds
     bool independent_shading{};
     bool temporal_audit{}; // optional observation; no private UE history writes
+    bool gaze_camera{}, compact_atlas{}, hold_tracking_loss{};
+    bool r10_crop_policy{}, dlss_history_protection{};
+    uint32_t quantization_pixels{8};
 };
 struct FrameConfig {
     FrameKey key{};
@@ -33,6 +37,8 @@ struct FrameConfig {
     UV gaze{};
     Settings settings{};
     uint64_t settings_revision{};
+    FovealCamera foveal_camera{};
+    bool foveal_history_reset{};
 };
 class ConfigLatch {
 public:
@@ -40,7 +46,7 @@ public:
         std::scoped_lock lock{mutex_};
         if (!std::isfinite(proposed.feather_fraction) ||
             proposed.feather_fraction < 0.f || proposed.feather_fraction > .45f ||
-            proposed.fovea_view > 1 || proposed.diagnostic_view > 2 ||
+            proposed.fovea_view > 1 || proposed.diagnostic_view > 2 || proposed.quantization_pixels>64 ||
             !std::isfinite(proposed.guard_fraction) || proposed.guard_fraction<0.f || proposed.guard_fraction>.25f ||
             !std::isfinite(proposed.smoothing_ms) || proposed.smoothing_ms<0.f || proposed.smoothing_ms>250.f)
             return false;
@@ -73,7 +79,7 @@ public:
         auto layout=make_layout(output_width,output_height,
                                 settings_.crop_width,settings_.crop_height,
                                 settings_.peripheral_scale,settings_.foveal_density,
-                                gaze.u,gaze.v);
+                                gaze.u,gaze.v,settings_.compact_atlas);
         if (!layout || !layout_valid(*layout)) return {};
         FrameConfig next{key,*layout,gaze,settings_,revision_};
         cached_=next;

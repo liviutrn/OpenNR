@@ -20,7 +20,22 @@ cbuffer DuoViewCompositeConfig : register(b0)
     uint DebugBorder;
     uint DebugViewMode;
     float _reserved;
+    float4 FullProjection;
+    float4 FovealRight;
+    float4 FovealUp;
+    float4 FovealForward;
 };
+
+float2 FovealSampleUV(float2 fullUv)
+{
+    if (FovealForward.w < 0.5)
+        return (fullUv - CropUv.xy) / (CropUv.zw - CropUv.xy);
+    float3 ray = float3((2 * fullUv.x - 1 - FullProjection.z) / FullProjection.x,
+        (1 - 2 * fullUv.y - FullProjection.w) / FullProjection.y, 1);
+    float z = dot(ray, FovealForward.xyz);
+    return float2(0.5 + 0.5 * FovealRight.w * dot(ray, FovealRight.xyz) / z,
+        0.5 - 0.5 * FovealUp.w * dot(ray, FovealUp.xyz) / z);
+}
 
 float2 AtlasSampleUV(uint4 rect, float2 localUv)
 {
@@ -64,7 +79,7 @@ void CSMain(uint3 threadId : SV_DispatchThreadID)
     float4 result = DebugViewMode == 2 ? float4(.04,.04,.04,1) : peripheralColor;
     if (weight > 0.0 && DebugViewMode != 1)
     {
-        const float2 roiLocal = (fullUv - CropUv.xy) / (CropUv.zw - CropUv.xy);
+        const float2 roiLocal = FovealSampleUV(fullUv);
         const float2 fovealSample = AtlasSampleUV(FoveaRect, roiLocal);
         const float4 fovealColor = SourceAtlas.SampleLevel(LinearClamp, fovealSample, 0.0);
         // Intended for identical color encoding in both views. Seam reduction

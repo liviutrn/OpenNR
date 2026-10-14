@@ -58,8 +58,9 @@ struct alignas(16) Config {
     float feather;
     uint32_t debug;
     float reserved[2];
+    float full_projection[4],foveal_right[4],foveal_up[4],foveal_forward[4];
 };
-static_assert(sizeof(Config)==80);
+static_assert(sizeof(Config)==144);
 int main() try {
     constexpr uint32_t W=32,H=32,AW=64,AH=32;
     ComPtr<IDXGIFactory4> factory;check(CreateDXGIFactory1(IID_PPV_ARGS(&factory)),"CreateDXGIFactory");

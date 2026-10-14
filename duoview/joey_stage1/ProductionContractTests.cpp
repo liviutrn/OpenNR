@@ -4,12 +4,19 @@
 #include <iostream>
 #include <stdexcept>
 #include "DuoViewState.hpp"
+#include "MonoRenderingPolicy.hpp"
 
 using namespace uevr::duoview;
 static void require(bool test, const char* what) {
     if (!test) throw std::runtime_error(what);
 }
 int main() try {
+    uevr::mono::Selection startup;
+    startup.initialize_duoview();
+    require(startup.active()==6 && startup.requested()==6 && startup.generation()==1 && !startup.pending(),
+        "DuoView must be active before a native frame or consumer retirement is possible");
+    startup.initialize_duoview();
+    require(startup.active()==6 && startup.generation()==1,"Reload must not reset startup to native stereo");
     for (auto wh: {std::array{2000u,2000u},std::array{3000u,3000u},
                    std::array{3400u,3172u},std::array{4096u,2160u}}) {
         const auto l=make_layout(wh[0],wh[1],.30f,.30f,.25f,2.5f,.5f,.5f);

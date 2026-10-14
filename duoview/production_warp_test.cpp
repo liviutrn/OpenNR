@@ -89,5 +89,65 @@ int main() try {
     for(UINT y=0;y<32;++y) for(UINT x=0;x<32;++x)
         if(std::memcmp(sample(x,y),sample(x+32,y),4)) throw std::runtime_error("Reused mono copy mismatch");
     readback->Unmap(0,nullptr);
+    for (unsigned iteration=0;iteration<3;++iteration) {
+        const float gaze_u=iteration==1 ? .25f : .75f;
+        const float gaze_v=iteration==1 ? .75f : .25f;
+        frame.layout=*uevr::duoview::make_layout(32,32,.5f,.5f,.25f,1.f,gaze_u,gaze_v,true);
+        const std::array<float,16> projection{
+            .55f,0,0,0,0,.75f,0,0,.03f,-.02f,0,1,0,0,.1f,0};
+        frame.foveal_camera=*uevr::duoview::make_foveal_camera(projection,frame.layout);
+        frame.key.frame=3+iteration;
+        frame.settings.feather_fraction=0;
+        auto compact=resource(device.Get(),texture(frame.layout.atlas_width,frame.layout.atlas_height,
+            D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET),D3D12_HEAP_TYPE_DEFAULT,D3D12_RESOURCE_STATE_COPY_DEST);
+        const auto compact_desc=compact->GetDesc();
+        D3D12_PLACED_SUBRESOURCE_FOOTPRINT compact_foot{};UINT64 compact_bytes{};
+        device->GetCopyableFootprints(&compact_desc,0,1,0,&compact_foot,nullptr,nullptr,&compact_bytes);
+        auto compact_upload=resource(device.Get(),buffer(compact_bytes),D3D12_HEAP_TYPE_UPLOAD,D3D12_RESOURCE_STATE_GENERIC_READ);
+        check(compact_upload->Map(0,&zero,&mapped));std::memset(mapped,0,compact_bytes);
+        for (UINT y=0;y<frame.layout.atlas_height;++y) for (UINT x=0;x<frame.layout.atlas_width;++x) {
+            std::array<uint8_t,4> color{255,0,0,255};
+            if (x<frame.layout.fovea.width && y<frame.layout.fovea.height) {
+                const auto& camera=frame.foveal_camera;
+                const float rx=(2*(x+.5f)/frame.layout.fovea.width-1)/camera.scale_x;
+                const float ry=(1-2*(y+.5f)/frame.layout.fovea.height)/camera.scale_y;
+                std::array<float,3> ray{};
+                for (unsigned i=0;i<3;++i) ray[i]=rx*camera.right[i]+ry*camera.up[i]+camera.forward[i];
+                const auto& p=camera.full_projection;
+                const auto u=.5f+.5f*(p[0]*ray[0]/ray[2]+p[2]);
+                const auto v=.5f-.5f*(p[1]*ray[1]/ray[2]+p[3]);
+                color={0,static_cast<uint8_t>(std::clamp(std::lround(v*255),0l,255l)),
+                    static_cast<uint8_t>(std::clamp(std::lround(u*255),0l,255l)),255};
+            }
+            std::memcpy(static_cast<uint8_t*>(mapped)+y*compact_foot.Footprint.RowPitch+x*4,color.data(),4);
+        }
+        compact_upload->Unmap(0,nullptr);
+        check(allocator->Reset());check(cmd->Reset(allocator.Get(),nullptr));
+        D3D12_TEXTURE_COPY_LOCATION compact_from{compact_upload.Get(),D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT};
+        compact_from.PlacedFootprint=compact_foot;
+        D3D12_TEXTURE_COPY_LOCATION compact_to{compact.Get(),D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX};
+        cmd->CopyTextureRegion(&compact_to,0,0,0,&compact_from,nullptr);
+        transition(cmd.Get(),compact.Get(),D3D12_RESOURCE_STATE_COPY_DEST,D3D12_RESOURCE_STATE_RENDER_TARGET);
+        transition(cmd.Get(),stereo.Get(),D3D12_RESOURCE_STATE_COPY_SOURCE,D3D12_RESOURCE_STATE_RENDER_TARGET);
+        if (!compositor.record(device.Get(),cmd.Get(),compact.Get(),stereo.Get(),D3D12_RESOURCE_STATE_RENDER_TARGET,frame))
+            throw std::runtime_error("Compact gaze camera composition failed: "+compositor.error());
+        transition(cmd.Get(),stereo.Get(),D3D12_RESOURCE_STATE_RENDER_TARGET,D3D12_RESOURCE_STATE_COPY_SOURCE);
+        cmd->CopyTextureRegion(&to,0,0,0,&from,nullptr);check(cmd->Close());
+        queue->ExecuteCommandLists(1,lists);check(queue->Signal(fence.Get(),frame.key.frame));
+        event=CreateEventW(nullptr,FALSE,FALSE,nullptr);check(fence->SetEventOnCompletion(frame.key.frame,event));
+        if(WaitForSingleObject(event,30000)!=WAIT_OBJECT_0)throw std::runtime_error("Compact GPU timeout");CloseHandle(event);
+        check(readback->Map(0,&read,&mapped));
+        for (UINT y=0;y<32;++y) for (UINT x=0;x<32;++x) {
+            const float u=(x+.5f)/32,v=(y+.5f)/32;
+            if (u>frame.layout.u0+.05f && u<frame.layout.u1-.05f &&
+                v>frame.layout.v0+.05f && v<frame.layout.v1-.05f) {
+                if (std::abs(int(sample(x,y)[2])-int(std::lround(u*255)))>4 ||
+                    std::abs(int(sample(x,y)[1])-int(std::lround(v*255)))>4 || sample(x,y)[0]>2)
+                    throw std::runtime_error("Gaze world-ray pattern moved inside the crop");
+            }
+            if(std::memcmp(sample(x,y),sample(x+32,y),4)) throw std::runtime_error("Compact mono-copy mismatch");
+        }
+        readback->Unmap(0,nullptr);
+    }
     std::cout << "Production shader, BGRA8 raster, moved gaze, retired-slot reuse, GPU timestamps: 2048 exact pixel pairs PASS\n";
 } catch(const std::exception& e) { std::cerr<<e.what()<<'\n';return 1; }

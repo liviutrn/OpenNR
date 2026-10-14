@@ -12,8 +12,9 @@ struct ShaderConstants {
     uint32_t border;
     uint32_t diagnostic;
     float reserved;
+    float full_projection[4], foveal_right[4], foveal_up[4], foveal_forward[4];
 };
-static_assert(sizeof(ShaderConstants) == 80);
+static_assert(sizeof(ShaderConstants) == 144);
 
 class Compositor {
 public:
@@ -36,15 +37,17 @@ public:
             FAILED(device->GetDeviceRemovedReason()) || !layout_valid(frame.layout)) return false;
         const auto source = atlas->GetDesc(), target = destination->GetDesc();
         const auto& l = frame.layout;
+        const auto output_width=l.output_width ? l.output_width : l.atlas_width/2;
+        const auto output_height=l.output_height ? l.output_height : l.atlas_height;
         if (source.Dimension != D3D12_RESOURCE_DIMENSION_TEXTURE2D ||
             target.Dimension != D3D12_RESOURCE_DIMENSION_TEXTURE2D ||
             source.Width != l.atlas_width || source.Height != l.atlas_height ||
-            target.Width != l.atlas_width || target.Height != l.atlas_height ||
+            target.Width != uint64_t(output_width)*2 || target.Height != output_height ||
             source.DepthOrArraySize != 1 || target.DepthOrArraySize != 1 ||
             source.SampleDesc.Count != 1 || target.SampleDesc.Count != 1 ||
             source.SampleDesc.Quality != 0 || target.SampleDesc.Quality != 0 ||
             !(target.Flags & D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET) ||
-            l.atlas_width / 2 > 16384 ||
+            output_width > 8192 || output_height > 16384 ||
             source.MipLevels != 1 || target.MipLevels != 1 ||
             (source.Flags & D3D12_RESOURCE_FLAG_DENY_SHADER_RESOURCE) || !bgra8(target.Format)) return false;
         const auto format = srv_format(source.Format);
@@ -55,15 +58,25 @@ public:
             FAILED(cmd->GetDevice(IID_PPV_ARGS(&cd))) ||
             sd.Get() != device || dd.Get() != device || cd.Get() != device) return false;
         const bool srgb = format == DXGI_FORMAT_B8G8R8A8_UNORM_SRGB || format == DXGI_FORMAT_R8G8B8A8_UNORM_SRGB;
-        if (!prepare(device, l.atlas_width / 2, l.atlas_height, srgb)) return false;
+        if (!prepare(device, output_width, output_height, srgb)) return false;
         const bool timed = frequency && frequency == frequency_ && queries_ && timestamps_;
         if (timed) read_timing();
         ShaderConstants constants{
-            {l.atlas_width / 2, l.atlas_height}, {l.atlas_width, l.atlas_height},
+            {output_width, output_height}, {l.atlas_width, l.atlas_height},
             {l.fovea.x, l.fovea.y, l.fovea.width, l.fovea.height},
             {l.periphery.x, l.periphery.y, l.periphery.width, l.periphery.height},
             {l.u0, l.v0, l.u1, l.v1}, frame.settings.feather_fraction,
             frame.settings.debug_border ? 1u : 0u, frame.settings.diagnostic_view, 0.f};
+        const auto& camera=frame.foveal_camera;
+        std::copy(camera.full_projection.begin(),camera.full_projection.end(),constants.full_projection);
+        for (unsigned i=0;i<3;++i) {
+            constants.foveal_right[i]=camera.right[i];
+            constants.foveal_up[i]=camera.up[i];
+            constants.foveal_forward[i]=camera.forward[i];
+        }
+        constants.foveal_right[3]=camera.scale_x;
+        constants.foveal_up[3]=camera.scale_y;
+        constants.foveal_forward[3]=camera.enabled ? 1.f : 0.f;
         D3D12_SHADER_RESOURCE_VIEW_DESC view{};
         view.Format = format;
         view.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;

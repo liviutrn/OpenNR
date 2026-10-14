@@ -4,19 +4,25 @@ import argparse, hashlib, json, subprocess
 from pathlib import Path
 
 EDITED_BACKEND = {
+ "CMakeLists.txt",
  "src/mods/vr/MonoRenderingPolicy.hpp", "src/mods/vr/CompatibilityPolicy.hpp",
+ "src/mods/vr/RenderingMethodSetting.hpp",
  "src/mods/VR.hpp", "src/mods/VR.cpp",
  "src/mods/vr/FFakeStereoRenderingHook.cpp", "src/mods/vr/D3D12Component.hpp",
  "src/mods/vr/D3D12Component.cpp", "tests/MonoRenderingTests.hpp",
 }
 ADDED_BACKEND = {
+ "src/mods/vr/DuoViewOpenNRCropPolicy.hpp", "src/mods/vr/DuoViewDlssHistoryPolicy.hpp",
+ "src/mods/vr/DuoViewDlssHistory.hpp", "src/mods/vr/DuoViewDlssHistory.cpp",
+ "src/mods/vr/DuoViewNgxParameters.hpp",
  "src/mods/vr/DuoViewGeometry.hpp", "src/mods/vr/DuoViewGaze.hpp",
+ "src/mods/vr/DuoViewFovealCamera.hpp",
  "src/mods/vr/DuoViewPSVR2Gaze.hpp", "src/mods/vr/DuoViewCropStability.hpp",
  "src/mods/vr/DuoViewFrame.hpp", "src/mods/vr/DuoViewConfig.hpp",
  "src/mods/vr/DuoViewState.hpp", "src/mods/vr/DuoViewD3D12.hpp",
  "src/mods/vr/DuoViewMonoCopyD3D12.hpp", "src/mods/vr/DuoViewShaderSource.hpp",
 }
-EDITED_FRONTEND = {"UEVR/RenderingModeOptions.cs", "tests/RenderingModes/Program.cs"}
+EDITED_FRONTEND = {"UEVR/RenderingModeOptions.cs", "UEVR/MainWindow.xaml.cs", "tests/RenderingModes/Program.cs"}
 GENERATED_FRONTEND = {"UEVR/FilteredExecutables.json"}
 
 def git(root,*args):
@@ -63,7 +69,9 @@ def main():
  if (".eye_tracked=m_duo_gaze->value()" not in vr_cpp or
      "m_duoview_gaze.read_uv(frozen,optical)" not in vr_cpp or
      ".temporal_audit=m_duo_history_audit->value()" not in vr_cpp or
-     ".smoothing_ms=0.f" not in vr_cpp):
+     ".smoothing_ms=m_duo_smoothing->value()" not in vr_cpp or
+     'm_duo_quantization->draw(' not in vr_cpp or
+     'uevr::duoview::ngx::service()' not in vr_cpp):
   raise RuntimeError("Stage5 gaze control is not connected to frame source")
  for token in ('m_duo_history_audit->draw(', 'm_duo_shading->draw(', 'm_duo_width->draw(', 'm_duo_height->draw(', 'm_duo_periphery->draw(',
                'm_duo_density->draw(', 'm_duo_feather->draw(', 'm_duo_debug_source->draw('):
@@ -72,6 +80,16 @@ def main():
                '"DuoViewFoveaSourceView"', '"DuoViewCropSmoothingMs"', '"DuoViewTemporalAudit"'):
   if token not in vr_header: raise RuntimeError("Persisted DuoView setting missing "+token)
  hook=(a.backend/"src/mods/vr/FFakeStereoRenderingHook.cpp").read_text(encoding="utf-8")
+ setting=(a.backend/"src/mods/vr/RenderingMethodSetting.hpp").read_text(encoding="utf-8")
+ policy=(a.backend/"src/mods/vr/MonoRenderingPolicy.hpp").read_text(encoding="utf-8")
+ for token in ('m_selection.initialize_duoview();','void request(int32_t)'):
+  if token not in setting: raise RuntimeError("Dedicated mode enforcement missing "+token)
+ if 'm_active=pack(duoview_method_id,1)' not in policy:
+  raise RuntimeError("DuoView must activate directly, never through ID0")
+ for token in ('!vr->is_using_duoview_mono() && !vr->is_ghosting_fix_enabled()',
+               'rotate_foveal_view(rotation,frame->config.foveal_camera)',
+               'x = duo_extent[0]', 'duoview_scene_extent()[0]'):
+  if token not in hook: raise RuntimeError("DuoView startup/render contract missing "+token)
  if "frame->config.settings.fovea_view" not in hook or "duo_frame->config.settings.fovea_view" not in hook:
   raise RuntimeError("Actual source index and UE projection must follow frozen source-view selection")
  if ("apply_frame_projection(double_matrix,*frame" not in hook or
