@@ -1,6 +1,9 @@
 # DuoView v26 — OpenNR controls and DLSS history protection
 
 Branch: `experiments/duoview-v25-gaze-camera-always-on`. Windows build pending.
+Published build source: `310b505b1e430baf3981c5c79a9805bc752a5c54`.
+Its tree `ede7269d4c0e2b9f168238774a6b7aa554f6db68` exactly matches the locally verified tree.
+Windows run: [Build34 / 38605029465](https://github.com/liviutrn/OpenNR/actions/runs/38605029465).
 The user approved the fixes and building and requested the last OpenNR stabilization controls plus a fix for gaze-dependent jitter and jelly-like settling.
 
 ## Source-backed changes
@@ -36,3 +39,18 @@ No STALKER2 GPU capture or PSVR2 execution is available here. The jelly symptom 
 ## Build publication status
 
 An earlier automatic review rejected publication as insufficiently authorized. The user subsequently gave full authorization to publish and build this experimental branch. Shell Git has no configured GitHub credentials here; publication uses the connected GitHub API and must preserve the exact tested source tree. Windows validation remains pending until the resulting workflow succeeds.
+
+Build34 has passed exact baseline/SDK verification, exact patch verification, pinned production contracts and independent CPU/GPU WARP tests. Original compatibility tests and the complete backend/frontend build remain in progress.
+
+## Atlas examples at 5000x5000 per eye
+
+These are scene/view extents before DLSS input scaling, from the pinned Joey allocation/view policy and DuoView layout code; they are not measured FPS or whole-process VRAM usage. Normal Joey Mono uses one 5000x5000 scene view inside the original double-wide allocation. Full-resolution XR output remains required in every case.
+
+| Mode/settings | Scene views | Scene atlas | Active view pixels | Atlas pixels |
+|---|---|---|---:|---:|
+| Native stereo | Two 5000x5000 eye views | 10000x5000 | 50,000,000 | 50,000,000 |
+| Original Joey Mono | One 5000x5000 mono view | 10000x5000 | 25,000,000 | 50,000,000 |
+| DuoView: 50%x50%, density1, periphery20% | Fovea2504x2504 + full-view periphery1000x1000 | 3504x2504 | 7,270,016 | 8,774,016 |
+| DuoView: same crop, density2 | Fovea5000x5000 + periphery1000x1000 | 6000x5000 | 26,000,000 | 30,000,000 |
+
+The source rectangles align to8 pixels. Atlas width is fovea width plus periphery width; height is their maximum height. For default DuoView, one 4-byte-per-pixel scene surface occupies about35.1MB instead of200MB in a double-wide atlas; actual games allocate multiple formats, histories, resources and final XR images. Atlas area falls82.45%; this does not imply82.45% lower total VRAM or higher FPS. Compact packing alone does not lower either view's chosen resolution. Low peripheral density is a deliberate quality tradeoff; density2 spends more pixels on the crop. The eye-tracked foveal camera rotates toward gaze and the compositor maps its rays back into the full mono output, so exact visible sharpness remains a headset acceptance item.
