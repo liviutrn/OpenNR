@@ -63,3 +63,30 @@
 - Stage1 exact Joey backend pin `5ac7edc207866569334175e4ed8a7517971547f6`; SDK `3cffbc82429b6165ceec2714f0f0d9ae48f55596`; frontend `60be4b0f9a646109fd9fdf448bacd41477234091`.
 - Use `duoview/joey_stage1/apply_stage234.py` guarded patch. Never move the old mixed backend source into the production build.
 - Do not declare Q2/Q3 solved because user said first working fovea. Maintain a clear split among user-verified, CI-verified, source-reviewed, theory/unknown.
+
+
+## 2026-10-14 implementation checkpoint — source commit a68371d7777845986542782419198995bbf53a49
+
+The preceding plan was written before several additional guarded quality-v20 commits. The following source changes are NOW PRESENT ON QUALITY BRANCH, but have **NOT YET PASSED ENTIRE CI/HEADSET**:
+
+- `936535e8f481228c886881146a65515eabe1ce4d`: added pinned production WARP tests that render both new diagnostic modes and validate identical pixels in both XR eye halves. Also tests frame settings changes cannot mutate an already-frozen source pair.
+- `d7b281c0a369d0d912de6e0e95d8e10806bb6fa2`: restored *functional* fovea source view selector **0 OR 1**, not a dummy slider. View rect routing, projection crop, and `State::projection()` observation now all use the same frozen source index. Camera still captures fully processed Mono view0 and transfers exact pose to view1. Default is **view1**, preserving Build19 output; view0 restores old prototype's primary fovea arrangement.
+- `a68371d7777845986542782419198995bbf53a49`: added PSVR2 CAPI no-poll counters fresh/reused/invalid/expired/unavailable and latest sample age, read as atomics only when the UEVR quality menu is open; applies settings on profile reload; updates package filename and READ_FIRST to accurately describe new quality controls.
+- No mandatory gaze smoothing, no temporal deadzone, no altered global Lumen CVars, no automatic brightness adjustment, no changed Joey original mode ID5.
+- Prior obsolete CI runs were cancelled automatically by quality branch concurrency on each new source commit. **Only the CI run whose SHA matches the latest source commit is authoritative.**
+- The preserved Build19 headset-success evidence is valid for `ce9c9abc...`, not new v20. Do not declare the new variable source-view logic stable until its own GPU, CPU and headset checks.
+
+### Single efficient headset A/B matrix (ONLY after complete verified v20 candidate)
+1. Preserve Build19 folder; run normal Joey Mono ID5 once and DuoView ID6 with unchanged Build19-like settings: 30% fovea, 2.5x focal density, 25% peripheral, source view **1**, normal blended diagnostic **0**. Observe if same no-hitch behavior.
+2. Temporarily turn gaze **OFF** to freeze ROI. Without moving camera, use diagnostic **1 (periphery only)** versus **2 (fovea only)**. Compare the same world surface in the crop. Determine whether shadows are already different before blending; no gamma guesses. Return to **0** afterward.
+3. Set fovea source view **0**, keep everything else equal. Compare lighting and detail after temporal histories have settled. This may reproduce the old high-quality view ordering, but is unproven.
+4. Compare peripheral scale **0.25 vs 0.40**, fixed gaze/source view. If shadows improve at higher peripheral density it suggests low-res probe/shadow reconstruction; if a view swap alone resolves it, view-index/postprocess history is a stronger suspect. Do NOT yet change global Lumen options.
+5. Enable gaze and observe **fresh/reused/invalid/expired** counts while twitch occurs. Frequent `expired` indicates CAPI sample timeout→center path; low `expired` with jitter suggests raw sensor/coordinate/predictor issue. No per-frame logging is needed.
+6. Report any exact new hitches/frame drops, shadow differences, eye tracking motion and UI loading. One controlled v20 headset session should answer several engineering questions.
+
+### Next work after the diagnostic milestone
+- Pure frame-cadence simulation tests (CAPI no-new sample, blink, counter rollback and 50ms threshold) with injectable clock/reader; avoid "just extend stale timeout" guesses.
+- Compare old gaze transformation through `get_eye_transform(0)` with new native combined ray optical basis using actual Joey Mono calibration. Correct rotation/sign only with evidence and regression.
+- If native gaze is sound but intrinsically noisy, implement **optional, OFF-by-default** fast-saccade adaptive gaze stabilization after verifying no extra latency and no temporal crop regeneration.
+- Resolve Lumen/per-view exposure and TSR history cause at scene-view source; distinguish screen-trace resolution artifacts from truly different producer images before any shader color corrections.
+- Optional diagnostic GPU timestamps only when toggled, no live GPU fence wait or blocking read.
