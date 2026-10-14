@@ -60,6 +60,7 @@ def main():
     void configure_duoview();
     void note_duoview_gpu_ms(float ms) { m_duo_gpu_ms.store(ms, std::memory_order_relaxed); }
     std::optional<uevr::duoview::ViewFrame> duoview_begin_frame();
+    bool duoview_finalize_gaze();
     void duoview_abort(const char* reason);''')
     edit(header,'    std::atomic<const char*> m_mono_status{"Not selected"};',
         '''    // Legacy-style persistent options; never sampled by the XR compositor.
@@ -233,15 +234,28 @@ std::optional<uevr::duoview::ViewFrame> VR::duoview_begin_frame() {
     projection[3][2]=near_plane;
     std::array<float, 16> frozen{};
     std::memcpy(frozen.data(), &projection[0][0], sizeof(frozen));
+    // Do not read gaze in AdjustViewRect / early producer setup: the first
+    // Unreal Mono camera has not yet received Joey's final head pose.
+    return m_duoview.begin(key, get_hmd_width(), get_hmd_height(), frozen,
+        []() -> std::optional<uevr::duoview::UV> { return {}; },
+        GetTickCount64(), true);
+}
+
+bool VR::duoview_finalize_gaze() {
+    if (!is_duoview_renderer_active()) return false;
+    const auto key=duoview_producer_key();
+    const auto frame=m_duoview.snapshot(key);
+    if (!frame) return false;
+    if (frame->gaze_finalized) return true; // fixed center, or already frozen
     const auto eye=get_eye_transform(0);
     const std::array<float,9> optical{
         eye[0][0],eye[0][1],eye[0][2],
         eye[1][0],eye[1][1],eye[1][2],
         eye[2][0],eye[2][1],eye[2][2]};
-    return m_duoview.begin(key, get_hmd_width(), get_hmd_height(), frozen,
-        [this, frozen, optical]() -> std::optional<uevr::duoview::UV> {
-            return m_duoview_gaze.read_uv(frozen,optical);
-        }, GetTickCount64());
+    // One latest native sensor read, AFTER source view0 has the final Mono
+    // camera. No interpolation, DLSS hooks, or camera/projection recentering.
+    const auto sample=m_duoview_gaze.read_uv(frame->projection,optical);
+    return m_duoview.finalize_gaze(key,sample,GetTickCount64());
 }
 
 void VR::duoview_abort(const char* reason) {
@@ -309,8 +323,9 @@ void VR::duoview_abort(const char* reason) {
             const auto* p = reinterpret_cast<const Vector3d*>(view_location);
             const uevr::duoview::CameraPose pose{{r->pitch,r->yaw,r->roll},{p->x,p->y,p->z}};
             vr->duoview_begin_frame();
-            if (!vr->duoview_state().camera(key, 0, pose))
-                SPDLOG_WARNING_EVERY_N_SEC(2, "[DuoView] First scene pose not captured");
+            if (!vr->duoview_state().camera(key, 0, pose) ||
+                !vr->duoview_finalize_gaze())
+                SPDLOG_WARNING_EVERY_N_SEC(2, "[DuoView] First scene pose/gaze could not be finalized before projection");
         }
 
         // Modify Player Control Rotation
@@ -331,7 +346,7 @@ void VR::duoview_abort(const char* reason) {
             vr->get_openxr_runtime()->note_mono_projection();
         }''',
     '''        if (duo_fovea || duo_full) {
-            if (const auto frame = vr->duoview_begin_frame()) {
+            if (const auto frame = vr->duoview_begin_frame(); frame && frame->gaze_finalized) {
                 uevr::duoview::apply_frame_projection(double_matrix,*frame,static_cast<unsigned>(view_index));
                 vr->duoview_state().projection(frame->config.key, static_cast<unsigned>(view_index));
             } else {
@@ -361,7 +376,7 @@ void VR::duoview_abort(const char* reason) {
             init_options_view_family->get_render_target()==rtm->get_view_family_render_target();
         if (main) {
             const unsigned view=init_options_stereo_pass==EStereoscopicPass::eSSP_PRIMARY ? 0u : 1u;
-            if (const auto frame=vr->duoview_begin_frame()) {
+            if (const auto frame=vr->duoview_begin_frame(); frame && frame->gaze_finalized) {
                 Matrix4x4d expected{};
                 uevr::duoview::apply_frame_projection(expected,*frame,view);
                 const auto reconcile=[&](auto& projection) {
