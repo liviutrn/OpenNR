@@ -27,8 +27,8 @@ def main():
     require("m_duo_gaze->value()=false;" in vr and
             "UE previous-clip layout is unverified; fixed-center crop remains active" in vr,
             "Unsupported eye tracking must be turned off with a clear runtime reason")
-    require("Eye tracking unavailable on this UE layout" in vrh and
-            "fixed-crop DuoView remains active" in vrh,
+    require("Eye tracking unavailable on this UE layout" in vr and
+            "fixed-crop DuoView remains active" in vr,
             "UI must explain the fixed-crop fallback")
     require(hook.count("duoview_begin_frame(is_ue_5_6_or_newer())") == 5,
             "All five render hook paths must pass the same engine-layout capability")
