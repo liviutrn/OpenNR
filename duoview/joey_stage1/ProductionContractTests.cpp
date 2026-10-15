@@ -152,7 +152,7 @@ int main() try {
     CropStability direct;
     Settings follow{};
     follow.crop_width=follow.crop_height=.5f;
-    follow.guard_fraction=.25f; follow.smoothing_ms=250.f;
+    follow.guard_fraction=.25f; follow.smoothing_ms=0.f; // v48 instant baseline retained
     follow.stabilize_crop=true; // persisted legacy values must be harmless
     auto centre=direct.update({31,1},3400,3172,follow,UV{.5f,.5f},1000);
     auto tiny=direct.update({31,2},3400,3172,follow,UV{.501f,.499f},1011);
@@ -179,6 +179,41 @@ int main() try {
                 GazeSample{std::nullopt,2001,false,true},2001).u==.5f,
             "Explicit invalidation must discard the held crop immediately");
     State audit;
+    // v48 smoothing regression: the UI setting must alter the actual gaze
+    // coordinates driving the frozen off-axis projection, not only the UI.
+    Settings smooth_settings{};
+    smooth_settings.eye_tracked=true;
+    smooth_settings.stabilize_crop=false;
+    smooth_settings.smoothing_ms=85.f;
+    CropStability smoother;
+    auto initial=smoother.update({32,1},3000,3000,smooth_settings,UV{.5f,.5f},1000);
+    auto halfway=smoother.update({32,2},3000,3000,smooth_settings,UV{.9f,.7f},1016);
+    const float alpha=1.f-std::exp(-16.f/85.f);
+    require(initial.u==.5f && initial.v==.5f &&
+            std::abs(halfway.u-(.5f+.4f*alpha))<.0001f &&
+            std::abs(halfway.v-(.5f+.2f*alpha))<.0001f,
+            "v48 85ms gaze smoothing not applied before projection");
+    auto later=smoother.update({32,3},3000,3000,smooth_settings,UV{.9f,.7f},1032);
+    require(later.u>halfway.u && later.u<.9f && later.v>halfway.v,
+            "v48 smoothing failed to converge monotonically");
+    // Zero ms must restore the exact instant gaze path without filter lag.
+    smooth_settings.smoothing_ms=0.f;
+    auto zero=smoother.update({32,4},3000,3000,smooth_settings,UV{.2f,.8f},1048);
+    require(zero.u==.2f && zero.v==.8f,"v48 zero smoothing did not follow instantly");
+    // Heavy smoothing must work at the old slider's maximum.
+    smooth_settings.smoothing_ms=250.f;
+    auto heavy=smoother.update({32,5},3000,3000,smooth_settings,UV{.8f,.2f},1064);
+    require(heavy.u>.2f && heavy.u<.3f && heavy.v<.8f && heavy.v>.7f,
+            "v48 250ms smoothing did not attenuate the gaze step");
+    const auto same=smoother.update({32,6},3000,3000,smooth_settings,{},1080);
+    require(same.u==heavy.u && same.v==heavy.v,
+            "v48 missing gaze packet should not advance smoothed crop");
+    const auto old_gaze=smoother.update({32,7},3000,3000,smooth_settings,{},1120);
+    require(old_gaze.u==.5f && old_gaze.v==.5f,
+            "v48 stale gaze must return to center instead of preserving filter history");
+    auto reacquire=smoother.update({32,8},3000,3000,smooth_settings,UV{.6f,.4f},1136);
+    require(reacquire.u==.6f && reacquire.v==.4f,
+            "v48 reacquired gaze must not blend against expired history");
     Settings auds{}; auds.temporal_audit=true; auds.eye_tracked=true;
     require(audit.configure(auds),"Audit settings rejected");
     const std::array<double,16> source_rotation{
