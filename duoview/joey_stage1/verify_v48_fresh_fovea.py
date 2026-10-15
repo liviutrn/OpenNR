@@ -45,6 +45,16 @@ def main():
     require("vr->duoview_eye_tracking_enabled() &&" in hook and
             "is_ue_5_6_or_newer()" in hook,
             "The UE5.6 raw temporal writer must remain version gated")
+    gaze=(root/"src/mods/vr/DuoViewCropStability.hpp").read_text(encoding="utf-8")
+    require("m_duo_smoothing->draw(" in vr and
+            ".smoothing_ms=m_duo_smoothing->value()" in vr and
+            "current.smoothing_ms==candidate.smoothing_ms" in vr,
+            "User's smoothing slider is missing or is not connected to live DuoView settings")
+    require("s.smoothing_ms>0.f" in gaze and "std::expm1(" in gaze and
+            "current_.u+(sample.uv->u-current_.u)*alpha" in gaze and
+            "last_filter_ms_=now;" in gaze and
+            "last_valid_=last_filter_ms_=0" in gaze,
+            "Gaze smoothing must be applied to source position with clock-based EMA and stale reset")
     require("m_duoview_quarantined.store(false" not in vr,
             "Re-selection must not clear a fault quarantine")
     evidence.mkdir(parents=True,exist_ok=True)
