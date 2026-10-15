@@ -10,7 +10,7 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: duoview-restart-build3-control-${{ github.ref }}
+  group: duoview-restart-build3-control-${{ github.ref }}-${{ github.sha }}
   cancel-in-progress: false
 env:
   PYTHONDONTWRITEBYTECODE: '1'
@@ -65,6 +65,12 @@ jobs:
           python workspace/duoview/restart/tests/test_backend_patch.py *> evidence/patcher-tests.log
           $code=$LASTEXITCODE; Get-Content evidence/patcher-tests.log
           if ($code -ne 0) { throw "Patch safety tests failed ($code)" }
+      - name: Parse and smoke-test evidence collector in Windows PowerShell 5.1
+        shell: pwsh
+        run: |
+          powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File workspace/duoview/restart/tests/collector_smoke_tests.ps1 *> evidence/collector-smoke.log
+          $code=$LASTEXITCODE; Get-Content evidence/collector-smoke.log
+          if ($code -ne 0) { throw "Windows PowerShell 5.1 evidence collector smoke test failed ($code)" }
       - name: Check out original public backend submodules
         shell: pwsh
         run: |
@@ -173,6 +179,9 @@ jobs:
           Copy-Item evidence/backend-patch-manifest.json package/
           Copy-Item workspace/duoview/restart/STATUS.md package/
           Copy-Item workspace/duoview/restart/EXPERIMENTS.md package/
+          Copy-Item workspace/duoview/restart/source-snapshot-manifest.json package/
+          Copy-Item workspace/duoview/restart/Collect-DuoViewRestartEvidence.ps1 package/
+          Copy-Item workspace/duoview/restart/COLLECTOR_USAGE.md package/
           @'
           EXPERIMENTAL Build3 stable-source/moving-mask diagnostic control.
           The original Mono callback remains the default when UEVR_STABLE_SOURCE_MASK is unset or off.
@@ -182,9 +191,18 @@ jobs:
           This uses one stable full-frustum Mono source for both eye outputs and does not save scene-render work.
           It is not DuoView, does not create a second engine view, and does not establish temporal stability.
           The first opted-in frame compiles/prepares the shader and is a warmup frame that falls back to Mono.
+          After a diagnostic run, Collect-DuoViewRestartEvidence.ps1 creates a bounded local ZIP from the allowlisted UEVR, STALKER 2, and package paths; it does not upload anything.
           No STALKER 2, PSVR2, OpenXR headset, or moving-gaze runtime validation is included in this artifact.
           '@ | Set-Content package/READ_FIRST.txt
-          Get-ChildItem package -Recurse -File | Get-FileHash -Algorithm SHA256 | ConvertTo-Json | Set-Content evidence/package-sha256.json
+          $packageRoot=(Resolve-Path package).Path.TrimEnd('\')
+          $packageHashes=@(Get-ChildItem package -Recurse -File | Sort-Object FullName | ForEach-Object {
+            [ordered]@{
+              Path=$_.FullName.Substring($packageRoot.Length + 1).Replace('\','/')
+              Hash=(Get-FileHash $_.FullName -Algorithm SHA256).Hash
+            }
+          })
+          ConvertTo-Json -InputObject $packageHashes -Depth 4 | Set-Content package/package-sha256.json
+          Copy-Item package/package-sha256.json evidence/package-sha256.json
           $zip="Joey-Build3-Stable-Source-Mask-${{ github.run_number }}.zip"
           Compress-Archive -Path package/* -DestinationPath $zip -Force
           (Get-FileHash $zip -Algorithm SHA256).Hash | Set-Content "$zip.sha256"

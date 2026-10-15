@@ -12,7 +12,9 @@ read process environment variables, or upload data.
 param(
     [string]$UevrRoot,
     [string]$GameSavedRoot,
+    [string]$GameExecutableStem = 'Stalker2-Win64-Shipping',
     [string]$PackageRoot,
+    [string]$PackageHashManifestPath,
     [string]$UevrLogPath,
     [string[]]$SettingsPath = @(),
     [string]$DiagnosticPath,
@@ -380,6 +382,37 @@ function Format-ValueCounts {
     return ($parts -join ', ')
 }
 
+if ([System.Environment]::OSVersion.Platform -ne [System.PlatformID]::Win32NT) {
+    throw 'This collector is intended for Windows PowerShell 5.1 on Windows.'
+}
+
+$gameExecutableStemSource = 'scoped_stalker2_default_candidate'
+if ($PSBoundParameters.ContainsKey('GameExecutableStem')) { $gameExecutableStemSource = 'caller_supplied' }
+# The pinned Framework derives its per-target profile name from the executable
+# stem. When -WatchPid is supplied, capture that live process path before wait.
+if ($WatchPid -gt 0 -and -not $PSBoundParameters.ContainsKey('GameExecutableStem')) {
+    try {
+        $watchProcess = Get-Process -Id $WatchPid -ErrorAction Stop
+        $watchExecutablePath = [string]$watchProcess.Path
+        if ([string]::IsNullOrWhiteSpace($watchExecutablePath)) {
+            $watchExecutablePath = [string]$watchProcess.MainModule.FileName
+        }
+        if (-not [string]::IsNullOrWhiteSpace($watchExecutablePath)) {
+            $candidateStem = [System.IO.Path]::GetFileNameWithoutExtension($watchExecutablePath)
+            if ($candidateStem -match '^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$') {
+                $GameExecutableStem = $candidateStem
+                $gameExecutableStemSource = 'derived_from_watch_pid_process_path'
+            }
+        }
+    } catch {
+        # Access to process metadata is best-effort; the scoped default or
+        # caller-supplied stem remains recorded in the manifest.
+    }
+}
+if ($GameExecutableStem -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$') {
+    throw 'GameExecutableStem must be a single safe executable filename stem.'
+}
+
 # Optional watch is a read-only wait; the target process is never stopped.
 $watchStatus = 'not_requested'
 if ($WatchPid -gt 0) {
@@ -397,21 +430,29 @@ if ($WatchPid -gt 0) {
     if ($watchStatus -eq 'waiting') { $watchStatus = 'timeout_process_may_still_run' }
 }
 
-if ([System.Environment]::OSVersion.Platform -ne [System.PlatformID]::Win32NT) {
-    throw 'This collector is intended for Windows PowerShell 5.1 on Windows.'
-}
-
 $uevrRootMode = 'explicit'
 if ([string]::IsNullOrWhiteSpace($UevrRoot)) {
-    $uevrRootMode = 'default_candidate_unverified'
-    if (-not [string]::IsNullOrWhiteSpace($env:LOCALAPPDATA)) { $UevrRoot = Join-Path $env:LOCALAPPDATA 'UEVR' }
+    if (-not [string]::IsNullOrWhiteSpace($env:APPDATA)) {
+        $uevrRootMode = 'source_verified_framework_profile'
+        $UevrRoot = Join-Path (Join-Path $env:APPDATA 'UnrealVRMod') $GameExecutableStem
+    } else {
+        $uevrRootMode = 'source_verified_profile_unresolved'
+    }
 }
 $packageRootMode = 'explicit'
 if ([string]::IsNullOrWhiteSpace($PackageRoot)) {
     $packageRootMode = 'script_directory_default'
     $PackageRoot = $PSScriptRoot
 }
-$gameRootMode = $(if ([string]::IsNullOrWhiteSpace($GameSavedRoot)) { 'not_supplied_no_verified_default' } else { 'explicit' })
+$gameRootMode = 'explicit'
+if ([string]::IsNullOrWhiteSpace($GameSavedRoot)) {
+    if (-not [string]::IsNullOrWhiteSpace($env:LOCALAPPDATA)) {
+        $gameRootMode = 'official_stalker2_steam_saved_candidate'
+        $GameSavedRoot = Join-Path $env:LOCALAPPDATA 'Stalker2\Saved'
+    } else {
+        $gameRootMode = 'official_saved_candidate_unresolved'
+    }
+}
 if ([string]::IsNullOrWhiteSpace($OutputDirectory)) { $OutputDirectory = (Get-Location).Path }
 if (-not (Test-LocalPath $OutputDirectory)) { throw 'OutputDirectory must be a local filesystem path.' }
 if (-not (Test-Path -LiteralPath $OutputDirectory -PathType Container)) { [void](New-Item -ItemType Directory -Path $OutputDirectory -Force) }
@@ -428,10 +469,25 @@ $script:StageRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("DVR-$stamp-$su
 
 try {
     $cutoffUtc = [datetime]::UtcNow.AddDays(-$RecentDays)
+    $uevrProfileExists = Test-PlainDirectory $UevrRoot
+    $gameSavedRootExists = Test-PlainDirectory $GameSavedRoot
+    if (-not [string]::IsNullOrWhiteSpace($UevrLogPath)) {
+        $uevrLogSelection = 'caller_supplied_file'
+    } elseif ($uevrRootMode -eq 'source_verified_framework_profile') {
+        $uevrLogSelection = 'pinned_framework_log_txt'
+    } elseif ($uevrRootMode -eq 'source_verified_profile_unresolved') {
+        $uevrLogSelection = 'source_profile_path_unresolved'
+    } else {
+        $uevrLogSelection = 'bounded_explicit_root_scan'
+    }
 
-    # UEVR log discovery is intentionally shallow and limited to this candidate root and one named child.
+    # Framework.cpp in the pinned backend writes log.txt in the persistent
+    # per-executable profile. Only an explicitly supplied profile root uses
+    # the shallow generic candidate scan below.
     if (-not [string]::IsNullOrWhiteSpace($UevrLogPath)) {
         Save-EvidenceFile -SourcePath $UevrLogPath -Label 'explicit UEVR log' -Category 'uevr-logs' -Mode Tail -PerFileLimit 4MB -Redact -ParseTelemetry
+    } elseif ($uevrRootMode -eq 'source_verified_framework_profile' -and -not [string]::IsNullOrWhiteSpace($UevrRoot)) {
+        Save-EvidenceFile -SourcePath (Join-Path $UevrRoot 'log.txt') -Label 'source-verified UEVR Framework log.txt tail' -Category 'uevr-logs' -Mode Tail -PerFileLimit 4MB -Redact -ParseTelemetry
     } elseif (-not [string]::IsNullOrWhiteSpace($UevrRoot) -and (Test-PlainDirectory $UevrRoot)) {
         $uevrLogDirs = @($UevrRoot, (Join-Path $UevrRoot 'logs'))
         $uevrLogs = @(Get-BoundedRecentFiles -Directories $uevrLogDirs -Extensions @('.log', '.txt') -Maximum 5 -CutoffUtc $cutoffUtc)
@@ -442,19 +498,20 @@ try {
             Save-EvidenceFile -SourcePath $file.FullName -Label 'recent UEVR log tail' -Category 'uevr-logs' -Mode Tail -PerFileLimit 4MB -Redact -ParseTelemetry
         }
     } else {
-        Add-Record @{ sourceLabel = 'UEVR logs'; archivePath = $null; status = 'missing_root'; reason = 'default candidate is %LOCALAPPDATA%\UEVR; no verified runtime log location is established'; sourceBytes = $null; archivedBytes = 0; archivedSha256 = $null; sourceSha256 = $null; redactions = 0; truncated = $false; modifiedUtc = $null; capturedRange = $null }
+        Add-Record @{ sourceLabel = 'UEVR logs'; archivePath = $null; status = 'missing_root'; reason = 'pinned logger path requires %APPDATA%\UnrealVRMod\<executable-stem>\log.txt; APPDATA was unavailable'; sourceBytes = $null; archivedBytes = 0; archivedSha256 = $null; sourceSha256 = $null; redactions = 0; truncated = $false; modifiedUtc = $null; capturedRange = $null }
     }
 
     if (-not [string]::IsNullOrWhiteSpace($DiagnosticPath)) {
         Save-EvidenceFile -SourcePath $DiagnosticPath -Label 'explicit diagnostic file; output type not assumed' -Category 'diagnostic' -Mode Tail -PerFileLimit 4MB -Redact -ParseTelemetry
     }
 
-    # Exact settings names only; explicit paths are still restricted to text-like formats and local files.
+    # Exact settings names only; Framework.cpp in the pinned backend saves
+    # config.txt in this same per-executable persistent profile (lines 1188-1196).
     $settings = New-Object System.Collections.ArrayList
     if ($SettingsPath.Count -gt 0) {
         foreach ($path in $SettingsPath) { [void]$settings.Add($path) }
     } elseif (-not [string]::IsNullOrWhiteSpace($UevrRoot) -and (Test-PlainDirectory $UevrRoot)) {
-        foreach ($name in @('settings.ini', 'settings.json', 'config.ini', 'config.json')) {
+        foreach ($name in @('config.txt', 'settings.ini', 'settings.json', 'config.ini', 'config.json')) {
             $candidate = Join-Path $UevrRoot $name
             if (Test-Path -LiteralPath $candidate -PathType Leaf) { [void]$settings.Add($candidate) }
         }
@@ -464,8 +521,11 @@ try {
     }
     foreach ($path in $settings | Select-Object -First 8) {
         $extension = [System.IO.Path]::GetExtension($path).ToLowerInvariant()
-        if (@('.ini', '.json', '.cfg', '.xml', '.toml') -notcontains $extension) {
-            Add-Record @{ sourceLabel = 'settings candidate'; archivePath = $null; status = 'excluded_type'; reason = 'settings allowlist accepts only ini/json/cfg/xml/toml text files'; sourceBytes = $null; archivedBytes = 0; archivedSha256 = $null; sourceSha256 = $null; redactions = 0; truncated = $false; modifiedUtc = $null; capturedRange = $null }
+        $leaf = [System.IO.Path]::GetFileName($path)
+        $allowedExtension = @('.ini', '.json', '.cfg', '.xml', '.toml') -contains $extension
+        $allowedExactTextFile = ($extension -eq '.txt' -and $leaf -ieq 'config.txt')
+        if (-not $allowedExtension -and -not $allowedExactTextFile) {
+            Add-Record @{ sourceLabel = 'settings candidate'; archivePath = $null; status = 'excluded_type'; reason = 'settings allowlist accepts ini/json/cfg/xml/toml or the exact filename config.txt'; sourceBytes = $null; archivedBytes = 0; archivedSha256 = $null; sourceSha256 = $null; redactions = 0; truncated = $false; modifiedUtc = $null; capturedRange = $null }
             continue
         }
         Save-EvidenceFile -SourcePath $path -Label 'allowlisted UEVR settings file' -Category 'settings' -Mode Text -PerFileLimit 512KB -Redact
@@ -474,9 +534,11 @@ try {
         Add-Record @{ sourceLabel = 'settings candidates'; archivePath = $null; status = 'excluded_candidate_limit'; reason = 'settings collection is capped at 8 files'; sourceBytes = $null; archivedBytes = 0; archivedSha256 = $null; sourceSha256 = $null; redactions = 0; truncated = $false; modifiedUtc = $null; capturedRange = $null }
     }
 
-    # The caller supplies the game's Saved directory. No install/profile search is attempted.
+    # Official STALKER 2 support documents the Steam Saved parent. Collect only
+    # logs/crash metadata/config from its exact allowlisted child directories;
+    # the STEAM save-content directory is never enumerated.
     if ([string]::IsNullOrWhiteSpace($GameSavedRoot) -or -not (Test-PlainDirectory $GameSavedRoot)) {
-        Add-Record @{ sourceLabel = 'STALKER 2 Saved root'; archivePath = $null; status = 'missing_root'; reason = 'pass -GameSavedRoot with the game Saved directory; no verified default is established'; sourceBytes = $null; archivedBytes = 0; archivedSha256 = $null; sourceSha256 = $null; redactions = 0; truncated = $false; modifiedUtc = $null; capturedRange = $null }
+        Add-Record @{ sourceLabel = 'STALKER 2 Saved root'; archivePath = $null; status = 'missing_root'; reason = 'official Steam candidate is %LOCALAPPDATA%\Stalker2\Saved; pass -GameSavedRoot for another install/store'; sourceBytes = $null; archivedBytes = 0; archivedSha256 = $null; sourceSha256 = $null; redactions = 0; truncated = $false; modifiedUtc = $null; capturedRange = $null }
     } else {
         $gameLogDirs = @((Join-Path $GameSavedRoot 'Logs'), (Join-Path $GameSavedRoot 'Crashes'))
         $gameLogs = @(Get-BoundedRecentFiles -Directories $gameLogDirs -Extensions @('.log', '.xml', '.runtime-xml', '.ini') -Maximum 12 -CutoffUtc $cutoffUtc -IncludeOneChildLevel)
@@ -512,7 +574,9 @@ try {
     }
 
     # Exact package file allowlist; absent files are recorded rather than treated as an error.
-    $packageFiles = @('baseline.lock.json', 'exact-baseline-source.json', 'backend-patch-manifest.json', 'STATUS.md', 'EXPERIMENTS.md', 'README.md', 'source-snapshot-manifest.json')
+    # package-sha256.json hashes the other package files and is intentionally
+    # self-excluded to avoid a recursive hash definition.
+    $packageFiles = @('baseline.lock.json', 'exact-baseline-source.json', 'backend-patch-manifest.json', 'source-snapshot-manifest.json', 'STATUS.md', 'EXPERIMENTS.md', 'READ_FIRST.txt', 'Collect-DuoViewRestartEvidence.ps1', 'COLLECTOR_USAGE.md')
     if (-not [string]::IsNullOrWhiteSpace($PackageRoot) -and (Test-PlainDirectory $PackageRoot)) {
         foreach ($name in $packageFiles) {
             $path = Join-Path $PackageRoot $name
@@ -521,6 +585,20 @@ try {
             } else {
                 Add-Record @{ sourceLabel = ("package metadata: $name"); archivePath = $null; status = 'missing'; reason = 'allowlisted package file not present at PackageRoot'; sourceBytes = $null; archivedBytes = 0; archivedSha256 = $null; sourceSha256 = $null; redactions = 0; truncated = $false; modifiedUtc = $null; capturedRange = $null }
             }
+        }
+        $hashManifest = $PackageHashManifestPath
+        if ([string]::IsNullOrWhiteSpace($hashManifest)) {
+            $candidateHashManifest = Join-Path $PackageRoot 'package-sha256.json'
+            if (Test-Path -LiteralPath $candidateHashManifest -PathType Leaf) { $hashManifest = $candidateHashManifest }
+        }
+        if (-not [string]::IsNullOrWhiteSpace($hashManifest)) {
+            if ([System.IO.Path]::GetFileName($hashManifest) -ine 'package-sha256.json') {
+                Add-Record @{ sourceLabel = 'package hash manifest'; archivePath = $null; status = 'excluded_name'; reason = 'only the exact filename package-sha256.json is accepted'; sourceBytes = $null; archivedBytes = 0; archivedSha256 = $null; sourceSha256 = $null; redactions = 0; truncated = $false; modifiedUtc = $null; capturedRange = $null }
+            } else {
+                Save-EvidenceFile -SourcePath $hashManifest -Label 'package provenance hash manifest: package-sha256.json' -Category 'package-metadata' -Mode Text -PerFileLimit 4MB -Redact
+            }
+        } else {
+            Add-Record @{ sourceLabel = 'package provenance hash manifest: package-sha256.json'; archivePath = $null; status = 'not_provided'; reason = 'optional workflow hash payload was not supplied or present at PackageRoot'; sourceBytes = $null; archivedBytes = 0; archivedSha256 = $null; sourceSha256 = $null; redactions = 0; truncated = $false; modifiedUtc = $null; capturedRange = $null }
         }
     } else {
         Add-Record @{ sourceLabel = 'package metadata'; archivePath = $null; status = 'missing_root'; reason = 'PackageRoot is missing or non-local'; sourceBytes = $null; archivedBytes = 0; archivedSha256 = $null; sourceSha256 = $null; redactions = 0; truncated = $false; modifiedUtc = $null; capturedRange = $null }
@@ -541,8 +619,10 @@ try {
         'DuoView restart evidence collection',
         "Collected UTC: $([datetime]::UtcNow.ToString('o'))",
         "Watch status: $watchStatus (timeout is bounded; the target process is never terminated)",
-        "UEVR root selection: $uevrRootMode; the default candidate is %LOCALAPPDATA%\UEVR and is not a verified runtime log location.",
-        "Game Saved root selection: $gameRootMode; no game path was searched when this was not supplied.",
+        "UEVR profile selection: $uevrRootMode; executable stem=$GameExecutableStem ($gameExecutableStemSource); profile directory exists=$uevrProfileExists; log selection=$uevrLogSelection.",
+        'Pinned UEVR Framework logger convention: %APPDATA%\UnrealVRMod\<executable-stem>\log.txt (backend 5ac7edc207866569334175e4ed8a7517971547f6).',
+        "Game Saved selection: $gameRootMode; candidate directory exists=$gameSavedRootExists. No game-version claim is made.",
+        'Only allowlisted Logs/Crashes/Config files are considered; Saved\STEAM save content is not collected.',
         "Recent-file window: $RecentDays days. Staged evidence cap: 100 MiB; optional dump cap: 20 MiB per file and 32 MiB total.",
         '',
         "[DuoViewRestart] producer-copy summary matches: $recordCount",
@@ -565,8 +645,25 @@ try {
     [System.IO.File]::WriteAllText((Join-Path $script:StageRoot 'summary.txt'), $summary, $script:Utf8NoBom)
 
     $rootSummary = [ordered]@{
-        uevr = [ordered]@{ selection = $uevrRootMode; candidateLeaf = $(if ($UevrRoot) { [System.IO.Path]::GetFileName($UevrRoot.TrimEnd('\')) } else { $null }); verifiedRuntimeLocation = $false }
-        gameSaved = [ordered]@{ selection = $gameRootMode; candidateLeaf = $(if ($GameSavedRoot) { [System.IO.Path]::GetFileName($GameSavedRoot.TrimEnd('\')) } else { $null }); verifiedDefault = $false }
+        uevr = [ordered]@{
+            selection = $uevrRootMode
+            profileCandidateLeaf = $(if ($UevrRoot) { [System.IO.Path]::GetFileName($UevrRoot.TrimEnd('\')) } else { $null })
+            profileDirectoryExists = $uevrProfileExists
+            executableStem = $GameExecutableStem
+            executableStemSelection = $gameExecutableStemSource
+            loggerSelection = $uevrLogSelection
+            loggerLeaf = $(if ($UevrLogPath) { [System.IO.Path]::GetFileName($UevrLogPath) } else { 'log.txt' })
+            pathConventionSourceVerified = $true
+            source = 'Pinned backend joeyhodge/UEVR@5ac7edc207866569334175e4ed8a7517971547f6, Framework.cpp:334, 1164-1182, and 1188-1196'
+        }
+        gameSaved = [ordered]@{
+            selection = $gameRootMode
+            candidateLeaf = $(if ($GameSavedRoot) { [System.IO.Path]::GetFileName($GameSavedRoot.TrimEnd('\')) } else { $null })
+            candidateExists = $gameSavedRootExists
+            sourceSupportedDefault = ($gameRootMode -eq 'official_stalker2_steam_saved_candidate')
+            savedGameContentCollected = $false
+            sourceReferences = @('https://www.stalker2.com/news/saves-managing-manual/', 'https://www.stalker2.com/news/mods-cost-of-hope-update-2-0-faq')
+        }
         package = [ordered]@{ selection = $packageRootMode; candidateLeaf = $(if ($PackageRoot) { [System.IO.Path]::GetFileName($PackageRoot.TrimEnd('\')) } else { $null }) }
     }
     $manifest = [ordered]@{
