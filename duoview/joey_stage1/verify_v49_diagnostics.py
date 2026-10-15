@@ -28,7 +28,7 @@ def main():
       "bounded_queues":'queue_.size()<20000' in diag and 'images_.size()<20' in diag,
       "separate_file_evidence":all(x in diag for x in ('frame_trace.csv','image_manifest.csv','health.txt')),
       "phase_fixed_step_sweep_live":all(x in diag for x in ('n < 120','n < 240','n < 360','n < 480','Phase::live')),
-      "preserve_v48_foveal_state":'fresh_fovea_no_history=true' in vr and
+      "preserve_v48_foveal_state":'fresh_fovea_no_history=m_duo_no_history->value()' in vr and
           'fovea_history_disabled' in state and 'init_options_ue5->scene_view_state=nullptr;' in hook,
       "no_raw_ue55_memory_write":'ClipToPrevClipOverride' not in gpu and 'D3DCompile(' not in com,
       "mode_isolation":'is_duoview_renderer_active()' in hook,
