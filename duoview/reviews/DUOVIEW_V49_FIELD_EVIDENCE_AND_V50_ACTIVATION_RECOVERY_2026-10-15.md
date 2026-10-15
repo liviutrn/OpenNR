@@ -33,3 +33,11 @@ Both v48 and v49 immediately appeared as Mono rather than two-view DuoView ID6.
 - If still no compose, log the new `[DuoView][Activation] incomplete pair` status and investigate precise missing geometry family/rect/proj/camera invariant; if XR errors persist, diagnose OpenXR frame timing separately.
 - Later, revisit true UE5.5 temporal reconstruction from source-backed APIs or safe engine temporal consumers. Do not claim moving gaze jitter is solved by v50.
 - Protected Joey Build3 must not be overwritten. Use isolated folder for testing.
+
+## Verified final v50 Windows build (2026-10-15 17:42 UTC)
+- Source build commit: `f2675abb28050a6af4bb66d1a1e404ec1c91f955`. (Later commits to this documentation do not change built source.)
+- GitHub Actions **run 38776407208**, #109, overall **SUCCESS**: https://github.com/liviutrn/OpenNR/actions/runs/38776407208
+- Passed: exact Joey/UESDK/frontend source pins, stage1/stage234/native bootstrap/v49 diagnostic/v50 recovery exact-anchor patches, generated-source audit, v50 behavioral pair tests, independent CPU/DX12 WARP tests, original Joey compatibility test suite, backend DLL build, frontend build, PE/ZIP/hash audit.
+- Windows artifact ID **11994669294**, name `Joey-DuoView-Activation-v50-109`. Inner install ZIP `Joey-DuoView-Activation-v50-109.zip`, **11,673,990 bytes**, SHA256 `29c8dcf6c07ed57cbb6f94708a459524a3f29fb4137635f16b82db48a65393c2`; checksum checked independently after download. Includes UEVRInjector.exe, UEVRBackend.dll, OpenXR loader, diagnostic collector and policy JSON.
+- Diagnostic evidence artifact ID **11994449422**.
+- **Important**: passing Windows CI does NOT establish that the user’s real STALKER2/PSVR2 headset session composites even one frame. User has not yet tested v50. Source regression tests are not an Unreal game integration harness. The v49 XR_FRAME_DISCARDED and XR_ERROR_TIME_INVALID stream remains unresolved. If ID6 remains Mono, collect v50 UEVR log and the ZIP created by `Collect-DuoView-V49.cmd`; inspect newly added `[DuoView][Activation]` line for missing family/rectangles/projections/cameras/views.
