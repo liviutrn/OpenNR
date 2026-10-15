@@ -52,7 +52,7 @@ def main():
     check("does not write the unverified ClipToPrevClipOverride memory field" in readme,
           "Read-first must clearly state the UE5.5 raw-write prohibition")
     check("Reselecting ID6 will not clear a fault quarantine" in readme and
-          "does NOT prove that Unreal TSR consumes the override" in readme,
+          "Headset validation is required" in readme,
           "Read-first must describe session quarantine and validation limits")
 
     policy = json.loads((package / "duoview-v48-fresh-fovea-policy.json").read_text(encoding="utf-8"))
@@ -90,7 +90,7 @@ def main():
         "headset_validated": False,
     }
     evidence.mkdir(parents=True, exist_ok=True)
-    (evidence / "v47-package-audit.json").write_text(
+    (evidence / "v48-package-audit.json").write_text(
         json.dumps(summary, indent=2) + "\n", encoding="utf-8")
     print("v48 x64 PE, ZIP round-trip, source provenance, and UE5.5 fresh-fovea audit: PASS")
     print("ZIP SHA256:", archive_sha)
