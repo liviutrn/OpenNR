@@ -38,10 +38,10 @@ def main():
             "slot->fovea_history_disabled" in state and
             "if (slot->config.settings.fresh_fovea_no_history && !slot->fovea_history_disabled) return {};" in state,
             "A frame must fail without confirmed no-history foveal constructor input")
-    require("fresh_fovea_no_history=true" in vr and
+    require("fresh_fovea_no_history=m_duo_no_history->value()" in vr and
             "current.fresh_fovea_no_history==candidate.fresh_fovea_no_history" in vr and
             "bool fresh_fovea_no_history{};" in config,
-            "Fresh fovea setting not connected to immutable DuoView frame")
+            "Optional fresh-fovea setting not connected to immutable DuoView frame")
     require("vr->duoview_eye_tracking_enabled() &&" in hook and
             "is_ue_5_6_or_newer()" in hook,
             "The UE5.6 raw temporal writer must remain version gated")
@@ -60,16 +60,18 @@ def main():
     evidence.mkdir(parents=True,exist_ok=True)
     policy={
         "target":"STALKER 2, UE5.5.4",
-        "experiment":"v48 fresh fovea, no persistent FSceneViewState",
+        "experiment":"v50 optional v48 fresh-fovea mode, default OFF for startup recovery",
         "eye_tracking_requested":True,
-        "foveal_state_cleared_every_producer_frame":True,
-        "crop_change_resets_foveal_temporal_history":True,
+        "foveal_state_cleared_every_producer_frame":False,
+        "foveal_state_cleared_when_opted_in":True,
+        "gaze_temporal_correction_verified":False,
+        "crop_change_resets_foveal_temporal_history":False,
         "peripheral_state_unchanged":True,
         "ue55_raw_sceneview_offsets_written":False,
         "headset_validated":False,
         "limitations":"UE render/TSR/Lumen behavior requires in-game validation"
     }
     (evidence/"duoview-v48-fresh-fovea-policy.json").write_text(json.dumps(policy,indent=2)+"\n")
-    print("v48 typed UE5.5 foveal state isolation, frame guard, and peripheral protection: PASS")
+    print("v50 optional UE5.5 foveal state isolation, frame guard, and peripheral protection: PASS")
 
 if __name__=="__main__":main()
