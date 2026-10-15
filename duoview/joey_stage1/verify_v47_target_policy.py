@@ -52,7 +52,7 @@ def main():
         "ue56_temporal_bridge_still_guarded": True,
     }
     (evidence / "duoview-v47-target-policy.json").write_text(
-        __import__("json").dumps(report, indent=2) + "\\n", encoding="utf-8")
+        __import__("json").dumps(report, indent=2) + "\n", encoding="utf-8")
     print("v47 UE5.5 fixed-crop, temporal-write guard, and session quarantine policy: PASS")
 
 if __name__ == "__main__":
