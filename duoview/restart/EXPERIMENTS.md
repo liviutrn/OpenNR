@@ -36,9 +36,14 @@ it does not mean `xrEndFrame` or headset presentation accepted the image.
 The observed frame value is the D3D12 component's `frame_count` at the Mono
 copy call site. Its relation to engine source generation, projection frame,
 and gaze pose is unproven, and those fields are explicitly marked unavailable.
-Diagnostics currently emit bounded log summaries and have a fixed-capacity
-ring, but no asynchronous ring drain/export. This limitation is not evidence
-of a rolling crash-history recorder.
+On an opt-in diagnostic/control path, a background consumer drains the fixed
+ring to `%LOCALAPPDATA%\UEVR\DuoViewRestart\stable-source-mask-<UTC>.jsonl`.
+It records source pins, requested/effective methods, command/API/submission
+observations, exact fallback reasons, and missing producer fields. It caps
+each session at 4,096 frame records and reports ring/limit drops. It flushes
+every 16 records or after one second; an abrupt process exit may lose the
+newest buffered records. This is bounded session telemetry, not a dump or
+rolling crash-history recorder.
 
 The Windows workflow is responsible for running the portable replay and
 patcher tests, D3D12 WARP oracle tests, the existing compatibility suite, the

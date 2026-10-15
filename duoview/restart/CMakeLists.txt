@@ -2,6 +2,7 @@ cmake_minimum_required(VERSION 3.20)
 project(duoview_restart_tests LANGUAGES CXX)
 enable_testing()
 find_package(Threads REQUIRED)
+find_package(Python3 COMPONENTS Interpreter REQUIRED)
 
 add_executable(duoview_restart_replay_tests tests/replay_tests.cpp)
 target_compile_features(duoview_restart_replay_tests PRIVATE cxx_std_17)
@@ -12,3 +13,5 @@ else()
     target_compile_options(duoview_restart_replay_tests PRIVATE -Wall -Wextra -Werror)
 endif()
 add_test(NAME duoview_restart_replay_tests COMMAND duoview_restart_replay_tests)
+add_test(NAME duoview_restart_backend_patch_tests
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_backend_patch.py)

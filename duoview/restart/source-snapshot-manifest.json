@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "baseline_commit": "64432d0442066715fa442660a0848cf4963640b0",
+  "files": {
+    ".gitattributes": "0d3635d2c142e262c4b144f439b9e05ff3b66308",
+    ".github/workflows/duoview-restart-build3-control.yml": "ae52a855d24464ed3cc7c4dc8fb53398e286c458",
+    "duoview/restart/CMakeLists.txt": "63d3577ddf317ca7e30eba7ca0c4bf42e30db1f1",
+    "duoview/restart/DuoViewRestartDiagnostics.hpp": "7a8c8e4e41eb7c65a91f7bb5d7b77cd663cb7d70",
+    "duoview/restart/EXPERIMENTS.md": "1942b7caf93e168ac668aa66baa6df47971746a6",
+    "duoview/restart/STATUS.md": "6fd0a25f4ed92bcc09dbf07174a34cfd8b8307ba",
+    "duoview/restart/apply_backend_patch.py": "3f9eea38cc9638ee4cb257b39b258d41111626f0",
+    "duoview/restart/backend/MonoControlBlock.inl": "74cc09e104acc454bb538a2f318bbe9edbbaa6eb",
+    "duoview/restart/backend/StableSourceMaskD3D12.hpp": "8819be96b9cf0b3a994b42b7b84b7e6c1ef1bf90",
+    "duoview/restart/source_snapshot_manifest.py": "31aaaabf43fa1b31a7ff047860290f67d602b4f1",
+    "duoview/restart/tests/CMakeLists.txt": "f4e9ce3c88083d869edf7cfb28e4c699d0f06799",
+    "duoview/restart/tests/replay_tests.cpp": "52f44801f788ad2668cb3beada86d88c793ecc7b",
+    "duoview/restart/tests/stable_source_mask_d3d12_tests.cpp": "68d76c9be628032a63f882eda6b93698d6bf5859",
+    "duoview/restart/tests/support/spdlog/spdlog.h": "84b7fff0cb2600bba256353802e5dce99616c0e0",
+    "duoview/restart/tests/test_backend_patch.py": "d15f1774de13072a3f10dd0b48f3801fa6b30537",
+    "duoview/restart/verify_backend_patch.py": "d42bb486c4cf633c5554ea54daee4cfa1d82ad27"
+  }
+}

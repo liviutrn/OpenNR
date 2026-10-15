@@ -32,8 +32,13 @@ At the current integration boundary, only the D3D12 copy-frame counter is
 observed. It is not established as an engine source-generation ID, projection
 frame, or gaze-pose frame. The adapter separately records command recording,
 the copy API return, and accepted producer-copy status. It does not claim that
-`xrEndFrame` or headset presentation accepted an image. Diagnostic ring export
-is still unavailable and is a follow-up implementation task.
+`xrEndFrame` or headset presentation accepted an image. On an opt-in
+diagnostic/control path, a background consumer exports JSONL to
+`%LOCALAPPDATA%\UEVR\DuoViewRestart\stable-source-mask-<UTC>.jsonl`. Each
+session is capped at 4,096 frame observations; the fixed ring and export-limit
+drop counts are recorded. It flushes in small batches and periodically, so an
+abrupt process exit can lose the newest buffered records. This is bounded
+session telemetry, not a crash dump or a rolling crash-history recorder.
 
 The identical-full-frustum two-engine-view comparison remains blocked until
 distinct engine-owned view state and an independently owned shading/history

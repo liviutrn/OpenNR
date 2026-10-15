@@ -18,6 +18,7 @@ enum class FallbackReason : uint8_t {
     diagnostic_disabled,
     unsupported_device_or_queue,
     invalid_extent_or_format,
+    unsupported_color_view_format,
     shader_resource_denied,
     descriptor_slot_limit,
     pipeline_unavailable,
@@ -26,10 +27,16 @@ enum class FallbackReason : uint8_t {
     submission_not_accepted,
     source_frame_unavailable,
     source_or_destination_state_unavailable,
+    command_context_unavailable,
+    command_context_not_retired,
+    producer_callback_not_invoked,
+    no_copy_command_recorded,
     independent_view_state_unproven,
 };
 
 struct FrameObservation {
+    // Build3 integration fills this from D3D12Component::on_frame frame_count
+    // at the Mono-copy call site. It is not an engine source-generation ID.
     uint64_t producer_frame{};
     uint64_t projection_frame{};
     uint64_t mask_frame{};
@@ -39,10 +46,14 @@ struct FrameObservation {
     bool stable_mask_requested{};
     EffectivePath observed_path{EffectivePath::unknown};
     FallbackReason fallback{FallbackReason::none};
+    FallbackReason submission_failure{FallbackReason::none};
     bool control_command_recorded{};
     bool mono_copy_command_recorded{};
+    bool copy_api_returned_successfully{};
     bool copy_submission_accepted{};
+    bool source_generation_observed{};
     bool projection_frame_observed{};
+    bool gaze_pose_observed{};
     uint32_t source_width{};
     uint32_t source_height{};
     uint32_t destination_width{};
