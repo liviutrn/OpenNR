@@ -26,6 +26,7 @@ struct Settings {
     float smoothing_ms{85.f};   // exponential temporal follow in milliseconds
     bool independent_shading{};
     bool temporal_audit{}; // optional observation; no private UE history writes
+    bool fresh_fovea_no_history{}; // v48: do not give UE a persistent SceneViewState for the fovea
     bool history_sample_correction{}; // legacy experimental input, not used by rendering
     float history_sample_strength{1.f};
 };
