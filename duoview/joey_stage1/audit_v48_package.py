@@ -47,7 +47,7 @@ def main():
 
     readme = (package / "READ_FIRST.txt").read_text(encoding="utf-8-sig")
     check("v48" in readme and "UE 5.5.4" in readme and
-          "fresh fovea" in readme,
+          "fresh fovea" in readme.lower(),
           "Read-first must identify the UE5.5.4 fresh-fovea experiment")
     check("does not write the unverified ClipToPrevClipOverride memory field" in readme,
           "Read-first must clearly state the UE5.5 raw-write prohibition")
