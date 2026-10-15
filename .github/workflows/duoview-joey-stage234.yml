@@ -1,8 +1,8 @@
-name: DuoView v48 UE5.5 Fresh Fovea No-History — EXPERIMENTAL
-run-name: DuoView v48 fresh-fovea no-history Windows audit (${{ github.run_number }})
+name: DuoView v49 Autonomous Gaze Diagnostic — EXPERIMENTAL
+run-name: DuoView v49 three-channel diagnostic Windows audit (${{ github.run_number }})
 on:
   push:
-    branches: [experiments/duoview-fresh-fovea-v48]
+    branches: [experiments/duoview-diagnostic-v49]
     paths:
       - '.github/workflows/duoview-joey-stage234.yml'
       - 'duoview/joey_stage1/**'
@@ -95,11 +95,11 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Native low-res bootstrap source patch failed' }
           python workspace/duoview/joey_stage1/verify_stage234.py backend frontend evidence
           if ($LASTEXITCODE -ne 0) { throw 'Build33 restoration + native bootstrap violated SDK/source boundaries' }
-      - name: Verify v48 typed fovea history disable and quarantine policy
+      - name: Verify v49 typed fovea history disable and quarantine policy
         shell: pwsh
         run: |
           python workspace/duoview/joey_stage1/verify_v48_fresh_fovea.py backend evidence
-          if ($LASTEXITCODE -ne 0) { throw 'v48 foveal no-history or quarantine guard failed' }
+          if ($LASTEXITCODE -ne 0) { throw 'v49 foveal no-history or quarantine guard failed' }
       - name: Preserve real generated Joey hook excerpts for independent audit
         shell: pwsh
         run: |
@@ -180,9 +180,9 @@ jobs:
           Copy-Item evidence/duoview-stage234-hashes.json package/
           Copy-Item evidence/duoview-v48-fresh-fovea-policy.json package/
           @'
-          DUOVIEW v48 FRESH FOVEA — EXPERIMENTAL STALKER 2 / UE 5.5.4 / DX12 / SteamVR OpenXR
+          DUOVIEW v49 AUTONOMOUS DIAGNOSTIC — EXPERIMENTAL STALKER 2 / UE 5.5.4 / DX12 / SteamVR OpenXR
 
-          PURPOSE: test the new hypothesis that Unreal's reuse of historical foveal pixels causes severe jumps when the eye-tracked crop moves.
+          PURPOSE: record three independent diagnostic channels (CPU projection/frame CSV, GPU source/composite patches, and automatic verdict/health report). Test fixed, forced motion, and real eye gaze automatically.
 
           Fresh fovea: in experimental mode ID6 only, the original UE5.5 FSceneViewInitOptions scene_view_state pointer is temporarily set to null FOR THE FOVEAL VIEW BEFORE CONSTRUCTION, then restored immediately afterwards. Unreal therefore receives a foveal view without its previous persistent FSceneViewState on each producer frame. Any crop relocation automatically starts fresh, and the stationary crop ALSO starts fresh every frame. The peripheral view's SceneViewState remains unchanged.
 
@@ -206,22 +206,22 @@ jobs:
           if (@(Get-ChildItem package -File -Filter *.exe).Count -lt 1) { throw "Missing Joey frontend executable" }
           if ((Get-Content package/READ_FIRST.txt -Raw) -notmatch 'Reselecting ID6 will not clear a fault quarantine') { throw 'Stale quarantine instructions' }
           Get-ChildItem package -Recurse -File | Get-FileHash -Algorithm SHA256 | ConvertTo-Json | Set-Content evidence/package-sha256.json
-          $zip="Joey-DuoView-FreshFovea-v48-${{ github.run_number }}.zip"
+          $zip="Joey-DuoView-Diagnostic-v49-${{ github.run_number }}.zip"
           Compress-Archive -Path package/* -DestinationPath $zip -Force
           (Get-FileHash $zip -Algorithm SHA256).Hash | Set-Content "$zip.sha256"
       - name: Independently verify final candidate ZIP, PE machine IDs and unpacked hashes
         shell: pwsh
         run: |
-          $zip="Joey-DuoView-FreshFovea-v48-${{ github.run_number }}.zip"
+          $zip="Joey-DuoView-Diagnostic-v49-${{ github.run_number }}.zip"
           python workspace/duoview/joey_stage1/audit_v48_package.py package $zip evidence
-          if ($LASTEXITCODE -ne 0) { throw 'v48 package provenance, PE or ZIP audit failed' }
+          if ($LASTEXITCODE -ne 0) { throw 'v49 package provenance, PE or ZIP audit failed' }
       - uses: actions/upload-artifact@v4
         if: success()
         with:
-          name: Joey-DuoView-FreshFovea-v48-${{ github.run_number }}
+          name: Joey-DuoView-Diagnostic-v49-${{ github.run_number }}
           path: |
-            Joey-DuoView-FreshFovea-v48-*.zip
-            Joey-DuoView-FreshFovea-v48-*.zip.sha256
+            Joey-DuoView-Diagnostic-v49-*.zip
+            Joey-DuoView-Diagnostic-v49-*.zip.sha256
           if-no-files-found: error
           retention-days: 90
       - name: Record public source and dependency provenance
@@ -236,6 +236,6 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: Joey-DuoView-v48-Evidence-${{ github.run_number }}
+          name: Joey-DuoView-v49-Evidence-${{ github.run_number }}
           path: evidence/
           if-no-files-found: error
