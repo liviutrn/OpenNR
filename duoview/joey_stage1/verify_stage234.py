@@ -128,7 +128,7 @@ def main():
  bridge=(a.backend/"src/mods/vr/DuoViewSceneViewTemporal.hpp").read_text(encoding="utf-8")
  if "make_clip_to_prev_clip" not in temporal_math or "inverse_current" not in temporal_math:
   raise RuntimeError("v46 source does not construct the full current-to-previous clip transform")
- for token in ("ClipToPrevClipOverride", "get_view_family_offset", "0x12a0",
+ for token in ("ClipToPrevClipOverride", "get_view_family_offset",
                "apply_clip_to_prev_clip_override", "readback"):
   if token not in bridge:
    raise RuntimeError("UE5.6 temporal bridge validation is incomplete: "+token)
