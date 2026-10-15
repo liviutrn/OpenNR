@@ -93,6 +93,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Stage 2-4 source anchors did not match original Joey' }
           python workspace/duoview/joey_stage1/apply_native_lowres_bootstrap.py backend
           if ($LASTEXITCODE -ne 0) { throw 'Native low-res bootstrap source patch failed' }
+          python workspace/duoview/joey_stage1/apply_v49_diagnostics.py backend workspace/duoview
+          if ($LASTEXITCODE -ne 0) { throw 'V49 diagnostic source patch failed' }
           python workspace/duoview/joey_stage1/verify_stage234.py backend frontend evidence
           if ($LASTEXITCODE -ne 0) { throw 'Build33 restoration + native bootstrap violated SDK/source boundaries' }
       - name: Verify v49 typed fovea history disable and quarantine policy
@@ -180,7 +182,7 @@ jobs:
           Copy-Item evidence/duoview-stage234-hashes.json package/
           Copy-Item evidence/duoview-v48-fresh-fovea-policy.json package/
           @'
-          DUOVIEW v49 AUTONOMOUS DIAGNOSTIC — EXPERIMENTAL STALKER 2 / UE 5.5.4 / DX12 / SteamVR OpenXR
+          DUOVIEW v49 AUTONOMOUS DIAGNOSTIC — BASED ON v48 fresh fovea — EXPERIMENTAL STALKER 2 / UE 5.5.4 / DX12 / SteamVR OpenXR
 
           PURPOSE: record three independent diagnostic channels (CPU projection/frame CSV, GPU source/composite patches, and automatic verdict/health report). Test fixed, forced motion, and real eye gaze automatically.
 
@@ -199,6 +201,7 @@ jobs:
 
           CI validates exact original sources, pinned tests, independent geometric and GPU WARP tests, Joey compatibility, backend/frontend build, and PE/ZIP/hash checks. A passing CI run does NOT prove in-headset stability, no regressions in UE5.5 runtime history, or absence of GPU hangs.
 
+          AUTONOMOUS V49 DIAG: The first 120 source frames fix center; next 120 step right; next 120 sweep across; next 120 return to center; subsequent frames use PSVR2 Toolkit gaze. Default smoothing is zero to reveal motion. No manual screenshots needed. Data saved in %LOCALAPPDATA%\DuoViewDiagnostics\v49_pid... (or %TEMP% fallback): frame_trace.csv, image_manifest.csv, 128x128 uncompressed DX12 GPU raw tiles, health.txt. The UEVR log also receives periodic source/phase status independently. GPU tile 0 = atlas fovea, tile 1 = atlas periphery, tile 2 = composite at fixed screen center. Empty GPU manifest does not count as visual proof. Files stay local and are never uploaded automatically. This remains v48 no-history rendering: the test cannot alone prove the original history-dependent cause. Headset validation is required.
           USE SEPARATE TEST FOLDER. NEVER OVERWRITE THE 30-MINUTE-PROVEN JOEY BUILD 3.
           '@ | Set-Content package/READ_FIRST.txt
           $needed=@('UEVRBackend.dll','UEVRPluginNullifier.dll','LuaVR.dll','READ_FIRST.txt','duoview-stage234-hashes.json','exact-baseline-source.json')
