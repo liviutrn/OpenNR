@@ -1,8 +1,8 @@
-name: DuoView v49 Autonomous Gaze Diagnostic — EXPERIMENTAL
-run-name: DuoView v49 three-channel diagnostic Windows audit (${{ github.run_number }})
+name: DuoView v50 Activation Recovery + Three-Channel Diagnostic — EXPERIMENTAL
+run-name: DuoView v50 activation recovery Windows audit (${{ github.run_number }})
 on:
   push:
-    branches: [experiments/duoview-diagnostic-v49]
+    branches: [experiments/duoview-v50-activation-recovery]
     paths:
       - '.github/workflows/duoview-joey-stage234.yml'
       - 'duoview/joey_stage1/**'
@@ -95,18 +95,25 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Native low-res bootstrap source patch failed' }
           python workspace/duoview/joey_stage1/apply_v49_diagnostics.py backend workspace/duoview
           if ($LASTEXITCODE -ne 0) { throw 'V49 diagnostic source patch failed' }
+          python workspace/duoview/joey_stage1/apply_v50_activation_recovery.py backend
+          if ($LASTEXITCODE -ne 0) { throw 'V50 activation recovery source patch failed' }
           python workspace/duoview/joey_stage1/verify_stage234.py backend frontend evidence
           if ($LASTEXITCODE -ne 0) { throw 'Build33 restoration + native bootstrap violated SDK/source boundaries' }
-      - name: Verify v49 typed fovea history disable and quarantine policy
+      - name: Verify optional UE5.5 fresh-fovea history isolation and quarantine policy
         shell: pwsh
         run: |
           python workspace/duoview/joey_stage1/verify_v48_fresh_fovea.py backend evidence
-          if ($LASTEXITCODE -ne 0) { throw 'v49 foveal no-history or quarantine guard failed' }
+          if ($LASTEXITCODE -ne 0) { throw 'v50 optional foveal no-history guard failed' }
       - name: Verify v49 three-channel diagnostics independently
         shell: pwsh
         run: |
           python workspace/duoview/joey_stage1/verify_v49_diagnostics.py backend evidence
           if ($LASTEXITCODE -ne 0) { throw 'v49 independent diagnostic source checks failed' }
+      - name: Verify v50 startup retries, explicit uncorrected-history diagnostics and restoration
+        shell: pwsh
+        run: |
+          python workspace/duoview/joey_stage1/verify_v50_activation.py backend evidence
+          if ($LASTEXITCODE -ne 0) { throw 'v50 activation recovery independent source audit failed' }
       - name: Preserve real generated Joey hook excerpts for independent audit
         shell: pwsh
         run: |
@@ -187,53 +194,54 @@ jobs:
           Copy-Item evidence/duoview-stage234-hashes.json package/
           Copy-Item evidence/duoview-v48-fresh-fovea-policy.json package/
           Copy-Item evidence/duoview-v49-source-policy.json package/
+          Copy-Item evidence/duoview-v50-activation-policy.json package/
           Copy-Item workspace/duoview/joey_stage1/Collect-DuoView-V49.ps1 package/
           Copy-Item workspace/duoview/joey_stage1/Collect-DuoView-V49.cmd package/
           @'
-          DUOVIEW v49 AUTONOMOUS DIAGNOSTIC — BASED ON v48 fresh fovea — EXPERIMENTAL STALKER 2 / UE 5.5.4 / DX12 / SteamVR OpenXR
+          DUOVIEW v50 STARTUP ACTIVATION RECOVERY — BASED ON v49 autonomous diagnostics + optional v48 fresh fovea — EXPERIMENTAL STALKER 2 / UE 5.5.4 / DX12 / SteamVR OpenXR
 
           PURPOSE: record three independent diagnostic channels (CPU projection/frame CSV, GPU source/composite patches, and automatic verdict/health report). Test fixed, forced motion, and real eye gaze automatically.
 
-          Fresh fovea: in experimental mode ID6 only, the original UE5.5 FSceneViewInitOptions scene_view_state pointer is temporarily set to null FOR THE FOVEAL VIEW BEFORE CONSTRUCTION, then restored immediately afterwards. Unreal therefore receives a foveal view without its previous persistent FSceneViewState on each producer frame. Any crop relocation automatically starts fresh, and the stationary crop ALSO starts fresh every frame. The peripheral view's SceneViewState remains unchanged.
+          Fresh fovea: OPTIONAL and OFF by default in v50. If explicitly enabled, the typed UE5.5 FSceneViewInitOptions scene_view_state pointer is temporarily null only FOR THE FOVEAL VIEW BEFORE CONSTRUCTION, then restored immediately afterwards. Every enabled frame must prove the state override or fails closed. In normal v50 startup, fovea/peripheral persistent SceneViewState remain available.
 
           The frozen gaze crop is rendered with an off-axis Unreal projection BEFORE the compositor maps pixels back to the Mono full view. There is no extra final-color displacement. Gaze can move instantly; the existing one-pixel fixation guard remains but no laggy smoothing.
 
-          This test deliberately sacrifices foveal temporal accumulation and may cause noise, aliasing, shimmering, reduced Lumen/reflection stability or other differences, even when the crop is not moving. Not all engine temporal effects necessarily use the scene view state alone. It is NOT known whether UE5.5 TSR, Lumen, and other history consumers fully stop reusing foveal data. Headset validation is required.
+          v50 by default ALLOWS history-uncorrected moving gaze strictly for diagnostics. This removes the mandatory v48 no-history startup gate, but it DOES NOT fix temporal crop jitter, motion vectors, TSR, Lumen or DLSS. Turning ON optional fresh-fovea mode sacrifices foveal temporal accumulation and may cause shimmer, noise, or different lighting. The historical v49 headset run had no confirmed GPU composite and was quarantined after one startup frame. Headset validation is required.
 
-          Target guard: STALKER 2, UE5.5-style typed FSceneViewInitOptions (UE5.4/5.5) under the matching Joey SDK, main view family, specified high-density source view only. A frame is rejected if the required no-history override was not actually applied. The source does not write the unverified ClipToPrevClipOverride memory field on UE 5.5.4. The old UE5.6 temporal writer remains separately version gated.
+          Target guard: STALKER 2, UE5.5-style typed FSceneViewInitOptions (UE5.4/5.5) under the matching Joey SDK. No-history override remains fail-closed WHEN ENABLED, not a prerequisite to startup. A missing/incomplete cold-start view pair attempts safe original Mono copy and retries next frame instead of permanent quarantine; actual compositor failure with a complete pair remains quarantined. The source does not write the unverified ClipToPrevClipOverride memory field on UE 5.5.4. The old UE5.6 temporal writer remains separately version gated.
 
           Original Joey modes 0/5 unchanged; isolated DuoView ID6. No NGX hook bundled.
-          The GPU fault quarantine is session latched. Reselecting ID6 will not clear a fault quarantine. Restart UEVR/game before retrying after any failure.
+          The GPU fault quarantine is session latched for real compositor failures with a complete pair. Reselecting ID6 will not clear a fault quarantine. Missing startup frame is NOT treated as a GPU fault and retries. Restart UEVR/game after actual GPU faults.
 
           Source: Joey UEVR 5ac7edc207866569334175e4ed8a7517971547f6, restricted UESDK 3cffbc82429b6165ceec2714f0f0d9ae48f55596 unchanged, frontend 60be4b0f9a646109fd9fdf448bacd41477234091 with rendering method ID6.
 
           CI validates exact original sources, pinned tests, independent geometric and GPU WARP tests, Joey compatibility, backend/frontend build, and PE/ZIP/hash checks. A passing CI run does NOT prove in-headset stability, no regressions in UE5.5 runtime history, or absence of GPU hangs.
 
-          AUTONOMOUS V49 DIAG: The first 120 source frames fix center; next 120 step right; next 120 sweep across; next 120 return to center; subsequent frames use PSVR2 Toolkit gaze. Default smoothing is zero to reveal motion. No manual screenshots needed. Data saved in %LOCALAPPDATA%\DuoViewDiagnostics\v49_pid... (or %TEMP% fallback): frame_trace.csv, image_manifest.csv, 128x128 uncompressed DX12 GPU raw tiles, health.txt. The UEVR log also receives periodic source/phase status independently. GPU tile 0 = atlas fovea, tile 1 = atlas periphery, tile 2 = composite at fixed screen center. Empty GPU manifest does not count as visual proof. Files stay local and are never uploaded automatically. This remains v48 no-history rendering: the test cannot alone prove the original history-dependent cause. Headset validation is required.
+          AUTONOMOUS V49/V50 DIAG: The first 120 source frames fix center; next 120 step right; next 120 sweep across; next 120 return to center; subsequent frames use PSVR2 Toolkit gaze. Default smoothing is zero to reveal motion. No manual screenshots needed. Data saved in %LOCALAPPDATA%\DuoViewDiagnostics\v49_pid... (or %TEMP% fallback): frame_trace.csv, image_manifest.csv, 128x128 uncompressed DX12 GPU raw tiles, health.txt. The UEVR log also receives periodic source/phase status independently. GPU tile 0 = atlas fovea, tile 1 = atlas periphery, tile 2 = composite at fixed screen center. Empty GPU manifest does not count as visual proof. Files stay local and are never uploaded automatically. This is v50 history-uncorrected rendering by default, with optional v48 no-history experiment. The diagnostic alone cannot prove the original temporal history cause. The startup resolution scale is captured from profile before 30% boot override, and restored only after confirmed DuoView composites. Headset validation is required.
           After testing, double-click Collect-DuoView-V49.cmd from the package on Windows; it creates a ZIP of all automatically collected diagnostic evidence on your desktop. Upload that ZIP to ChatGPT. It is NOT an image capture request to the headset.
           USE SEPARATE TEST FOLDER. NEVER OVERWRITE THE 30-MINUTE-PROVEN JOEY BUILD 3.
           '@ | Set-Content package/READ_FIRST.txt
-          $needed=@('UEVRBackend.dll','UEVRPluginNullifier.dll','LuaVR.dll','READ_FIRST.txt','duoview-stage234-hashes.json','exact-baseline-source.json','duoview-v49-source-policy.json','Collect-DuoView-V49.cmd','Collect-DuoView-V49.ps1')
+          $needed=@('UEVRBackend.dll','UEVRPluginNullifier.dll','LuaVR.dll','READ_FIRST.txt','duoview-stage234-hashes.json','exact-baseline-source.json','duoview-v49-source-policy.json','duoview-v50-activation-policy.json','Collect-DuoView-V49.cmd','Collect-DuoView-V49.ps1')
           foreach ($name in $needed) { if (!(Test-Path ("package/" + $name))) { throw "Missing critical package file: $name" } }
           if (@(Get-ChildItem package -File -Filter *.exe).Count -lt 1) { throw "Missing Joey frontend executable" }
           if ((Get-Content package/READ_FIRST.txt -Raw) -notmatch 'Reselecting ID6 will not clear a fault quarantine') { throw 'Stale quarantine instructions' }
           Get-ChildItem package -Recurse -File | Get-FileHash -Algorithm SHA256 | ConvertTo-Json | Set-Content evidence/package-sha256.json
-          $zip="Joey-DuoView-Diagnostic-v49-${{ github.run_number }}.zip"
+          $zip="Joey-DuoView-Activation-v50-${{ github.run_number }}.zip"
           Compress-Archive -Path package/* -DestinationPath $zip -Force
           (Get-FileHash $zip -Algorithm SHA256).Hash | Set-Content "$zip.sha256"
       - name: Independently verify final candidate ZIP, PE machine IDs and unpacked hashes
         shell: pwsh
         run: |
-          $zip="Joey-DuoView-Diagnostic-v49-${{ github.run_number }}.zip"
+          $zip="Joey-DuoView-Activation-v50-${{ github.run_number }}.zip"
           python workspace/duoview/joey_stage1/audit_v48_package.py package $zip evidence
-          if ($LASTEXITCODE -ne 0) { throw 'v49 package provenance, PE or ZIP audit failed' }
+          if ($LASTEXITCODE -ne 0) { throw 'v50 package provenance, PE or ZIP audit failed' }
       - uses: actions/upload-artifact@v4
         if: success()
         with:
-          name: Joey-DuoView-Diagnostic-v49-${{ github.run_number }}
+          name: Joey-DuoView-Activation-v50-${{ github.run_number }}
           path: |
-            Joey-DuoView-Diagnostic-v49-*.zip
-            Joey-DuoView-Diagnostic-v49-*.zip.sha256
+            Joey-DuoView-Activation-v50-*.zip
+            Joey-DuoView-Activation-v50-*.zip.sha256
           if-no-files-found: error
           retention-days: 90
       - name: Record public source and dependency provenance
@@ -248,6 +256,6 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: Joey-DuoView-v49-Evidence-${{ github.run_number }}
+          name: Joey-DuoView-v50-Evidence-${{ github.run_number }}
           path: evidence/
           if-no-files-found: error
