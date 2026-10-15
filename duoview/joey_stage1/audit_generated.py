@@ -2,7 +2,7 @@
 """Read-only inspection of generated Joey code after all patch stages.
 
 Reports anchors and bounded public-source excerpts. Never includes private SDK.
-v46 includes a source-level proof that the UE5.6 previous-clip bridge is
+v47 includes a source-level proof that the UE5.6 previous-clip bridge is
 present; the runtime layout gate still fails closed if any live check differs.
 """
 import hashlib
@@ -21,9 +21,12 @@ TARGETS = {
    "vr->duoview_state().view_transform(",
    "vr->duoview_state().temporal_contract(key,index)",
    "uevr::duoview::ue56::apply_clip_to_prev_clip_override(",
+   "vr->duoview_begin_frame(is_ue_5_6_or_newer())",
  ],
  "src/mods/VR.cpp": [
-   "std::optional<uevr::duoview::ViewFrame> VR::duoview_begin_frame()",
+   "void VR::set_duoview_temporal_abi_supported(bool supported)",
+   "candidate.eye_tracked = candidate.eye_tracked &&",
+   "std::optional<uevr::duoview::ViewFrame> VR::duoview_begin_frame(bool temporal_abi_supported)",
    "return m_duoview_gaze.read_sample(frozen,optical)",
  ],
  "src/mods/vr/D3D12Component.cpp": [
@@ -42,7 +45,7 @@ def main():
     backend,evidence=map(Path,sys.argv[1:])
     evidence.mkdir(parents=True,exist_ok=True)
     summary={}
-    sections=["# Generated Joey source audit — v46 UE5.6 bridge present","",
+    sections=["# Generated Joey source audit — v47 UE5.5 safe fallback + UE5.6 bridge present","",
               "Generated-source lines; anchors do not replace runtime headset validation.",""]
     for rel,needles in TARGETS.items():
         p=backend/rel
@@ -65,11 +68,11 @@ def main():
     summary["previous_unreal_projection_consumed"]="ClipToPrevClipOverride_WRITTEN_ONLY_AFTER_UE56_LAYOUT_GATE"
     summary["active_upscaler"]="NOT_OBSERVED"
     summary["temporal_gate"]="REQUIRES_TWO_SUCCESSFUL_UE56_OVERRIDES_AFTER_FIRST_FRAME"
-    (evidence/"v46-generated-source-audit.json").write_text(
+    (evidence/"v47-generated-source-audit.json").write_text(
         json.dumps(summary,indent=2)+"\n",encoding="utf-8")
-    (evidence/"v46-generated-source-audit.md").write_text(
+    (evidence/"v47-generated-source-audit.md").write_text(
         "\n".join(sections)+"\n",encoding="utf-8")
-    print("v46 generated-source anchors audited; UE5.6 previous-clip bridge and fail-closed gate present.")
+    print("v47 generated-source anchors audited; UE5.5 fixed-crop guard and UE5.6 bridge present.")
 
 if __name__=="__main__":
     main()
