@@ -335,6 +335,42 @@ int main() try {
     State bad_controls; require(!bad_controls.configure(follow),"Invalid smoothing must be rejected");
     follow.smoothing_ms=85.f; follow.guard_fraction=.251f;
     require(!bad_controls.configure(follow),"Invalid wide guard must be rejected");
+    // v48 independent no-history contract: foveal SceneViewState must be
+    // withheld on EVERY frame, not only on the first moving-gaze frame.
+    State fresh;
+    Settings fresh_settings{};
+    fresh_settings.crop_width=fresh_settings.crop_height=.30f;
+    fresh_settings.eye_tracked=true;
+    fresh_settings.fovea_view=0;
+    fresh_settings.fresh_fovea_no_history=true;
+    require(fresh.configure(fresh_settings),"v48 fresh-fovea configuration rejected");
+    auto fresh_frame=[&](FrameKey k,UV uv,bool mark) {
+        auto f=fresh.begin(k,3000,3000,m,[&]()->std::optional<UV>{return uv;},2000+k.frame*11);
+        require(f.has_value(),"v48 gaze frame missing");
+        require(fresh.rectangle(k,0)&&fresh.projection(k,0)&&fresh.camera(k,0,camera)&&fresh.scene(k,0,100),
+                "v48 foveal geometry or original source identity failed");
+        require(fresh.rectangle(k,1)&&fresh.projection(k,1)&&fresh.camera(k,1,camera)&&fresh.scene(k,1,200),
+                "v48 original peripheral view rejected");
+        require(fresh.family(k,true,2),"v48 source view pair incomplete");
+        std::array<double,16> rot{};rot[0]=rot[5]=rot[10]=rot[15]=1.;
+        require(fresh.view_transform(k,0,{0.,0.,0.},rot) &&
+                fresh.view_transform(k,1,{0.,0.,0.},rot),"v48 source transforms rejected");
+        if (mark) require(fresh.mark_fovea_history_disabled(k,0),"v48 no-history state mark rejected");
+        return fresh.consume(k);
+    };
+    require(!fresh_frame({80,1},UV{.50f,.50f},false),
+            "v48 permitted a frame with a persistent foveal history");
+    require(fresh_frame({80,2},UV{.50f,.50f},true).has_value(),
+            "v48 first fresh foveal frame rejected");
+    require(fresh_frame({80,3},UV{.72f,.30f},true).has_value(),
+            "v48 moving crop erroneously demanded previous temporal override");
+    require(!fresh_frame({80,4},UV{.75f,.32f},false),
+            "v48 allowed temporal state to reappear during gaze movement");
+    require(fresh_frame({80,5},UV{.78f,.33f},true).has_value(),
+            "v48 failed to recover a fresh crop after a missing-history frame");
+    // Peripheral source must not be marked as the foveal no-history view.
+    require(!fresh.mark_fovea_history_disabled({80,5},1),
+            "v48 attempted to invalidate the peripheral temporal history");
     std::cout<<"Pinned Joey DuoView geometry, instant gaze, typed projection, history audit contract PASS\n";
     return 0;
 } catch(const std::exception& e) {
