@@ -32,7 +32,8 @@ TARGETS = {
  "src/mods/vr/D3D12Component.cpp": [
    "vr->duoview_state().consume(",
    "duo_recorded = item->record(",
-   "vr->duoview_abort(\"XR copy/composite fault; safe original Mono requested\")",
+   "vr->duoview_abort(\"DuoView compositor/XR copy failed with complete pair; original Mono requested\")",
+   "[DuoView][Activation] incomplete pair frame=",
  ],
  "src/mods/vr/runtimes/OpenXR.cpp": [
    "bool OpenXR::restore_duoview_bootstrap_scale(float target) {",
@@ -45,7 +46,7 @@ def main():
     backend,evidence=map(Path,sys.argv[1:])
     evidence.mkdir(parents=True,exist_ok=True)
     summary={}
-    sections=["# Generated Joey source audit — v47 UE5.5 safe fallback + UE5.6 bridge present","",
+    sections=["# Generated Joey source audit — v50 activation recovery and UE5.6 bridge gated","",
               "Generated-source lines; anchors do not replace runtime headset validation.",""]
     for rel,needles in TARGETS.items():
         p=backend/rel
@@ -67,12 +68,12 @@ def main():
         summary[rel]={"sha256":sha,"bytes":len(data),"lines":len(lines),"anchors":found}
     summary["previous_unreal_projection_consumed"]="ClipToPrevClipOverride_WRITTEN_ONLY_AFTER_UE56_LAYOUT_GATE"
     summary["active_upscaler"]="NOT_OBSERVED"
-    summary["temporal_gate"]="REQUIRES_TWO_SUCCESSFUL_UE56_OVERRIDES_AFTER_FIRST_FRAME"
+    summary["temporal_gate"]="v50 DIAGNOSTIC gaze permits uncorrected history; optional UE5.5 no-history opt-in strictly checked"\n    summary["startup_fallback"]="Incomplete first source pair retries; actual GPU compositor failure is quarantined"
     (evidence/"v47-generated-source-audit.json").write_text(
         json.dumps(summary,indent=2)+"\n",encoding="utf-8")
     (evidence/"v47-generated-source-audit.md").write_text(
         "\n".join(sections)+"\n",encoding="utf-8")
-    print("v47 generated-source anchors audited; UE5.5 fixed-crop guard and UE5.6 bridge present.")
+    print("v50 generated-source anchors audited; incomplete pair retry distinct from real DX12 fault quarantine.")
 
 if __name__=="__main__":
     main()
