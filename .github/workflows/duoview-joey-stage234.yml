@@ -95,6 +95,9 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Native low-res bootstrap source patch failed' }
           python workspace/duoview/joey_stage1/verify_stage234.py backend frontend evidence
           if ($LASTEXITCODE -ne 0) { throw 'Build33 restoration + native bootstrap violated SDK/source boundaries' }
+      - name: Verify v47 UE5.5 fixed-crop and quarantine policy
+        shell: pwsh
+        run: |
           python workspace/duoview/joey_stage1/verify_v47_target_policy.py backend evidence
           if ($LASTEXITCODE -ne 0) { throw 'v47 UE5.5 fixed-crop or quarantine guard failed' }
       - name: Preserve real generated Joey hook excerpts for independent audit
