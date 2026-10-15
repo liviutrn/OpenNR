@@ -21,7 +21,7 @@ TARGETS = {
    "vr->duoview_state().view_transform(",
    "vr->duoview_state().temporal_contract(key,index)",
    "uevr::duoview::ue56::apply_clip_to_prev_clip_override(",
-   "vr->duoview_begin_frame(is_ue_5_6_or_newer())",
+   "vr->duoview_eye_tracking_enabled()",
  ],
  "src/mods/VR.cpp": [
    "void VR::set_duoview_temporal_abi_supported(bool supported)",
