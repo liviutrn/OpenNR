@@ -39,11 +39,41 @@ def main():
         ),
     ])
 
+    patch(root/"src/mods/vr/DuoViewConfig.hpp", [
+        (
+            '    bool fresh_fovea_no_history{}; // v48: do not give UE a persistent SceneViewState for the fovea',
+            '    bool fresh_fovea_no_history{}; // v48 typed per-fovea history override, optional in v50\n'
+            '    bool allow_uncorrected_gaze_history{}; // v50 DIAGNOSTIC ONLY: compare UE moving-crop without verified temporal correction',
+            "explicit diagnostic history policy, default disabled in standalone tests"
+        ),
+    ])
+
+    patch(root/"src/mods/vr/DuoViewState.hpp", [
+        (
+            'const bool temporal_bridge_ready=(slot->config.settings.fresh_fovea_no_history && slot->fovea_history_disabled) ||',
+            'const bool temporal_bridge_ready=slot->config.settings.allow_uncorrected_gaze_history ||\n'
+            '            (slot->config.settings.fresh_fovea_no_history && slot->fovea_history_disabled) ||',
+            "diagnostic bypass of UE temporal contract, NOT a gaze stabilization fix"
+        ),
+    ])
+
     patch(root/"src/mods/VR.cpp", [
         (
             '.fresh_fovea_no_history=true, // v48: withhold foveal UE SceneViewState EVERY frame; crop changes always start fresh',
             '.fresh_fovea_no_history=m_duo_no_history->value(), // v50: optional experiment; OFF during startup/recovery',
             "remove forced startup no-history contract"
+        ),
+        (
+            '.fresh_fovea_no_history=m_duo_no_history->value(), // v50: optional experiment; OFF during startup/recovery',
+            '.fresh_fovea_no_history=m_duo_no_history->value(), // v50: optional experiment; OFF during startup/recovery\n'
+            '        .allow_uncorrected_gaze_history=!m_duo_no_history->value(), // v50 DIAGNOSTIC ONLY: permit history-uncorrected moving crop; expect temporal shaking',
+            "diagnostic gaze can run without UE5.5 unknown temporal ABI"
+        ),
+        (
+            'current.fresh_fovea_no_history==candidate.fresh_fovea_no_history &&',
+            'current.fresh_fovea_no_history==candidate.fresh_fovea_no_history &&\n'
+            '        current.allow_uncorrected_gaze_history==candidate.allow_uncorrected_gaze_history &&',
+            "latch diagnostic mode"
         ),
         (
             'm_duo_history_audit->draw("Diagnostic: projection/history continuity (logs, OFF by default)");',
@@ -54,7 +84,7 @@ def main():
         ),
         (
             'ImGui::TextWrapped("v48 test: adjustable gaze smoothing occurs BEFORE projection. Foveal FSceneViewState stays disabled on every UE5.5 frame. Peripheral history remains independent.");',
-            'ImGui::TextWrapped("v50 activation recovery: normal foveal history at startup; v48 history bypass is an opt-in experiment. Synthetic gaze and diagnostic traces remain enabled.");',
+            'ImGui::TextWrapped("v50 diagnostic only: startup uses normal foveal history and allows eye gaze without verified UE history correction. Moving crop may shake; optional v48 fresh-fovea mode requires typed state override. This is NOT a temporal fix.");',
             "correct UI label"
         ),
         (
