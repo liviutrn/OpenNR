@@ -1,28 +1,56 @@
-# Build3 restart experiment status
+# Build3 restart checkpoint
 
-Baseline: OpenNR `64432d0442066715fa442660a0848cf4963640b0`; backend
-`joeyhodge/UEVR@5ac7edc207866569334175e4ed8a7517971547f6`; SDK
-`joeyhodge/UESDK@3cffbc82429b6165ceec2714f0f0d9ae48f55596`; frontend
-`joeyhodge/uevr-frontend@60be4b0f9a646109fd9fdf448bacd41477234091`.
+This restart derives from OpenNR `64432d0442066715fa442660a0848cf4963640b0`.
+Provenance references:
 
-`Stable Source / Moving Mask` is a diagnostic control only: a single stable,
-full-frustum Mono render is used for both eye outputs, and a replay-driven mask
-chooses full-detail source samples inside the mask and reduced-detail samples
-from that same frame outside it. It does not save scene-render work and does
-not mean DuoView or two engine views are active.
+- Baseline workflow run: `38453012351`
+- Baseline artifact: `11842620175` (`Joey-101226-Clean-Baseline-Build-3.zip`)
+- Backend: `joeyhodge/UEVR@5ac7edc207866569334175e4ed8a7517971547f6`
+- SDK: `joeyhodge/UESDK@3cffbc82429b6165ceec2714f0f0d9ae48f55596`
+- Frontend: `joeyhodge/uevr-frontend@60be4b0f9a646109fd9fdf448bacd41477234091`
 
-The recorded v48 and v49 runs did not activate DuoView; both fell back to Mono.
-They provide no moving-gaze stability observation. Runtime results must report
-the requested method, the observed effective producer path, and a reason for
-each fallback. A successful build alone is not a headset or game-runtime test.
+The prior v48 and v49 runs both fell back to Mono. Neither is evidence about
+moving-gaze stability. The Mono path remains the default in this restart.
 
-The identical-full-frustum two-engine-view comparison is blocked until the
-backend proves distinct engine-owned view state and an independently owned
-shading/history consumer. Current Build3 evidence only establishes the original
-single-view Mono producer and its double-wide copy.
+## Implemented first renderer control
 
-Replay patterns are deterministic in producer-frame space: fixed, step, ramp,
-and four-corner alternating. The mask is associated with the source producer
-frame; stale or unavailable source frames must use the original Mono copy and
-record the exact reason. The current checkpoint implements only the portable
-replay/mapping/observation core; the GPU experiment remains pending.
+`Stable Source / Moving Mask` takes one stable full-frustum Mono image and
+samples that same image into both output halves. Full-detail samples are chosen
+inside a deterministic mask and coarser samples outside it. This is an
+image-processing control only: it saves no scene-render work, is not DuoView,
+and does not create two engine views. It is opt-in through
+`UEVR_STABLE_SOURCE_MASK=fixed|step|ramp|alternating`; unset or `off` preserves
+the original Mono callback path. The variable must be present in the target
+game process environment before launch. Setting it only in an injector process
+after the game has started has no effect on the target process. Optional
+summary logs can be enabled independently with `UEVR_DUOVIEW_DIAGNOSTICS=1`.
+
+The first opted-in GPU callback prepares its D3D12 shader and pipeline and
+falls back to the Mono copy as a warmup frame. Unsupported resources, queue or
+device mismatches, unsupported color formats, unavailable command-context
+retirement, and pipeline errors fall back to Mono and retain an explicit
+reason. D3D12 command recording, the copy API return, and accepted copy status
+are separate observations. Accepted here means only the OpenXR copy boundary;
+it does not mean `xrEndFrame` or headset presentation accepted the image.
+
+The observed frame value is the D3D12 component's `frame_count` at the Mono
+copy call site. Its relation to engine source generation, projection frame,
+and gaze pose is unproven, and those fields are explicitly marked unavailable.
+Diagnostics currently emit bounded log summaries and have a fixed-capacity
+ring, but no asynchronous ring drain/export. This limitation is not evidence
+of a rolling crash-history recorder.
+
+The Windows workflow is responsible for running the portable replay and
+patcher tests, D3D12 WARP oracle tests, the existing compatibility suite, the
+matching frontend tests/build, and a generated-source hash verifier. A WARP
+test skip is treated as blocked validation, not a pass. Until that workflow
+completes, this branch's adapter has not been validated by a Windows build.
+
+## Remaining gates
+
+The identical-full-frustum two-engine-view comparison needs proof of distinct
+engine-owned view state and an independently owned shading/history consumer.
+The current baseline establishes only its single-view Mono producer and
+double-wide copy. No STALKER 2 process, OpenXR headset runtime, or PSVR2 device
+is available in this cloud environment, so no real game/headset runtime result
+can be claimed here.

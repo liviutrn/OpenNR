@@ -1,42 +1,41 @@
-# Build3 restart checkpoint
+# Build3 restart experiment status
 
-This branch starts from OpenNR `64432d0442066715fa442660a0848cf4963640b0`, the
-exact Build3 source pin. Provenance references:
+The fresh restart branch is based on OpenNR
+`64432d0442066715fa442660a0848cf4963640b0`, baseline workflow run
+`38453012351`, and artifact `11842620175` (`Joey-101226-Clean-Baseline-Build-3.zip`).
+The backend, SDK, and frontend source pins are recorded in `EXPERIMENTS.md`.
+The previous v48 and v49 runs both fell back to Mono and provide no evidence
+about moving-gaze stability.
 
-- Baseline workflow run: `38453012351`
-- Baseline artifact: `11842620175` (`Joey-101226-Clean-Baseline-Build-3.zip`)
-- Backend: `joeyhodge/UEVR@5ac7edc207866569334175e4ed8a7517971547f6`
-- SDK: `joeyhodge/UESDK@3cffbc82429b6165ceec2714f0f0d9ae48f55596`
-- Frontend: `joeyhodge/uevr-frontend@60be4b0f9a646109fd9fdf448bacd41477234091`
+The branch now includes an opt-in `Stable Source / Moving Mask` D3D12 control
+at the pinned Mono copy boundary, along with a pinned-source patcher and a
+Windows workflow for portable tests, WARP image tests, full compatibility
+tests, and packaging. That workflow has not yet completed. This cloud
+workspace cannot establish behavior in STALKER 2, on an OpenXR runtime, or on
+PSVR2 hardware.
 
-The prior v48 and v49 runs both fell back to Mono. Neither is evidence about
-moving-gaze stability. The original Mono path remains the default.
+The control uses the original single full-frustum Mono source for both output
+halves. It samples full-detail source pixels inside a deterministic replay mask
+and coarser samples from that same image outside. It saves no scene-render work
+and is not DuoView or two independently rendered engine views. The original
+Mono behavior remains the default when the environment option is unset or
+`off`.
 
-## This checkpoint
+Set `UEVR_STABLE_SOURCE_MASK` to `fixed`, `step`, `ramp`, or `alternating` in
+the **target game process environment before starting the game**. Setting it
+only in an injector process after the game is already running does not change
+the game's environment. The first opted-in D3D12 copy prepares the shader and
+falls back to Mono as a warmup frame. Optional bounded log summaries can be
+enabled independently with `UEVR_DUOVIEW_DIAGNOSTICS=1`.
 
-`DuoViewRestartDiagnostics.hpp` supplies deterministic producer-frame replay,
-valid-left-half source UV mapping, and a fixed-capacity single-producer /
-single-consumer observation ring. `tests/replay_tests.cpp` exercises invalid
-inputs, replay patterns, left-half edge clamping, ring wrap/full/drop/order,
-concurrent producer-consumer traffic, and producer-boundary effective-path
-classification. The core is portable and does not claim rendering behavior.
+At the current integration boundary, only the D3D12 copy-frame counter is
+observed. It is not established as an engine source-generation ID, projection
+frame, or gaze-pose frame. The adapter separately records command recording,
+the copy API return, and accepted producer-copy status. It does not claim that
+`xrEndFrame` or headset presentation accepted an image. Diagnostic ring export
+is still unavailable and is a follow-up implementation task.
 
-On the Linux workspace, the replay test passed a direct GCC build with
-`-O2 -DNDEBUG -Wall -Wextra -Werror -pthread`. The independent review also ran
-the Release configuration and ASan/UBSan successfully (LSAN was disabled in
-that sandbox). The local environment does not provide CMake or a Windows/D3D12
-runtime, so these results do not validate the backend GPU path.
-
-## Experiment limits
-
-The intended first renderer control is a single stable full-frustum Mono image
-used for both outputs, with a replay-driven mask selecting full-detail samples
-inside the mask and coarser samples from that same source outside it. This is a
-diagnostic image-processing control: it saves no scene-render work and is not
-DuoView or two independent engine views. A real identical-two-engine-view
-comparison remains gated on proof of distinct engine-owned view state and an
-independently-owned shading/history consumer.
-
-The renderer-side D3D12 control is still under review and is not integrated or
-available in this checkpoint. No headset, STALKER 2 runtime, or PSVR2
-observation has been made in this environment.
+The identical-full-frustum two-engine-view comparison remains blocked until
+distinct engine-owned view state and an independently owned shading/history
+consumer are proven. The current baseline evidence establishes the original
+single-view Mono producer and its double-wide copy only.
