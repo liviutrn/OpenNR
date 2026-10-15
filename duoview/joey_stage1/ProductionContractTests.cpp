@@ -205,6 +205,20 @@ int main() try {
     auto heavy=smoother.update({32,5},3000,3000,smooth_settings,UV{.8f,.2f},1064);
     require(heavy.u>.2f && heavy.u<.3f && heavy.v<.8f && heavy.v>.7f,
             "v48 250ms smoothing did not attenuate the gaze step");
+    // At high smoothing the 1-pixel guard must not swallow every subpixel
+    // filtered step. Compare raw displacement for the guard, filtered for motion.
+    CropStability guarded_smoother;
+    Settings guarded=smooth_settings;
+    guarded.stabilize_crop=true;
+    guarded_smoother.update({33,1},3000,3000,guarded,UV{.5f,.5f},1000);
+    const auto subpixel=guarded_smoother.update({33,2},3000,3000,guarded,
+        UV{.503f,.5f},1011);
+    require(subpixel.u>.5f && subpixel.u<.5005f,
+            "v48 fixation guard incorrectly swallows high-smoothing subpixel progress");
+    const auto converging=guarded_smoother.update({33,3},3000,3000,guarded,
+        UV{.503f,.5f},1022);
+    require(converging.u>subpixel.u && converging.u<.503f,
+            "v48 high smoothing dead-zone stops the moving crop");
     const auto same=smoother.update({32,6},3000,3000,smooth_settings,{},1080);
     require(same.u==heavy.u && same.v==heavy.v,
             "v48 missing gaze packet should not advance smoothed crop");
