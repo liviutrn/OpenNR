@@ -44,6 +44,36 @@ The portable fixed ring is not connected to the renderer and is not exported.
 There is no rolling crash history or causal GPU-boundary capture in this
 increment.
 
+## Identical full-frustum two-view comparison (not implemented)
+
+The pinned backend already has an ordinary `Native Stereo` rendering method
+(method ID 0); its desired-view hook returns two for the non-Mono native path.
+Mono is method ID 5 and requests one view. Strict Synchronized/AFR normally
+returns one view, aside from an existing bounded two-frame Ghosting bootstrap
+pulse. These source facts make ordinary Native Stereo the candidate path for a
+future two-view ownership experiment; they do not prove it is safe or active in
+the target game.
+
+Before changing camera geometry, a target run must observe two distinct
+engine-owned view states and their generations, stereo roles and render rects,
+plus independent shading/history consumption. STALKER 2 UE5.5.4 DX12 has a
+lazy ViewState path in strict Synchronized mode: the pinned adapter explicitly
+avoids replaying `LocalPlayer::PostInitProperties`, because that path does not
+allocate the states; `CalcSceneViewInitOptions` does. That runtime-specific
+fact is not a license to manufacture or copy view states. The existing
+two-entry eye-state tracker is evidence infrastructure, not proof of distinct
+target histories.
+
+The safe experiment order is: first inspect the ordinary two full-frustum
+sources, engine roles, rects and state/history owners without changing their
+lifecycle; then, only after those observations are valid, test a unified
+validated Mono pose/projection while keeping both engine-owned roles and
+owners intact. Compare the resolved source views before changing XR output.
+XR-calibrated output mapping is a separate validation gate, so a source-view
+comparison cannot be reported as a correct submitted stereo image. This cloud
+workspace has no STALKER 2 process or headset runtime; none of these probes has
+run here.
+
 The Windows workflow is responsible for running the portable replay and
 patcher tests, D3D12 WARP oracle tests, the existing compatibility suite, the
 matching frontend tests/build, and a generated-source hash verifier. A WARP

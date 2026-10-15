@@ -95,6 +95,8 @@ jobs:
           $code=$LASTEXITCODE; Get-Content evidence/restart-tests.log
           if ($code -ne 0) { throw "Restart tests failed ($code)" }
       - name: Build and run D3D12 WARP stable-source compositor tests
+        id: warp_validation
+        continue-on-error: true
         shell: pwsh
         run: |
           cmake -S workspace/duoview/restart/tests -B workspace/duoview/restart/warp-build -G 'Visual Studio 17 2022' -A x64 *> evidence/warp-configure.log
@@ -152,6 +154,13 @@ jobs:
           python workspace/duoview/restart/verify_backend_patch.py --backend backend --manifest $manifest *> evidence/backend-patch-verification.log
           $code=$LASTEXITCODE; Get-Content evidence/backend-patch-verification.log
           if ($code -ne 0) { throw 'Backend patch files changed unexpectedly during build' }
+      - name: Require D3D12 WARP validation before packaging
+        if: success()
+        shell: pwsh
+        run: |
+          if ('${{ steps.warp_validation.outcome }}' -ne 'success') {
+            throw "D3D12 WARP validation outcome was ${{ steps.warp_validation.outcome }}; packaging is blocked."
+          }
       - name: Package experimental Build3 control
         if: success()
         shell: pwsh

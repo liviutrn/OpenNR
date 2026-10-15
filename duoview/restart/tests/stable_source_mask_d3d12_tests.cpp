@@ -68,6 +68,8 @@ const char* format_label(DXGI_FORMAT format) {
     return format == DXGI_FORMAT_B8G8R8A8_UNORM_SRGB ? "BGRA8_SRGB" : "BGRA8_UNORM";
 }
 
+void print_debug_errors(ID3D12Device* device, std::string_view phase);
+
 bool enable_debug_layer() {
     ComPtr<ID3D12Debug> debug;
     if (FAILED(D3D12GetDebugInterface(IID_PPV_ARGS(&debug)))) { return false; }
@@ -121,8 +123,22 @@ ComPtr<ID3D12Resource> create_committed(ID3D12Device* device, D3D12_HEAP_TYPE he
     heap.CreationNodeMask = 1;
     heap.VisibleNodeMask = 1;
     ComPtr<ID3D12Resource> resource;
-    check_hr(device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc, state,
-        nullptr, IID_PPV_ARGS(&resource)), "CreateCommittedResource");
+    const HRESULT result = device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc, state,
+        nullptr, IID_PPV_ARGS(&resource));
+    if (FAILED(result)) {
+        std::fprintf(stderr,
+            "resource creation phase=CreateCommittedResource failed: heap=%u dimension=%u alignment=%llu "
+            "width=%llu height=%u depthOrArray=%u mipLevels=%u format=%u sampleCount=%u sampleQuality=%u "
+            "layout=%u flags=0x%08X initialState=0x%08X HRESULT=0x%08lX\n",
+            static_cast<unsigned>(heap_type), static_cast<unsigned>(desc.Dimension),
+            static_cast<unsigned long long>(desc.Alignment), static_cast<unsigned long long>(desc.Width),
+            desc.Height, desc.DepthOrArraySize, desc.MipLevels, static_cast<unsigned>(desc.Format),
+            desc.SampleDesc.Count, desc.SampleDesc.Quality, static_cast<unsigned>(desc.Layout),
+            static_cast<unsigned>(desc.Flags), static_cast<unsigned>(state),
+            static_cast<unsigned long>(result));
+        print_debug_errors(device, "CreateCommittedResource failure");
+        check_hr(result, "CreateCommittedResource");
+    }
     return resource;
 }
 
@@ -603,16 +619,19 @@ void test_invalid_inputs(StableSourceMask& control, Mode mode, ID3D12Device* dev
         "odd double-wide width must fail as invalid_extent_or_format");
     context.discard();
 
-    const auto denied_desc = texture_desc(kSourceWidth, kHeight, DXGI_FORMAT_B8G8R8A8_UNORM,
-        static_cast<D3D12_RESOURCE_FLAGS>(D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET |
+    // D3D12 forbids DENY_SHADER_RESOURCE on a color render target. Use the
+    // legal depth-stencil combination here and assert the module rejects the
+    // unsupported structural format before it can try to create a view.
+    const auto denied_desc = texture_desc(kSourceWidth, kHeight, DXGI_FORMAT_D32_FLOAT,
+        static_cast<D3D12_RESOURCE_FLAGS>(D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL |
             D3D12_RESOURCE_FLAG_DENY_SHADER_RESOURCE));
     auto denied_source = create_committed(device, D3D12_HEAP_TYPE_DEFAULT, denied_desc,
-        D3D12_RESOURCE_STATE_COPY_SOURCE);
+        D3D12_RESOURCE_STATE_DEPTH_WRITE);
     context.begin();
     expect_fallback(record_mask(control, mode, context, device, queue, denied_source.Get(),
         valid_target.resource(), 1, context.fence.Get(), context.references_retired()),
-        FallbackReason::shader_resource_denied,
-        "DENY_SHADER_RESOURCE source must fail as shader_resource_denied");
+        FallbackReason::invalid_extent_or_format,
+        "legal depth-stencil DENY_SHADER_RESOURCE descriptor must fail structural color-format validation");
     context.discard();
 }
 
@@ -705,6 +724,28 @@ void run_mode_and_format(ID3D12Device* device, ID3D12CommandQueue* queue,
         format_label(format), static_cast<unsigned long long>(frames.size()));
 }
 
+void print_debug_errors(ID3D12Device* device, std::string_view phase) {
+    ComPtr<ID3D12InfoQueue> info_queue;
+    if (FAILED(device->QueryInterface(IID_PPV_ARGS(&info_queue)))) {
+        std::fprintf(stderr, "D3D12 debug info queue unavailable during %.*s\n",
+            static_cast<int>(phase.size()), phase.data());
+        return;
+    }
+    const UINT64 message_count = info_queue->GetNumStoredMessages();
+    for (UINT64 i = 0; i < message_count; ++i) {
+        SIZE_T message_size = 0;
+        if (FAILED(info_queue->GetMessage(i, nullptr, &message_size)) || message_size == 0) { continue; }
+        std::vector<uint8_t> storage(message_size);
+        auto* message = reinterpret_cast<D3D12_MESSAGE*>(storage.data());
+        if (FAILED(info_queue->GetMessage(i, message, &message_size))) { continue; }
+        if (message->Severity == D3D12_MESSAGE_SEVERITY_ERROR ||
+            message->Severity == D3D12_MESSAGE_SEVERITY_CORRUPTION) {
+            std::fprintf(stderr, "D3D12 debug error during %.*s: %s\n",
+                static_cast<int>(phase.size()), phase.data(), message->pDescription);
+        }
+    }
+}
+
 void check_debug_errors(ID3D12Device* device, bool debug_layer_enabled) {
     if (!debug_layer_enabled) {
         std::puts("INFO D3D12 debug layer unavailable; GPU output checks still ran");
@@ -724,10 +765,7 @@ void check_debug_errors(ID3D12Device* device, bool debug_layer_enabled) {
         auto* message = reinterpret_cast<D3D12_MESSAGE*>(storage.data());
         if (FAILED(info_queue->GetMessage(i, message, &message_size))) { continue; }
         if (message->Severity == D3D12_MESSAGE_SEVERITY_ERROR ||
-            message->Severity == D3D12_MESSAGE_SEVERITY_CORRUPTION) {
-            ++error_count;
-            std::fprintf(stderr, "D3D12 debug error: %s\n", message->pDescription);
-        }
+            message->Severity == D3D12_MESSAGE_SEVERITY_CORRUPTION) { ++error_count; }
     }
     require(error_count == 0, "D3D12 debug layer reported an error or corruption message");
     std::printf("INFO D3D12 debug layer enabled; checked %llu messages\n",
