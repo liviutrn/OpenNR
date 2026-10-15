@@ -102,6 +102,11 @@ jobs:
         run: |
           python workspace/duoview/joey_stage1/verify_v48_fresh_fovea.py backend evidence
           if ($LASTEXITCODE -ne 0) { throw 'v49 foveal no-history or quarantine guard failed' }
+      - name: Verify v49 three-channel diagnostics independently
+        shell: pwsh
+        run: |
+          python workspace/duoview/joey_stage1/verify_v49_diagnostics.py backend evidence
+          if ($LASTEXITCODE -ne 0) { throw 'v49 independent diagnostic source checks failed' }
       - name: Preserve real generated Joey hook excerpts for independent audit
         shell: pwsh
         run: |
@@ -181,6 +186,9 @@ jobs:
           Copy-Item evidence/duoview-stage1-source-hashes.json package/
           Copy-Item evidence/duoview-stage234-hashes.json package/
           Copy-Item evidence/duoview-v48-fresh-fovea-policy.json package/
+          Copy-Item evidence/duoview-v49-source-policy.json package/
+          Copy-Item workspace/duoview/joey_stage1/Collect-DuoView-V49.ps1 package/
+          Copy-Item workspace/duoview/joey_stage1/Collect-DuoView-V49.cmd package/
           @'
           DUOVIEW v49 AUTONOMOUS DIAGNOSTIC — BASED ON v48 fresh fovea — EXPERIMENTAL STALKER 2 / UE 5.5.4 / DX12 / SteamVR OpenXR
 
@@ -202,9 +210,10 @@ jobs:
           CI validates exact original sources, pinned tests, independent geometric and GPU WARP tests, Joey compatibility, backend/frontend build, and PE/ZIP/hash checks. A passing CI run does NOT prove in-headset stability, no regressions in UE5.5 runtime history, or absence of GPU hangs.
 
           AUTONOMOUS V49 DIAG: The first 120 source frames fix center; next 120 step right; next 120 sweep across; next 120 return to center; subsequent frames use PSVR2 Toolkit gaze. Default smoothing is zero to reveal motion. No manual screenshots needed. Data saved in %LOCALAPPDATA%\DuoViewDiagnostics\v49_pid... (or %TEMP% fallback): frame_trace.csv, image_manifest.csv, 128x128 uncompressed DX12 GPU raw tiles, health.txt. The UEVR log also receives periodic source/phase status independently. GPU tile 0 = atlas fovea, tile 1 = atlas periphery, tile 2 = composite at fixed screen center. Empty GPU manifest does not count as visual proof. Files stay local and are never uploaded automatically. This remains v48 no-history rendering: the test cannot alone prove the original history-dependent cause. Headset validation is required.
+          After testing, double-click Collect-DuoView-V49.cmd from the package on Windows; it creates a ZIP of all automatically collected diagnostic evidence on your desktop. Upload that ZIP to ChatGPT. It is NOT an image capture request to the headset.
           USE SEPARATE TEST FOLDER. NEVER OVERWRITE THE 30-MINUTE-PROVEN JOEY BUILD 3.
           '@ | Set-Content package/READ_FIRST.txt
-          $needed=@('UEVRBackend.dll','UEVRPluginNullifier.dll','LuaVR.dll','READ_FIRST.txt','duoview-stage234-hashes.json','exact-baseline-source.json')
+          $needed=@('UEVRBackend.dll','UEVRPluginNullifier.dll','LuaVR.dll','READ_FIRST.txt','duoview-stage234-hashes.json','exact-baseline-source.json','duoview-v49-source-policy.json','Collect-DuoView-V49.cmd','Collect-DuoView-V49.ps1')
           foreach ($name in $needed) { if (!(Test-Path ("package/" + $name))) { throw "Missing critical package file: $name" } }
           if (@(Get-ChildItem package -File -Filter *.exe).Count -lt 1) { throw "Missing Joey frontend executable" }
           if ((Get-Content package/READ_FIRST.txt -Raw) -notmatch 'Reselecting ID6 will not clear a fault quarantine') { throw 'Stale quarantine instructions' }
