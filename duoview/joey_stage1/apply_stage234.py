@@ -56,10 +56,19 @@ def main():
         // subsequently publishes that frame number as internal_frame_count.
         return duoview_key(get_runtime()->internal_frame_count + 1u);
     }
-    bool duoview_gaze_active() const { return m_duoview_gaze.active(); }
+    void set_duoview_temporal_abi_supported(bool supported);
+    bool duoview_temporal_abi_supported() const {
+        return m_duoview_temporal_abi_supported.load(std::memory_order_acquire);
+    }
+    bool duoview_eye_tracking_enabled() const {
+        return duoview_temporal_abi_supported() && m_duo_gaze->value();
+    }
+    bool duoview_gaze_active() const {
+        return duoview_eye_tracking_enabled() && m_duoview_gaze.active();
+    }
     void configure_duoview();
     void note_duoview_gpu_ms(float ms) { m_duo_gpu_ms.store(ms, std::memory_order_relaxed); }
-    std::optional<uevr::duoview::ViewFrame> duoview_begin_frame();
+    std::optional<uevr::duoview::ViewFrame> duoview_begin_frame(bool temporal_abi_supported);
     void duoview_abort(const char* reason);''')
     edit(header,'    std::atomic<const char*> m_mono_status{"Not selected"};',
         '''    // Legacy-style persistent options; never sampled by the XR compositor.
@@ -82,6 +91,7 @@ def main():
     uevr::duoview::State m_duoview;
     uevr::duoview::psvr2::Reader m_duoview_gaze;
     std::atomic<bool> m_duoview_quarantined{false};
+    std::atomic<bool> m_duoview_temporal_abi_supported{false};
     std::once_flag m_duoview_settings_once;
     std::atomic<const char*> m_mono_status{"Not selected"};''')
     edit(header,'    void on_device_reset() override {\n        get_runtime()->on_device_reset();',
@@ -104,7 +114,7 @@ def main():
                 if (ImGui::Button("Restore old DuoView settings")) {
                     m_duo_width->value()=.50f; m_duo_height->value()=.50f;
                     m_duo_periphery->value()=.20f; m_duo_density->value()=1.f;
-                    m_duo_feather->value()=.08f; m_duo_gaze->value()=true;
+                    m_duo_feather->value()=.08f; m_duo_gaze->value()=duoview_temporal_abi_supported();
                     m_duo_border->value()=false; m_duo_fovea_view->value()=0;
                     m_duo_debug_source->value()=0;
                 }
@@ -113,12 +123,17 @@ def main():
                 m_duo_periphery->draw("Peripheral resolution scale");
                 m_duo_density->draw("Foveal pixel density");
                 m_duo_feather->draw("Blend feather width");
-                m_duo_gaze->draw("Eye tracking");
+                if (duoview_temporal_abi_supported()) {
+                    m_duo_gaze->draw("Eye tracking");
+                } else {
+                    ImGui::TextUnformatted("Eye tracking unavailable on this UE layout");
+                    ImGui::TextWrapped("This build only has a validated previous-clip layout for UE5.6. Eye-tracked crop stays off; fixed-crop DuoView remains active.");
+                }
                 m_duo_border->draw("Blend border highlight");
                 m_duo_debug_source->draw("Source diagnostic: 0 Blend / 1 Periphery / 2 Fovea");
                 m_duo_fovea_view->draw("Fovea UE source view (0 or 1)");
                 m_duo_stabilize->draw("Fixation noise guard (1 output pixel; no smoothing)");
-                ImGui::TextWrapped("Eye tracking moves the foveal crop projection while keeping the head camera fixed. v46 supplies the previous cropped view-projection through UE5.6 ClipToPrevClipOverride after a layout and identity gate; no extra vector is added to final color.");
+                ImGui::TextWrapped("Eye-tracked moving crop requires the guarded UE5.6 ClipToPrevClipOverride layout. On other engine versions, DuoView uses the fixed center crop and does not write the unverified field.");
                 m_duo_history_audit->draw("Diagnostic: projection/history continuity (logs, OFF by default)");
                 if (m_duo_history_audit->value()) {
                     // Bounded UI-only sensor metadata. The device clock cannot be
@@ -195,7 +210,7 @@ def main():
     edit(cpp,'    // Load camera offsets\n    load_cameras();',
         '    // Load camera offsets\n    load_cameras();\n    configure_duoview();')
     edit(cpp,'    m_mono_main_view_token = 0;\n    m_mono_attachment_token = 0;',
-        '    m_duoview.retire();\n    m_duo_shading->value()=false;\n    configure_duoview();\n    if (selection.active() == RenderingMethod::DUOVIEW_MONO) m_duoview_quarantined.store(false, std::memory_order_release);\n    m_mono_main_view_token = 0;\n    m_mono_attachment_token = 0;')
+        '    m_duoview.retire();\n    m_duo_shading->value()=false;\n    configure_duoview();\n    // A fault quarantine is latched for this UEVR session; mode reselection must not retry a failed GPU path.\n    m_mono_main_view_token = 0;\n    m_mono_attachment_token = 0;')
     changed[cpp]+='''
 // Update the immutable state from persisted controls only on changes.
 void VR::configure_duoview() {
@@ -212,6 +227,8 @@ void VR::configure_duoview() {
         .temporal_audit=m_duo_history_audit->value(),
         .history_sample_correction=false,
         .history_sample_strength=0.f};
+    candidate.eye_tracked = candidate.eye_tracked &&
+        m_duoview_temporal_abi_supported.load(std::memory_order_acquire);
     const auto current=m_duoview.settings();
     if (current.crop_width==candidate.crop_width && current.crop_height==candidate.crop_height &&
         current.peripheral_scale==candidate.peripheral_scale && current.foveal_density==candidate.foveal_density &&
@@ -228,6 +245,19 @@ void VR::configure_duoview() {
         SPDLOG_WARNING_EVERY_N_SEC(2, "[DuoView] Requested quality settings exceed atlas geometry; preserving previous valid settings");
 }
 
+void VR::set_duoview_temporal_abi_supported(bool supported) {
+    const bool previous=m_duoview_temporal_abi_supported.exchange(
+        supported,std::memory_order_acq_rel);
+    bool changed=previous!=supported;
+    if (!supported && m_duo_gaze->value()) {
+        m_duo_gaze->value()=false;
+        changed=true;
+        SPDLOG_WARNING_EVERY_N_SEC(30,
+            "[DuoView] Eye-tracked moving crop disabled: UE previous-clip layout is unverified; fixed-center crop remains active");
+    }
+    if (changed) configure_duoview();
+}
+
 // Stage 5: sample native PSVR2 gaze ONCE per immutable source frame.
  // CAPI unavailable or invalid => fixed center. Never adjust mid-frame.
 bool VR::is_duoview_renderer_active() const {
@@ -241,7 +271,8 @@ bool VR::is_duoview_renderer_active() const {
     return stalker2;
 }
 
-std::optional<uevr::duoview::ViewFrame> VR::duoview_begin_frame() {
+std::optional<uevr::duoview::ViewFrame> VR::duoview_begin_frame(bool temporal_abi_supported) {
+    set_duoview_temporal_abi_supported(temporal_abi_supported);
     if (!is_duoview_renderer_active() || !m_fake_stereo_hook ||
         !m_fake_stereo_hook->is_in_viewport_client_draw()) return {};
     std::call_once(m_duoview_settings_once, [this] { configure_duoview(); });
@@ -269,7 +300,7 @@ void VR::duoview_abort(const char* reason) {
     SPDLOG_WARNING_EVERY_N_SEC(2, "[DuoView] Quarantining two-view path; continuing original Mono inside ID6: {}", reason);
     m_duoview_quarantined.store(true, std::memory_order_release);
     m_duoview.retire();
-    set_mono_status("DuoView fault: rendering original Mono inside ID6; reselect ID6 to retry");
+    set_mono_status("DuoView fault: original Mono fallback; restart UEVR/game before retrying");
 }
 '''
     hook="src/mods/vr/FFakeStereoRenderingHook.cpp"
@@ -467,8 +498,9 @@ void VR::duoview_abort(const char* reason) {
     if (vr->is_native_stereo_fix_enabled()) {''',
     '''    auto result = g_hook->m_sceneview_data.constructor_hook.unsafe_call<sdk::FSceneView*>(view, init_options, a3, a4);
 
-    if (vr->is_duoview_renderer_active() && g_hook->m_has_double_precision &&
-        is_ue_5_6_or_newer() && result != nullptr && init_options_view_family != nullptr &&
+    if (vr->is_duoview_renderer_active() && vr->duoview_eye_tracking_enabled() &&
+        g_hook->m_has_double_precision && is_ue_5_6_or_newer() &&
+        result != nullptr && init_options_view_family != nullptr &&
         (init_options_original_stereo_pass == EStereoscopicPass::eSSP_PRIMARY ||
          init_options_original_stereo_pass == EStereoscopicPass::eSSP_SECONDARY)) {
         const auto rtm=g_hook->get_render_target_manager();
@@ -601,6 +633,10 @@ void VR::duoview_abort(const char* reason) {
                         bool recorded = false;''')
     # Copy reference modules into exact checked-out Joey tree. No private SDK
     # declarations or altered SDK files.
+    if changed[hook].count("duoview_begin_frame()") != 5:
+        raise RuntimeError("v47 expected five DuoView frame-start hooks")
+    changed[hook]=changed[hook].replace(
+        "duoview_begin_frame()", "duoview_begin_frame(is_ue_5_6_or_newer())")
     for name in ("DuoViewGeometry.hpp","DuoViewGaze.hpp","DuoViewCropMotion.hpp","DuoViewPSVR2Gaze.hpp","DuoViewCropStability.hpp","DuoViewHistoryCorrection.hpp","DuoViewFrame.hpp",
                  "DuoViewConfig.hpp","DuoViewState.hpp","DuoViewTemporalMath.hpp","DuoViewUE56Layout.hpp",
                  "DuoViewSceneViewTemporal.hpp","DuoViewD3D12.hpp",
@@ -623,7 +659,7 @@ void VR::duoview_abort(const char* reason) {
         str(root/"src/mods/vr/DuoViewShaderSource.hpp")], check=True)
     for path,text in changed.items():
         (source_root(path)/path).write_text(text,encoding="utf-8",newline="")
-    print("Applied v46 gaze-dependent projection crop + validated UE5.6 previous-clip bridge + fail-closed temporal gate.")
+    print("Applied v47 UE5.5-safe fixed-crop fallback, UE-gated gaze bridge, and session-latched fault quarantine.")
 
 if __name__=="__main__":
     main()

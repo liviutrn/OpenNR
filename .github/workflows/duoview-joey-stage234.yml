@@ -1,8 +1,8 @@
-name: DuoView v46 Validated UE5.6 Previous Clip Bridge — CANDIDATE
-run-name: DuoView v46 crop temporal bridge Windows audit (${{ github.run_number }})
+name: DuoView v47 UE5.5 Fixed-Crop Safety — CANDIDATE
+run-name: DuoView v47 UE5.5 fixed-crop safety Windows audit (${{ github.run_number }})
 on:
   push:
-    branches: [experiments/duoview-world-locked-temporal-v46]
+    branches: [experiments/duoview-world-locked-temporal-v47]
     paths:
       - '.github/workflows/duoview-joey-stage234.yml'
       - 'duoview/joey_stage1/**'
@@ -95,6 +95,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Native low-res bootstrap source patch failed' }
           python workspace/duoview/joey_stage1/verify_stage234.py backend frontend evidence
           if ($LASTEXITCODE -ne 0) { throw 'Build33 restoration + native bootstrap violated SDK/source boundaries' }
+          python workspace/duoview/joey_stage1/verify_v47_target_policy.py backend evidence
+          if ($LASTEXITCODE -ne 0) { throw 'v47 UE5.5 fixed-crop or quarantine guard failed' }
       - name: Preserve real generated Joey hook excerpts for independent audit
         shell: pwsh
         run: |
@@ -173,76 +175,51 @@ jobs:
           Copy-Item evidence/duoview-stage1-edits.json package/
           Copy-Item evidence/duoview-stage1-source-hashes.json package/
           Copy-Item evidence/duoview-stage234-hashes.json package/
+          Copy-Item evidence/duoview-v47-target-policy.json package/
           @'
-          DUOVIEW v46 CANDIDATE: gaze-dependent high-resolution crop projection with the head camera held fixed.
-          Gaze moves the foveal projection and crop together. The periphery and fovea retain the same head pose.
-          Unreal receives the crop projection before scene rendering and should generate crop-aware motion vectors from its persistent per-view previous projection.
-          DuoView does not add an OpenNR-style crop offset a second time: OpenNR corrects vectors after cropping a rendered image; here the crop is in Unreal's projection.
-          The compositor maps cropped fovea samples back to full-view world coordinates. Moving the crop does not move stationary scene detail on the output.
-          Foveal source pixel count/density settings and periphery render allocation remain unchanged; no extra render pass or resource readback.
-          Tracked crop is a constant angular frustum; its outline can be perspective-shaped on the full Mono image away from center.
-          Optional fixation guard holds only changes within one output pixel; larger movement is immediate, with no smoothing or velocity cap.
-          Fixed-center Eye Tracking OFF centers the cropped projection; it does not steer a camera.
-          Current typed FSceneViewInitOptions projection is reconciled at construction. v46 latches the exact current UE5.6 source origin/rotation, crop projection, source rect, Family and ViewState identity, then writes ClipToPrevClipOverride only through a layout-gated runtime bridge. The public UE5.6 layout proof is SceneView ClipToPrevClipOverride offset 0x12a0 with a 0x1330-byte SceneView mirror; every live check and matrix readback must pass or the write is refused.
-          The bridge supplies inverse(current cropped view-projection) * previous cropped view-projection, so head motion and moving-ROI motion are both represented in Unreal's own previous-clip consumer. It does not write private TSR history, private velocity buffers, or a final-color displacement.
-          The per-frame gate blocks eye-tracked composition unless the two source ViewStates are distinct and stable across adjacent producer frames AND both v46 UE5.6 overrides succeeded after the first frame. This is a source/layout/runtime-write proof only; it does NOT prove headset TSR consumed correct vectors.
-          Actual STALKER2/PSVR2 motion-vector and image-stability acceptance is pending.
-          Starting foundation: Build37 native0 low-scale bootstrap -> ID6 -> restore OpenXR scale AFTER accepted compositions.
-          Backend: exact Joey 5ac7edc207866569334175e4ed8a7517971547f6 + guarded DuoView modifications.
+          DUOVIEW v47 SAFETY CANDIDATE — STALKER 2 UE 5.5.4 / DX12 / OpenXR
+          
+          This build addresses the reported eye-gaze fallback loop. On UE versions below 5.6, eye-tracked moving crop is disabled before a DuoView frame is frozen. DuoView remains on its fixed-center crop and does not write the unverified ClipToPrevClipOverride memory field.
+          
+          UE 5.5 documents the ClipToPrevClipOverride API, but the pinned SDK does not provide a validated UE 5.5 FSceneView byte offset for it. The only included SceneView field mirror is the UE 5.6.1 layout. v47 follows the Astra handoff: no guessed UE 5.5 offset and no edits to the restricted UESDK.
+          
+          For this STALKER 2 UE 5.5.4 target, this is a safe fixed-crop fallback. It does not enable eye-tracked moving crop on UE 5.5.4. That requires a separately verified engine layout and a headset test.
+          
+          The existing UE5.6 temporal bridge remains gated by its version/layout/runtime checks. Its only mirrored FSceneView layout is UE5.6.1; later versions and headset temporal consumption have not been validated. CI validates compilation, unit/contract tests, source identity, package architecture and ZIP hashes. CI does NOT prove that Unreal TSR consumes the override or that the headset image is stable.
+          
+          Modes 0 and 5 remain original Joey behavior. Experimental rendering mode ID6 is scoped to STALKER 2 DX12 OpenXR.
+          The crop and view-source controls remain available. The PSVR2 Toolkit CAPI is not bundled; unavailable or invalid gaze uses the center crop.
+          DuoView GPU faults quarantine ID6 for the remainder of the UEVR session. Reselecting ID6 will not clear a fault quarantine; restart UEVR/game only after reviewing the logs.
+          Fault-frame emergency copy can still show incomplete source pixels. No GPU hang can be ruled out by source/CI tests.
+          
+          Starting foundation: Build37 native0 low-scale bootstrap -> ID6 -> restore OpenXR scale after accepted compositions.
+          Backend: exact Joey 5ac7edc207866569334175e4ed8a7517971547f6 plus guarded DuoView modifications.
           Restricted SDK unchanged: joeyhodge/UESDK 3cffbc82429b6165ceec2714f0f0d9ae48f55596.
-          Matching frontend source: 60be4b0f9a646109fd9fdf448bacd41477234091, plus ID 6.
-          Modes 0 and 5 are routed to ORIGINAL JOEY. Experimental mode ID6 is active ONLY in STALKER 2 DX12 OpenXR.
-          ID6 restores persistent per-profile crop width/height, fovea density, peripheral scale, blend feather and gaze controls.
-          Old source defaults: 0.50x0.50 crop at 1.0x density, 0.20x periphery, gaze ON, fovea UE0/periphery UE1.
-          Press Restore old DuoView settings once if an existing profile retains newer settings. Increase density to match your old preferred tuning; exact historical tuning is unknown.
-          Foveal atlas rectangle starts at x=0, matching Injector-5. Gaze uses the inverse left optical rotation, matching the old coordinate path.
-          v46 tracks valid native gaze per producer frame without smoothing or velocity caps. The optional one-output-pixel fixation guard remains.
-          Missing CAPI samples hold their original mapped coordinate for at most 50ms from sensor arrival; repeated reads do not refresh age. Blink/bad packets clear it immediately, then the crop returns to center.
-          Both UE views use frozen producer data and the same head pose; only the high-resolution projection crop follows gaze. v46 supplies the previous cropped projection to the documented UE5.6 ClipToPrevClipOverride field, with a layout-gated fail-closed write.
-          Optional temporal audit reports head-pose stability, distinct/persistent ViewStates, source-frame gaps, the history gate, and expected static-world crop motion in fovea-buffer pixels. It is diagnostic and OFF by default.
-          Independent primary shading starts OFF on EACH injection/mode transition; toggle it in-game after DuoView settles.
-          The shading toggle temporarily constructs the SECONDARY source as PRIMARY only with proven distinct source ViewStates and matching main family. It does not enable the full Native Fix capture/submission path.
-          Toggle OFF to return to the existing shading path on the next producer frame. Actual shading parity and temporal stability require headset testing.
-          Optional GPU timing is OFF by default. Query resources prewarm at swapchain creation; no GPU waits or render-callback allocation for timing.
-          Debug source 0=blended output, 1=periphery only, 2=fovea only (dark outside ROI).
-          Source view0 is the first UE pass (old prototype default), view1 is the second (Build19 default).
-          Both source passes share exactly the same Mono head camera. In tracked mode only the high-resolution projection/crop follows gaze.
-          Stage5 reads combined calibrated PSVR2 Toolkit CAPI gaze ONCE per frame. No DLL bundled.
-          If CAPI is unavailable/invalid or blinked, ID6 stays at fixed center; no OpenXR gaze layer required.
-          Menu shows whether PSVR2 gaze is fresh, center fallback, or Mono quarantine.
-          Uses the same Mono head pose, moving off-axis foveal projection, DX12 raster composition and original XR submission.
-          On failure, DuoView is QUARANTINED internally inside ID6; the next frame uses Joey original Mono.
-          The fault frame attempts a current-frame original Mono copy but may show incomplete atlas contents.
-          DXBC shaders are precompiled during CI; per-XR-image PSOs/textures are prewarmed on swapchain setup.
-          Changing source formats or unexpected swapchain lifecycle may still cause reconstruction. Monitor frame pacing.
-          Experimental: Source/test/CI passing cannot prove exact game GPU producer completion or headset stability.
-          NEVER overwrite 30-minute-proven Build3! Extract this ZIP into a SEPARATE TEST DIRECTORY.
-          Built-in gaze freshness/age counters are read from UI; crop motion is not manually added a second time to vectors.
-          Stage5 gaze requires installed PSVR2 Toolkit CAPI and still requires headset calibration validation.
-          Engine view order and optical gaze mapping are source verified. Actual Lumen/shadow/exposure and visual parity require a headset test; no gamma correction applied.
-          The eye-tracked source/compositor and first-use pacing are NOT headset verified.
+          Matching frontend source: 60be4b0f9a646109fd9fdf448bacd41477234091 plus rendering mode ID6.
+          
+          NEVER overwrite the 30-minute-proven Build3 install.
           '@ | Set-Content package/READ_FIRST.txt
           $needed=@('UEVRBackend.dll','UEVRPluginNullifier.dll','LuaVR.dll','READ_FIRST.txt','duoview-stage234-hashes.json','exact-baseline-source.json')
           foreach ($name in $needed) { if (!(Test-Path ("package/" + $name))) { throw "Missing critical package file: $name" } }
           if (@(Get-ChildItem package -File -Filter *.exe).Count -lt 1) { throw "Missing Joey frontend executable" }
-          if ((Get-Content package/READ_FIRST.txt -Raw) -notmatch 'QUARANTINED internally') { throw 'Stale fallback instructions' }
+          if ((Get-Content package/READ_FIRST.txt -Raw) -notmatch 'Reselecting ID6 will not clear a fault quarantine') { throw 'Stale quarantine instructions' }
           Get-ChildItem package -Recurse -File | Get-FileHash -Algorithm SHA256 | ConvertTo-Json | Set-Content evidence/package-sha256.json
-          $zip="Joey-DuoView-MovingCrop-v46-${{ github.run_number }}.zip"
+          $zip="Joey-DuoView-FixedCropSafety-v47-${{ github.run_number }}.zip"
           Compress-Archive -Path package/* -DestinationPath $zip -Force
           (Get-FileHash $zip -Algorithm SHA256).Hash | Set-Content "$zip.sha256"
       - name: Independently verify final candidate ZIP, PE machine IDs and unpacked hashes
         shell: pwsh
         run: |
-          $zip="Joey-DuoView-MovingCrop-v46-${{ github.run_number }}.zip"
-          python workspace/duoview/joey_stage1/audit_v46_package.py package $zip evidence
-          if ($LASTEXITCODE -ne 0) { throw 'v46 package provenance, PE or ZIP audit failed' }
+          $zip="Joey-DuoView-FixedCropSafety-v47-${{ github.run_number }}.zip"
+          python workspace/duoview/joey_stage1/audit_v47_package.py package $zip evidence
+          if ($LASTEXITCODE -ne 0) { throw 'v47 package provenance, PE or ZIP audit failed' }
       - uses: actions/upload-artifact@v4
         if: success()
         with:
-          name: Joey-DuoView-MovingCrop-v46-${{ github.run_number }}
+          name: Joey-DuoView-FixedCropSafety-v47-${{ github.run_number }}
           path: |
-            Joey-DuoView-MovingCrop-v46-*.zip
-            Joey-DuoView-MovingCrop-v46-*.zip.sha256
+            Joey-DuoView-FixedCropSafety-v47-*.zip
+            Joey-DuoView-FixedCropSafety-v47-*.zip.sha256
           if-no-files-found: error
           retention-days: 90
       - name: Record public source and dependency provenance
@@ -257,6 +234,6 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: Joey-DuoView-FixedCenter-Evidence-${{ github.run_number }}
+          name: Joey-DuoView-v47-Evidence-${{ github.run_number }}
           path: evidence/
           if-no-files-found: error
