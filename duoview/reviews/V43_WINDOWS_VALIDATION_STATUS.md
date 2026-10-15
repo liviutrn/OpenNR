@@ -17,7 +17,7 @@ This is a documentation-only checkpoint after the tested source commit; no sourc
 
 ## Implemented mechanism
 
-Tracked gaze rotates the genuine high-resolution camera about the same Mono optical origin while keeping its projection principal point fixed. A matching current-frame perspective homography composites its rays into the canonical Mono image. Fixed-center tracking OFF retains the old projection/camera path. Source pixel counts and atlas allocation remain unchanged. The tracked frustum has constant angular extent, so its projected outline and edge sampling distribution differ from the old axis-aligned full-image ROI.
+Tracked gaze rotates the genuine high-resolution camera about the same Mono optical origin while keeping its projection principal point fixed. A matching current-frame perspective homography composites its rays into the canonical Mono image. Fixed-center tracking OFF retains the old projection/camera path. Source pixel counts and atlas allocation remain unchanged. The tracked frustum has constant angular extent, so its projected outline and sampling distribution differ from the old axis-aligned full-image ROI. At eccentric gaze, this can reduce sampling density at the fixation point itself; a representative 32.7-degree horizontal gaze gives about 29% fewer horizontal samples per degree than the old off-axis crop.
 
 A reader-owned sensor timestamp/frame sequence fixes the CAPI false-notification/new-payload ambiguity. Optional fixation guard is one output pixel, with immediate motion outside it. No smoothing, global NGX hook or private UE previous-state write was added.
 
