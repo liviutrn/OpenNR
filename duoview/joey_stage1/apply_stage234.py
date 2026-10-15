@@ -132,8 +132,9 @@ def main():
                 m_duo_border->draw("Blend border highlight");
                 m_duo_debug_source->draw("Source diagnostic: 0 Blend / 1 Periphery / 2 Fovea");
                 m_duo_fovea_view->draw("Fovea UE source view (0 or 1)");
-                m_duo_stabilize->draw("Fixation noise guard (1 output pixel; no smoothing)");
-                ImGui::TextWrapped("v48 test: foveal FSceneViewState disabled on every UE5.5 source frame; crop changes start with fresh history. Peripheral history remains independent. No smoothing or previous-clip raw writes.");
+                m_duo_stabilize->draw("Fixation noise guard (1 output pixel)");
+                m_duo_smoothing->draw("Gaze smoothing (ms, 0 = instant)");
+                ImGui::TextWrapped("v48 test: adjustable gaze smoothing occurs BEFORE projection. Foveal FSceneViewState stays disabled on every UE5.5 frame. Peripheral history remains independent.");
                 m_duo_history_audit->draw("Diagnostic: projection/history continuity (logs, OFF by default)");
                 if (m_duo_history_audit->value()) {
                     // Bounded UI-only sensor metadata. The device clock cannot be
@@ -221,8 +222,8 @@ void VR::configure_duoview() {
         .eye_tracked=m_duo_gaze->value() && m_duoview_temporal_abi_supported.load(std::memory_order_acquire), .fovea_view=static_cast<uint32_t>(m_duo_fovea_view->value()),
         .diagnostic_view=static_cast<uint32_t>(m_duo_debug_source->value()),
         .gpu_timing=m_duo_timing->value(), .stabilize_crop=m_duo_stabilize->value(),
-        // Compatibility with saved Build32 profiles: force latency settings off.
-        .guard_fraction=0.f, .smoothing_ms=0.f,
+        // v48: expose actual saved/user-chosen time-constant (0 = instant).
+        .guard_fraction=0.f, .smoothing_ms=m_duo_smoothing->value(),
         .independent_shading=m_duo_shading->value(),
         .temporal_audit=m_duo_history_audit->value(),
         .fresh_fovea_no_history=true, // v48: withhold foveal UE SceneViewState EVERY frame; crop changes always start fresh
