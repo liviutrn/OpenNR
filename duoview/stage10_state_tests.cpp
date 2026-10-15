@@ -43,7 +43,7 @@ int main() {
     assert(!state.snapshot(first));
     assert(state.begin({2,1},3000,3000,matrix,read));
     CropStability stable;
-    Settings controls; controls.stabilize_crop=true;
+    Settings controls; controls.stabilize_crop=true; controls.smoothing_ms=0.f; // explicit instant-mode oracle
     controls.crop_width=controls.crop_height=.3f;
     auto centre=stable.update({1,1},3000,3000,controls,UV{.5f,.5f},1000);
     assert(centre.u==.5f && centre.v==.5f);
