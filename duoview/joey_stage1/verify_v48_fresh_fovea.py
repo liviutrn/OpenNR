@@ -26,8 +26,8 @@ def main():
             "init_options_ue5->scene_view_state=nullptr;" in hook and
             "init_options_ue5->scene_view_state=duo_saved_fovea_state;" in hook,
             "The foveal state must be withheld only during construction then restored")
-    constructor=hook.index("g_hook->m_sceneview_data.constructor_hook.unsafe_call<sdk::FSceneView*>")
     disable=hook.index("init_options_ue5->scene_view_state=nullptr;")
+    constructor=hook.index("g_hook->m_sceneview_data.constructor_hook.unsafe_call<sdk::FSceneView*>",disable)
     restore=hook.index("init_options_ue5->scene_view_state=duo_saved_fovea_state;")
     require(disable<constructor<restore,"The no-history override must surround the constructor call")
     require("index==frozen->config.settings.fovea_view" in hook and
