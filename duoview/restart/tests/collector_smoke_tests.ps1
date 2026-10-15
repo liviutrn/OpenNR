@@ -103,7 +103,11 @@ try {
         Assert-Smoke ($manifest.diagnosticBoundary.fallbackReasonCounts.none -ge 1) 'Fallback reason log match was not counted.'
         Assert-Smoke ($manifest.caps.stagedEvidenceBytesUsed -le $manifest.caps.stagedEvidenceBytes) 'Staged evidence exceeded total byte cap.'
         Assert-Smoke ($manifest.caps.optionalDumpsBytesUsed -le $manifest.caps.optionalDumpsBytes) 'Optional dump evidence exceeded dump total cap.'
-        Assert-Smoke (($entries | Where-Object { $_.sourceLabel -eq 'optional crash dump; may contain sensitive process memory' -and $_.status -eq 'excluded_size_limit' }).Count -eq 1) 'Oversized dump was not explicitly excluded.'
+        $oversizedDumpRecord = $entries | Where-Object { $_.sourceLabel -eq 'opt-in crash dump; may contain sensitive process memory' } | Select-Object -First 1
+        Assert-Smoke ($null -ne $oversizedDumpRecord -and
+            $oversizedDumpRecord.status -eq 'excluded_size_limit' -and
+            $oversizedDumpRecord.sourceBytes -eq (21MB) -and
+            $oversizedDumpRecord.archivedBytes -eq 0) 'Oversized dump was not excluded at the 20 MiB per-file cap.'
         Assert-Smoke (($entries | Where-Object { $_.sourceLabel -eq 'package metadata: baseline.lock.json' -and $_.status -eq 'missing' }).Count -eq 1) 'Missing allowlisted package metadata was not recorded.'
         Assert-Smoke (($entries | Where-Object { $_.sourceLabel -eq 'package metadata: READ_FIRST.txt' -and $_.status -eq 'included' }).Count -eq 1) 'Workflow READ_FIRST package note was not included.'
         Assert-Smoke (($entries | Where-Object { $_.sourceLabel -eq 'package metadata: source-snapshot-manifest.json' -and $_.status -eq 'included' }).Count -eq 1) 'Source snapshot manifest was not included.'

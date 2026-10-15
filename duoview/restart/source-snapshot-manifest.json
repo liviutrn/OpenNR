@@ -15,7 +15,7 @@
     "duoview/restart/backend/StableSourceMaskD3D12.hpp": "330e63c5ccba515a1635f6776d19c1694c01a15c",
     "duoview/restart/source_snapshot_manifest.py": "31aaaabf43fa1b31a7ff047860290f67d602b4f1",
     "duoview/restart/tests/CMakeLists.txt": "f4e9ce3c88083d869edf7cfb28e4c699d0f06799",
-    "duoview/restart/tests/collector_smoke_tests.ps1": "20228b9236e5252c8fb154f0a3d249edb23f4396",
+    "duoview/restart/tests/collector_smoke_tests.ps1": "64586d8630d8ef3992d07475720aac572a9ce8aa",
     "duoview/restart/tests/replay_tests.cpp": "52f44801f788ad2668cb3beada86d88c793ecc7b",
     "duoview/restart/tests/stable_source_mask_d3d12_tests.cpp": "972c6c4c732877f8d52f359d6ace6ac2aa18cb0c",
     "duoview/restart/tests/support/spdlog/spdlog.h": "84b7fff0cb2600bba256353802e5dce99616c0e0",
