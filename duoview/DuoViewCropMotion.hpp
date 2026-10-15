@@ -20,7 +20,7 @@ inline std::optional<CropMotion> expected_crop_motion(
     const auto& now = current.layout;
     if (!previous.settings.eye_tracked || !current.settings.eye_tracked ||
         previous.key.generation != current.key.generation ||
-        previous.key.frame == std::numeric_limits<uint32_t>::max() ||
+        previous.key.frame == (std::numeric_limits<uint32_t>::max)() ||
         previous.key.frame + 1u != current.key.frame ||
         previous.settings.fovea_view != current.settings.fovea_view ||
         old.atlas_width != now.atlas_width || old.atlas_height != now.atlas_height ||
