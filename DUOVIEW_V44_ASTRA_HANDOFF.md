@@ -41,11 +41,13 @@ Read `duoview/reviews/V43_ADVERSARIAL_REVIEW_2026-10-15.md` and `duoview/reviews
 ## Current source and builds
 
 - Branch: `experiments/duoview-gaze-motion-vectors-v44`
-- Current code commit: `bde264fa58e71a32d0e50285d7d661076f4bfa6a`
-- Windows run #72: https://github.com/liviutrn/OpenNR/actions/runs/38695937854
-- As of this handoff, the pinned production geometry/history contracts, DX12/WARP tests, and original compatibility stage passed. The full matching backend build step was still running. No v44 test ZIP had been produced yet.
-- Earlier run #70 exposed an over-tight float-only assertion tolerance; run #71 exposed that a gate-rejected frame could still be accepted by `accept_composite`. Both were corrected before run #72.
-- Local GCC checks passed, including the independent foveal temporal oracle over 17,280 deterministic projection pairs. The local production-contract executable was also run with a temporary shim only for its separate Mono bootstrap contract; run #72 is the authoritative Windows/pinned-backend check.
+- Tested code commit: `2ad967175e66825c094f086122e1f1c7ae623a78`. This adds a Windows-macro-safe spelling of `numeric_limits::max()` after run #72 exposed MSVC's `max` macro expansion error.
+- Windows run #73: https://github.com/liviutrn/OpenNR/actions/runs/38697520328 — **success**.
+- Run #73 passed the pinned production geometry/history contracts, independent geometry/state/DX12 WARP tests, every configured test target, the complete original compatibility suite, the original backend and auxiliary DLL build, frontend test/build, final source identity/package validation, and independent PE machine/hash checks.
+- Test artifact: `Joey-DuoView-MovingCrop-v44-73`. The Actions run page above provides the artifact download. Its artifact archive SHA-256 is `a652961bbec4c2a7d63e68ce53b2a5c0d7fa4272b7afa1d2bc486159ab63d0e8`.
+- The artifact archive contains the installable candidate ZIP plus its checksum file. Candidate ZIP SHA-256: `b311d0591dcafc7da5ec88230da109900ae4951fdb6a4ecc65deeffdf5a83227`.
+- Earlier run #70 exposed an over-tight float-only assertion tolerance; run #71 exposed that a gate-rejected frame could still be accepted by `accept_composite`; run #72 exposed the Windows `max` macro collision. Each was corrected before the successful run #73.
+- Local GCC checks also passed, including the independent foveal temporal oracle over 17,280 deterministic projection pairs. The physical headset/game behavior and Unreal TSR/DLSS temporal-history internals remain unverified; see the unresolved question above.
 
 ## Files to inspect first
 
