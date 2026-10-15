@@ -21,7 +21,7 @@ def main():
     require("duoview_begin_frame(bool temporal_abi_supported)" in vrh and
             "set_duoview_temporal_abi_supported(temporal_abi_supported);" in vr,
             "Frame setup must receive the engine temporal-layout capability")
-    require("candidate.eye_tracked = candidate.eye_tracked &&" in vr and
+    require(".eye_tracked=m_duo_gaze->value() &&" in vr and
             "m_duoview_temporal_abi_supported.load(std::memory_order_acquire)" in vr,
             "Unsupported engine layouts must freeze DuoView as a fixed crop")
     require("m_duo_gaze->value()=false;" in vr and

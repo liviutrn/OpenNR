@@ -25,7 +25,7 @@ TARGETS = {
  ],
  "src/mods/VR.cpp": [
    "void VR::set_duoview_temporal_abi_supported(bool supported)",
-   "candidate.eye_tracked = candidate.eye_tracked &&",
+   ".eye_tracked=m_duo_gaze->value() &&",
    "std::optional<uevr::duoview::ViewFrame> VR::duoview_begin_frame(bool temporal_abi_supported)",
    "return m_duoview_gaze.read_sample(frozen,optical)",
  ],

@@ -218,7 +218,7 @@ void VR::configure_duoview() {
         .crop_width=m_duo_width->value(), .crop_height=m_duo_height->value(),
         .peripheral_scale=m_duo_periphery->value(), .foveal_density=m_duo_density->value(),
         .feather_fraction=m_duo_feather->value(), .debug_border=m_duo_border->value(),
-        .eye_tracked=m_duo_gaze->value(), .fovea_view=static_cast<uint32_t>(m_duo_fovea_view->value()),
+        .eye_tracked=m_duo_gaze->value() && m_duoview_temporal_abi_supported.load(std::memory_order_acquire), .fovea_view=static_cast<uint32_t>(m_duo_fovea_view->value()),
         .diagnostic_view=static_cast<uint32_t>(m_duo_debug_source->value()),
         .gpu_timing=m_duo_timing->value(), .stabilize_crop=m_duo_stabilize->value(),
         // Compatibility with saved Build32 profiles: force latency settings off.
@@ -227,8 +227,6 @@ void VR::configure_duoview() {
         .temporal_audit=m_duo_history_audit->value(),
         .history_sample_correction=false,
         .history_sample_strength=0.f};
-    candidate.eye_tracked = candidate.eye_tracked &&
-        m_duoview_temporal_abi_supported.load(std::memory_order_acquire);
     const auto current=m_duoview.settings();
     if (current.crop_width==candidate.crop_width && current.crop_height==candidate.crop_height &&
         current.peripheral_scale==candidate.peripheral_scale && current.foveal_density==candidate.foveal_density &&
