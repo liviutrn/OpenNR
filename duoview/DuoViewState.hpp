@@ -45,6 +45,7 @@ struct ViewFrame {
     std::array<bool,2> temporal_override_attempted{}, temporal_override_applied{};
     bool history_gate_pass{};
     bool shading_applied{};
+    bool fovea_history_disabled{}; // Verified pre-constructor SceneViewState null injection for this frame
 };
 
 struct TemporalContract {
@@ -92,6 +93,15 @@ public:
     }
     bool rectangle(FrameKey key, unsigned view) { return observe(key, view, 0); }
     bool projection(FrameKey key, unsigned view) { return observe(key, view, 1); }
+    bool mark_fovea_history_disabled(FrameKey key, unsigned view) {
+        std::scoped_lock lock{mutex_};
+        auto& slot=frames_[key.frame%frames_.size()];
+        if (!slot || slot->config.key!=key || view>1 || slot->invalid || slot->consumed ||
+            view!=slot->config.settings.fovea_view || !slot->config.settings.fresh_fovea_no_history)
+            return false;
+        slot->fovea_history_disabled=true;
+        return true;
+    }
     bool scene(FrameKey key, unsigned view, uintptr_t state, bool shading_applied=false) {
         std::scoped_lock lock{mutex_};
         auto& slot=frames_[key.frame%frames_.size()];
@@ -232,7 +242,8 @@ public:
         }
         const bool same_current_source_transform=same_view_transform(
             slot->view_transforms[0],slot->view_transforms[1]);
-        const bool temporal_bridge_ready=!slot->config.settings.eye_tracked ||
+        const bool temporal_bridge_ready=(slot->config.settings.fresh_fovea_no_history && slot->fovea_history_disabled) ||
+            !slot->config.settings.eye_tracked ||
             !result.previous_frame ||
             (slot->temporal_override_attempted[0] && slot->temporal_override_applied[0] &&
              slot->temporal_override_attempted[1] && slot->temporal_override_applied[1]);
@@ -244,6 +255,9 @@ public:
         last_audit_=result;
         slot->history_gate_pass=result.history_gate_pass;
         last_completed_=slot; // continuity baseline; not proof of successful XR copy
+        // Fresh fovea is a contractual per-frame constructor override: never compose
+        // if the state pointer was not actually withheld from the foveal UE view.
+        if (slot->config.settings.fresh_fovea_no_history && !slot->fovea_history_disabled) return {};
         if (slot->config.settings.eye_tracked && !result.history_gate_pass) return {};
         slot->composition_ready=true;
         ViewFrame packet=*slot;
