@@ -77,6 +77,7 @@ def main():
     const ModSlider::Ptr m_duo_smoothing{ModSlider::create(generate_name("DuoViewCropSmoothingMs"), 0.f, 250.f, 85.f)};
     const ModToggle::Ptr m_duo_shading{ModToggle::create(generate_name("DuoViewIndependentShading"), false)};
     const ModToggle::Ptr m_duo_history_audit{ModToggle::create(generate_name("DuoViewTemporalAudit"), false)};
+    const ModToggle::Ptr m_duo_fresh_fovea{ModToggle::create(generate_name("DuoViewFreshFovea"), true)};
     const ModToggle::Ptr m_duo_timing{ModToggle::create(generate_name("DuoViewGpuTiming"), false)};
     std::atomic<float> m_duo_gpu_ms{-1.f};
     uevr::duoview::State m_duoview;
@@ -91,7 +92,7 @@ def main():
             *m_duo_width, *m_duo_height, *m_duo_periphery, *m_duo_density,
             *m_duo_feather, *m_duo_gaze, *m_duo_border, *m_duo_debug_source,
             *m_duo_fovea_view, *m_duo_timing, *m_duo_stabilize, *m_duo_guard,
-            *m_duo_smoothing, *m_duo_history_audit,''')
+            *m_duo_smoothing, *m_duo_history_audit, *m_duo_fresh_fovea,''')
     cpp="src/mods/VR.cpp"
     edit(cpp,
         'ImGui::TextWrapped("DuoView Stage 1: rendering uses original Joey Mono unchanged. Two-view foveation and gaze are NOT active.");',
@@ -119,6 +120,8 @@ def main():
                 m_duo_fovea_view->draw("Fovea UE source view (0 or 1)");
                 m_duo_stabilize->draw("Fixation noise guard (1 output pixel; no smoothing)");
                 ImGui::TextWrapped("Eye tracking steers the real high-resolution camera around the same Mono origin. The image maps back to the full view using the matching camera transform. Larger eye movements remain immediate.");
+                m_duo_fresh_fovea->draw("Experimental: fresh foveal view (no UE temporal history)");
+                ImGui::TextWrapped("v45: ON prevents the eye-tracked high-resolution view from reusing UE SceneViewState temporal history; AA/TSR quality may be lower. OFF restores v43 history. No NGX hooks or private engine writes.");
                 m_duo_history_audit->draw("Diagnostic: projection/history continuity (logs, OFF by default)");
                 if (m_duo_history_audit->value()) {
                     // Bounded UI-only sensor metadata. The device clock cannot be
@@ -206,6 +209,7 @@ void VR::configure_duoview() {
         // Compatibility with saved Build32 profiles: force latency settings off.
         .guard_fraction=0.f, .smoothing_ms=0.f,
         .independent_shading=m_duo_shading->value(),
+        .fresh_fovea=m_duo_fresh_fovea->value(),
         .temporal_audit=m_duo_history_audit->value(),
         .history_sample_correction=false,
         .history_sample_strength=0.f};
@@ -218,6 +222,7 @@ void VR::configure_duoview() {
         current.stabilize_crop==candidate.stabilize_crop && current.guard_fraction==candidate.guard_fraction &&
         current.smoothing_ms==candidate.smoothing_ms &&
         current.independent_shading==candidate.independent_shading &&
+        current.fresh_fovea==candidate.fresh_fovea &&
         current.temporal_audit==candidate.temporal_audit &&
         current.history_sample_correction==candidate.history_sample_correction &&
         current.history_sample_strength==candidate.history_sample_strength) return;
@@ -444,6 +449,39 @@ void VR::duoview_abort(const char* reason) {
                 applied=get_effective_stereo_pass()==EStereoscopicPass::eSSP_PRIMARY;
             }
             vr->duoview_state().scene(key,index,state,applied);
+        }
+    }
+    // v45: Engine-supported view-state isolation; only the selected foveal
+    // source receives null SceneViewState for THIS constructor call.
+    // A scoped restoration preserves caller-owned InitOptions memory.
+    struct V45RestoreFoveaState {
+        sdk::FSceneViewInitOptionsUE5* options{};
+        sdk::FSceneViewStateInterface* original{};
+        ~V45RestoreFoveaState() { if(options) options->scene_view_state=original; }
+    } v45_restore_fovea_state{};
+    if (vr->is_duoview_renderer_active() && g_hook->is_in_viewport_client_draw() &&
+        g_hook->m_has_double_precision && is_ue5 && !is_ue50_to_53 &&
+        init_options_ue5 != nullptr && init_options_view_family != nullptr) {
+        const auto rtm=g_hook->get_render_target_manager();
+        const bool main=rtm && init_options_view_family->get_render_target()==
+            rtm->get_view_family_render_target();
+        const bool source_pass=init_options_original_stereo_pass==EStereoscopicPass::eSSP_PRIMARY ||
+            init_options_original_stereo_pass==EStereoscopicPass::eSSP_SECONDARY;
+        if (main && source_pass) {
+            const unsigned index=init_options_original_stereo_pass==EStereoscopicPass::eSSP_PRIMARY ? 0u : 1u;
+            const auto key=vr->duoview_producer_key();
+            if (const auto frame=vr->duoview_begin_frame();
+                frame && frame->config.settings.fresh_fovea &&
+                frame->config.settings.eye_tracked &&
+                !frame->config.settings.independent_shading &&
+                index==frame->config.settings.fovea_view &&
+                init_options_ue5->scene_view_state!=nullptr &&
+                init_options_ue5->scene_view_state==init_options_scene_state) {
+                v45_restore_fovea_state.options=init_options_ue5;
+                v45_restore_fovea_state.original=init_options_ue5->scene_view_state;
+                init_options_ue5->scene_view_state=nullptr;
+                vr->duoview_state().scene(key,index,0,false);
+            }
         }
     }
     std::optional<uint32_t> views_original_count{};''')

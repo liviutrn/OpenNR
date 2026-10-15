@@ -26,6 +26,8 @@ struct Settings {
     float guard_fraction{.08f}; // continuous, wide spatial deadzone
     float smoothing_ms{85.f};   // exponential temporal follow in milliseconds
     bool independent_shading{};
+    // v45 experimental; foveal UE SceneViewState bypass, not velocity patch.
+    bool fresh_fovea{true};
     bool temporal_audit{}; // optional observation; no private UE history writes
     bool history_sample_correction{}; // legacy experimental input, not used by rendering
     float history_sample_strength{1.f};

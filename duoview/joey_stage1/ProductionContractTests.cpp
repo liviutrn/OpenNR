@@ -59,6 +59,8 @@ int main() try {
     settings.eye_tracked=false;
     settings.fovea_view=1;
     require(state.configure(settings),"Fixed-center configuration rejected");
+    settings.fresh_fovea=true;
+    require(state.configure(settings),"Fresh fovea setting must latch");
     settings.diagnostic_view=3;
     require(!state.configure(settings),"Invalid diagnostic accepted");
     settings.diagnostic_view=1;

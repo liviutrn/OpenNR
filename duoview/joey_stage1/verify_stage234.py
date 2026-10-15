@@ -93,6 +93,10 @@ def main():
   raise RuntimeError("Current color must not receive the temporal history displacement")
  if "constants.fovea_uv_rows" not in compositor or "frame.steering.active" not in compositor:
   raise RuntimeError("Rendered gaze camera requires matching current-frame homography")
+ if "V45RestoreFoveaState" not in hooked or "init_options_ue5->scene_view_state=nullptr" not in hooked:
+  raise RuntimeError("v45 typed UE5 temporal-source isolation missing")
+ if "m_duo_fresh_fovea->draw(" not in vr or ".fresh_fovea=m_duo_fresh_fovea->value()" not in vr:
+  raise RuntimeError("v45 isolation selector missing from in-game UI")
  if "m_duo_history_shift" in vr or "m_duo_history_strength" in vr:
   raise RuntimeError("Invalid final-color displacement controls must not be exposed")
  if ".history_sample_correction=false" not in vr:
