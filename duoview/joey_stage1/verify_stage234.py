@@ -12,7 +12,7 @@ EDITED_BACKEND = {
 }
 ADDED_BACKEND = {
  "src/mods/vr/DuoViewGeometry.hpp", "src/mods/vr/DuoViewGaze.hpp",
- "src/mods/vr/DuoViewSteering.hpp",
+ "src/mods/vr/DuoViewSteering.hpp", "src/mods/vr/DuoViewTemporalMotion.hpp",
  "src/mods/vr/DuoViewPSVR2Gaze.hpp", "src/mods/vr/DuoViewCropStability.hpp",
  "src/mods/vr/DuoViewHistoryCorrection.hpp",
  "src/mods/vr/DuoViewFrame.hpp", "src/mods/vr/DuoViewConfig.hpp",
@@ -98,6 +98,8 @@ def main():
  if ".history_sample_correction=false" not in vr:
   raise RuntimeError("Legacy saved settings must not reenable current-color displacement")
  state=(a.backend/"src/mods/vr/DuoViewState.hpp").read_text(encoding="utf-8")
+ if "gaze_only_pixel_motion(" not in state:
+  raise RuntimeError("v45 source-local temporal motion not connected to audit")
  if "compositor_history_shift(" in state:
   raise RuntimeError("Temporal crop vector cannot be applied to current color packets")
  steering=(a.backend/"src/mods/vr/DuoViewSteering.hpp").read_text(encoding="utf-8")

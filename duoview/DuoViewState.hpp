@@ -1,6 +1,7 @@
 #pragma once
 #include "DuoViewConfig.hpp"
 #include "DuoViewCropStability.hpp"
+#include "DuoViewTemporalMotion.hpp"
 #include <array>
 #include <functional>
 
@@ -11,9 +12,10 @@ struct CameraPose {
 };
 struct TemporalAudit {
     FrameKey key{};
-    bool previous_frame{}, same_pose{}, distinct_view_states{}, stable_view_states{}, moving_fovea{};
-    // Current->previous *crop-local* source-pixel motion from ROI alone.
-    // This does NOT establish what UE velocity/TSR actually consumes.
+    bool previous_frame{}, same_pose{}, same_foveal_camera{}, distinct_view_states{}, stable_view_states{}, moving_fovea{};
+    bool gaze_only_motion_valid{};
+    // Current->previous source-pixel motion of a STATIONARY full-screen ray.
+    // These values do NOT establish what UE velocity/TSR actually consumes.
     double expected_crop_motion_px_x{}, expected_crop_motion_px_y{};
     std::array<uintptr_t,2> current_states{}, previous_states{};
 };
@@ -138,16 +140,19 @@ public:
             result.previous_frame=true;
             result.previous_states=last_completed_->scene_states;
             result.same_pose=last_completed_->camera==slot->camera;
+            const unsigned fovea=slot->config.settings.fovea_view;
+            result.same_foveal_camera=last_completed_->source_cameras[fovea]==slot->source_cameras[fovea];
             result.stable_view_states=result.distinct_view_states &&
                 result.current_states==result.previous_states;
-            const auto& old=last_completed_->config.layout;
             const auto& now=slot->config.layout;
-            result.expected_crop_motion_px_x=
-                (static_cast<double>(now.u0)-old.u0)/now.crop_width*now.fovea.width;
-            result.expected_crop_motion_px_y=
-                (static_cast<double>(now.v0)-old.v0)/now.crop_height*now.fovea.height;
-            result.moving_fovea=std::abs(result.expected_crop_motion_px_x)>.1 ||
-                                  std::abs(result.expected_crop_motion_px_y)>.1;
+            const UV fixation{(now.u0+now.u1)*.5f,(now.v0+now.v1)*.5f};
+            if (const auto motion=gaze_only_pixel_motion(
+                    last_completed_->config,slot->config,fixation)) {
+                result.gaze_only_motion_valid=true;
+                result.expected_crop_motion_px_x=motion->x;
+                result.expected_crop_motion_px_y=motion->y;
+                result.moving_fovea=std::abs(motion->x)>.1 || std::abs(motion->y)>.1;
+            }
         }
         last_audit_=result;
         last_completed_=slot; // diagnostic only; not proof of successful XR copy

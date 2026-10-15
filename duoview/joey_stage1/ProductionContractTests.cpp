@@ -154,7 +154,7 @@ int main() try {
     require(instant.u==.9f && instant.v==.8f,
             "Large saccade must reach target in the same render frame");
     auto held=direct.update({31,4},3400,3172,follow,{},1044);
-    require(held.u==instant.u && held.v==instant.v,"Brief missing sample should hold last coordinate");
+    require(held.u==.5f && held.v==.5f,"Double-cached missing sample must recenter immediately");
     auto expired=direct.update({31,5},3400,3172,follow,{},1123);
     require(expired.u==.5f && expired.v==.5f,"Expired gaze must restore static center");
     State audit;
@@ -174,7 +174,8 @@ int main() try {
     mark({40,2},UV{.7f,.5f},100,200);
     auto d=audit.temporal_audit();
     require(d && d->previous_frame && d->distinct_view_states && d->stable_view_states &&
-            d->same_pose && d->moving_fovea && d->expected_crop_motion_px_x > 1.,
+            d->same_pose && !d->same_foveal_camera && d->gaze_only_motion_valid &&
+            d->moving_fovea && std::abs(d->expected_crop_motion_px_x) > 1.,
             "Temporal moving-crop/previous-state diagnostics inconsistent");
     mark({40,3},UV{.8f,.5f},100,100);
     d=audit.temporal_audit();

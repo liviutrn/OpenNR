@@ -48,7 +48,7 @@ int main() {
     auto moved=stable.update({1,3},3000,3000,controls,UV{.75f,.6f},1022);
     assert(moved.u==.75f && moved.v==.6f); // deliberate movement instant
     auto held=stable.update({1,4},3000,3000,controls,{},1055);
-    assert(held.u==moved.u && held.v==moved.v);
+    assert(held.u==.5f && held.v==.5f); // CAPI Reader alone owns age/expiry
     auto expired=stable.update({1,5},3000,3000,controls,{},1123);
     assert(expired.u==.5f && expired.v==.5f);
     controls.stabilize_crop=false;

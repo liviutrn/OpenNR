@@ -1,14 +1,15 @@
-name: DuoView v43 Gaze Camera Steering — CANDIDATE
-run-name: DuoView v43 gaze camera steering Windows audit (${{ github.run_number }})
+name: DuoView v45 World-Locked Motion Audit — CANDIDATE
+run-name: DuoView v45 world-locked motion Windows audit (${{ github.run_number }})
 on:
   push:
-    branches: [experiments/duoview-gaze-camera-steering-v43]
+    branches: [experiments/duoview-world-locked-temporal-v45]
     paths:
       - '.github/workflows/duoview-joey-stage234.yml'
       - 'duoview/joey_stage1/**'
       - 'duoview/DuoViewPSVR2Gaze.hpp'
       - 'duoview/DuoViewGaze.hpp'
       - 'duoview/DuoViewSteering.hpp'
+      - 'duoview/DuoViewTemporalMotion.hpp'
       - 'duoview/DuoViewCropStability.hpp'
       - 'duoview/DuoViewState.hpp'
       - 'duoview/DuoViewHistoryCorrection.hpp'

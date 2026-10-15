@@ -495,9 +495,9 @@ void VR::duoview_abort(const char* reason) {
                         if (frame && frame->config.settings.temporal_audit) {
                             if (const auto diagnostic=vr->duoview_state().temporal_audit()) {
                                 SPDLOG_INFO_EVERY_N_SEC(1,
-                                    "[DuoView][TemporalAudit] frame={} prior={} samePose={} separateStates={} persistentStates={} gazeMoved={} expectedCropDelta=({:.1f},{:.1f}) px",
+                                    "[DuoView][TemporalAudit] frame={} prior={} sameMonoPose={} sameFoveaPose={} separateStates={} persistentStates={} gazeMoved={} gazeOnlySourceMotion=({:.1f},{:.1f}) px",
                                     diagnostic->key.frame, diagnostic->previous_frame,
-                                    diagnostic->same_pose, diagnostic->distinct_view_states,
+                                    diagnostic->same_pose, diagnostic->same_foveal_camera, diagnostic->distinct_view_states,
                                     diagnostic->stable_view_states, diagnostic->moving_fovea,
                                     diagnostic->expected_crop_motion_px_x,
                                     diagnostic->expected_crop_motion_px_y);
@@ -545,7 +545,7 @@ void VR::duoview_abort(const char* reason) {
                         bool recorded = false;''')
     # Copy reference modules into exact checked-out Joey tree. No private SDK
     # declarations or altered SDK files.
-    for name in ("DuoViewGeometry.hpp","DuoViewGaze.hpp","DuoViewSteering.hpp","DuoViewPSVR2Gaze.hpp","DuoViewCropStability.hpp","DuoViewHistoryCorrection.hpp","DuoViewFrame.hpp",
+    for name in ("DuoViewGeometry.hpp","DuoViewGaze.hpp","DuoViewSteering.hpp","DuoViewTemporalMotion.hpp","DuoViewPSVR2Gaze.hpp","DuoViewCropStability.hpp","DuoViewHistoryCorrection.hpp","DuoViewFrame.hpp",
                  "DuoViewConfig.hpp","DuoViewState.hpp","DuoViewD3D12.hpp",
                  "DuoViewMonoCopyD3D12.hpp"):
         target=root/"src/mods/vr"/name
