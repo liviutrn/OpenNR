@@ -24,7 +24,7 @@ struct ViewFrame {
     FrameConfig config;
     std::array<float, 16> projection{};
     CameraPose camera{};
-    bool camera_valid{}, main_family{}, consumed{}, gaze_valid{}, invalid{};
+    bool camera_valid{}, main_family{}, consumed{}, composition_ready{}, gaze_valid{}, invalid{};
     std::array<bool, 2> rectangles{}, projections{}, cameras{};
     std::array<uintptr_t,2> scene_states{};
     bool shading_applied{};
@@ -158,6 +158,7 @@ public:
         last_audit_=result;
         last_completed_=slot; // continuity baseline; not proof of successful XR copy
         if (slot->config.settings.eye_tracked && !result.history_gate_pass) return {};
+        slot->composition_ready=true;
         ViewFrame packet=*slot;
         return packet;
     }
@@ -166,7 +167,7 @@ public:
     bool accept_composite(FrameKey key) {
         std::scoped_lock lock{mutex_};
         auto& slot=frames_[key.frame % frames_.size()];
-        if (!slot || slot->config.key!=key || !slot->consumed || slot->invalid) return false;
+        if (!slot || slot->config.key!=key || !slot->consumed || !slot->composition_ready || slot->invalid) return false;
         if (last_accepted_ &&
             (last_accepted_->config.key.generation > key.generation ||
              (last_accepted_->config.key.generation == key.generation &&
