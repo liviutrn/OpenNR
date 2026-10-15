@@ -118,7 +118,7 @@ def main():
                 m_duo_debug_source->draw("Source diagnostic: 0 Blend / 1 Periphery / 2 Fovea");
                 m_duo_fovea_view->draw("Fovea UE source view (0 or 1)");
                 m_duo_stabilize->draw("Fixation noise guard (1 output pixel; no smoothing)");
-                ImGui::TextWrapped("Eye tracking steers the real high-resolution camera around the same Mono origin. The image maps back to the full view using the matching camera transform. Larger eye movements remain immediate.");
+                ImGui::TextWrapped("Eye tracking moves the foveal crop projection while keeping the head camera fixed. Unreal's persistent per-view history must see the previous crop so its own motion vectors include crop motion; no extra vector is added here.");
                 m_duo_history_audit->draw("Diagnostic: projection/history continuity (logs, OFF by default)");
                 if (m_duo_history_audit->value()) {
                     // Bounded UI-only sensor metadata. The device clock cannot be
@@ -133,13 +133,16 @@ def main():
                     } else {
                         ImGui::TextUnformatted("Toolkit gaze metadata: no sample received");
                     }
-                    ImGui::TextWrapped("Checks current/previous ViewStates and expected crop-local motion. Constructor projection is synchronized to the latched frame. See UEVR log.");
+                    ImGui::TextWrapped("Checks separate persistent ViewStates and the expected static-world crop vector. Projection changes are frozen per frame; the vector is a buffer-space diagnostic, not motion on the final screen. See UEVR log.");
                     if (const auto report=m_duoview.temporal_audit()) {
-                        ImGui::Text("Previous frame: %s | source histories: %s | persistent: %s",
+                        ImGui::Text("Prior: %s | gap: %s | separate histories: %s | persistent: %s | crop layout: %s | gate: %s",
                             report->previous_frame?"yes":"no",
+                            report->history_gap?"yes":"no",
                             report->distinct_view_states?"separate":"shared/missing",
-                            report->stable_view_states?"yes":"no/unknown");
-                        ImGui::Text("Expected gaze-induced crop motion: X %.1f px Y %.1f px",
+                            report->stable_view_states?"yes":"no/unknown",
+                            report->stable_projection_history?"stable":"changed/unknown",
+                            report->history_gate_pass?"PASS":"BLOCK");
+                        ImGui::Text("Expected static-world crop vector in fovea buffer: X %.1f px Y %.1f px",
                             report->expected_crop_motion_px_x,report->expected_crop_motion_px_y);
                     }
                 }
@@ -184,7 +187,7 @@ def main():
                     active.foveal_density!=m_duo_density->value() || active.peripheral_scale!=m_duo_periphery->value())
                     ImGui::TextWrapped("Selected view sizes exceed existing atlas; previous valid settings remain in effect.");
                 ImGui::TextWrapped("Diagnostic 1 isolates the full-FOV peripheral pass. Diagnostic 2 isolates the foveal pass (dark outside crop). Compare shadows/lighting in the same scene.");
-                ImGui::TextWrapped("View 0 = FIRST Unreal pass (old prototype default), view 1 = SECOND pass (Build19 default). Same Mono optical origin; tracked fovea uses a steered camera. Switching may reset temporal history.");
+                ImGui::TextWrapped("View 0 = FIRST Unreal pass (old prototype default), view 1 = SECOND pass (Build19 default). Both keep the same head camera; only the foveal projection crop follows gaze. Switching may reset temporal history.");
                 ImGui::TreePop();
             }
         }
@@ -256,8 +259,8 @@ std::optional<uevr::duoview::ViewFrame> VR::duoview_begin_frame() {
         eye[1][0],eye[1][1],eye[1][2],
         eye[2][0],eye[2][1],eye[2][2]};
     return m_duoview.begin(key, get_hmd_width(), get_hmd_height(), frozen,
-        [this, frozen, optical]() -> std::optional<uevr::duoview::UV> {
-            return m_duoview_gaze.read_uv(frozen,optical);
+        [this, frozen, optical]() -> uevr::duoview::GazeSample {
+            return m_duoview_gaze.read_sample(frozen,optical);
         }, GetTickCount64());
 }
 
@@ -301,7 +304,7 @@ void VR::duoview_abort(const char* reason) {
         *x = 0;
         *y = 0;
     } else if (!VR::get()->is_native_stereo_fix_enabled() || swgr_ue574_dx12_runtime()) {''')
-    # Both views share one Mono origin; only the selected foveal orientation steers.
+    # Both views keep one Mono head pose; the selected foveal projection moves with gaze.
     edit(hook,'''    auto vr = VR::get();
     //std::scoped_lock _{vr->get_vr_mutex()};''',
     '''    auto vr = VR::get();
@@ -492,16 +495,18 @@ void VR::duoview_abort(const char* reason) {
                         bool duo_failed = false;
                         const auto frame = vr->duoview_state().consume(
                             vr->duoview_key(static_cast<uint32_t>(frame_count)));
-                        if (frame && frame->config.settings.temporal_audit) {
-                            if (const auto diagnostic=vr->duoview_state().temporal_audit()) {
-                                SPDLOG_INFO_EVERY_N_SEC(1,
-                                    "[DuoView][TemporalAudit] frame={} prior={} samePose={} separateStates={} persistentStates={} gazeMoved={} expectedCropDelta=({:.1f},{:.1f}) px",
-                                    diagnostic->key.frame, diagnostic->previous_frame,
-                                    diagnostic->same_pose, diagnostic->distinct_view_states,
-                                    diagnostic->stable_view_states, diagnostic->moving_fovea,
-                                    diagnostic->expected_crop_motion_px_x,
-                                    diagnostic->expected_crop_motion_px_y);
-                            }
+                        if (const auto diagnostic=vr->duoview_state().temporal_audit();
+                            diagnostic && diagnostic->enabled &&
+                            diagnostic->key==vr->duoview_key(static_cast<uint32_t>(frame_count))) {
+                            SPDLOG_INFO_EVERY_N_SEC(1,
+                                "[DuoView][TemporalAudit] frame={} prior={} historyGap={} sameHeadPose={} separateStates={} persistentStates={} stableCropLayout={} historyGate={} cropMoved={} expectedStaticWorldCropVector=({:.1f},{:.1f})px",
+                                diagnostic->key.frame, diagnostic->previous_frame,
+                                diagnostic->history_gap, diagnostic->same_pose,
+                                diagnostic->distinct_view_states, diagnostic->stable_view_states,
+                                diagnostic->stable_projection_history,
+                                diagnostic->history_gate_pass, diagnostic->moving_fovea,
+                                diagnostic->expected_crop_motion_px_x,
+                                diagnostic->expected_crop_motion_px_y);
                         }
                         vr->m_openxr->note_mono_copy(static_cast<uint32_t>(frame_count), false);
                         // Do not skip the OpenXR copy if pair evidence fails.
@@ -545,7 +550,7 @@ void VR::duoview_abort(const char* reason) {
                         bool recorded = false;''')
     # Copy reference modules into exact checked-out Joey tree. No private SDK
     # declarations or altered SDK files.
-    for name in ("DuoViewGeometry.hpp","DuoViewGaze.hpp","DuoViewSteering.hpp","DuoViewPSVR2Gaze.hpp","DuoViewCropStability.hpp","DuoViewHistoryCorrection.hpp","DuoViewFrame.hpp",
+    for name in ("DuoViewGeometry.hpp","DuoViewGaze.hpp","DuoViewCropMotion.hpp","DuoViewPSVR2Gaze.hpp","DuoViewCropStability.hpp","DuoViewHistoryCorrection.hpp","DuoViewFrame.hpp",
                  "DuoViewConfig.hpp","DuoViewState.hpp","DuoViewD3D12.hpp",
                  "DuoViewMonoCopyD3D12.hpp"):
         target=root/"src/mods/vr"/name
@@ -566,7 +571,7 @@ void VR::duoview_abort(const char* reason) {
         str(root/"src/mods/vr/DuoViewShaderSource.hpp")], check=True)
     for path,text in changed.items():
         (source_root(path)/path).write_text(text,encoding="utf-8",newline="")
-    print("Applied v24 instantaneous gaze + FSceneView constructor projection synchronization + opt-in temporal continuity diagnostics.")
+    print("Applied v44 gaze-dependent projection crop + persistent-view-state temporal gate + sample-age-preserving gaze freshness.")
 
 if __name__=="__main__":
     main()

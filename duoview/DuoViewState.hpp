@@ -1,6 +1,7 @@
 #pragma once
 #include "DuoViewConfig.hpp"
 #include "DuoViewCropStability.hpp"
+#include "DuoViewCropMotion.hpp"
 #include <array>
 #include <functional>
 
@@ -11,9 +12,11 @@ struct CameraPose {
 };
 struct TemporalAudit {
     FrameKey key{};
-    bool previous_frame{}, same_pose{}, distinct_view_states{}, stable_view_states{}, moving_fovea{};
-    // Current->previous *crop-local* source-pixel motion from ROI alone.
-    // This does NOT establish what UE velocity/TSR actually consumes.
+    bool enabled{}, previous_frame{}, same_pose{}, distinct_view_states{};
+    bool stable_view_states{}, stable_projection_history{}, history_gap{};
+    bool history_gate_pass{}, moving_fovea{};
+    // Expected current->previous crop contribution for a static world point.
+    // Unreal's per-view previous projection must supply this in its own vectors.
     double expected_crop_motion_px_x{}, expected_crop_motion_px_y{};
     std::array<uintptr_t,2> current_states{}, previous_states{};
 };
@@ -21,7 +24,6 @@ struct ViewFrame {
     FrameConfig config;
     std::array<float, 16> projection{};
     CameraPose camera{};
-    std::array<CameraPose,2> source_cameras{};
     bool camera_valid{}, main_family{}, consumed{}, gaze_valid{}, invalid{};
     std::array<bool, 2> rectangles{}, projections{}, cameras{};
     std::array<uintptr_t,2> scene_states{};
@@ -32,17 +34,15 @@ template<typename Matrix>
 void apply_frame_projection(Matrix& matrix, const ViewFrame& frame, unsigned view) {
     for (int col=0;col<4;++col) for (int row=0;row<4;++row)
         matrix[col][row]=frame.projection[col*4+row];
-    if (view==frame.config.settings.fovea_view) {
-        if(frame.config.steering.active) apply_steering_projection(matrix,frame.config.layout);
-        else apply_foveal_crop(matrix,frame.config.layout);
-    }
+    if (view==frame.config.settings.fovea_view)
+        apply_foveal_crop(matrix,frame.config.layout);
 }
 class State {
 public:
     bool configure(Settings settings) { std::scoped_lock lock{mutex_}; return config_.set_settings(settings); }
     Settings settings() const { return config_.current_settings(); }
     std::optional<ViewFrame> begin(FrameKey key, uint32_t w, uint32_t h,
-        const std::array<float, 16>& projection, const std::function<std::optional<UV>()>& read_gaze,
+        const std::array<float, 16>& projection, const std::function<GazeSample()>& read_gaze,
         uint64_t now_ms=0) {
         std::scoped_lock lock{mutex_};
         auto& slot = frames_[key.frame % frames_.size()];
@@ -51,18 +51,14 @@ public:
             (key.generation==last_begin_.generation && key.frame<=last_begin_.frame)) return {};
         for (float x:projection) if (!std::isfinite(x)) return {};
         const auto s = config_.current_settings();
-        const auto gaze = s.eye_tracked ? read_gaze() : std::optional<UV>{UV{}};
+        const auto gaze = s.eye_tracked ? read_gaze() : GazeSample{UV{}};
         auto stability=stability_;
         const auto center=stability.update(key,w,h,s,gaze,now_ms);
         const auto frozen = config_.for_frame(key, w, h, center);
         if (!frozen) return {};
-        auto packet=*frozen;
-        const auto steering=make_steering(projection,packet.layout,s.eye_tracked);
-        if(!steering) return {};
-        packet.steering=*steering;
         stability_=stability; last_begin_=key;
-        slot = ViewFrame{packet, projection};
-        slot->gaze_valid = s.eye_tracked && gaze.has_value();
+        slot = ViewFrame{*frozen, projection};
+        slot->gaze_valid = s.eye_tracked && gaze.uv.has_value() && !gaze.invalidated;
         return slot;
     }
     std::optional<ViewFrame> snapshot(FrameKey key) const {
@@ -93,7 +89,7 @@ public:
         std::scoped_lock lock{mutex_};
         const auto& slot = frames_[key.frame % frames_.size()];
         if (!slot || slot->config.key != key || view > 1 || slot->invalid || !slot->camera_valid) return {};
-        return slot->source_cameras[view];
+        return slot->camera;
     }
     bool camera(FrameKey key, unsigned view, const CameraPose& pose) {
         std::scoped_lock lock{mutex_};
@@ -104,12 +100,8 @@ public:
         if (!slot->camera_valid) {
             if(view!=0) return false;
             slot->camera = pose; slot->camera_valid = true;
-            slot->source_cameras={pose,pose};
-            slot->source_cameras[slot->config.settings.fovea_view]=
-                steering_camera(pose,slot->config.steering);
         } else {
-            const auto& expected=view==0 ? slot->camera : slot->source_cameras[view];
-            if(expected!=pose) { slot->invalid=true; return false; }
+            if(slot->camera!=pose) { slot->invalid=true; return false; }
         }
         slot->cameras[view] = true;
         return true;
@@ -130,27 +122,42 @@ public:
         slot->consumed = true;
         TemporalAudit result{};
         result.key=key;
+        result.enabled=slot->config.settings.temporal_audit;
         result.current_states=slot->scene_states;
         result.distinct_view_states=slot->scene_states[0] && slot->scene_states[1] &&
                                     slot->scene_states[0]!=slot->scene_states[1];
-        if (last_completed_ && last_completed_->config.key.generation==key.generation &&
-            last_completed_->config.key.frame+1==key.frame) {
-            result.previous_frame=true;
+        const bool has_previous_generation=last_completed_ &&
+            last_completed_->config.key.generation==key.generation;
+        if (has_previous_generation) {
+            result.previous_frame=last_completed_->config.key.frame+1==key.frame;
+            result.history_gap=!result.previous_frame;
             result.previous_states=last_completed_->scene_states;
             result.same_pose=last_completed_->camera==slot->camera;
             result.stable_view_states=result.distinct_view_states &&
                 result.current_states==result.previous_states;
-            const auto& old=last_completed_->config.layout;
-            const auto& now=slot->config.layout;
-            result.expected_crop_motion_px_x=
-                (static_cast<double>(now.u0)-old.u0)/now.crop_width*now.fovea.width;
-            result.expected_crop_motion_px_y=
-                (static_cast<double>(now.v0)-old.v0)/now.crop_height*now.fovea.height;
+            const auto& old_layout=last_completed_->config.layout;
+            const auto& new_layout=slot->config.layout;
+            result.stable_projection_history=
+                last_completed_->config.settings.fovea_view==slot->config.settings.fovea_view &&
+                old_layout.atlas_width==new_layout.atlas_width &&
+                old_layout.atlas_height==new_layout.atlas_height &&
+                old_layout.fovea.width==new_layout.fovea.width &&
+                old_layout.fovea.height==new_layout.fovea.height &&
+                old_layout.crop_width==new_layout.crop_width &&
+                old_layout.crop_height==new_layout.crop_height;
+            if (result.previous_frame) if (const auto motion=expected_crop_motion(last_completed_->config,slot->config)) {
+                result.expected_crop_motion_px_x=motion->current_to_previous_pixels_x;
+                result.expected_crop_motion_px_y=motion->current_to_previous_pixels_y;
+            }
             result.moving_fovea=std::abs(result.expected_crop_motion_px_x)>.1 ||
                                   std::abs(result.expected_crop_motion_px_y)>.1;
         }
+        result.history_gate_pass=result.distinct_view_states && !result.history_gap &&
+            (!result.previous_frame ||
+                (result.stable_view_states && result.stable_projection_history));
         last_audit_=result;
-        last_completed_=slot; // diagnostic only; not proof of successful XR copy
+        last_completed_=slot; // continuity baseline; not proof of successful XR copy
+        if (slot->config.settings.eye_tracked && !result.history_gate_pass) return {};
         ViewFrame packet=*slot;
         return packet;
     }

@@ -182,14 +182,11 @@ int main() try {
     if(shift_red != base_red)
         throw std::runtime_error("Legacy crop-motion input displaced current color");
     UINT64 world_signal=7;
-    std::array<float,16> projection{};
-    projection[0]=projection[5]=1.f;projection[11]=1.f;projection[14]=.1f;
-    for (bool steered : {false,true}) for (float extent : {.3f,.5f}) for (float density : {1.f,1.5f,2.5f}) {
+    for (float extent : {.3f,.5f}) for (float density : {1.f,1.5f,2.5f}) {
         for (float gaze_u : {.5f,.625f,.45f}) {
             const auto moving=uevr::duoview::make_layout(32,32,extent,extent,.25f,density,gaze_u,.5f);
             if (!moving) continue;
             frame.layout=*moving;
-            frame.steering=*uevr::duoview::make_steering(projection,*moving,steered);
             frame.key.frame++;
             frame.settings.diagnostic_view=0;
             frame.history_sample_offset={.125f,-.125f};
@@ -199,18 +196,8 @@ int main() try {
                 for(UINT y=0;y<r.height;++y) for(UINT x=0;x<r.width;++x) {
                     const float u=(x+.5f)/r.width;
                     const float v=(y+.5f)/r.height;
-                    float full_u=foveal ? moving->u0+u*extent : u;
-                    float full_v=foveal ? moving->v0+v*extent : v;
-                    if(foveal && steered) {
-                        const double x=(2.*u-1.)*extent/projection[0];
-                        const double y=(1.-2.*v)*extent/projection[5];
-                        const auto& b=frame.steering.basis;
-                        const double rx=b[0]*x+b[3]*y+b[6];
-                        const double ry=b[1]*x+b[4]*y+b[7];
-                        const double rz=b[2]*x+b[5]*y+b[8];
-                        full_u=float(.5+.5*projection[0]*rx/rz);
-                        full_v=float(.5-.5*projection[5]*ry/rz);
-                    }
+                    const float full_u=foveal ? moving->u0+u*extent : u;
+                    const float full_v=foveal ? moving->v0+v*extent : v;
                     auto* pixel=static_cast<uint8_t*>(mapped)+
                         (y+r.y)*foot.Footprint.RowPitch+(x+r.x)*4;
                     pixel[0]=foveal ? 255 : 0;
@@ -255,7 +242,7 @@ int main() try {
             }
             const UINT center_x=static_cast<UINT>(gaze_u*32.f);
             if(sample(center_x,16)[0]<240)
-                throw std::runtime_error("Steering test substituted periphery for real high-resolution source");
+                throw std::runtime_error("Moving-crop test substituted periphery for real high-resolution source");
             readback->Unmap(0,nullptr);
         }
     }

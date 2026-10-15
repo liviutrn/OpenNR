@@ -12,7 +12,7 @@ EDITED_BACKEND = {
 }
 ADDED_BACKEND = {
  "src/mods/vr/DuoViewGeometry.hpp", "src/mods/vr/DuoViewGaze.hpp",
- "src/mods/vr/DuoViewSteering.hpp",
+ "src/mods/vr/DuoViewCropMotion.hpp",
  "src/mods/vr/DuoViewPSVR2Gaze.hpp", "src/mods/vr/DuoViewCropStability.hpp",
  "src/mods/vr/DuoViewHistoryCorrection.hpp",
  "src/mods/vr/DuoViewFrame.hpp", "src/mods/vr/DuoViewConfig.hpp",
@@ -91,8 +91,8 @@ def main():
   raise RuntimeError("DuoView does not record only successful XR source copies")
  if "{frame.history_sample_offset.u, frame.history_sample_offset.v}" in compositor:
   raise RuntimeError("Current color must not receive the temporal history displacement")
- if "constants.fovea_uv_rows" not in compositor or "frame.steering.active" not in compositor:
-  raise RuntimeError("Rendered gaze camera requires matching current-frame homography")
+ if "fovea_uv_rows" in compositor or "frame.steering" in compositor:
+  raise RuntimeError("Obsolete gaze-camera homography must not reach moving-crop renderer")
  if "m_duo_history_shift" in vr or "m_duo_history_strength" in vr:
   raise RuntimeError("Invalid final-color displacement controls must not be exposed")
  if ".history_sample_correction=false" not in vr:
@@ -100,15 +100,22 @@ def main():
  state=(a.backend/"src/mods/vr/DuoViewState.hpp").read_text(encoding="utf-8")
  if "compositor_history_shift(" in state:
   raise RuntimeError("Temporal crop vector cannot be applied to current color packets")
- steering=(a.backend/"src/mods/vr/DuoViewSteering.hpp").read_text(encoding="utf-8")
- if "apply_steering_projection(matrix,frame.config.layout)" not in state or (
-     "steering_camera(pose,slot->config.steering)" not in state):
-  raise RuntimeError("Tracked fovea must use the real centered-projection gaze camera")
+ crop_motion=(a.backend/"src/mods/vr/DuoViewCropMotion.hpp").read_text(encoding="utf-8")
+ if "apply_foveal_crop(matrix,frame.config.layout)" not in state or (
+     "expected_crop_motion(last_completed_->config,slot->config)" not in state):
+  raise RuntimeError("Tracked fovea must use the moving projection crop and audit its expected vector")
+ if "previous.key.frame + 1u != current.key.frame" not in crop_motion or (
+     "double(now.u0) - old.u0" not in crop_motion):
+  raise RuntimeError("Crop-vector diagnostic must have a strict frame key and current-to-previous origin sign")
  if "output->pitch=rendered->rotation[0]" not in hooked or (
      "output->yaw=rendered->rotation[1]" not in hooked):
   raise RuntimeError("View0 actual renderer output does not consume the gaze camera")
- if "matrix[2][0]=0." not in steering or "matrix[2][1]=0." not in steering:
-  raise RuntimeError("Tracked principal point must remain centered")
+ if "steering_camera" in state or "source_cameras" in state or "DuoViewSteering" in state:
+  raise RuntimeError("Tracked gaze must leave both source camera poses unchanged")
+ if "result.history_gate_pass=result.distinct_view_states" not in state or (
+     "result.history_gap" not in state or "stable_projection_history" not in state or
+     "!result.history_gate_pass" not in state):
+  raise RuntimeError("Unreal's per-view history must be distinct, stable, layout-compatible and gap-gated")
  sensor=(a.backend/"src/mods/vr/DuoViewPSVR2Gaze.hpp").read_text(encoding="utf-8")
  if "const bool fresh=sequence_.observe(candidate)" not in sensor:
   raise RuntimeError("CAPI sample freshness must be local to this reader, not shared notification state")
@@ -116,12 +123,17 @@ def main():
      "status.raw.timestamp,status.raw.frame_counter" not in sensor or
      "last_observation_=describe_gaze_sample(candidate,now,uv.has_value())" not in sensor):
   raise RuntimeError("Real CAPI sensor sample metadata is not recorded from producer frame")
+ if ("GazeSample read_sample" not in sensor or
+     "return GazeSample{cached_uv_,fresh_time_,fresh,false}" not in sensor or
+     "sample.host_arrival_ms" not in (a.backend/"src/mods/vr/DuoViewCropStability.hpp").read_text(encoding="utf-8")):
+  raise RuntimeError("CAPI reuse must preserve original sample age through crop stability")
  if "m_duoview_gaze.observation()" not in vr:
   raise RuntimeError("Bounded UI-only gaze sensor audit not present in generated production source")
  vr_cpp=(a.backend/"src/mods/VR.cpp").read_text(encoding="utf-8")
  vr_header=(a.backend/"src/mods/VR.hpp").read_text(encoding="utf-8")
  if (".eye_tracked=m_duo_gaze->value()" not in vr_cpp or
-     "m_duoview_gaze.read_uv(frozen,optical)" not in vr_cpp or
+     "m_duoview_gaze.read_sample(frozen,optical)" not in vr_cpp or
+     "-> uevr::duoview::GazeSample" not in vr_cpp or
      ".temporal_audit=m_duo_history_audit->value()" not in vr_cpp or
      ".smoothing_ms=0.f" not in vr_cpp):
   raise RuntimeError("Stage5 gaze control is not connected to frame source")

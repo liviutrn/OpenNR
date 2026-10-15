@@ -18,7 +18,7 @@ def check(cond,why):
     if not cond: raise RuntimeError(why)
 
 def main():
-    check(len(sys.argv)==4,"usage: audit_v41_package.py PACKAGE_DIR ZIP_FILE EVIDENCE_DIR")
+    check(len(sys.argv)==4,"usage: audit_v44_package.py PACKAGE_DIR ZIP_FILE EVIDENCE_DIR")
     package,zip_path,evidence=map(Path,sys.argv[1:])
     needed={"UEVRBackend.dll","UEVRPluginNullifier.dll","LuaVR.dll",
             "READ_FIRST.txt","duoview-stage234-hashes.json",
@@ -44,10 +44,11 @@ def main():
         machine=struct.unpack_from("<H",data,offset+4)[0]
         check(machine==0x8664,"Non-x64 binary: "+name)
     readme=(package/"READ_FIRST.txt").read_text(encoding="utf-8-sig")
-    check("v43" in readme and "QUARANTINED internally" in readme,
-          "Read-first must identify v43 gaze camera candidate and safe fallback")
-    check("NOT a TSR/motion-vector hook" in readme,
-          "Must not misrepresent compositor correction as engine temporal fix")
+    check("v44" in readme and "QUARANTINED internally" in readme,
+          "Read-first must identify v44 moving crop candidate and safe fallback")
+    check("per-view previous projection" in readme and
+          "does NOT prove TSR consumed correct vectors" in readme,
+          "Must describe engine-owned projection history without claiming headset proof")
     with zipfile.ZipFile(zip_path) as archive:
         info=archive.infolist()
         zip_entries={}
@@ -67,12 +68,13 @@ def main():
              "zip_file_count":len(entries),"files":entries,
              "engine_previous_clip_verified":False,
              "experimental_compositor_ab_test":False,
-             "gaze_camera_steering":True,
+             "moving_projection_crop":True,
+             "view_state_history_gate":True,
              "headset_validated":False}
     evidence.mkdir(parents=True,exist_ok=True)
-    (evidence/"v43-package-audit.json").write_text(
+    (evidence/"v44-package-audit.json").write_text(
          json.dumps(summary,indent=2)+"\n",encoding="utf-8")
-    print("v43 PE x64, ZIP round-trip SHA256, identity, documentation: PASS")
+    print("v44 PE x64, ZIP round-trip SHA256, identity, documentation: PASS")
     print("ZIP SHA256:",summary["sha256"])
     print("ZIP FILE COUNT:",len(entries))
     print("NOT a proof of headset/Unreal TSR correction.")

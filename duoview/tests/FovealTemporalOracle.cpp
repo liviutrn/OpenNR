@@ -5,6 +5,7 @@
 // A deliberate missing-crop and double-correction path MUST fail.
 #include "../DuoViewGeometry.hpp"
 #include "../DuoViewHistoryCorrection.hpp"
+#include "../DuoViewCropMotion.hpp"
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -138,7 +139,21 @@ static void negative_controls() {
     // Historical sign-reversed diagnostic must be rejected.
     const double inverted=(prev.u0-now.u0)*now.fovea.width/now.crop_width;
     check(std::abs(inverted+correct)<.001,"wrong-sign diagnostic not detected");
-    FrameConfig prior{{1,1},prev}, current{{1,2},now};
+    FrameConfig prior{{4,10},prev}, current{{4,11},now};
+    prior.settings.eye_tracked=current.settings.eye_tracked=true;
+    const auto crop_motion=expected_crop_motion(prior,current);
+    check(crop_motion && std::abs(crop_motion->current_to_previous_pixels_x-correct)<.001 &&
+          std::abs(crop_motion->current_to_previous_uv.u-(now.u0-prev.u0)/now.crop_width)<1e-6,
+          "production crop-vector helper disagrees with static-world projection");
+    current.key.frame=12;
+    check(!expected_crop_motion(prior,current),
+          "crop vector must not bridge a missing producer frame");
+    current.key.frame=11;
+    current.settings.eye_tracked=false;
+    check(!expected_crop_motion(prior,current),
+          "crop vector must not be applied outside eye-tracked projection mode");
+    current.settings.eye_tracked=true;
+    prior.key={1,1}; current.key={1,2};
     current.settings.history_sample_correction=true;
     const auto shift=compositor_history_shift(prior,true,current,true);
     check(shift.has_value(),"legacy correction counterexample not exercised");

@@ -25,6 +25,7 @@ int main() {
     assert(state.camera(first,1)->position==pose.position);
     assert(!state.family(first,false,2) && !state.family(first,true,1));
     assert(state.family(first,true,2));
+    assert(state.scene(first,0,100) && state.scene(first,1,200));
     auto b=state.begin(second,3000,3000,matrix,read);
     assert(b && b->config.settings.fovea_view==1 && gaze_reads==2);
     assert(state.snapshot(first)->config.layout.crop_width==.5f);
@@ -41,6 +42,7 @@ int main() {
     Settings controls; controls.stabilize_crop=true;
     controls.crop_width=controls.crop_height=.3f;
     auto centre=stable.update({1,1},3000,3000,controls,UV{.5f,.5f},1000);
+    assert(centre.u==.5f && centre.v==.5f);
     auto noisy=stable.update({1,2},3000,3000,controls,UV{.501f,.499f},1011);
     assert(noisy.u==.501f && noisy.v==.499f); // no latency or guard
     auto fixation=stable.update({1,20},3000,3000,controls,UV{.5011f,.4991f},1012);

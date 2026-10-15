@@ -127,8 +127,8 @@ public:
             unavailable_.load(std::memory_order_relaxed),age_ms_.load(std::memory_order_relaxed)};
     }
     // Called ONLY for a new DuoView source-frame snapshot, not per eye or compositor.
-    std::optional<UV> read_uv(const std::array<float,16>& projection,
-                              const std::array<float,9>& optical_rotation) {
+    GazeSample read_sample(const std::array<float,16>& projection,
+                           const std::array<float,9>& optical_rotation) {
         std::scoped_lock lock{mutex_};
         const uint64_t now=GetTickCount64();
         if(!read_ && now>=next_attempt_) { initialize(); next_attempt_=now+1000; }
@@ -153,6 +153,9 @@ public:
             } else {
                 cached_uv_.reset(); // blink/bad frame invalidates immediately
                 invalid_.fetch_add(1,std::memory_order_relaxed);
+                age_ms_.store(UINT32_MAX,std::memory_order_relaxed);
+                active_.store(false,std::memory_order_release);
+                return GazeSample{std::nullopt,now,false,true};
             }
         }
         if(!cached_uv_||now<fresh_time_||now-fresh_time_>50) {
@@ -165,7 +168,7 @@ public:
         age_ms_.store(static_cast<uint32_t>(now-fresh_time_),std::memory_order_relaxed);
         if(!fresh) reused_.fetch_add(1,std::memory_order_relaxed);
         active_.store(true,std::memory_order_release);
-        return cached_uv_;
+        return GazeSample{cached_uv_,fresh_time_,fresh,false};
     }
 private:
     void initialize() {

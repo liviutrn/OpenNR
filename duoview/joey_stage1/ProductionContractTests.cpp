@@ -118,12 +118,17 @@ int main() try {
     for(auto& column:current_matrix) for(auto& value:column) value=99.;
     apply_frame_projection(previous_matrix,*previous,0);
     apply_frame_projection(current_matrix,*current,0);
-    require(previous_matrix==current_matrix && current_matrix[2][0]==0. &&
-            current_matrix[2][1]==0.,
-            "Tracked gaze must move the camera, not the projection principal point");
-    require(previous->config.steering.active && current->config.steering.active &&
-            previous->config.steering.basis!=current->config.steering.basis,
-            "Moving gaze must have a real renderer camera rotation");
+    require(previous_matrix!=current_matrix &&
+            previous_matrix[2][0]!=current_matrix[2][0],
+            "Gaze must move the foveal projection crop");
+    require(temporal.camera({7,1},0,camera) && temporal.camera({7,1},1,camera) &&
+            temporal.camera({7,2},0,camera) && temporal.camera({7,2},1,camera),
+            "Both source views must keep the canonical head pose");
+    const auto crop_vector=expected_crop_motion(previous->config,current->config);
+    require(crop_vector && std::abs(crop_vector->current_to_previous_pixels_x-
+                (current->config.layout.u0-previous->config.layout.u0)*current->config.layout.fovea.width/
+                    current->config.layout.crop_width)<1e-6,
+            "Crop-only source vector has incorrect current-to-previous sign or scale");
     require(previous->config.layout.fovea.width==current->config.layout.fovea.width &&
             previous->config.layout.fovea.height==current->config.layout.fovea.height,
             "Compatible gaze translation must not resize the render target/history");
@@ -157,10 +162,23 @@ int main() try {
     require(held.u==instant.u && held.v==instant.v,"Brief missing sample should hold last coordinate");
     auto expired=direct.update({31,5},3400,3172,follow,{},1123);
     require(expired.u==.5f && expired.v==.5f,"Expired gaze must restore static center");
+    CropStability freshness;
+    const GazeSample real{UV{.7f,.4f},1000,true,false};
+    const GazeSample cached{UV{.7f,.4f},1000,false,false};
+    require(freshness.update({32,1},3400,3172,follow,real,1000).u==.7f,
+            "Fresh mapped gaze was rejected");
+    require(freshness.update({32,2},3400,3172,follow,cached,1050).u==.7f,
+            "Cached sample must remain valid at 50ms");
+    require(freshness.update({32,3},3400,3172,follow,cached,1051).u==.5f,
+            "Replayed gaze must not extend its original 50ms expiry");
+    freshness.update({32,4},3400,3172,follow,real,2000);
+    require(freshness.update({32,5},3400,3172,follow,
+                GazeSample{std::nullopt,2001,false,true},2001).u==.5f,
+            "Explicit invalidation must discard the held crop immediately");
     State audit;
     Settings auds{}; auds.temporal_audit=true; auds.eye_tracked=true;
     require(audit.configure(auds),"Audit settings rejected");
-    auto mark=[&](FrameKey k, UV gaze, uintptr_t primary, uintptr_t secondary) {
+    auto mark=[&](FrameKey k, UV gaze, uintptr_t primary, uintptr_t secondary, bool expect_gate=true) {
         auto f=audit.begin(k,3400,3172,p,[&]()->std::optional<UV>{return gaze;},1000+k.frame*11);
         require(f.has_value(),"Audit frame missing");
         for (unsigned eye=0;eye<2;++eye) {
@@ -168,7 +186,9 @@ int main() try {
                     audit.camera(k,eye,camera) && audit.scene(k,eye,eye?secondary:primary),
                     "Audit frame view observations failed");
         }
-        require(audit.family(k,true,2) && audit.consume(k),"Audit source frame could not be consumed");
+        require(audit.family(k,true,2),"Audit source family missing");
+        const bool consumed=audit.consume(k).has_value();
+        require(consumed==expect_gate,"ViewState history gate returned the wrong decision");
     };
     mark({40,1},UV{.5f,.5f},100,200);
     mark({40,2},UV{.7f,.5f},100,200);
@@ -176,14 +196,34 @@ int main() try {
     require(d && d->previous_frame && d->distinct_view_states && d->stable_view_states &&
             d->same_pose && d->moving_fovea && d->expected_crop_motion_px_x > 1.,
             "Temporal moving-crop/previous-state diagnostics inconsistent");
-    mark({40,3},UV{.8f,.5f},100,100);
+    mark({40,3},UV{.8f,.5f},100,100,false);
     d=audit.temporal_audit();
-    require(d && !d->distinct_view_states && !d->stable_view_states,
-            "Shared temporal history must be flagged");
-    mark({40,4},UV{.8f,.5f},300,400);
+    require(d && !d->distinct_view_states && !d->stable_view_states && !d->history_gate_pass,
+            "Shared temporal history must be blocked");
+    mark({40,4},UV{.8f,.5f},300,400,false);
     d=audit.temporal_audit();
-    require(d && d->distinct_view_states && !d->stable_view_states,
-            "Changed temporal identity across frames must be flagged");
+    require(d && d->distinct_view_states && !d->stable_view_states && !d->history_gate_pass,
+            "Changed temporal identity across frames must be blocked");
+    mark({40,5},UV{.8f,.5f},300,400);
+    d=audit.temporal_audit();
+    require(d && d->history_gate_pass && d->stable_view_states,
+            "Stable per-view history must re-enable after one clean pair");
+    mark({40,7},UV{.8f,.5f},300,400,false);
+    d=audit.temporal_audit();
+    require(d && d->history_gap && !d->history_gate_pass,
+            "Skipped producer frame must block crop-history continuity");
+    mark({40,8},UV{.8f,.5f},300,400);
+    auds.fovea_view=1;
+    require(audit.configure(auds),"Foveal source switch was rejected");
+    mark({40,9},UV{.8f,.5f},300,400,false);
+    d=audit.temporal_audit();
+    require(d && d->stable_view_states && !d->stable_projection_history &&
+            !d->history_gate_pass,
+            "Changing which ViewState owns the fovea must block one frame");
+    mark({40,10},UV{.8f,.5f},300,400);
+    d=audit.temporal_audit();
+    require(d && d->stable_projection_history && d->history_gate_pass,
+            "Stable foveal source layout should re-enable after one frame");
     // Current rendered color stays world-aligned, including legacy settings.
     State history;
     Settings hs{}; hs.crop_width=hs.crop_height=.30f;
@@ -240,9 +280,8 @@ int main() try {
             "ViewState-change fixture invalid");
     require(history.family({61,7},true,2),"ViewState-change family missing");
     changed=history.consume({61,7});
-    require(changed && changed->config.history_sample_offset.u==0.f,
-        "Changed Unreal foveal ViewState must disable correction");
-    require(history.accept_composite({61,7}),"Frame7 accepted copy missing");
+    require(!changed && !history.accept_composite({61,7}),
+        "Changed Unreal ViewState identity must block eye-tracked composition");
     CameraPose teleport=camera;teleport.position[0]+=2000.0;
     auto cut=history.begin({61,8},3000,3000,p,
         []()->std::optional<UV>{return UV{.84f,.5f};},1088);

@@ -20,7 +20,7 @@ TARGETS = {
  ],
  "src/mods/VR.cpp": [
    "std::optional<uevr::duoview::ViewFrame> VR::duoview_begin_frame()",
-   "return m_duoview_gaze.read_uv(frozen,optical)",
+   "return m_duoview_gaze.read_sample(frozen,optical)",
  ],
  "src/mods/vr/D3D12Component.cpp": [
    "vr->duoview_state().consume(",

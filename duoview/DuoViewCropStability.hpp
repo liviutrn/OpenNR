@@ -7,7 +7,7 @@ namespace uevr::duoview {
 class CropStability {
 public:
  UV update(FrameKey key,uint32_t w,uint32_t h,const Settings& s,
-           std::optional<UV> sample,uint64_t now) {
+           GazeSample sample,uint64_t now) {
     if (generation_!=key.generation || w!=width_ || h!=height_ ||
         cw_!=s.crop_width || ch_!=s.crop_height ||
         (last_tick_ && now<last_tick_)) {
@@ -16,14 +16,30 @@ public:
     }
     last_tick_=now;
     if (!s.eye_tracked) { have_=false; return {}; }
-    if (sample && std::isfinite(sample->u) && std::isfinite(sample->v) &&
-        sample->u>=0.f && sample->u<=1.f && sample->v>=0.f && sample->v<=1.f) {
-        last_valid_=now;
-        if(have_ && s.stabilize_crop && w && h &&
-           std::abs(sample->u-current_.u)*w<=1.f &&
-           std::abs(sample->v-current_.v)*h<=1.f) return current_;
-        current_=*sample; have_=true;
-        return current_; // new valid eye sample always wins instantly
+    if (sample.invalidated) {
+        have_=false;
+        last_valid_=0;
+        return {};
+    }
+    if (sample.uv && std::isfinite(sample.uv->u) && std::isfinite(sample.uv->v) &&
+        sample.uv->u>=0.f && sample.uv->u<=1.f &&
+        sample.uv->v>=0.f && sample.uv->v<=1.f) {
+        const auto arrival=sample.timestamped && sample.host_arrival_ms<=now
+            ? sample.host_arrival_ms : now;
+        // Only a new sensor packet advances expiry. A cached packet can seed a
+        // reset state, but it retains its original arrival timestamp.
+        const bool new_to_state=sample.fresh || !have_ || arrival>last_valid_;
+        if (new_to_state) {
+            const bool inside_fixation_guard=have_ && s.stabilize_crop && w && h &&
+                std::abs(sample.uv->u-current_.u)*w<=1.f &&
+                std::abs(sample.uv->v-current_.v)*h<=1.f;
+            if (!inside_fixation_guard) current_=*sample.uv;
+            have_=true;
+            last_valid_=arrival;
+        }
+        if (have_ && now>=last_valid_ && now-last_valid_<=50) {
+            return current_; // new valid eye sample always wins instantly
+        }
     }
     if (have_ && now>=last_valid_ && now-last_valid_<=50)
         return current_;

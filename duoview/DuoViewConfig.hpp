@@ -5,7 +5,6 @@
 // subsequent shader blend into different crop positions or densities.
 #include "DuoViewFrame.hpp"
 #include "DuoViewGaze.hpp"
-#include "DuoViewSteering.hpp"
 #include <cstdint>
 #include <mutex>
 #include <optional>
@@ -37,7 +36,6 @@ struct FrameConfig {
     Settings settings{};
     uint64_t settings_revision{};
     UV history_sample_offset{0.f,0.f}; // legacy packet field; color sampling ignores it
-    Steering steering{};
 };
 class ConfigLatch {
 public:

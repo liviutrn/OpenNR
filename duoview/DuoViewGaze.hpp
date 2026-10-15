@@ -18,6 +18,24 @@ struct UV {
     float u{.5f}, v{.5f};
 };
 
+// A mapped gaze coordinate keeps the sensor's original host-arrival time.
+// Replaying this value on later frames must never make an old sample fresh.
+struct GazeSample {
+    std::optional<UV> uv{};
+    uint64_t host_arrival_ms{};
+    bool fresh{}, invalidated{}, timestamped{};
+
+    GazeSample() = default;
+    // Convenient adapter for renderer-independent tests and non-CAPI callers:
+    // a provided value represents a new sample arriving on this frame.
+    GazeSample(std::optional<UV> value) : uv(value), fresh(value.has_value()) {}
+    GazeSample(UV value) : uv(value), fresh(true) {}
+    GazeSample(std::optional<UV> value,uint64_t arrival,bool is_fresh,
+               bool was_invalidated,bool has_timestamp=true)
+        : uv(value),host_arrival_ms(arrival),fresh(is_fresh),
+          invalidated(was_invalidated),timestamped(has_timestamp) {}
+};
+
 inline std::optional<Ray> optical_ray(Ray ray, const std::array<float, 9>& rotation) {
     for (float x : rotation) if (!std::isfinite(x)) return {};
     // Transpose the orthonormal eye rotation in OpenXR's -Z basis, then return to Mono +Z.
