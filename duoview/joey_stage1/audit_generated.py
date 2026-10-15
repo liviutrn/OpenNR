@@ -68,7 +68,8 @@ def main():
         summary[rel]={"sha256":sha,"bytes":len(data),"lines":len(lines),"anchors":found}
     summary["previous_unreal_projection_consumed"]="ClipToPrevClipOverride_WRITTEN_ONLY_AFTER_UE56_LAYOUT_GATE"
     summary["active_upscaler"]="NOT_OBSERVED"
-    summary["temporal_gate"]="v50 DIAGNOSTIC gaze permits uncorrected history; optional UE5.5 no-history opt-in strictly checked"\n    summary["startup_fallback"]="Incomplete first source pair retries; actual GPU compositor failure is quarantined"
+    summary["temporal_gate"]="v50 DIAGNOSTIC gaze permits uncorrected history; optional UE5.5 no-history opt-in strictly checked"
+    summary["startup_fallback"]="Incomplete first source pair retries; actual GPU compositor failure is quarantined"
     (evidence/"v47-generated-source-audit.json").write_text(
         json.dumps(summary,indent=2)+"\n",encoding="utf-8")
     (evidence/"v47-generated-source-audit.md").write_text(
