@@ -169,7 +169,7 @@ jobs:
           The original Mono callback remains the default when UEVR_STABLE_SOURCE_MASK is unset or off.
           Set UEVR_STABLE_SOURCE_MASK to fixed, step, ramp, or alternating in the target game process environment before launching the game; setting it only in an injector process after the game starts has no effect.
           Optional Mono-path summaries: set UEVR_DUOVIEW_DIAGNOSTICS=1.
-          Opt-in observations are exported to %LOCALAPPDATA%\UEVR\DuoViewRestart\stable-source-mask-<UTC>.jsonl, capped at 4,096 frame records per session.
+          With UEVR_DUOVIEW_DIAGNOSTICS=1 or an opted-in control, existing logger output includes at most one aggregate summary per elapsed second; no per-frame export is produced.
           This uses one stable full-frustum Mono source for both eye outputs and does not save scene-render work.
           It is not DuoView, does not create a second engine view, and does not establish temporal stability.
           The first opted-in frame compiles/prepares the shader and is a warmup frame that falls back to Mono.

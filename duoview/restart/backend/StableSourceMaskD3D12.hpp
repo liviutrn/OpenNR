@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <chrono>
@@ -8,17 +9,15 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
-#include <filesystem>
-#include <fstream>
-#include <iomanip>
-#include <mutex>
+#include <cstdio>
 #include <optional>
-#include <sstream>
 #include <string_view>
-#include <thread>
-#include <ctime>
 #include <utility>
 
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
 #include <d3d12.h>
 #include <d3dcompiler.h>
 #include <dxgi1_6.h>
@@ -45,9 +44,13 @@ inline constexpr float peripheral_sample_scale = 4.0f;
 
 inline Mode requested_mode() noexcept {
     static const Mode mode = [] {
-        const char* raw = std::getenv("UEVR_STABLE_SOURCE_MASK");
-        if (raw == nullptr || *raw == '\0' || std::strcmp(raw, "off") == 0) { return Mode::disabled; }
-        const std::string_view value{raw};
+        char raw[64]{};
+        const auto length = GetEnvironmentVariableA("UEVR_STABLE_SOURCE_MASK", raw,
+            static_cast<DWORD>(sizeof(raw)));
+        if (length == 0) { return Mode::disabled; }
+        if (length >= static_cast<DWORD>(sizeof(raw))) { return Mode::invalid; }
+        if (raw[0] == '\0' || std::strcmp(raw, "off") == 0) { return Mode::disabled; }
+        const std::string_view value{raw, length};
         if (value == "fixed") { return Mode::fixed; }
         if (value == "step") { return Mode::step; }
         if (value == "ramp") { return Mode::ramp; }
@@ -59,8 +62,10 @@ inline Mode requested_mode() noexcept {
 
 inline bool diagnostics_enabled() noexcept {
     static const bool enabled = [] {
-        const char* raw = std::getenv("UEVR_DUOVIEW_DIAGNOSTICS");
-        return raw != nullptr && std::strcmp(raw, "1") == 0;
+        char raw[16]{};
+        const auto length = GetEnvironmentVariableA("UEVR_DUOVIEW_DIAGNOSTICS", raw,
+            static_cast<DWORD>(sizeof(raw)));
+        return length == 1 && raw[0] == '1';
     }();
     return enabled;
 }
@@ -501,174 +506,6 @@ inline StableSourceMask& instance() {
     return *control;
 }
 
-inline ObservationRing<256>& observations() {
-    static ObservationRing<256> ring;
-    return ring;
-}
-
-inline const char* bool_name(bool value) noexcept { return value ? "true" : "false"; }
-inline const char* effective_path_name(EffectivePath path) noexcept;
-
-// The render/copy thread only pushes a fixed-size record and starts this
-// consumer once on an explicitly opted-in diagnostic path. File-system work,
-// formatting, and flushes remain on the background thread. The file and its
-// number of records are bounded; after the limit, the consumer keeps draining
-// the ring and counts omitted records so the producer never blocks on storage.
-class ObservationExporter {
-public:
-    ObservationExporter() = default;
-    ObservationExporter(const ObservationExporter&) = delete;
-    ObservationExporter& operator=(const ObservationExporter&) = delete;
-
-    ~ObservationExporter() {
-        m_stop.store(true, std::memory_order_release);
-        if (m_worker.joinable()) { m_worker.join(); }
-    }
-
-    void start_once() noexcept {
-        bool expected = false;
-        if (!m_start_attempted.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) { return; }
-        try {
-            m_status.store(1, std::memory_order_release);
-            m_worker = std::thread([this] { run(); });
-        } catch (...) {
-            m_status.store(2, std::memory_order_release);
-        }
-    }
-
-    const char* status_name() const noexcept {
-        switch (m_status.load(std::memory_order_acquire)) {
-        case 0: return "not_started";
-        case 1: return "running";
-        case 2: return "unavailable";
-        case 3: return "record_limit_reached";
-        }
-        return "unknown";
-    }
-
-    uint64_t omitted_records() const noexcept { return m_omitted.load(std::memory_order_relaxed); }
-
-private:
-    static constexpr uint64_t maximum_records = 4096;
-
-    static std::filesystem::path output_path() {
-        const auto* local_app_data = _wgetenv(L"LOCALAPPDATA");
-        if (local_app_data == nullptr || *local_app_data == L'\0') { return {}; }
-        const std::filesystem::path directory = std::filesystem::path{local_app_data} / L"UEVR" / L"DuoViewRestart";
-        std::error_code error;
-        std::filesystem::create_directories(directory, error);
-        if (error) { return {}; }
-
-        const auto now = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
-        std::tm utc{};
-        if (gmtime_s(&utc, &now) != 0) { return {}; }
-        std::wostringstream filename;
-        filename << L"stable-source-mask-" << std::put_time(&utc, L"%Y%m%dT%H%M%SZ") << L".jsonl";
-        return directory / filename.str();
-    }
-
-    static void write_session_start(std::ofstream& output) {
-        output << "{\"event\":\"session_start\",\"schema_version\":1"
-            << ",\"baseline_commit\":\"64432d0442066715fa442660a0848cf4963640b0\""
-            << ",\"backend_commit\":\"5ac7edc207866569334175e4ed8a7517971547f6\""
-            << ",\"sdk_commit\":\"3cffbc82429b6165ceec2714f0f0d9ae48f55596\""
-            << ",\"frontend_commit\":\"60be4b0f9a646109fd9fdf448bacd41477234091\""
-            << ",\"control\":\"single_stable_mono_source_moving_mask_no_scene_render_savings\"}\n";
-    }
-
-    static void write_record(std::ofstream& output, const FrameObservation& record,
-        uint64_t ring_dropped, uint64_t omitted) {
-        output << "{\"event\":\"copy_observation\",\"copy_frame_counter\":" << record.producer_frame
-            << ",\"source_generation_observed\":" << bool_name(record.source_generation_observed)
-            << ",\"projection_frame\":" << record.projection_frame
-            << ",\"projection_frame_observed\":" << bool_name(record.projection_frame_observed)
-            << ",\"gaze_pose_observed\":" << bool_name(record.gaze_pose_observed)
-            << ",\"mask_frame\":" << record.mask_frame
-            << ",\"requested_method\":" << record.requested_method
-            << ",\"effective_method\":" << record.effective_method
-            << ",\"requested_control_mode\":" << static_cast<unsigned int>(record.requested_control_mode)
-            << ",\"stable_mask_requested\":" << bool_name(record.stable_mask_requested)
-            << ",\"observed_copy_path\":\"" << effective_path_name(record.observed_path) << "\""
-            << ",\"fallback_reason\":\"" << reason_name(record.fallback) << "\""
-            << ",\"submission_failure\":\"" << reason_name(record.submission_failure) << "\""
-            << ",\"control_command_recorded\":" << bool_name(record.control_command_recorded)
-            << ",\"mono_copy_command_recorded\":" << bool_name(record.mono_copy_command_recorded)
-            << ",\"copy_api_returned_successfully\":" << bool_name(record.copy_api_returned_successfully)
-            << ",\"copy_submission_accepted\":" << bool_name(record.copy_submission_accepted)
-            << ",\"source_width\":" << record.source_width << ",\"source_height\":" << record.source_height
-            << ",\"destination_width\":" << record.destination_width
-            << ",\"destination_height\":" << record.destination_height
-            << ",\"ring_dropped_records\":" << ring_dropped
-            << ",\"export_limit_omitted_records\":" << omitted << "}\n";
-    }
-
-    void run() noexcept {
-        std::ofstream output;
-        try {
-            const auto path = output_path();
-            if (path.empty()) { m_status.store(2, std::memory_order_release); }
-            else {
-                output.open(path, std::ios::out | std::ios::trunc);
-                if (!output) { m_status.store(2, std::memory_order_release); }
-                else { write_session_start(output); output.flush(); }
-            }
-        } catch (...) { m_status.store(2, std::memory_order_release); }
-
-        uint64_t written = 0;
-        uint64_t omitted = 0;
-        uint64_t since_flush = 0;
-        auto last_flush = std::chrono::steady_clock::now();
-        for (;;) {
-            FrameObservation record{};
-            bool drained_any = false;
-            while (observations().try_pop(record)) {
-                drained_any = true;
-                if (!output.is_open() || !output || written >= maximum_records) { ++omitted; continue; }
-                write_record(output, record, observations().dropped(), omitted);
-                ++written;
-                ++since_flush;
-                if (since_flush >= 16) {
-                    output.flush();
-                    since_flush = 0;
-                    last_flush = std::chrono::steady_clock::now();
-                }
-            }
-            m_omitted.store(omitted, std::memory_order_relaxed);
-            if (written >= maximum_records && m_status.load(std::memory_order_relaxed) == 1) {
-                m_status.store(3, std::memory_order_release);
-            }
-            const auto now = std::chrono::steady_clock::now();
-            if (output.is_open() && output && since_flush != 0 && now - last_flush >= std::chrono::seconds{1}) {
-                output.flush();
-                since_flush = 0;
-                last_flush = now;
-            }
-            if (m_stop.load(std::memory_order_acquire)) {
-                if (!drained_any) { break; }
-                continue;
-            }
-            std::this_thread::sleep_for(std::chrono::milliseconds{20});
-        }
-        if (output.is_open() && output) {
-            output << "{\"event\":\"session_end\",\"records_written\":" << written
-                << ",\"export_limit_omitted_records\":" << omitted
-                << ",\"ring_dropped_records\":" << observations().dropped() << "}\n";
-            output.flush();
-        }
-    }
-
-    std::atomic<bool> m_start_attempted{};
-    std::atomic<bool> m_stop{};
-    std::atomic<int> m_status{};
-    std::atomic<uint64_t> m_omitted{};
-    std::thread m_worker;
-};
-
-inline ObservationExporter& exporter() {
-    static ObservationExporter instance;
-    return instance;
-}
-
 inline const char* effective_path_name(EffectivePath path) noexcept {
     switch (path) {
     case EffectivePath::unknown: return "unknown";
@@ -680,38 +517,98 @@ inline const char* effective_path_name(EffectivePath path) noexcept {
 }
 
 inline void record_observation(const FrameObservation& record, Mode mode) {
-    auto& ring = observations();
-    exporter().start_once();
-    ring.try_push(record);
-    static uint64_t last_log_frame = 0;
+    constexpr auto reason_count = static_cast<std::size_t>(FallbackReason::independent_view_state_unproven) + 1;
+    static std::atomic_flag reporter_busy = ATOMIC_FLAG_INIT;
+    static std::atomic<uint64_t> concurrent_observations_dropped{};
+    if (reporter_busy.test_and_set(std::memory_order_acquire)) {
+        concurrent_observations_dropped.fetch_add(1, std::memory_order_relaxed);
+        return;
+    }
+    struct ReporterRelease {
+        std::atomic_flag& flag;
+        ~ReporterRelease() { flag.clear(std::memory_order_release); }
+    } release{reporter_busy};
+
     static bool has_logged = false;
-    static EffectivePath last_path = EffectivePath::unknown;
-    static FallbackReason last_reason = FallbackReason::none;
-    static FallbackReason last_submission_failure = FallbackReason::none;
-    const bool changed = record.observed_path != last_path || record.fallback != last_reason ||
-        record.submission_failure != last_submission_failure;
-    const bool frame_went_backwards = has_logged && record.producer_frame < last_log_frame;
-    if (!changed && !frame_went_backwards && record.producer_frame - last_log_frame < 120) { return; }
-    last_log_frame = record.producer_frame;
+    static std::chrono::steady_clock::time_point last_log_time{};
+    static uint64_t window_observations = 0;
+    static std::array<uint64_t, reason_count> fallback_counts{};
+    static std::array<uint64_t, reason_count> submission_failure_counts{};
+    static std::array<uint64_t, 4> path_counts{};
+    static uint64_t logger_failures = 0;
+    const auto reason_index = static_cast<std::size_t>(record.fallback);
+    const auto submission_index = static_cast<std::size_t>(record.submission_failure);
+    const auto path_index = static_cast<std::size_t>(record.observed_path);
+    if (reason_index < fallback_counts.size()) { ++fallback_counts[reason_index]; }
+    if (submission_index < submission_failure_counts.size()) { ++submission_failure_counts[submission_index]; }
+    if (path_index < path_counts.size()) { ++path_counts[path_index]; }
+    ++window_observations;
+
+    const auto now = std::chrono::steady_clock::now();
+    if (has_logged && now - last_log_time < std::chrono::seconds{1}) { return; }
+
+    auto format_reason_counts = [](const auto& counts, char* output, std::size_t capacity) {
+        std::size_t used = 0;
+        if (capacity != 0) { output[0] = '\0'; }
+        for (std::size_t i = 1; i < counts.size() && used + 1 < capacity; ++i) {
+            if (counts[i] == 0) { continue; }
+            const auto reason = reason_name(static_cast<FallbackReason>(i));
+            const int written = std::snprintf(output + used, capacity - used, "%s%s:%llu",
+                used == 0 ? "" : ",", reason, static_cast<unsigned long long>(counts[i]));
+            if (written < 0) { break; }
+            used = (std::min)(capacity - 1, used + static_cast<std::size_t>(written));
+        }
+        if (used == 0 && capacity != 0) { std::snprintf(output, capacity, "none"); }
+    };
+    auto format_path_counts = [](char* output, std::size_t capacity) {
+        std::size_t used = 0;
+        if (capacity != 0) { output[0] = '\0'; }
+        constexpr const char* names[]{"unknown", "mono_copy", "stable_source_moving_mask", "identical_two_views"};
+        for (std::size_t i = 0; i < path_counts.size() && used + 1 < capacity; ++i) {
+            if (path_counts[i] == 0) { continue; }
+            const int written = std::snprintf(output + used, capacity - used, "%s%s:%llu",
+                used == 0 ? "" : ",", names[i], static_cast<unsigned long long>(path_counts[i]));
+            if (written < 0) { break; }
+            used = (std::min)(capacity - 1, used + static_cast<std::size_t>(written));
+        }
+        if (used == 0 && capacity != 0) { std::snprintf(output, capacity, "none"); }
+    };
+    char fallback_summary[512]{};
+    char submission_summary[512]{};
+    char path_summary[256]{};
+    format_reason_counts(fallback_counts, fallback_summary, sizeof(fallback_summary));
+    format_reason_counts(submission_failure_counts, submission_summary, sizeof(submission_summary));
+    format_path_counts(path_summary, sizeof(path_summary));
+    const auto window_count = window_observations;
+    const auto concurrent_drops = concurrent_observations_dropped.exchange(0, std::memory_order_relaxed);
+    last_log_time = now;
     has_logged = true;
-    last_path = record.observed_path;
-    last_reason = record.fallback;
-    last_submission_failure = record.submission_failure;
-    spdlog::info(
-        "[DuoViewRestart] copy_frame_counter={} source_generation_observed={} projection_frame={} projection_observed={} gaze_pose_observed={} mask_frame={} requested_method={} effective_method={} requested_control={} observed_copy_path={} control_command_recorded={} mono_copy_command_recorded={} copy_api_returned_successfully={} copy_submission_accepted={} fallback_reason={} submission_failure={} source={}x{} destination={}x{} diagnostics_ring_dropped={} diagnostic_export_status={} diagnostic_export_omitted={}",
-        record.producer_frame,
-        record.source_generation_observed ? "true" : "false",
-        record.projection_frame,
-        record.projection_frame_observed ? "true" : "false",
-        record.gaze_pose_observed ? "true" : "false", record.mask_frame,
-        record.requested_method, record.effective_method, mode_name(mode),
-        effective_path_name(record.observed_path), record.control_command_recorded,
-        record.mono_copy_command_recorded, record.copy_api_returned_successfully,
-        record.copy_submission_accepted,
-        reason_name(record.fallback), reason_name(record.submission_failure),
-        record.source_width, record.source_height,
-        record.destination_width, record.destination_height, ring.dropped(),
-        exporter().status_name(), exporter().omitted_records());
+    window_observations = 0;
+    fallback_counts.fill(0);
+    submission_failure_counts.fill(0);
+    path_counts.fill(0);
+
+    try {
+        spdlog::info(
+            "[DuoViewRestart] copy_frame_counter={} source_generation_observed={} projection_frame={} projection_observed={} gaze_pose_observed={} mask_frame={} requested_method={} effective_method={} requested_control={} observed_copy_path={} control_command_recorded={} mono_copy_command_recorded={} copy_api_returned_successfully={} copy_submission_accepted={} fallback_reason={} submission_failure={} source={}x{} destination={}x{} diagnostic_window_observations={} suppressed_observations={} fallback_reason_window_counts={} submission_failure_window_counts={} observed_path_window_counts={} concurrent_observations_dropped={} prior_logger_failures={}",
+            record.producer_frame,
+            record.source_generation_observed ? "true" : "false",
+            record.projection_frame,
+            record.projection_frame_observed ? "true" : "false",
+            record.gaze_pose_observed ? "true" : "false", record.mask_frame,
+            record.requested_method, record.effective_method, mode_name(mode),
+            effective_path_name(record.observed_path), record.control_command_recorded,
+            record.mono_copy_command_recorded, record.copy_api_returned_successfully,
+            record.copy_submission_accepted,
+            reason_name(record.fallback), reason_name(record.submission_failure),
+            record.source_width, record.source_height,
+            record.destination_width, record.destination_height,
+            window_count, window_count > 0 ? window_count - 1 : 0,
+            fallback_summary, submission_summary, path_summary, concurrent_drops, logger_failures);
+        logger_failures = 0;
+    } catch (...) {
+        ++logger_failures;
+    }
 }
 
 } // namespace uevr::duoview_restart::dx12
