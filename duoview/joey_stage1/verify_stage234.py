@@ -137,9 +137,9 @@ def main():
                "scene_view_init_options_offset"):
   if token not in layout:
    raise RuntimeError("UE5.6 SceneView ABI layout proof is incomplete: "+token)
- if "vr->duoview_state().view_transform" not in hook or (
-     "vr->duoview_state().temporal_contract" not in hook or
-     "apply_clip_to_prev_clip_override" not in hook):
+ if "vr->duoview_state().view_transform" not in hooked or (
+     "vr->duoview_state().temporal_contract" not in hooked or
+     "apply_clip_to_prev_clip_override" not in hooked):
   raise RuntimeError("Generated hook does not latch source transforms and apply the UE5.6 bridge")
  sensor=(a.backend/"src/mods/vr/DuoViewPSVR2Gaze.hpp").read_text(encoding="utf-8")
  if "const bool fresh=sequence_.observe(candidate)" not in sensor:
