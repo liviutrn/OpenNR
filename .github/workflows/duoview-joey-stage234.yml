@@ -1,8 +1,8 @@
-name: DuoView v47 UE5.5 Fixed-Crop Safety — CANDIDATE
-run-name: DuoView v47 UE5.5 fixed-crop safety Windows audit (${{ github.run_number }})
+name: DuoView v48 UE5.5 Fresh Fovea No-History — EXPERIMENTAL
+run-name: DuoView v48 fresh-fovea no-history Windows audit (${{ github.run_number }})
 on:
   push:
-    branches: [experiments/duoview-world-locked-temporal-v47]
+    branches: [experiments/duoview-fresh-fovea-v48]
     paths:
       - '.github/workflows/duoview-joey-stage234.yml'
       - 'duoview/joey_stage1/**'
@@ -95,11 +95,11 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Native low-res bootstrap source patch failed' }
           python workspace/duoview/joey_stage1/verify_stage234.py backend frontend evidence
           if ($LASTEXITCODE -ne 0) { throw 'Build33 restoration + native bootstrap violated SDK/source boundaries' }
-      - name: Verify v47 UE5.5 fixed-crop and quarantine policy
+      - name: Verify v48 typed fovea history disable and quarantine policy
         shell: pwsh
         run: |
-          python workspace/duoview/joey_stage1/verify_v47_target_policy.py backend evidence
-          if ($LASTEXITCODE -ne 0) { throw 'v47 UE5.5 fixed-crop or quarantine guard failed' }
+          python workspace/duoview/joey_stage1/verify_v48_fresh_fovea.py backend evidence
+          if ($LASTEXITCODE -ne 0) { throw 'v48 foveal no-history or quarantine guard failed' }
       - name: Preserve real generated Joey hook excerpts for independent audit
         shell: pwsh
         run: |
@@ -178,51 +178,50 @@ jobs:
           Copy-Item evidence/duoview-stage1-edits.json package/
           Copy-Item evidence/duoview-stage1-source-hashes.json package/
           Copy-Item evidence/duoview-stage234-hashes.json package/
-          Copy-Item evidence/duoview-v47-target-policy.json package/
+          Copy-Item evidence/duoview-v48-fresh-fovea-policy.json package/
           @'
-          DUOVIEW v47 SAFETY CANDIDATE — STALKER 2 UE 5.5.4 / DX12 / OpenXR
-          
-          This build addresses the reported eye-gaze fallback loop. On UE versions below 5.6, eye-tracked moving crop is disabled before a DuoView frame is frozen. DuoView remains on its fixed-center crop and does not write the unverified ClipToPrevClipOverride memory field.
-          
-          UE 5.5 documents the ClipToPrevClipOverride API, but the pinned SDK does not provide a validated UE 5.5 FSceneView byte offset for it. The only included SceneView field mirror is the UE 5.6.1 layout. v47 follows the Astra handoff: no guessed UE 5.5 offset and no edits to the restricted UESDK.
-          
-          For this STALKER 2 UE 5.5.4 target, this is a safe fixed-crop fallback. It does not enable eye-tracked moving crop on UE 5.5.4. That requires a separately verified engine layout and a headset test.
-          
-          The existing UE5.6 temporal bridge remains gated by its version/layout/runtime checks. Its only mirrored FSceneView layout is UE5.6.1; later versions and headset temporal consumption have not been validated. CI validates compilation, unit/contract tests, source identity, package architecture and ZIP hashes. CI does NOT prove that Unreal TSR consumes the override or that the headset image is stable.
-          
-          Modes 0 and 5 remain original Joey behavior. Experimental rendering mode ID6 is scoped to STALKER 2 DX12 OpenXR.
-          The crop and view-source controls remain available. The PSVR2 Toolkit CAPI is not bundled; unavailable or invalid gaze uses the center crop.
-          DuoView GPU faults quarantine ID6 for the remainder of the UEVR session. Reselecting ID6 will not clear a fault quarantine; restart UEVR/game only after reviewing the logs.
-          Fault-frame emergency copy can still show incomplete source pixels. No GPU hang can be ruled out by source/CI tests.
-          
-          Starting foundation: Build37 native0 low-scale bootstrap -> ID6 -> restore OpenXR scale after accepted compositions.
-          Backend: exact Joey 5ac7edc207866569334175e4ed8a7517971547f6 plus guarded DuoView modifications.
-          Restricted SDK unchanged: joeyhodge/UESDK 3cffbc82429b6165ceec2714f0f0d9ae48f55596.
-          Matching frontend source: 60be4b0f9a646109fd9fdf448bacd41477234091 plus rendering mode ID6.
-          
-          NEVER overwrite the 30-minute-proven Build3 install.
+          DUOVIEW v48 FRESH FOVEA — EXPERIMENTAL STALKER 2 / UE 5.5.4 / DX12 / SteamVR OpenXR
+
+          PURPOSE: test the new hypothesis that Unreal's reuse of historical foveal pixels causes severe jumps when the eye-tracked crop moves.
+
+          Fresh fovea: in experimental mode ID6 only, the original UE5.5 FSceneViewInitOptions scene_view_state pointer is temporarily set to null FOR THE FOVEAL VIEW BEFORE CONSTRUCTION, then restored immediately afterwards. Unreal therefore receives a foveal view without its previous persistent FSceneViewState on each producer frame. Any crop relocation automatically starts fresh, and the stationary crop ALSO starts fresh every frame. The peripheral view's SceneViewState remains unchanged.
+
+          The frozen gaze crop is rendered with an off-axis Unreal projection BEFORE the compositor maps pixels back to the Mono full view. There is no extra final-color displacement. Gaze can move instantly; the existing one-pixel fixation guard remains but no laggy smoothing.
+
+          This test deliberately sacrifices foveal temporal accumulation and may cause noise, aliasing, shimmering, reduced Lumen/reflection stability or other differences, even when the crop is not moving. Not all engine temporal effects necessarily use the scene view state alone. It is NOT known whether UE5.5 TSR, Lumen, and other history consumers fully stop reusing foveal data. Headset validation is required.
+
+          Target guard: STALKER 2, UE5.5-style typed FSceneViewInitOptions (UE5.4/5.5) under the matching Joey SDK, main view family, specified high-density source view only. A frame is rejected if the required no-history override was not actually applied. The source does not write the unverified ClipToPrevClipOverride memory field on UE 5.5.4. The old UE5.6 temporal writer remains separately version gated.
+
+          Original Joey modes 0/5 unchanged; isolated DuoView ID6. No NGX hook bundled.
+          The GPU fault quarantine is session latched. Reselecting ID6 will not clear a fault quarantine. Restart UEVR/game before retrying after any failure.
+
+          Source: Joey UEVR 5ac7edc207866569334175e4ed8a7517971547f6, restricted UESDK 3cffbc82429b6165ceec2714f0f0d9ae48f55596 unchanged, frontend 60be4b0f9a646109fd9fdf448bacd41477234091 with rendering method ID6.
+
+          CI validates exact original sources, pinned tests, independent geometric and GPU WARP tests, Joey compatibility, backend/frontend build, and PE/ZIP/hash checks. A passing CI run does NOT prove in-headset stability, no regressions in UE5.5 runtime history, or absence of GPU hangs.
+
+          USE SEPARATE TEST FOLDER. NEVER OVERWRITE THE 30-MINUTE-PROVEN JOEY BUILD 3.
           '@ | Set-Content package/READ_FIRST.txt
           $needed=@('UEVRBackend.dll','UEVRPluginNullifier.dll','LuaVR.dll','READ_FIRST.txt','duoview-stage234-hashes.json','exact-baseline-source.json')
           foreach ($name in $needed) { if (!(Test-Path ("package/" + $name))) { throw "Missing critical package file: $name" } }
           if (@(Get-ChildItem package -File -Filter *.exe).Count -lt 1) { throw "Missing Joey frontend executable" }
           if ((Get-Content package/READ_FIRST.txt -Raw) -notmatch 'Reselecting ID6 will not clear a fault quarantine') { throw 'Stale quarantine instructions' }
           Get-ChildItem package -Recurse -File | Get-FileHash -Algorithm SHA256 | ConvertTo-Json | Set-Content evidence/package-sha256.json
-          $zip="Joey-DuoView-FixedCropSafety-v47-${{ github.run_number }}.zip"
+          $zip="Joey-DuoView-FreshFovea-v48-${{ github.run_number }}.zip"
           Compress-Archive -Path package/* -DestinationPath $zip -Force
           (Get-FileHash $zip -Algorithm SHA256).Hash | Set-Content "$zip.sha256"
       - name: Independently verify final candidate ZIP, PE machine IDs and unpacked hashes
         shell: pwsh
         run: |
-          $zip="Joey-DuoView-FixedCropSafety-v47-${{ github.run_number }}.zip"
-          python workspace/duoview/joey_stage1/audit_v47_package.py package $zip evidence
-          if ($LASTEXITCODE -ne 0) { throw 'v47 package provenance, PE or ZIP audit failed' }
+          $zip="Joey-DuoView-FreshFovea-v48-${{ github.run_number }}.zip"
+          python workspace/duoview/joey_stage1/audit_v48_package.py package $zip evidence
+          if ($LASTEXITCODE -ne 0) { throw 'v48 package provenance, PE or ZIP audit failed' }
       - uses: actions/upload-artifact@v4
         if: success()
         with:
-          name: Joey-DuoView-FixedCropSafety-v47-${{ github.run_number }}
+          name: Joey-DuoView-FreshFovea-v48-${{ github.run_number }}
           path: |
-            Joey-DuoView-FixedCropSafety-v47-*.zip
-            Joey-DuoView-FixedCropSafety-v47-*.zip.sha256
+            Joey-DuoView-FreshFovea-v48-*.zip
+            Joey-DuoView-FreshFovea-v48-*.zip.sha256
           if-no-files-found: error
           retention-days: 90
       - name: Record public source and dependency provenance
@@ -237,6 +236,6 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: Joey-DuoView-v47-Evidence-${{ github.run_number }}
+          name: Joey-DuoView-v48-Evidence-${{ github.run_number }}
           path: evidence/
           if-no-files-found: error
