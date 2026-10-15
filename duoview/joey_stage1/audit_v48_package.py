@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Independent post-package verification for the v48 fresh-fovea temporal experiment."""
+"""Independent post-package PE/ZIP audit, v50 optional fresh-fovea with conservative startup."""
 from pathlib import Path
 import hashlib
 import json
@@ -46,9 +46,9 @@ def main():
         check(machine == 0x8664, "Non-x64 binary: " + name)
 
     readme = (package / "READ_FIRST.txt").read_text(encoding="utf-8-sig")
-    check("v48" in readme and "UE 5.5.4" in readme and
+    check("v50" in readme and "UE 5.5.4" in readme and
           "fresh fovea" in readme.lower(),
-          "Read-first must identify the UE5.5.4 fresh-fovea experiment")
+          "Read-first must identify UE5.5.4 optional fresh-fovea experiment")
     check("does not write the unverified ClipToPrevClipOverride memory field" in readme,
           "Read-first must clearly state the UE5.5 raw-write prohibition")
     check("Reselecting ID6 will not clear a fault quarantine" in readme and
@@ -58,10 +58,11 @@ def main():
     policy = json.loads((package / "duoview-v48-fresh-fovea-policy.json").read_text(encoding="utf-8"))
     check(policy.get("target") == "STALKER 2, UE5.5.4" and
           policy.get("eye_tracking_requested") is True and
-          policy.get("foveal_state_cleared_every_producer_frame") is True and
+          policy.get("foveal_state_cleared_every_producer_frame") is False and
+          policy.get("foveal_state_cleared_when_opted_in") is True and
           policy.get("peripheral_state_unchanged") is True and
           policy.get("ue55_raw_sceneview_offsets_written") is False,
-          "Packaged v48 policy does not match no-history fovea experiment")
+          "Packaged v50 policy misrepresents optional startup no-history behavior")
     with zipfile.ZipFile(zip_path) as archive:
         zip_entries = {}
         for item in archive.infolist():
@@ -85,17 +86,18 @@ def main():
         "zip_file_count": len(entries),
         "files": entries,
         "ue55_gaze_crop_enabled": True,
-        "fovea_no_persistent_sceneview_state": True,
+        "fovea_no_persistent_sceneview_state": False,
+        "fovea_no_history_available_as_opt_in": True,
         "unknown_ue55_sceneview_field_written": False,
         "headset_validated": False,
     }
     evidence.mkdir(parents=True, exist_ok=True)
     (evidence / "v48-package-audit.json").write_text(
         json.dumps(summary, indent=2) + "\n", encoding="utf-8")
-    print("v48 x64 PE, ZIP round-trip, source provenance, and UE5.5 fresh-fovea audit: PASS")
+    print("v50 x64 PE, ZIP round-trip, source provenance, and UE5.5 optional fresh-fovea audit: PASS")
     print("ZIP SHA256:", archive_sha)
     print("ZIP FILE COUNT:", len(entries))
-    print("UE5.5 eye-tracked no-history fovea requested; headset behavior unverified")
+    print("UE5.5 diagnostic moving gaze without verified UE temporal history correction; headset behavior unverified")
 
 if __name__ == "__main__":
     main()
