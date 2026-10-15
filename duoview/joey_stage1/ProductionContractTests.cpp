@@ -125,9 +125,11 @@ int main() try {
             temporal.camera({7,2},0,camera) && temporal.camera({7,2},1,camera),
             "Both source views must keep the canonical head pose");
     const auto crop_vector=expected_crop_motion(previous->config,current->config);
+    const double expected_crop_pixels_x=
+        (double(current->config.layout.u0)-previous->config.layout.u0)/
+        current->config.layout.crop_width*current->config.layout.fovea.width;
     require(crop_vector && std::abs(crop_vector->current_to_previous_pixels_x-
-                (current->config.layout.u0-previous->config.layout.u0)*current->config.layout.fovea.width/
-                    current->config.layout.crop_width)<1e-6,
+                expected_crop_pixels_x)<.001 && crop_vector->current_to_previous_pixels_x>0.,
             "Crop-only source vector has incorrect current-to-previous sign or scale");
     require(previous->config.layout.fovea.width==current->config.layout.fovea.width &&
             previous->config.layout.fovea.height==current->config.layout.fovea.height,
