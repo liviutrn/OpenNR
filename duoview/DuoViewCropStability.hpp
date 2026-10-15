@@ -47,8 +47,8 @@ public:
                 candidate.v=current_.v+(sample.uv->v-current_.v)*alpha;
             }
             const bool inside_fixation_guard=previous_valid && s.stabilize_crop && w && h &&
-                std::abs(candidate.u-current_.u)*w<=1.f &&
-                std::abs(candidate.v-current_.v)*h<=1.f;
+                std::abs(sample.uv->u-current_.u)*w<=1.f &&
+                std::abs(sample.uv->v-current_.v)*h<=1.f;
             if (!inside_fixation_guard) current_=candidate;
             have_=true;
             last_valid_=arrival;
