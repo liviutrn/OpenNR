@@ -420,6 +420,65 @@ int main() try {
     // Peripheral source must not be marked as the foveal no-history view.
     require(!fresh.mark_fovea_history_disabled({80,5},1),
             "v48 attempted to invalidate the peripheral temporal history");
+    // v50 regression: a complete two-view UE5.5 frame without verified
+    // previous-clip overrides MUST be able to compose in explicitly marked
+    // uncorrected-gaze diagnostic mode. v48 wrongly quarantined ID6 before
+    // even reaching the compositor. Strict/default state policy stays separate.
+    State recover;
+    Settings recovery_settings{};
+    recovery_settings.eye_tracked=true;
+    recovery_settings.allow_uncorrected_gaze_history=true;
+    recovery_settings.fresh_fovea_no_history=false;
+    recovery_settings.crop_width=recovery_settings.crop_height=.50f;
+    require(recover.configure(recovery_settings),
+            "v50 diagnostic activation configuration rejected");
+    auto recovery_frame=[&](FrameKey k, UV gaze) {
+        auto f=recover.begin(k,3000,3000,p,
+            [&]()->std::optional<UV>{ return gaze; },4000+k.frame*11);
+        require(f.has_value(),"v50 producer frame missing");
+        for(unsigned view=0;view<2;++view) {
+            require(recover.rectangle(k,view) && recover.projection(k,view) &&
+                    recover.camera(k,view,camera) && recover.scene(k,view,100+view),
+                    "v50 two-view producer evidence incomplete");
+            require(recover.view_transform(k,view,{0.,0.,0.},source_rotation),
+                    "v50 current UE view transforms incomplete");
+        }
+        require(recover.family(k,true,2),"v50 dual-view family not accepted");
+        return recover.consume(k);
+    };
+    require(recovery_frame({91,1},UV{.50f,.50f}).has_value(),
+            "v50 cold-start DuoView should compose without no-history override");
+    require(recovery_frame({91,2},UV{.68f,.50f}).has_value(),
+            "v50 moving-gaze diagnostic should not require UE5.6 temporal override on UE5.5");
+    require(recover.accept_composite({91,2}),
+            "v50 successful two-view copy must remain externally acknowledgeable");
+    // Recovery from a missing source frame must not permanently retire the
+    // generation: the next complete frame can provide a continuity baseline.
+    require(!recovery_frame({91,4},UV{.68f,.50f}).has_value(),
+            "v50 skipped source frame should temporarily block history continuity");
+    require(recovery_frame({91,5},UV{.68f,.50f}).has_value(),
+            "v50 skipped producer frame should recover on adjacent next frame");
+    State strict_start;
+    Settings strict_settings=recovery_settings;
+    strict_settings.allow_uncorrected_gaze_history=false;
+    require(strict_start.configure(strict_settings),"v50 strict policy invalid");
+    auto strict_pair=[&](FrameKey k) {
+        auto f=strict_start.begin(k,3000,3000,p,
+            []()->std::optional<UV>{return UV{.5f,.5f};},5000+k.frame*11);
+        require(f.has_value(),"v50 strict producer missing");
+        for(unsigned eye=0;eye<2;++eye) {
+            require(strict_start.rectangle(k,eye) && strict_start.projection(k,eye) &&
+                    strict_start.camera(k,eye,camera) && strict_start.scene(k,eye,100+eye) &&
+                    strict_start.view_transform(k,eye,{0.,0.,0.},source_rotation),
+                    "v50 strict pair incomplete");
+        }
+        require(strict_start.family(k,true,2),"v50 strict main family missing");
+        return strict_start.consume(k);
+    };
+    require(strict_pair({92,1}).has_value(),
+            "v50 strict first frame should not need previous history");
+    require(!strict_pair({92,2}).has_value(),
+            "v50 strict temporal gate incorrectly bypassed without explicit diagnostic opt-in");
     std::cout<<"Pinned Joey DuoView geometry, instant gaze, typed projection, history audit contract PASS\n";
     return 0;
 } catch(const std::exception& e) {
