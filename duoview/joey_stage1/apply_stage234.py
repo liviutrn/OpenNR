@@ -127,13 +127,13 @@ def main():
                     m_duo_gaze->draw("Eye tracking");
                 } else {
                     ImGui::TextUnformatted("Eye tracking unavailable on this UE layout");
-                    ImGui::TextWrapped("This build only has a validated previous-clip layout for UE5.6. Eye-tracked crop stays off; fixed-crop DuoView remains active.");
+                    ImGui::TextWrapped("Fresh-fovea mode requires the validated UE5.5 typed init options; the frame is rejected if foveal state could not be disabled.");
                 }
                 m_duo_border->draw("Blend border highlight");
                 m_duo_debug_source->draw("Source diagnostic: 0 Blend / 1 Periphery / 2 Fovea");
                 m_duo_fovea_view->draw("Fovea UE source view (0 or 1)");
                 m_duo_stabilize->draw("Fixation noise guard (1 output pixel; no smoothing)");
-                ImGui::TextWrapped("Eye-tracked moving crop requires the guarded UE5.6 ClipToPrevClipOverride layout. On other engine versions, DuoView uses the fixed center crop and does not write the unverified field.");
+                ImGui::TextWrapped("v48 test: foveal FSceneViewState disabled on every UE5.5 source frame; crop changes start with fresh history. Peripheral history remains independent. No smoothing or previous-clip raw writes.");
                 m_duo_history_audit->draw("Diagnostic: projection/history continuity (logs, OFF by default)");
                 if (m_duo_history_audit->value()) {
                     // Bounded UI-only sensor metadata. The device clock cannot be
@@ -225,6 +225,7 @@ void VR::configure_duoview() {
         .guard_fraction=0.f, .smoothing_ms=0.f,
         .independent_shading=m_duo_shading->value(),
         .temporal_audit=m_duo_history_audit->value(),
+        .fresh_fovea_no_history=true, // v48: withhold foveal UE SceneViewState EVERY frame; crop changes always start fresh
         .history_sample_correction=false,
         .history_sample_strength=0.f};
     const auto current=m_duoview.settings();
@@ -237,6 +238,7 @@ void VR::configure_duoview() {
         current.smoothing_ms==candidate.smoothing_ms &&
         current.independent_shading==candidate.independent_shading &&
         current.temporal_audit==candidate.temporal_audit &&
+        current.fresh_fovea_no_history==candidate.fresh_fovea_no_history &&
         current.history_sample_correction==candidate.history_sample_correction &&
         current.history_sample_strength==candidate.history_sample_strength) return;
     if (!m_duoview.configure(candidate))
@@ -494,7 +496,39 @@ void VR::duoview_abort(const char* reason) {
     edit(hook, '''    auto result = g_hook->m_sceneview_data.constructor_hook.unsafe_call<sdk::FSceneView*>(view, init_options, a3, a4);
 
     if (vr->is_native_stereo_fix_enabled()) {''',
-    '''    auto result = g_hook->m_sceneview_data.constructor_hook.unsafe_call<sdk::FSceneView*>(view, init_options, a3, a4);
+    '''    // v48: remove UE's persistent FSceneViewState ONLY from the cropped fovea
+    // BEFORE construction. This is a true no-temporal-history input, not a
+    // cosmetic shift of the already-rendered image. The peripheral source
+    // retains its original state. The typed UE5.4/5.5 options member is
+    // declared and verified by the pinned exact UESDK; no raw offsets used.
+    sdk::FSceneViewStateInterface* duo_saved_fovea_state=nullptr;
+    bool duo_fresh_fovea_applied=false;
+    if (vr->is_duoview_renderer_active() && g_hook->is_in_viewport_client_draw() &&
+        g_hook->m_has_double_precision && is_ue5 && !is_ue_5_6_or_newer() &&
+        init_options_ue5 != nullptr && init_options_view_family != nullptr &&
+        (init_options_original_stereo_pass == EStereoscopicPass::eSSP_PRIMARY ||
+         init_options_original_stereo_pass == EStereoscopicPass::eSSP_SECONDARY)) {
+        const auto rtm=g_hook->get_render_target_manager();
+        const bool main=rtm && init_options_view_family->get_render_target()==rtm->get_view_family_render_target();
+        if (main) {
+            const unsigned index=init_options_original_stereo_pass==EStereoscopicPass::eSSP_PRIMARY ? 0u : 1u;
+            const auto key=vr->duoview_producer_key();
+            if (const auto frozen=vr->duoview_state().snapshot(key);
+                frozen && frozen->config.settings.fresh_fovea_no_history &&
+                index==frozen->config.settings.fovea_view &&
+                init_options_ue5->scene_view_state==init_options_scene_state &&
+                vr->duoview_state().mark_fovea_history_disabled(key,index)) {
+                duo_saved_fovea_state=init_options_ue5->scene_view_state;
+                init_options_ue5->scene_view_state=nullptr;
+                duo_fresh_fovea_applied=true;
+            }
+        }
+    }
+    auto result = g_hook->m_sceneview_data.constructor_hook.unsafe_call<sdk::FSceneView*>(view, init_options, a3, a4);
+    // Restore the caller-owned constructor arguments. The constructed view
+    // already captured the null state; other UE views keep their original state.
+    if (duo_fresh_fovea_applied)
+        init_options_ue5->scene_view_state=duo_saved_fovea_state;
 
     if (vr->is_duoview_renderer_active() && vr->duoview_eye_tracking_enabled() &&
         g_hook->m_has_double_precision && is_ue_5_6_or_newer() &&
@@ -634,7 +668,7 @@ void VR::duoview_abort(const char* reason) {
     if changed[hook].count("duoview_begin_frame()") != 5:
         raise RuntimeError("v47 expected five DuoView frame-start hooks")
     changed[hook]=changed[hook].replace(
-        "duoview_begin_frame()", "duoview_begin_frame(is_ue_5_6_or_newer())")
+        "duoview_begin_frame()", "duoview_begin_frame(true)")
     for name in ("DuoViewGeometry.hpp","DuoViewGaze.hpp","DuoViewCropMotion.hpp","DuoViewPSVR2Gaze.hpp","DuoViewCropStability.hpp","DuoViewHistoryCorrection.hpp","DuoViewFrame.hpp",
                  "DuoViewConfig.hpp","DuoViewState.hpp","DuoViewTemporalMath.hpp","DuoViewUE56Layout.hpp",
                  "DuoViewSceneViewTemporal.hpp","DuoViewD3D12.hpp",
@@ -657,7 +691,7 @@ void VR::duoview_abort(const char* reason) {
         str(root/"src/mods/vr/DuoViewShaderSource.hpp")], check=True)
     for path,text in changed.items():
         (source_root(path)/path).write_text(text,encoding="utf-8",newline="")
-    print("Applied v47 UE5.5-safe fixed-crop fallback, UE-gated gaze bridge, and session-latched fault quarantine.")
+    print("Applied v48 UE5.5 fresh-fovea no-history constructor override and isolated peripheral temporal history.")
 
 if __name__=="__main__":
     main()
