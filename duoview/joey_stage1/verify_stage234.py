@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify exact Stage 2-4 added/edited source and unchanged original SDK."""
+"""Verify exact v46 added/edited source and unchanged original SDK."""
 import argparse, hashlib, json, subprocess
 from pathlib import Path
 
@@ -17,6 +17,8 @@ ADDED_BACKEND = {
  "src/mods/vr/DuoViewHistoryCorrection.hpp",
  "src/mods/vr/DuoViewFrame.hpp", "src/mods/vr/DuoViewConfig.hpp",
  "src/mods/vr/DuoViewState.hpp", "src/mods/vr/DuoViewD3D12.hpp",
+ "src/mods/vr/DuoViewTemporalMath.hpp", "src/mods/vr/DuoViewUE56Layout.hpp",
+ "src/mods/vr/DuoViewSceneViewTemporal.hpp",
  "src/mods/vr/DuoViewMonoCopyD3D12.hpp", "src/mods/vr/DuoViewShaderSource.hpp",
 }
 EDITED_FRONTEND = {"UEVR/RenderingModeOptions.cs", "tests/RenderingModes/Program.cs"}
@@ -116,6 +118,29 @@ def main():
      "result.history_gap" not in state or "stable_projection_history" not in state or
      "!result.history_gate_pass" not in state):
   raise RuntimeError("Unreal's per-view history must be distinct, stable, layout-compatible and gap-gated")
+ if "temporal_bridge_ready" not in state or (
+     "temporal_override_attempted[0]" not in state or
+     "temporal_override_applied[1]" not in state or
+     "same_current_source_transform" not in state):
+  raise RuntimeError("Eye-tracked composition is not fail-closed on the UE temporal bridge")
+ temporal_math=(a.backend/"src/mods/vr/DuoViewTemporalMath.hpp").read_text(encoding="utf-8")
+ layout=(a.backend/"src/mods/vr/DuoViewUE56Layout.hpp").read_text(encoding="utf-8")
+ bridge=(a.backend/"src/mods/vr/DuoViewSceneViewTemporal.hpp").read_text(encoding="utf-8")
+ if "make_clip_to_prev_clip" not in temporal_math or "inverse_current" not in temporal_math:
+  raise RuntimeError("v46 source does not construct the full current-to-previous clip transform")
+ for token in ("ClipToPrevClipOverride", "get_view_family_offset", "0x12a0",
+               "apply_clip_to_prev_clip_override", "readback"):
+  if token not in bridge:
+   raise RuntimeError("UE5.6 temporal bridge validation is incomplete: "+token)
+ for token in ("static_assert(offsetof(SceneView, ClipToPrevClipOverride) == 0x12a0)",
+               "static_assert(sizeof(SceneView) == 0x1330)",
+               "scene_view_init_options_offset"):
+  if token not in layout:
+   raise RuntimeError("UE5.6 SceneView ABI layout proof is incomplete: "+token)
+ if "vr->duoview_state().view_transform" not in hook or (
+     "vr->duoview_state().temporal_contract" not in hook or
+     "apply_clip_to_prev_clip_override" not in hook):
+  raise RuntimeError("Generated hook does not latch source transforms and apply the UE5.6 bridge")
  sensor=(a.backend/"src/mods/vr/DuoViewPSVR2Gaze.hpp").read_text(encoding="utf-8")
  if "const bool fresh=sequence_.observe(candidate)" not in sensor:
   raise RuntimeError("CAPI sample freshness must be local to this reader, not shared notification state")
@@ -163,7 +188,7 @@ def main():
   if json.loads(lock.read_text())!=hashes: raise RuntimeError("Stage 2-4 source mutated during compile")
  else:
   lock.write_text(json.dumps(hashes,indent=2)+"\n")
- print("Stage 2-4 exact source, proprietary SDK isolation and source hashes verified.")
+ print("v46 exact source, UE5.6 temporal bridge, proprietary SDK isolation and source hashes verified.")
 
 if __name__=="__main__":
  main()

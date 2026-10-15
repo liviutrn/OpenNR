@@ -10,11 +10,25 @@ struct CameraPose {
     std::array<double, 3> rotation{}, position{};
     bool operator==(const CameraPose&) const = default;
 };
+struct ViewTransform {
+    std::array<double, 3> origin{};
+    std::array<double, 16> rotation{}; // Physical UE FMatrix bytes.
+    bool valid{};
+};
+inline bool same_view_transform(const ViewTransform& left, const ViewTransform& right) {
+    if (!left.valid || !right.valid) return false;
+    for (size_t i=0; i<left.origin.size(); ++i)
+        if (std::abs(left.origin[i]-right.origin[i])>1.0e-9) return false;
+    for (size_t i=0; i<left.rotation.size(); ++i)
+        if (std::abs(left.rotation[i]-right.rotation[i])>1.0e-9) return false;
+    return true;
+}
 struct TemporalAudit {
     FrameKey key{};
     bool enabled{}, previous_frame{}, same_pose{}, distinct_view_states{};
     bool stable_view_states{}, stable_projection_history{}, history_gap{};
     bool history_gate_pass{}, moving_fovea{};
+    std::array<bool, 2> temporal_override_attempted{}, temporal_override_applied{};
     // Expected current->previous crop contribution for a static world point.
     // Unreal's per-view previous projection must supply this in its own vectors.
     double expected_crop_motion_px_x{}, expected_crop_motion_px_y{};
@@ -27,7 +41,16 @@ struct ViewFrame {
     bool camera_valid{}, main_family{}, consumed{}, composition_ready{}, gaze_valid{}, invalid{};
     std::array<bool, 2> rectangles{}, projections{}, cameras{};
     std::array<uintptr_t,2> scene_states{};
+    std::array<ViewTransform,2> view_transforms{};
+    std::array<bool,2> temporal_override_attempted{}, temporal_override_applied{};
+    bool history_gate_pass{};
     bool shading_applied{};
+};
+
+struct TemporalContract {
+    ViewFrame current{};
+    ViewFrame previous{};
+    unsigned view{};
 };
 
 template<typename Matrix>
@@ -77,6 +100,59 @@ public:
         if (view==1) slot->shading_applied=shading_applied;
         return true;
     }
+    bool view_transform(FrameKey key, unsigned view,
+                        const std::array<double, 3>& origin,
+                        const std::array<double, 16>& rotation) {
+        std::scoped_lock lock{mutex_};
+        auto& slot=frames_[key.frame%frames_.size()];
+        if (!slot || slot->config.key!=key || view>1 || slot->invalid || slot->consumed) return false;
+        for (const double value : origin) if (!std::isfinite(value)) return false;
+        for (const double value : rotation) if (!std::isfinite(value)) return false;
+        slot->view_transforms[view] = ViewTransform{origin,rotation,true};
+        return true;
+    }
+    std::optional<TemporalContract> temporal_contract(FrameKey key, unsigned view) const {
+        std::scoped_lock lock{mutex_};
+        if (view>1) return {};
+        const auto& slot=frames_[key.frame%frames_.size()];
+        if (!slot || slot->config.key!=key || slot->invalid || slot->consumed ||
+            !slot->view_transforms[view].valid || !slot->scene_states[view] ||
+            !slot->projections[view] || !last_completed_ ||
+            !last_completed_->consumed || !last_completed_->history_gate_pass ||
+            last_completed_->config.key.generation!=key.generation ||
+            last_completed_->config.key.frame+1!=key.frame ||
+            !last_completed_->view_transforms[view].valid ||
+            !last_completed_->scene_states[view] ||
+            slot->scene_states[view]!=last_completed_->scene_states[view] ||
+            !last_completed_->projections[view]) return {};
+        const auto& old_layout=last_completed_->config.layout;
+        const auto& new_layout=slot->config.layout;
+        const bool stable_layout=
+            last_completed_->config.settings.fovea_view==slot->config.settings.fovea_view &&
+            old_layout.atlas_width==new_layout.atlas_width &&
+            old_layout.atlas_height==new_layout.atlas_height &&
+            old_layout.fovea.width==new_layout.fovea.width &&
+            old_layout.fovea.height==new_layout.fovea.height &&
+            old_layout.periphery.width==new_layout.periphery.width &&
+            old_layout.periphery.height==new_layout.periphery.height &&
+            old_layout.crop_width==new_layout.crop_width &&
+            old_layout.crop_height==new_layout.crop_height;
+        if (!stable_layout) return {};
+        return TemporalContract{*slot,*last_completed_,view};
+    }
+    bool note_temporal_override(FrameKey key, unsigned view, bool applied) {
+        std::scoped_lock lock{mutex_};
+        auto& slot=frames_[key.frame%frames_.size()];
+        if (!slot || slot->config.key!=key || view>1 || slot->invalid || slot->consumed) return false;
+        // A UE frame may construct more than one transient wrapper for a
+        // source view. Never let a later duplicate constructor downgrade a
+        // successful write for the real view that will be rendered.
+        if (slot->temporal_override_attempted[view])
+            return slot->temporal_override_applied[view];
+        slot->temporal_override_attempted[view]=true;
+        slot->temporal_override_applied[view]=applied;
+        return true;
+    }
     bool can_independent_shading(FrameKey key, uintptr_t secondary_state) const {
         std::scoped_lock lock{mutex_};
         const auto& slot=frames_[key.frame%frames_.size()];
@@ -124,6 +200,8 @@ public:
         result.key=key;
         result.enabled=slot->config.settings.temporal_audit;
         result.current_states=slot->scene_states;
+        result.temporal_override_attempted=slot->temporal_override_attempted;
+        result.temporal_override_applied=slot->temporal_override_applied;
         result.distinct_view_states=slot->scene_states[0] && slot->scene_states[1] &&
                                     slot->scene_states[0]!=slot->scene_states[1];
         const bool has_previous_generation=last_completed_ &&
@@ -152,10 +230,19 @@ public:
             result.moving_fovea=std::abs(result.expected_crop_motion_px_x)>.1 ||
                                   std::abs(result.expected_crop_motion_px_y)>.1;
         }
+        const bool same_current_source_transform=same_view_transform(
+            slot->view_transforms[0],slot->view_transforms[1]);
+        const bool temporal_bridge_ready=!slot->config.settings.eye_tracked ||
+            !result.previous_frame ||
+            (slot->temporal_override_attempted[0] && slot->temporal_override_applied[0] &&
+             slot->temporal_override_attempted[1] && slot->temporal_override_applied[1]);
         result.history_gate_pass=result.distinct_view_states && !result.history_gap &&
             (!result.previous_frame ||
-                (result.stable_view_states && result.stable_projection_history));
+                (result.stable_view_states && result.stable_projection_history)) &&
+            (!slot->config.settings.eye_tracked || same_current_source_transform) &&
+            temporal_bridge_ready;
         last_audit_=result;
+        slot->history_gate_pass=result.history_gate_pass;
         last_completed_=slot; // continuity baseline; not proof of successful XR copy
         if (slot->config.settings.eye_tracked && !result.history_gate_pass) return {};
         slot->composition_ready=true;

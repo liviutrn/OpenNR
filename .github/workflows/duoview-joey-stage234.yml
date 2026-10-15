@@ -1,8 +1,8 @@
-name: DuoView v44 Moving Crop Motion History — CANDIDATE
-run-name: DuoView v44 moving crop motion history Windows audit (${{ github.run_number }})
+name: DuoView v46 Validated UE5.6 Previous Clip Bridge — CANDIDATE
+run-name: DuoView v46 crop temporal bridge Windows audit (${{ github.run_number }})
 on:
   push:
-    branches: [experiments/duoview-gaze-motion-vectors-v44]
+    branches: [experiments/duoview-world-locked-temporal-v46]
     paths:
       - '.github/workflows/duoview-joey-stage234.yml'
       - 'duoview/joey_stage1/**'
@@ -11,6 +11,9 @@ on:
       - 'duoview/DuoViewCropMotion.hpp'
       - 'duoview/DuoViewCropStability.hpp'
       - 'duoview/DuoViewState.hpp'
+      - 'duoview/DuoViewTemporalMath.hpp'
+      - 'duoview/DuoViewUE56Layout.hpp'
+      - 'duoview/DuoViewSceneViewTemporal.hpp'
       - 'duoview/DuoViewHistoryCorrection.hpp'
       - 'duoview/tests/**'
       - 'duoview/CMakeLists.txt'
@@ -171,7 +174,7 @@ jobs:
           Copy-Item evidence/duoview-stage1-source-hashes.json package/
           Copy-Item evidence/duoview-stage234-hashes.json package/
           @'
-          DUOVIEW v44 CANDIDATE: gaze-dependent high-resolution crop projection with the head camera held fixed.
+          DUOVIEW v46 CANDIDATE: gaze-dependent high-resolution crop projection with the head camera held fixed.
           Gaze moves the foveal projection and crop together. The periphery and fovea retain the same head pose.
           Unreal receives the crop projection before scene rendering and should generate crop-aware motion vectors from its persistent per-view previous projection.
           DuoView does not add an OpenNR-style crop offset a second time: OpenNR corrects vectors after cropping a rendered image; here the crop is in Unreal's projection.
@@ -180,8 +183,9 @@ jobs:
           Tracked crop is a constant angular frustum; its outline can be perspective-shaped on the full Mono image away from center.
           Optional fixation guard holds only changes within one output pixel; larger movement is immediate, with no smoothing or velocity cap.
           Fixed-center Eye Tracking OFF centers the cropped projection; it does not steer a camera.
-          Current typed FSceneViewInitOptions projection is reconciled at construction. Unreal owns its previous matrices and vector generation; no private offsets or guessed SDK fields are written.
-          The per-frame gate blocks eye-tracked composition unless the two source ViewStates are distinct and stable across adjacent producer frames. Passing the gate only checks prerequisites; it does NOT prove TSR consumed correct vectors.
+          Current typed FSceneViewInitOptions projection is reconciled at construction. v46 latches the exact current UE5.6 source origin/rotation, crop projection, source rect, Family and ViewState identity, then writes ClipToPrevClipOverride only through a layout-gated runtime bridge. The public UE5.6 layout proof is SceneView ClipToPrevClipOverride offset 0x12a0 with a 0x1330-byte SceneView mirror; every live check and matrix readback must pass or the write is refused.
+          The bridge supplies inverse(current cropped view-projection) * previous cropped view-projection, so head motion and moving-ROI motion are both represented in Unreal's own previous-clip consumer. It does not write private TSR history, private velocity buffers, or a final-color displacement.
+          The per-frame gate blocks eye-tracked composition unless the two source ViewStates are distinct and stable across adjacent producer frames AND both v46 UE5.6 overrides succeeded after the first frame. This is a source/layout/runtime-write proof only; it does NOT prove headset TSR consumed correct vectors.
           Actual STALKER2/PSVR2 motion-vector and image-stability acceptance is pending.
           Starting foundation: Build37 native0 low-scale bootstrap -> ID6 -> restore OpenXR scale AFTER accepted compositions.
           Backend: exact Joey 5ac7edc207866569334175e4ed8a7517971547f6 + guarded DuoView modifications.
@@ -192,9 +196,9 @@ jobs:
           Old source defaults: 0.50x0.50 crop at 1.0x density, 0.20x periphery, gaze ON, fovea UE0/periphery UE1.
           Press Restore old DuoView settings once if an existing profile retains newer settings. Increase density to match your old preferred tuning; exact historical tuning is unknown.
           Foveal atlas rectangle starts at x=0, matching Injector-5. Gaze uses the inverse left optical rotation, matching the old coordinate path.
-          v44 tracks valid native gaze per producer frame without smoothing or velocity caps. The optional one-output-pixel fixation guard remains.
+          v46 tracks valid native gaze per producer frame without smoothing or velocity caps. The optional one-output-pixel fixation guard remains.
           Missing CAPI samples hold their original mapped coordinate for at most 50ms from sensor arrival; repeated reads do not refresh age. Blink/bad packets clear it immediately, then the crop returns to center.
-          Both UE views use frozen producer data and the same head pose; only the high-resolution projection crop follows gaze. Unreal's persistent per-view projection history is expected to supply the crop component of its own motion vectors.
+          Both UE views use frozen producer data and the same head pose; only the high-resolution projection crop follows gaze. v46 supplies the previous cropped projection to the documented UE5.6 ClipToPrevClipOverride field, with a layout-gated fail-closed write.
           Optional temporal audit reports head-pose stability, distinct/persistent ViewStates, source-frame gaps, the history gate, and expected static-world crop motion in fovea-buffer pixels. It is diagnostic and OFF by default.
           Independent primary shading starts OFF on EACH injection/mode transition; toggle it in-game after DuoView settles.
           The shading toggle temporarily constructs the SECONDARY source as PRIMARY only with proven distinct source ViewStates and matching main family. It does not enable the full Native Fix capture/submission path.
@@ -223,22 +227,22 @@ jobs:
           if (@(Get-ChildItem package -File -Filter *.exe).Count -lt 1) { throw "Missing Joey frontend executable" }
           if ((Get-Content package/READ_FIRST.txt -Raw) -notmatch 'QUARANTINED internally') { throw 'Stale fallback instructions' }
           Get-ChildItem package -Recurse -File | Get-FileHash -Algorithm SHA256 | ConvertTo-Json | Set-Content evidence/package-sha256.json
-          $zip="Joey-DuoView-MovingCrop-v44-${{ github.run_number }}.zip"
+          $zip="Joey-DuoView-MovingCrop-v46-${{ github.run_number }}.zip"
           Compress-Archive -Path package/* -DestinationPath $zip -Force
           (Get-FileHash $zip -Algorithm SHA256).Hash | Set-Content "$zip.sha256"
       - name: Independently verify final candidate ZIP, PE machine IDs and unpacked hashes
         shell: pwsh
         run: |
-          $zip="Joey-DuoView-MovingCrop-v44-${{ github.run_number }}.zip"
-          python workspace/duoview/joey_stage1/audit_v44_package.py package $zip evidence
-          if ($LASTEXITCODE -ne 0) { throw 'v44 package provenance, PE or ZIP audit failed' }
+          $zip="Joey-DuoView-MovingCrop-v46-${{ github.run_number }}.zip"
+          python workspace/duoview/joey_stage1/audit_v46_package.py package $zip evidence
+          if ($LASTEXITCODE -ne 0) { throw 'v46 package provenance, PE or ZIP audit failed' }
       - uses: actions/upload-artifact@v4
         if: success()
         with:
-          name: Joey-DuoView-MovingCrop-v44-${{ github.run_number }}
+          name: Joey-DuoView-MovingCrop-v46-${{ github.run_number }}
           path: |
-            Joey-DuoView-MovingCrop-v44-*.zip
-            Joey-DuoView-MovingCrop-v44-*.zip.sha256
+            Joey-DuoView-MovingCrop-v46-*.zip
+            Joey-DuoView-MovingCrop-v46-*.zip.sha256
           if-no-files-found: error
           retention-days: 90
       - name: Record public source and dependency provenance

@@ -118,7 +118,7 @@ def main():
                 m_duo_debug_source->draw("Source diagnostic: 0 Blend / 1 Periphery / 2 Fovea");
                 m_duo_fovea_view->draw("Fovea UE source view (0 or 1)");
                 m_duo_stabilize->draw("Fixation noise guard (1 output pixel; no smoothing)");
-                ImGui::TextWrapped("Eye tracking moves the foveal crop projection while keeping the head camera fixed. Unreal's persistent per-view history must see the previous crop so its own motion vectors include crop motion; no extra vector is added here.");
+                ImGui::TextWrapped("Eye tracking moves the foveal crop projection while keeping the head camera fixed. v46 supplies the previous cropped view-projection through UE5.6 ClipToPrevClipOverride after a layout and identity gate; no extra vector is added to final color.");
                 m_duo_history_audit->draw("Diagnostic: projection/history continuity (logs, OFF by default)");
                 if (m_duo_history_audit->value()) {
                     // Bounded UI-only sensor metadata. The device clock cannot be
@@ -274,7 +274,7 @@ void VR::duoview_abort(const char* reason) {
 '''
     hook="src/mods/vr/FFakeStereoRenderingHook.cpp"
     edit(hook,'#include "FFakeStereoRenderingHook.hpp"',
-        '#include "FFakeStereoRenderingHook.hpp"\n#include "DuoViewGeometry.hpp"')
+        '#include "FFakeStereoRenderingHook.hpp"\n#include "DuoViewGeometry.hpp"\n#include "DuoViewSceneViewTemporal.hpp"')
     edit(hook,'    if (vr->is_using_mono()) { return 1; }',
         '    if (vr->is_duoview_renderer_active()) { return 2; }\n    if (vr->is_using_mono()) { return 1; }')
     edit(hook,'''    if (VR::get()->is_using_mono()) {
@@ -374,8 +374,10 @@ void VR::duoview_abort(const char* reason) {
         }''')
     # v24 current-frame projection coherence, at Joey's source-validated
     # FSceneViewInitOptionsUE5/UE50To53 input before UE constructs SceneView.
-    # UE's private previous ViewState, velocity buffers, and TSR history are
-    # NOT written: unknown offsets would risk crashes and double-compensation.
+    # v46 writes only the documented public UE5.6 ClipToPrevClipOverride
+    # after construction and only through the independent layout/identity
+    # gate below. UE's private ViewState, velocity buffers and TSR history
+    # remain untouched.
     edit(hook, '    FIntRect native_view_rect{};',
     '''    if (vr->is_duoview_renderer_active() && g_hook->is_in_viewport_client_draw() &&
         g_hook->m_has_double_precision && is_ue5 && init_options_view_family != nullptr &&
@@ -447,9 +449,58 @@ void VR::duoview_abort(const char* reason) {
                 applied=get_effective_stereo_pass()==EStereoscopicPass::eSSP_PRIMARY;
             }
             vr->duoview_state().scene(key,index,state,applied);
+            if (is_ue5 && init_options_ue5 != nullptr) {
+                std::array<double,16> rotation{};
+                std::memcpy(rotation.data(), &init_options_ue5->view_rotation_matrix, sizeof(rotation));
+                const auto& origin=init_options_ue5->view_origin;
+                if (!vr->duoview_state().view_transform(
+                        key,index,{origin.x,origin.y,origin.z},rotation))
+                    SPDLOG_WARNING_EVERY_N_SEC(2,
+                        "[DuoView] Failed to latch UE5.6 source view transform frame={} view={}",
+                        key.frame,index);
+            }
         }
     }
     std::optional<uint32_t> views_original_count{};''')
+    edit(hook, '''    auto result = g_hook->m_sceneview_data.constructor_hook.unsafe_call<sdk::FSceneView*>(view, init_options, a3, a4);
+
+    if (vr->is_native_stereo_fix_enabled()) {''',
+    '''    auto result = g_hook->m_sceneview_data.constructor_hook.unsafe_call<sdk::FSceneView*>(view, init_options, a3, a4);
+
+    if (vr->is_duoview_renderer_active() && g_hook->m_has_double_precision &&
+        is_ue_5_6_or_newer() && result != nullptr && init_options_view_family != nullptr &&
+        (init_options_original_stereo_pass == EStereoscopicPass::eSSP_PRIMARY ||
+         init_options_original_stereo_pass == EStereoscopicPass::eSSP_SECONDARY)) {
+        const auto rtm=g_hook->get_render_target_manager();
+        const bool main=rtm &&
+            init_options_view_family->get_render_target()==rtm->get_view_family_render_target();
+        if (main) {
+            const unsigned index=init_options_original_stereo_pass==EStereoscopicPass::eSSP_PRIMARY ? 0u : 1u;
+            const auto key=vr->duoview_producer_key();
+            if (const auto contract=vr->duoview_state().temporal_contract(key,index)) {
+                bool applied=false;
+                const auto current=uevr::duoview::ue56::temporal_input(contract->current,index);
+                const auto previous=uevr::duoview::ue56::temporal_input(contract->previous,index);
+                const auto override_raw=uevr::duoview::temporal::make_clip_to_prev_clip(previous,current,index);
+                const char* reason=nullptr;
+                if (override_raw) {
+                    applied=uevr::duoview::ue56::apply_clip_to_prev_clip_override(
+                        result,init_options_view_family,
+                        contract->current.scene_states[index],*contract,*override_raw,
+                        is_readable_process_range,is_writable_process_range,&reason);
+                } else {
+                    reason="current/previous view-projection transform is singular or invalid";
+                }
+                vr->duoview_state().note_temporal_override(key,index,applied);
+                if (!applied)
+                    SPDLOG_WARNING_EVERY_N_SEC(2,
+                        "[DuoView] UE5.6 crop temporal bridge blocked frame={} view={} reason={}",
+                        key.frame,index,reason != nullptr ? reason : "unknown");
+            }
+        }
+    }
+
+    if (vr->is_native_stereo_fix_enabled()) {''')
     # Engine construction observes camera/rect/projection; a complete pair is
     # required before composition, not before we let the engine build its views.
     dxh="src/mods/vr/D3D12Component.hpp"
@@ -551,7 +602,8 @@ void VR::duoview_abort(const char* reason) {
     # Copy reference modules into exact checked-out Joey tree. No private SDK
     # declarations or altered SDK files.
     for name in ("DuoViewGeometry.hpp","DuoViewGaze.hpp","DuoViewCropMotion.hpp","DuoViewPSVR2Gaze.hpp","DuoViewCropStability.hpp","DuoViewHistoryCorrection.hpp","DuoViewFrame.hpp",
-                 "DuoViewConfig.hpp","DuoViewState.hpp","DuoViewD3D12.hpp",
+                 "DuoViewConfig.hpp","DuoViewState.hpp","DuoViewTemporalMath.hpp","DuoViewUE56Layout.hpp",
+                 "DuoViewSceneViewTemporal.hpp","DuoViewD3D12.hpp",
                  "DuoViewMonoCopyD3D12.hpp"):
         target=root/"src/mods/vr"/name
         if target.exists(): raise RuntimeError("Refusing to overwrite prior source: "+str(target))
@@ -571,7 +623,7 @@ void VR::duoview_abort(const char* reason) {
         str(root/"src/mods/vr/DuoViewShaderSource.hpp")], check=True)
     for path,text in changed.items():
         (source_root(path)/path).write_text(text,encoding="utf-8",newline="")
-    print("Applied v44 gaze-dependent projection crop + persistent-view-state temporal gate + sample-age-preserving gaze freshness.")
+    print("Applied v46 gaze-dependent projection crop + validated UE5.6 previous-clip bridge + fail-closed temporal gate.")
 
 if __name__=="__main__":
     main()

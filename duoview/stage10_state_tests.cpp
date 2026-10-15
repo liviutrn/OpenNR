@@ -26,6 +26,10 @@ int main() {
     assert(!state.family(first,false,2) && !state.family(first,true,1));
     assert(state.family(first,true,2));
     assert(state.scene(first,0,100) && state.scene(first,1,200));
+    std::array<double,16> view_rotation{};
+    view_rotation[0]=view_rotation[5]=view_rotation[10]=view_rotation[15]=1.0;
+    assert(state.view_transform(first,0,{0.0,0.0,0.0},view_rotation));
+    assert(state.view_transform(first,1,{0.0,0.0,0.0},view_rotation));
     auto b=state.begin(second,3000,3000,matrix,read);
     assert(b && b->config.settings.fovea_view==1 && gaze_reads==2);
     assert(state.snapshot(first)->config.layout.crop_width==.5f);
