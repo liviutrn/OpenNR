@@ -14,17 +14,18 @@ static void require(bool test, const char* what) {
 int main() try {
     // Low-res Native0 warms UE view machinery before changing DuoView's
     // render method. Joey's existing GPU consumer retirement must be respected.
+    constexpr auto duoview_method = uevr::mono::method_id;
     uevr::mono::Selection bootstrap;
     bootstrap.initialize(0);
     require(bootstrap.active()==0 && !bootstrap.pending(),
             "Bootstrap must start Native Stereo 0 without immediate ID6");
-    bootstrap.request(6);
+    bootstrap.request(duoview_method);
     require(bootstrap.active()==0 && bootstrap.pending(),
             "DuoView request must defer while native resources remain live");
     require(!bootstrap.commit_at_game_frame_boundary(),
             "Unretired source copies may not activate DuoView");
     bootstrap.consumers_retired(bootstrap.request_token());
-    require(bootstrap.commit_at_game_frame_boundary() && bootstrap.active()==6,
+    require(bootstrap.commit_at_game_frame_boundary() && bootstrap.active()==duoview_method,
             "Guarded native to DuoView transition failed");
     for (auto wh: {std::array{2000u,2000u},std::array{3000u,3000u},
                    std::array{3400u,3172u},std::array{4096u,2160u}}) {
@@ -180,6 +181,8 @@ int main() try {
     State audit;
     Settings auds{}; auds.temporal_audit=true; auds.eye_tracked=true;
     require(audit.configure(auds),"Audit settings rejected");
+    const std::array<double,16> source_rotation{
+        1.,0.,0.,0., 0.,1.,0.,0., 0.,0.,1.,0., 0.,0.,0.,1.};
     auto mark=[&](FrameKey k, UV gaze, uintptr_t primary, uintptr_t secondary, bool expect_gate=true) {
         auto f=audit.begin(k,3400,3172,p,[&]()->std::optional<UV>{return gaze;},1000+k.frame*11);
         require(f.has_value(),"Audit frame missing");
@@ -187,6 +190,11 @@ int main() try {
             require(audit.rectangle(k,eye) && audit.projection(k,eye) &&
                     audit.camera(k,eye,camera) && audit.scene(k,eye,eye?secondary:primary),
                     "Audit frame view observations failed");
+            require(audit.view_transform(k,eye,{0.,0.,0.},source_rotation),
+                    "Audit source transform latch failed");
+            if (audit.temporal_contract(k,eye))
+                require(audit.note_temporal_override(k,eye,true),
+                        "Audit temporal bridge result was not recorded");
         }
         require(audit.family(k,true,2),"Audit source family missing");
         const bool consumed=audit.consume(k).has_value();
@@ -238,6 +246,11 @@ int main() try {
             require(history.rectangle(k,view) && history.projection(k,view) &&
                     history.camera(k,view,camera) && history.scene(k,view,100+view),
                     "v41 incomplete pair");
+            require(history.view_transform(k,view,{0.,0.,0.},source_rotation),
+                    "v41 source transform latch failed");
+            if (history.temporal_contract(k,view))
+                require(history.note_temporal_override(k,view,true),
+                        "v41 temporal bridge result was not recorded");
         }
         require(history.family(k,true,2),"v41 missing main family");
         return history.consume(k);
@@ -280,6 +293,9 @@ int main() try {
         require(history.rectangle({61,7},v) && history.projection({61,7},v) &&
             history.camera({61,7},v,camera) && history.scene({61,7},v,300+v),
             "ViewState-change fixture invalid");
+    for(unsigned v=0;v<2;++v)
+        require(history.view_transform({61,7},v,{0.,0.,0.},source_rotation),
+                "ViewState-change source transform latch failed");
     require(history.family({61,7},true,2),"ViewState-change family missing");
     changed=history.consume({61,7});
     require(!changed && !history.accept_composite({61,7}),
@@ -292,6 +308,13 @@ int main() try {
         require(history.rectangle({61,8},v) && history.projection({61,8},v) &&
             history.camera({61,8},v,teleport) && history.scene({61,8},v,300+v),
             "Camera-cut fixture invalid");
+    for(unsigned v=0;v<2;++v) {
+        require(history.view_transform({61,8},v,{0.,0.,0.},source_rotation),
+                "Camera-cut source transform latch failed");
+        if (history.temporal_contract({61,8},v))
+            require(history.note_temporal_override({61,8},v,true),
+                    "Camera-cut temporal bridge result was not recorded");
+    }
     require(history.family({61,8},true,2),"Camera-cut family missing");
     cut=history.consume({61,8});
     require(cut && cut->config.history_sample_offset.u==0.f,

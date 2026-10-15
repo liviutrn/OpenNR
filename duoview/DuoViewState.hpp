@@ -118,7 +118,7 @@ public:
         if (!slot || slot->config.key!=key || slot->invalid || slot->consumed ||
             !slot->view_transforms[view].valid || !slot->scene_states[view] ||
             !slot->projections[view] || !last_completed_ ||
-            !last_completed_->consumed || !last_completed_->history_gate_pass ||
+            !last_completed_->consumed ||
             last_completed_->config.key.generation!=key.generation ||
             last_completed_->config.key.frame+1!=key.frame ||
             !last_completed_->view_transforms[view].valid ||

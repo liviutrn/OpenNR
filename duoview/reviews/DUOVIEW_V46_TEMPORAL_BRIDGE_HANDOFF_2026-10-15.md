@@ -30,8 +30,10 @@ of copying private renderer offsets.
 1. `DuoViewState` latches each source's exact UE5.6 view origin and rotation
    at the same constructor-input stage as the frozen crop projection. A
    temporal contract is available only for the same generation, the strictly
-   adjacent producer frame, matching source `ViewState` identities, matching
-   crop/layout dimensions and a previously accepted history gate.
+   adjacent producer frame, matching source `ViewState` identities and
+   matching crop/layout dimensions. A prior failed pair becomes a new
+   baseline; the next stable adjacent pair must prove both fresh overrides
+   before composition resumes.
 2. `DuoViewTemporalMath.hpp` builds each source view-projection from the
    frozen projection, current crop, origin and rotation. It computes:
 
