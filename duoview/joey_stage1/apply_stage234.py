@@ -34,13 +34,13 @@ def main():
         changed[path]=replace(s,before,after,path)
     edit("src/mods/vr/MonoRenderingPolicy.hpp",
         'DuoView Mono (Stage 1 - safe Mono fallback)',
-        'DuoView Mono (Eye Tracked - Experimental)')
+        'DuoView Mono (Fixed Center - Experimental)')
     edit("UEVR/RenderingModeOptions.cs",
         'DuoView Mono (Stage 1 - safe Mono fallback)',
-        'DuoView Mono (Eye Tracked - Experimental)')
+        'DuoView Mono (Fixed Center - Experimental)')
     edit("tests/RenderingModes/Program.cs",
         'DuoView Mono (Stage 1 - safe Mono fallback)',
-        'DuoView Mono (Eye Tracked - Experimental)')
+        'DuoView Mono (Fixed Center - Experimental)')
     header="src/mods/VR.hpp"
     edit(header,'#include "vr/RenderingMethodSetting.hpp"',
         '#include "vr/RenderingMethodSetting.hpp"\n#include "vr/DuoViewState.hpp"\n#include "vr/DuoViewPSVR2Gaze.hpp"')
@@ -68,7 +68,8 @@ def main():
     const ModSlider::Ptr m_duo_periphery{ModSlider::create(generate_name("DuoViewPeripheralScale"), .05f, .50f, .20f)};
     const ModSlider::Ptr m_duo_density{ModSlider::create(generate_name("DuoViewFovealDensity"), .25f, 4.0f, 1.f)};
     const ModSlider::Ptr m_duo_feather{ModSlider::create(generate_name("DuoViewFeather"), 0.f, .45f, .08f)};
-    const ModToggle::Ptr m_duo_gaze{ModToggle::create(generate_name("DuoViewEyeTracking"), true)};
+    const ModToggle::Ptr m_duo_gaze{ModToggle::create(generate_name("DuoViewEyeTracking"), false)};
+    const ModSlider::Ptr m_duo_center_v{ModSlider::create(generate_name("DuoViewFixedCenterVertical"), 0.f, 1.f, .5f)};
     const ModToggle::Ptr m_duo_border{ModToggle::create(generate_name("DuoViewDebugBorder"), false)};
     const ModInt32::Ptr m_duo_debug_source{ModSliderInt32::create(generate_name("DuoViewDebugSource"), 0, 2, 0)};
     const ModInt32::Ptr m_duo_fovea_view{ModSliderInt32::create(generate_name("DuoViewFoveaSourceView"), 0, 1, 0)};
@@ -88,13 +89,13 @@ def main():
     edit(header,'        m_options = {',
         '''        m_options = {
             *m_duo_width, *m_duo_height, *m_duo_periphery, *m_duo_density,
-            *m_duo_feather, *m_duo_gaze, *m_duo_border, *m_duo_debug_source,
+            *m_duo_feather, *m_duo_center_v, *m_duo_border, *m_duo_debug_source,
             *m_duo_fovea_view, *m_duo_timing, *m_duo_stabilize, *m_duo_guard,
             *m_duo_smoothing,''')
     cpp="src/mods/VR.cpp"
     edit(cpp,
         'ImGui::TextWrapped("DuoView Stage 1: rendering uses original Joey Mono unchanged. Two-view foveation and gaze are NOT active.");',
-        'ImGui::TextWrapped(is_duoview_renderer_active() ? (duoview_gaze_active() ? "DuoView ID6: eye-tracked two-view Mono (PSVR2 Toolkit active)" : "DuoView ID6: held crop / center fallback (gaze unavailable)") : "DuoView ID6: original Joey Mono fallback / DuoView inactive");')
+        'ImGui::TextWrapped(is_duoview_renderer_active() ? "DuoView ID6: fixed-center two-view Mono" : "DuoView ID6: two-view renderer inactive (inspect diagnostics)");')
     edit(cpp, '#include "VR.hpp"', '#include "VR.hpp"\n#include <cstring>')
     edit(cpp,'        if (rendering_method_changed && !is_mono_transition_pending() && get_runtime() != nullptr) {',
     '''        if (is_using_duoview_mono() || requested_rendering_method() == RenderingMethod::DUOVIEW_MONO) {
@@ -103,7 +104,7 @@ def main():
                 if (ImGui::Button("Restore old DuoView settings")) {
                     m_duo_width->value()=.50f; m_duo_height->value()=.50f;
                     m_duo_periphery->value()=.20f; m_duo_density->value()=1.f;
-                    m_duo_feather->value()=.08f; m_duo_gaze->value()=true;
+                    m_duo_feather->value()=.08f; m_duo_center_v->value()=.5f; m_duo_gaze->value()=false;
                     m_duo_border->value()=false; m_duo_fovea_view->value()=0;
                     m_duo_debug_source->value()=0;
                 }
@@ -112,33 +113,16 @@ def main():
                 m_duo_periphery->draw("Peripheral resolution scale");
                 m_duo_density->draw("Foveal pixel density");
                 m_duo_feather->draw("Blend feather width");
-                m_duo_gaze->draw("Eye tracking");
+                m_duo_center_v->draw("Fixed fovea vertical position (0=top, 1=bottom)");
                 m_duo_border->draw("Blend border highlight");
                 m_duo_debug_source->draw("Source diagnostic: 0 Blend / 1 Periphery / 2 Fovea");
                 m_duo_fovea_view->draw("Fovea UE source view (0 or 1)");
-                m_duo_stabilize->draw("Smooth tracked crop (temporal)");
-                if (m_duo_stabilize->value()) {
-                    m_duo_guard->draw("Steady gaze guard (fraction of crop)");
-                    m_duo_smoothing->draw("Crop temporal smoothing (ms)");
-                    ImGui::TextWrapped("Continuous wide guard + exponential follow + speed cap. No hard recenter jump. Larger values calm fixation but delay intentional gaze changes.");
-                }
-                m_duo_shading->draw("Independent primary shading (experimental, runtime only)");
-                ImGui::TextWrapped("Shading starts OFF on each injection or rendering-mode transition. Enable after DuoView settles; changes apply to the next complete source frame. No separate capture or Native Fix submission is enabled.");
                 m_duo_timing->draw("GPU timing: composite + both eye copies");
                 if (m_duo_timing->value()) {
                     const float ms=m_duo_gpu_ms.load(std::memory_order_relaxed);
                     if (ms >= 0.f) ImGui::Text("Composite + eye copies: %.3f ms GPU (last retired slot)", ms);
                     else ImGui::TextUnformatted("GPU timing: waiting for a completed command slot");
                 }
-                const auto counts=m_duoview_gaze.counters();
-                ImGui::Text("PSVR2 gaze: fresh=%llu held=%llu invalid=%llu expired=%llu unavailable=%llu",
-                    static_cast<unsigned long long>(counts.fresh),
-                    static_cast<unsigned long long>(counts.reused),
-                    static_cast<unsigned long long>(counts.invalid),
-                    static_cast<unsigned long long>(counts.expired),
-                    static_cast<unsigned long long>(counts.unavailable));
-                if (counts.age_ms == UINT32_MAX) ImGui::TextUnformatted("Last gaze sample: unavailable");
-                else ImGui::Text("Last gaze sample: %u ms", counts.age_ms);
                 configure_duoview();
                 if (const auto snap=m_duoview.snapshot(duoview_key(get_runtime()->internal_frame_count))) {
                     const auto& layout=snap->config.layout;
@@ -146,9 +130,9 @@ def main():
                         layout.fovea.width,layout.fovea.height,
                         layout.periphery.width,layout.periphery.height,
                         layout.atlas_width/2,layout.atlas_height);
-                    ImGui::Text("Fovea UE%u; periphery UE%u; gaze %s",
+                    ImGui::Text("Fovea UE%u; periphery UE%u; fixed center vertical %.3f",
                         snap->config.settings.fovea_view,1u-snap->config.settings.fovea_view,
-                        snap->gaze_valid ? "tracking" : "held crop / center fallback");
+                        snap->config.settings.fixed_center_v);
                     ImGui::Text("View histories: %s; primary shading constructor: %s",
                         snap->scene_states[0] && snap->scene_states[1]
                             ? (snap->scene_states[0]!=snap->scene_states[1] ? "separate" : "shared") : "unobserved",
@@ -179,16 +163,18 @@ void VR::configure_duoview() {
         .crop_width=m_duo_width->value(), .crop_height=m_duo_height->value(),
         .peripheral_scale=m_duo_periphery->value(), .foveal_density=m_duo_density->value(),
         .feather_fraction=m_duo_feather->value(), .debug_border=m_duo_border->value(),
-        .eye_tracked=m_duo_gaze->value(), .fovea_view=static_cast<uint32_t>(m_duo_fovea_view->value()),
+        .eye_tracked=false, .fixed_center_v=m_duo_center_v->value(),
+        .fovea_view=static_cast<uint32_t>(m_duo_fovea_view->value()),
         .diagnostic_view=static_cast<uint32_t>(m_duo_debug_source->value()),
         .gpu_timing=m_duo_timing->value(), .stabilize_crop=m_duo_stabilize->value(),
         .guard_fraction=m_duo_guard->value(), .smoothing_ms=m_duo_smoothing->value(),
-        .independent_shading=m_duo_shading->value()};
+        .independent_shading=false};
     const auto current=m_duoview.settings();
     if (current.crop_width==candidate.crop_width && current.crop_height==candidate.crop_height &&
         current.peripheral_scale==candidate.peripheral_scale && current.foveal_density==candidate.foveal_density &&
         current.feather_fraction==candidate.feather_fraction && current.debug_border==candidate.debug_border &&
-        current.eye_tracked==candidate.eye_tracked && current.fovea_view==candidate.fovea_view &&
+        current.eye_tracked==candidate.eye_tracked && current.fixed_center_v==candidate.fixed_center_v &&
+        current.fovea_view==candidate.fovea_view &&
         current.diagnostic_view==candidate.diagnostic_view && current.gpu_timing==candidate.gpu_timing &&
         current.stabilize_crop==candidate.stabilize_crop && current.guard_fraction==candidate.guard_fraction &&
         current.smoothing_ms==candidate.smoothing_ms &&
@@ -349,13 +335,6 @@ void VR::duoview_abort(const char* reason) {
             const auto key=vr->duoview_producer_key();
             const auto state=reinterpret_cast<uintptr_t>(init_options_scene_state);
             bool applied=false;
-            if (index==1 && views->count==1 &&
-                is_readable_process_range(state,sizeof(uintptr_t)) &&
-                vr->duoview_state().can_independent_shading(key,state)) {
-                set_effective_stereo_pass(EStereoscopicPass::eSSP_PRIMARY);
-                restore_init_options_after_constructor=true;
-                applied=get_effective_stereo_pass()==EStereoscopicPass::eSSP_PRIMARY;
-            }
             vr->duoview_state().scene(key,index,state,applied);
         }
     }
@@ -464,7 +443,7 @@ void VR::duoview_abort(const char* reason) {
         str(root/"src/mods/vr/DuoViewShaderSource.hpp")], check=True)
     for path,text in changed.items():
         (source_root(path)/path).write_text(text,encoding="utf-8",newline="")
-    print("Applied Stage 5 PSVR2 gaze with cached per-frame projection, same-pose two-view and DX12 compositor (experimental).")
+    print("Applied fixed-center v22 source, vertical-center control, no gaze consumption or primary-pass override (experimental).")
 
 if __name__=="__main__":
     main()
