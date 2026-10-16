@@ -540,6 +540,44 @@ void VR::duoview_abort(const char* reason) {
         }
         vr->note_mono_frame_ready(m_mono_generation);
     }''')
+    # OpenVR never computed the Mono shared optical union used by Joey's
+    # OpenXR backend. Derive the same canted-eye-aware geometry for ID6 only.
+    # Native Stereo and original OpenVR modes remain bit-for-bit unchanged.
+    openvr="src/mods/vr/runtimes/OpenVR.cpp"
+    edit(openvr,'#include "../SteamFrameInput.hpp"',
+        '#include "../SteamFrameInput.hpp"\\n#include "../MonoRenderingPolicy.hpp"\\n#include <glm/gtc/quaternion.hpp>')
+    edit(openvr,'''        this->projections[vr::Eye_Right] = get_mat(vr::Eye_Right);
+        this->should_recalculate_eye_projections = false;''',
+    '''        this->projections[vr::Eye_Right] = get_mat(vr::Eye_Right);
+        if (auto owner=VR::get(); owner && owner->is_duoview_renderer_active()) {
+            std::array<uevr::mono::Eye,2> optical{};
+            for (size_t eye=0; eye<2; ++eye) {
+                const auto q=glm::quat_cast(glm::mat3(this->eyes[eye]));
+                const auto& position=this->eyes[eye][3];
+                const auto& f=this->raw_projections[eye];
+                optical[eye]={{q.x,q.y,q.z,q.w},
+                    {position.x,position.y,position.z},
+                    {f[0],f[1],-f[2],-f[3]}};
+            }
+            if (const auto common=uevr::mono::geometry(optical)) {
+                const auto mono_projection=Matrix4x4f{
+                    1.f/common->horizontal,0.f,0.f,0.f,
+                    0.f,1.f/common->vertical,0.f,0.f,
+                    0.f,0.f,0.f,1.f,
+                    0.f,0.f,nearz,0.f};
+                for (size_t eye=0;eye<2;++eye) {
+                    this->projections[eye]=mono_projection;
+                    for (size_t edge=0;edge<4;++edge)
+                        this->view_bounds[eye][edge]=common->bounds[eye][edge];
+                }
+                SPDLOG_INFO_ONCE("[DuoView][OpenVR] Shared optical frustum calibrated for both eyes");
+            } else {
+                SPDLOG_ERROR_EVERY_N_SEC(2,"[DuoView][OpenVR] Invalid common Mono optical geometry");
+                this->should_recalculate_eye_projections=true;
+                return VRRuntime::Error::SUCCESS;
+            }
+        }
+        this->should_recalculate_eye_projections = false;''')
     # OpenVR source-pair composition: reuse the same validated compositor
     # and current-frame pair key, but submit through SteamVR's existing two
     # 6DoF pose-aware per-eye textures instead of OpenXR swapchains.
