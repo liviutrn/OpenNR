@@ -4,6 +4,8 @@
 using namespace uevr::duoview;
 int main() {
     State state;
+    Settings gaze_legacy_test_settings; gaze_legacy_test_settings.eye_tracked=true;
+    assert(state.configure(gaze_legacy_test_settings));
     const FrameKey first{1,100}, second{1,101};
     std::array<float,16> matrix{};
     matrix[0]=matrix[5]=matrix[10]=matrix[15]=1;
@@ -11,7 +13,7 @@ int main() {
     auto read = [&]() -> std::optional<UV> { ++gaze_reads; return UV{.25f,.75f}; };
     auto a=state.begin(first,3000,3000,matrix,read);
     assert(a && a->gaze_valid && gaze_reads==1);
-    Settings changed; changed.crop_width=.3f; changed.fovea_view=1;
+    Settings changed; changed.crop_width=.3f; changed.fovea_view=1; changed.eye_tracked=true;
     assert(state.configure(changed));
     assert(state.begin(first,3000,3000,matrix,read)->config.layout.crop_width==.5f && gaze_reads==1);
     assert(!state.consume(first));
@@ -38,7 +40,7 @@ int main() {
     assert(!state.snapshot(first));
     assert(state.begin({2,1},3000,3000,matrix,read));
     CropStability stable;
-    Settings controls; controls.stabilize_crop=true;
+    Settings controls; controls.eye_tracked=true; controls.stabilize_crop=true;
     controls.crop_width=controls.crop_height=.3f;
     auto centre=stable.update({1,1},3000,3000,controls,UV{.5f,.5f},1000);
     auto noisy=stable.update({1,2},3000,3000,controls,UV{.501f,.499f},1011);
