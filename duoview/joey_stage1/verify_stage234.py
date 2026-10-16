@@ -98,7 +98,7 @@ def main():
   raise RuntimeError("DuoView failure must request genuine Joey Mono ID5 only from game thread")
  if "m_openvr.copy_left_to_right(backbuffer.Get(),scene_source_state)" not in backend_copy:
   raise RuntimeError("OpenVR Joey Mono must duplicate complete first scene half to second eye")
- if "duoview_abort(\"D3D12 setup/device/swapchain preparation failed\"")" not in backend_copy:
+ if 'duoview_abort("D3D12 setup/device/swapchain preparation failed")' not in backend_copy:
   raise RuntimeError("DX12 prewarm/RT setup errors must trigger DuoView-to-Mono policy")
  if "owner->is_using_mono()" not in (a.backend/"src/mods/vr/runtimes/OpenVR.cpp").read_text(encoding="utf-8"):
   raise RuntimeError("OpenVR Mono ID5 missing shared binocular optical calibration")
