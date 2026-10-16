@@ -17,7 +17,8 @@ struct Settings {
     float foveal_density{1.f};
     float feather_fraction{.08f};
     bool debug_border{};
-    bool eye_tracked{true};
+    bool eye_tracked{false};
+    float fixed_center_v{.5f};
     uint32_t fovea_view{};
     uint32_t diagnostic_view{}; // 0 composite, 1 periphery, 2 fovea
     bool gpu_timing{};
@@ -40,6 +41,8 @@ public:
         if (!std::isfinite(proposed.feather_fraction) ||
             proposed.feather_fraction < 0.f || proposed.feather_fraction > .45f ||
             proposed.fovea_view > 1 || proposed.diagnostic_view > 2 ||
+            !std::isfinite(proposed.fixed_center_v) ||
+            proposed.fixed_center_v < 0.f || proposed.fixed_center_v > 1.f ||
             !std::isfinite(proposed.guard_fraction) || proposed.guard_fraction<0.f || proposed.guard_fraction>.25f ||
             !std::isfinite(proposed.smoothing_ms) || proposed.smoothing_ms<0.f || proposed.smoothing_ms>250.f)
             return false;
