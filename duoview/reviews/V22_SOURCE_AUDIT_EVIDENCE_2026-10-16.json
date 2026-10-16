@@ -1,0 +1,93 @@
+{
+  "schema_version": 2,
+  "audit_date": "2026-10-16",
+  "branch": "experiments/duoview-joey-v22-astra-source-audit",
+  "branch_start_commit": "b59e8879a61a46b141a7bdfcc81ad64b3e5c4c75",
+  "branch_source_ancestor": "0bf0e66781fc512142e9a6fe92943ea2bac81544",
+  "gpu_recovery_checkpoint": "7c2d9151be63c0cd754dbcaa0b4c47c6fa131825",
+  "backend_pin": "5ac7edc207866569334175e4ed8a7517971547f6",
+  "frontend_pin": "60be4b0f9a646109fd9fdf448bacd41477234091",
+  "sdk_gitlink_pin": "3cffbc82429b6165ceec2714f0f0d9ae48f55596",
+  "effective_checkouts": {
+    "backend": "/workspace/scratch/21048c42591f/Joey-Source-Only-Backend-Verify",
+    "frontend": "/workspace/scratch/21048c42591f/Joey-Source-Only-Frontend-Verify"
+  },
+  "verification": {
+    "source_only": true,
+    "full_sdk_checkout_verified": false,
+    "shader_generated": false,
+    "compiled": false,
+    "stage1_exact_transform": "PASS",
+    "stage234_exact_transform": "PASS",
+    "stage234_static_source_hash_and_allowlist_verifier": "PASS",
+    "static_source_regression_verifier": "PASS",
+    "python_ast_syntax": "PASS",
+    "git_diff_check": "PASS",
+    "cpp_contracts_executed": false,
+    "warp_or_fault_injection": false,
+    "runtime_or_headset_test": false,
+    "actions_dispatched": false,
+    "dll_or_release_created": false
+  },
+  "source_only_pinned_hashes": {
+    "backend": {
+      "src/Framework.cpp": "c2c2905cd05689eb95abc02387ae272860289ac2e427c0473f8b28669ff53a0c",
+      "src/Framework.hpp": "d177640e4d3371637ab0d4c2e2e9715b715b823432a88ebc5584df893ef49987",
+      "src/mods/VR.cpp": "12fb0e3cda8cc6676275fa4918fdb132234df5e3a3b45f97e66f64ac4d8a9845",
+      "src/mods/VR.hpp": "e60b0a098c04e5b8a99e1c2be74c6450bb1c34fce029012328de51d5b3ab18b9",
+      "src/mods/vr/CompatibilityPolicy.hpp": "5fd83312789b0c334952cf8444ae221f8da79184f48a676bc1cfeb890c6de771",
+      "src/mods/vr/D3D12Component.cpp": "992b8900fe130143f6408745857736664527496c2c44340d8f8ed1fc7dbd3afc",
+      "src/mods/vr/D3D12Component.hpp": "d5f72abd7aaa6dfc15509ceb403c5c567135c94270ed1007cfbe1f947021e6a9",
+      "src/mods/vr/DuoViewBootstrap.hpp": "cc28b60e69be67d83729a3a7893b870d1e0136346e658689ea2b6f4c726acf22",
+      "src/mods/vr/DuoViewCommandRecovery.hpp": "685499faf704c17c81a1a36923f57e67557f490c57d057486e9b2dd5abe15e02",
+      "src/mods/vr/DuoViewConfig.hpp": "79bbc3e223c875437e5cd436dc1a6c364dd8705b32e3e36779b665f5699a2787",
+      "src/mods/vr/DuoViewCropStability.hpp": "d43ebbc3348b6bcd01f8c5880ce7eedbd816c6a9e812551765096146291c18ea",
+      "src/mods/vr/DuoViewD3D12.hpp": "4ef5b3b9b61e16108c04d938c581716539cf96b8d594592af0b2148eeef1edae",
+      "src/mods/vr/DuoViewFrame.hpp": "7eb2d2bfff05f91b9809be69cfcd4ff37e475ff01c4fe235aa00e4ce1ecaea31",
+      "src/mods/vr/DuoViewGaze.hpp": "fc9ed021438aaf744ba06700c81f13a5de5f70db8358cb902924d545e5b5dfea",
+      "src/mods/vr/DuoViewGeometry.hpp": "1a0d5bb1bbd00879d10d6eff7d36fb97c2a5f2e4559e78230993535639575c36",
+      "src/mods/vr/DuoViewMonoCopyD3D12.hpp": "1e0ba3c76ca74a6fb3c5a02c4e98d43fc09ac63c068f0ee8dc918aaf1b75a2b6",
+      "src/mods/vr/DuoViewPSVR2Gaze.hpp": "55960de7752bda963aea9f79fdc09e03992edabe7ffd8875cb476147ef3f51b8",
+      "src/mods/vr/DuoViewState.hpp": "c9be06f98f5c87ad67e28ac60c9efe59d1b036a2e22255c1f2a583310961356c",
+      "src/mods/vr/FFakeStereoRenderingHook.cpp": "2187262625939a6cb6c06b40ddcb965f5846d190db0fecdc8ec23f185cc9216b",
+      "src/mods/vr/MonoRenderingPolicy.hpp": "652278654ba9408c88d1145cf7d4892a67e1735ecc60cc0c4af058f0a6de881f",
+      "src/mods/vr/d3d12/CommandContext.cpp": "b03237cd5e12e5b05a53cb7118b7bdfc2a728e79b35a43f5b18cb9dfc533d9e5",
+      "src/mods/vr/d3d12/CommandContext.hpp": "1c16a89125e40839a741cbbec1d421ccc1b5219c2b9952446219e9bf1ee66999",
+      "src/mods/vr/runtimes/OpenVR.cpp": "cd93d6d84beebfc85bfc97362134e796a5ae732d70139b3fb19fa41a2e03aeef",
+      "src/mods/vr/runtimes/OpenXR.cpp": "6a7f7edd0bde3ba803f8cf45bbced6646cf69ad462e4531d68368c3acfe1d73e",
+      "tests/MonoRenderingTests.hpp": "df9d296893677db06f55226edb4309a3eeb930c9495096aeb24e487e0df665f1"
+    },
+    "frontend": {
+      "UEVR/RenderingModeOptions.cs": "42e3a4bec3f76d1718e682adad3f64a81d5c310dbcbd9c83ca52019556dfcc0d",
+      "tests/RenderingModes/Program.cs": "57e516e18cc9a05fefb1069f45bec3ca247c70db901e7f0296c47b7062d90d0d"
+    },
+    "verification": {
+      "source_only": true,
+      "full_sdk_checkout_verified": false,
+      "shader_generated": false,
+      "compiled": false
+    }
+  },
+  "open_nr_audit_source_sha256": {
+    "duoview/DuoViewBootstrap.hpp": "cc28b60e69be67d83729a3a7893b870d1e0136346e658689ea2b6f4c726acf22",
+    "duoview/DuoViewCommandRecovery.hpp": "685499faf704c17c81a1a36923f57e67557f490c57d057486e9b2dd5abe15e02",
+    "duoview/DuoViewD3D12.hpp": "4ef5b3b9b61e16108c04d938c581716539cf96b8d594592af0b2148eeef1edae",
+    "duoview/joey_stage1/ProductionContractTests.cpp": "652cf9234a7b3bbbb3aef5fdfa8254ea91a1697297d0e7f74f7f76d225a4ca27",
+    "duoview/joey_stage1/apply_stage234.py": "fc6ee324000f4969fce53599839f9dd9c1b80a066d80c228a69b41035d2f097d",
+    "duoview/joey_stage1/verify_source_review.py": "010376815cfffd2524928e87123989c84bee1db3e00b135bfa5b79c5302b3359",
+    "duoview/joey_stage1/verify_stage234.py": "573b201d6218101d1701e613614bb92e38dabb2fa0e60b581a19849cf553b53b"
+  },
+  "sdk_api_read": {
+    "pin": "3cffbc82429b6165ceec2714f0f0d9ae48f55596",
+    "declarations": {
+      "src/sdk/FSceneView.hpp": "0d4181a08ac34702ff1a10f467bf07c5a9c80deb",
+      "src/sdk/FSceneViewFamily.hpp": "683395503c7fee4f20fcbd664ac92e56d7f15776",
+      "src/sdk/TArray.hpp": "1ceeacc65663caa544a1818b1193dda6653f4875"
+    }
+  },
+  "remaining_limits": [
+    "High-resolution startup is gated at the earliest supported viewport Draw hook; earlier allocations and engine progress while Draw is deferred are runtime-unverified.",
+    "Unproven GPU retirement quarantines command/resource references until process exit and can retain VRAM after an unrecoverable fault.",
+    "No full SDK checkout, shader generation, C++ compilation, C++ contract execution, WARP/fault-injection, or headset validation was performed."
+  ]
+}

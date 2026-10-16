@@ -4,13 +4,82 @@
 #include <iostream>
 #include <stdexcept>
 #include "DuoViewState.hpp"
+#include "DuoViewBootstrap.hpp"
+#include "DuoViewCommandRecovery.hpp"
 #include "MonoRenderingPolicy.hpp"
 
 using namespace uevr::duoview;
 static void require(bool test, const char* what) {
     if (!test) throw std::runtime_error(what);
 }
+static FenceRetirementEvidence fence_evidence(bool executed, bool recorded, bool poisoned,
+    bool preexecute_proven, bool submitted_signal, uint64_t submitted_value,
+    bool recovery_signal, uint64_t recovery_value, uint64_t completed, bool device_removed) {
+    return {executed, recorded, poisoned, preexecute_proven, submitted_signal,
+        submitted_value, recovery_signal, recovery_value, completed, device_removed};
+}
 int main() try {
+    require(bootstrap_draw_decision(true,false,false,false,false,false,true)==
+                BootstrapDrawDecision::wait_for_backend &&
+            bootstrap_draw_decision(true,true,false,false,false,false,true)==
+                BootstrapDrawDecision::allow,
+            "Unknown backend must defer the target startup Draw while confirmed non-DX12 remains unchanged");
+    require(bootstrap_draw_decision(true,true,true,false,false,false,true)==
+                BootstrapDrawDecision::wait_for_configuration_or_runtime &&
+            bootstrap_draw_decision(true,true,true,true,true,true,true)==
+                BootstrapDrawDecision::wait_for_retirement &&
+            bootstrap_draw_decision(true,true,true,true,true,false,true)==
+                BootstrapDrawDecision::allow &&
+            bootstrap_draw_decision(true,true,true,true,true,true,false)==
+                BootstrapDrawDecision::allow &&
+            bootstrap_draw_decision(true,true,true,true,false,true,true)==
+                BootstrapDrawDecision::wait_for_manual_selection &&
+            bootstrap_draw_decision(true,true,true,true,false,false,true)==
+                BootstrapDrawDecision::allow,
+            "Bootstrap Draw gate must wait for readiness/retirement or explicit manual choice while Native ID0 is active");
+    require(should_defer_bootstrap_draw(bootstrap_draw_decision(
+                true,true,true,true,false,true,true)),
+            "Ready-but-unsupported automatic ID6 must keep Native ID0 scene Draw gated until manual selection");
+    require(fence_retirement_proven(fence_evidence(false,false,false,false,false,0,false,0,0,false)),
+            "A command list never submitted to Execute must not block retirement");
+    require(!fence_retirement_proven(fence_evidence(true,false,true,false,false,0,false,0,0,false)),
+            "A failed post-Execute Signal cannot be retired from an older fence value");
+    require(!fence_retirement_proven(fence_evidence(true,false,true,false,true,0,false,0,0,false)) &&
+            !fence_retirement_proven(fence_evidence(true,false,true,false,false,0,true,0,0,false)) &&
+            !fence_retirement_proven(fence_evidence(true,false,true,false,true,UINT64_MAX,false,0,UINT64_MAX-1,false)),
+            "Malformed signaled-fence evidence must not prove retirement");
+    require(!fence_retirement_proven(fence_evidence(true,false,true,false,false,0,true,4,3,false)) &&
+            fence_retirement_proven(fence_evidence(true,false,true,false,false,0,true,4,4,false)),
+            "Same-queue recovery fence must remain pending until its exact value completes");
+    require(!fence_retirement_proven(fence_evidence(true,false,true,false,true,7,false,0,6,false)) &&
+            fence_retirement_proven(fence_evidence(true,false,true,false,true,7,false,0,7,false)),
+            "A signaled fence after event-arm failure must still prove retirement");
+    require(!fence_retirement_proven(fence_evidence(true,false,true,false,true,7,false,0,UINT64_MAX,false)) &&
+            fence_retirement_proven(fence_evidence(true,false,true,false,false,0,false,0,UINT64_MAX,true)),
+            "UINT64_MAX is device loss unless the captured device confirms removal");
+    require(!fence_retirement_proven(fence_evidence(false,true,false,false,false,0,false,0,0,false)) &&
+            fence_retirement_proven(fence_evidence(false,false,true,true,false,0,false,0,0,false)),
+            "Recorded commands remain owned until Execute or an explicit pre-execute failure proof");
+    {
+        const RecordingRecoveryEvidence closed{false,true,false,false};
+        const auto queue_missing=queue_unavailable_after_close(closed);
+        require(!queue_missing.execute_submitted && !queue_missing.commands_recorded &&
+                queue_missing.poisoned && queue_missing.preexecute_failure_proven &&
+                fence_retirement_proven(fence_evidence(queue_missing.execute_submitted,
+                    queue_missing.commands_recorded,queue_missing.poisoned,
+                    queue_missing.preexecute_failure_proven,false,0,false,0,0,false)),
+                "Closed command list with no queue must discard only unsubmitted work and permit rebuild");
+        const RecordingRecoveryEvidence submitted{true,true,true,false};
+        const auto allocator_reset_failed=reset_failed_after_retirement(true,submitted);
+        require(!allocator_reset_failed.execute_submitted && !allocator_reset_failed.commands_recorded &&
+                allocator_reset_failed.poisoned && allocator_reset_failed.preexecute_failure_proven &&
+                fence_retirement_proven(fence_evidence(allocator_reset_failed.execute_submitted,
+                    allocator_reset_failed.commands_recorded,allocator_reset_failed.poisoned,
+                    allocator_reset_failed.preexecute_failure_proven,false,0,false,0,0,false)),
+                "Allocator/list reset failure after proven retirement must discard recording state and allow rebuild");
+        require(reset_failed_after_retirement(false,submitted).execute_submitted,
+                "Allocator/list failure without retirement proof must keep submitted ownership");
+    }
     // Do not downgrade for momentary 1-3 frame gaps during initialization.
     // Exactly 4 consecutive missing compositor/scene observations require
     // a game-thread transition to true Mono mode5; never Native Stereo ID0.
@@ -40,14 +109,21 @@ int main() try {
         // Producer fallback uses Joey's existing GPU-retirement transaction,
         // not an instant switch to Native Stereo.
         uevr::mono::Selection transition;
-        transition.initialize(uevr::mono::duoview_method_id);
+        transition.initialize(uevr::mono::method_id); // persisted real ID5 profile
         require(transition.active()==0 && transition.pending(),
-                "Boot-time DuoView must defer before GPU lifetime is safe");
-        transition.consumers_retired(transition.request_token());
+                "A persisted Mono profile must start through safe Native retirement");
+        transition.request(uevr::mono::duoview_method_id); // eligible launch autostart
+        const auto autostart_token=transition.request_token();
+        require(transition.requested()==uevr::mono::duoview_method_id && transition.active()==0,
+                "Saved fallback ID5 prevented the next eligible launch from requesting ID6");
+        require(!transition.commit_at_game_frame_boundary(),
+                "Bootstrap advanced without actual GPU-consumer retirement");
+        transition.consumers_retired(autostart_token);
         require(transition.commit_at_game_frame_boundary() &&
                 transition.active()==uevr::mono::duoview_method_id,
                 "Boot-time DuoView could not start safely");
         transition.request(uevr::mono::method_id);
+        transition.consumers_retired(autostart_token); // stale startup evidence
         require(transition.active()==uevr::mono::duoview_method_id &&
                 transition.pending(),"Fallback to Joey Mono switched mid-frame");
         require(!transition.commit_at_game_frame_boundary(),

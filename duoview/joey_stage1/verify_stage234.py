@@ -2,20 +2,25 @@
 """Verify exact Stage 2-4 added/edited source and unchanged original SDK."""
 import argparse, hashlib, json, subprocess
 from pathlib import Path
+from verify_source_review import verify as verify_review_regressions, block as source_block
 
 EDITED_BACKEND = {
  "src/mods/vr/MonoRenderingPolicy.hpp", "src/mods/vr/CompatibilityPolicy.hpp",
+ "src/Framework.hpp", "src/Framework.cpp",
  "src/mods/VR.hpp", "src/mods/VR.cpp",
  "src/mods/vr/FFakeStereoRenderingHook.cpp", "src/mods/vr/D3D12Component.hpp",
  "src/mods/vr/D3D12Component.cpp", "src/mods/vr/runtimes/OpenVR.cpp",
+ "src/mods/vr/runtimes/OpenXR.cpp",
+ "src/mods/vr/d3d12/CommandContext.hpp", "src/mods/vr/d3d12/CommandContext.cpp",
  "tests/MonoRenderingTests.hpp",
 }
 ADDED_BACKEND = {
  "src/mods/vr/DuoViewGeometry.hpp", "src/mods/vr/DuoViewGaze.hpp",
  "src/mods/vr/DuoViewPSVR2Gaze.hpp", "src/mods/vr/DuoViewCropStability.hpp",
  "src/mods/vr/DuoViewFrame.hpp", "src/mods/vr/DuoViewConfig.hpp",
- "src/mods/vr/DuoViewState.hpp", "src/mods/vr/DuoViewD3D12.hpp",
- "src/mods/vr/DuoViewMonoCopyD3D12.hpp", "src/mods/vr/DuoViewShaderSource.hpp",
+ "src/mods/vr/DuoViewState.hpp", "src/mods/vr/DuoViewBootstrap.hpp", "src/mods/vr/DuoViewD3D12.hpp",
+ "src/mods/vr/DuoViewCommandRecovery.hpp", "src/mods/vr/DuoViewMonoCopyD3D12.hpp",
+ "src/mods/vr/DuoViewShaderSource.hpp",
 }
 EDITED_FRONTEND = {"UEVR/RenderingModeOptions.cs", "tests/RenderingModes/Program.cs"}
 GENERATED_FRONTEND = {"UEVR/FilteredExecutables.json"}
@@ -35,16 +40,27 @@ def main():
  p.add_argument("frontend",type=Path)
  p.add_argument("evidence",type=Path)
  p.add_argument("--final",action="store_true")
+ p.add_argument("--source-only",action="store_true",
+                 help="Verify exact transformed source before shader embedding; do not expect DXBC header")
  a=p.parse_args()
+ verify_review_regressions(a.backend)
  assert git(a.backend,"rev-parse","HEAD")=="5ac7edc207866569334175e4ed8a7517971547f6"
  assert git(a.frontend,"rev-parse","HEAD")=="60be4b0f9a646109fd9fdf448bacd41477234091"
  sdk=a.backend/"dependencies/submodules/UESDK"
- assert git(sdk,"rev-parse","HEAD")=="3cffbc82429b6165ceec2714f0f0d9ae48f55596"
- if git(sdk,"status","--porcelain"): raise RuntimeError("SDK source not clean")
+ sdk_tree=git(a.backend,"ls-tree","HEAD","dependencies/submodules/UESDK")
+ if "160000 commit 3cffbc82429b6165ceec2714f0f0d9ae48f55596" not in sdk_tree:
+  raise RuntimeError("Backend SDK submodule pin differs from the audited revision")
+ if (sdk/".git").exists():
+  if git(sdk,"rev-parse","HEAD")!="3cffbc82429b6165ceec2714f0f0d9ae48f55596":
+   raise RuntimeError("Initialized SDK checkout differs from the audited revision")
+  if git(sdk,"status","--porcelain"): raise RuntimeError("SDK source not clean")
+ elif not a.source_only:
+  raise RuntimeError("Full-source verification requires the pinned SDK checkout")
  bdiff=tracked(a.backend)
  if bdiff!=EDITED_BACKEND: raise RuntimeError(f"Wrong backend edited paths: {bdiff ^ EDITED_BACKEND}")
  buntracked=untracked(a.backend)
- if buntracked!=ADDED_BACKEND: raise RuntimeError(f"Unexpected added backend paths: {buntracked ^ ADDED_BACKEND}")
+ expected_added=ADDED_BACKEND-({"src/mods/vr/DuoViewShaderSource.hpp"} if a.source_only else set())
+ if buntracked!=expected_added: raise RuntimeError(f"Unexpected added backend paths: {buntracked ^ expected_added}")
  fdiff=tracked(a.frontend)
  if fdiff - (EDITED_FRONTEND|GENERATED_FRONTEND) or not EDITED_FRONTEND.issubset(fdiff):
   raise RuntimeError(f"Unexpected frontend tracked changes: {fdiff}")
@@ -54,7 +70,6 @@ def main():
   raise RuntimeError("Legacy atlas order must be preserved in applied source")
  # A shipping DuoView must never compile shaders on the OpenXR copy path.
  compositor=(a.backend/"src/mods/vr/DuoViewD3D12.hpp").read_text(encoding="utf-8")
- shaders=(a.backend/"src/mods/vr/DuoViewShaderSource.hpp").read_text(encoding="utf-8")
  if "D3DCompile(" in compositor or "shader_source" in compositor:
   raise RuntimeError("Runtime shader compiler still in production compositor")
  if "DuoViewState.hpp" not in (a.backend/"src/mods/VR.hpp").read_text(encoding="utf-8"):
@@ -77,7 +92,9 @@ def main():
   raise RuntimeError("Actual source index and UE projection must follow frozen source-view selection")
  if ("apply_frame_projection(double_matrix,*frame" not in hook or
      "can_native_fix_secondary_source(key,state)" not in hook or
-     "views_original_count=views->count" not in hook):
+     "duo_original_count=views->count" not in hook or
+     "utility::ScopeGuard restore_duoview_family" not in hook or
+     "if (result && duo_scene_observation)" not in hook):
   raise RuntimeError("DuoView source-parity constructor transaction or original-family restoration contract absent")
  # An incomplete DuoView atlas must never be presented as a full mono scene.
  # Persistent failure must request genuine mode5 on the game thread, never ID0.
@@ -119,8 +136,38 @@ def main():
   raise RuntimeError("SteamVR Mono fallback must be allowed ONLY for STALKER2 DX12")
  if ("m_duo_center_v->value()" not in vr_cpp or
      "m_duoview_autostart_done" not in vr_header or
-     "requested_rendering_method()!=RenderingMethod::DUOVIEW_MONO" not in vr_cpp):
+     "selection.requested()!=RenderingMethod::DUOVIEW_MONO" not in vr_cpp or
+     "m_rendering_method->request(RenderingMethod::DUOVIEW_MONO)" not in vr_cpp):
   raise RuntimeError("DuoView must auto-start after a saved Mono fallback and preserve fixed-center control")
+ framework_cpp=(a.backend/"src/Framework.cpp").read_text(encoding="utf-8")
+ framework_header=(a.backend/"src/Framework.hpp").read_text(encoding="utf-8")
+ bootstrap=(a.backend/"src/mods/vr/DuoViewBootstrap.hpp").read_text(encoding="utf-8")
+ if ("is_mods_fully_initialized() const" not in framework_header or
+     "if (m_vr) m_vr->on_duoview_startup_config_finalized();" not in framework_cpp or
+     "m_duoview_autostart_config_token.store(" not in vr_cpp or
+     "m_duoview_config_load_count" in vr_header or
+     "bootstrap_draw_decision(" not in bootstrap):
+  raise RuntimeError("Bootstrap readiness must use the explicit completed-config boundary, not a callback count")
+ if ("bool VR::defer_duoview_bootstrap_draw()" not in vr_cpp or
+     "m_d3d12.mono_consumers_retired()" not in vr_cpp or
+     "selection.consumers_retired(token)" not in vr_cpp or
+     "service_mono_transition_game_thread();" not in vr_cpp or
+     "request_duoview_autostart_if_ready();" not in vr_cpp):
+  raise RuntimeError("Startup must acknowledge actual retirement at the pre-scene Draw boundary and use the existing commit transaction")
+ viewport_draw=source_block(hook,"void FFakeStereoRenderingHook::game_viewport_client_draw_hook(")
+ main_draw_gate=viewport_draw.find("vr->defer_duoview_bootstrap_draw()) return;")
+ main_draw_orig=viewport_draw.find("call_orig();", viewport_draw.find("if (!vr->is_hmd_active())"))
+ early_draw_gate=viewport_draw.find("startup_vr->defer_duoview_bootstrap_draw()")
+ early_draw_orig=viewport_draw.find("call_orig();", viewport_draw.find("if (!g_framework->is_game_data_intialized())"))
+ if (main_draw_gate < 0 or main_draw_orig <= main_draw_gate or
+     early_draw_gate < 0 or early_draw_orig <= early_draw_gate):
+  raise RuntimeError("Startup Draw must be deferred before UE constructs the next scene")
+ bootstrap_contracts=(Path(__file__).with_name("ProductionContractTests.cpp")).read_text(encoding="utf-8")
+ if ("Unknown backend must defer the target startup Draw" not in bootstrap_contracts or
+     "Saved fallback ID5 prevented the next eligible launch from requesting ID6" not in bootstrap_contracts or
+     "Ready-but-unsupported automatic ID6 must keep Native ID0 scene Draw gated" not in bootstrap_contracts or
+     "actual GPU-consumer retirement" not in bootstrap_contracts):
+  raise RuntimeError("Bootstrap readiness, persisted-ID5 autostart, and retirement contracts are missing")
  openvr=(a.backend/"src/mods/vr/runtimes/OpenVR.cpp").read_text(encoding="utf-8")
  if ("uevr::mono::geometry(optical)" not in openvr or
      "owner->is_using_mono()" not in openvr or
@@ -128,17 +175,29 @@ def main():
   raise RuntimeError("OpenVR shared Mono optical calibration or per-eye submission bounds missing")
  if ".fovea_view=static_cast<uint32_t>(m_duo_fovea_view->value())" not in vr_cpp:
   raise RuntimeError("UE source selector must be connected to immutable frame settings")
- if "vertex_shader_bytecode[]" not in shaders or "pixel_shader_bytecode[]" not in shaders:
-  raise RuntimeError("Precompiled DXBC shader arrays missing")
- inputs = sorted(EDITED_BACKEND | ADDED_BACKEND)
+ shader_path=a.backend/"src/mods/vr/DuoViewShaderSource.hpp"
+ if a.source_only:
+  if shader_path.exists(): raise RuntimeError("Source-only transform unexpectedly generated a shader header")
+ else:
+  shaders=shader_path.read_text(encoding="utf-8")
+  if "vertex_shader_bytecode[]" not in shaders or "pixel_shader_bytecode[]" not in shaders:
+   raise RuntimeError("Precompiled DXBC shader arrays missing")
+ inputs = sorted(EDITED_BACKEND | expected_added)
  hashes = {"backend":{k:sha(a.backend/k) for k in inputs},
-           "frontend":{k:sha(a.frontend/k) for k in sorted(EDITED_FRONTEND)}}
+           "frontend":{k:sha(a.frontend/k) for k in sorted(EDITED_FRONTEND)},
+           "verification":{"source_only":bool(a.source_only),
+                           "full_sdk_checkout_verified":bool((sdk/".git").exists()),
+                           "shader_generated":not bool(a.source_only),
+                           "compiled":False}}
  lock=a.evidence/"duoview-stage234-hashes.json"
  if a.final:
   if json.loads(lock.read_text())!=hashes: raise RuntimeError("Stage 2-4 source mutated during compile")
  else:
   lock.write_text(json.dumps(hashes,indent=2)+"\n")
- print("Stage 2-4 exact source, proprietary SDK isolation and source hashes verified.")
+ if a.source_only:
+  print("Stage 2-4 source hashes verified; SDK gitlink verified; full SDK checkout/shader/build not verified.")
+ else:
+  print("Stage 2-4 exact source, proprietary SDK isolation and source hashes verified; this verifier does not certify compilation.")
 
 if __name__=="__main__":
  main()

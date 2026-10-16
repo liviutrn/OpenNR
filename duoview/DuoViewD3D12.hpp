@@ -101,6 +101,18 @@ public:
         return copied;
     }
     const std::string& error() const { return error_; }
+    template <typename Commands>
+    void retain_gpu_references(Commands& commands) const {
+        commands.retain_duoview_reference(device_.Get());
+        commands.retain_duoview_reference(output_.Get());
+        commands.retain_duoview_reference(source_.Get());
+        commands.retain_duoview_reference(root_.Get());
+        commands.retain_duoview_reference(pipeline_.Get());
+        commands.retain_duoview_reference(srv_.Get());
+        commands.retain_duoview_reference(rtv_.Get());
+        commands.retain_duoview_reference(queries_.Get());
+        commands.retain_duoview_reference(timestamps_.Get());
+    }
     bool recorded_commands() const { return recorded_commands_; }
     float gpu_milliseconds() const { return gpu_ms_; }
     UINT64 timing_frequency() const { return frequency_; }
