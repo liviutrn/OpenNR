@@ -56,25 +56,25 @@ def main():
  shaders=(a.backend/"src/mods/vr/DuoViewShaderSource.hpp").read_text(encoding="utf-8")
  if "D3DCompile(" in compositor or "shader_source" in compositor:
   raise RuntimeError("Runtime shader compiler still in production compositor")
- if "DuoViewPSVR2Gaze.hpp" not in (a.backend/"src/mods/VR.hpp").read_text(encoding="utf-8"):
-  raise RuntimeError("Production VR headers missing native PSVR2 gaze integration")
+ if "DuoViewState.hpp" not in (a.backend/"src/mods/VR.hpp").read_text(encoding="utf-8"):
+  raise RuntimeError("Production VR headers missing DuoView frame state")
  vr_cpp=(a.backend/"src/mods/VR.cpp").read_text(encoding="utf-8")
  vr_header=(a.backend/"src/mods/VR.hpp").read_text(encoding="utf-8")
- if (".eye_tracked=m_duo_gaze->value()" not in vr_cpp or
-     "m_duoview_gaze.read_uv(frozen,optical)" not in vr_cpp or
-     ".smoothing_ms=m_duo_smoothing->value()" not in vr_cpp):
-  raise RuntimeError("Stage5 gaze control is not connected to frame source")
- for token in ('m_duo_stabilize->draw(', 'm_duo_smoothing->draw(', 'm_duo_shading->draw(', 'm_duo_width->draw(', 'm_duo_height->draw(', 'm_duo_periphery->draw(',
+ if (".eye_tracked=false" not in vr_cpp or
+     ".fixed_center_v=m_duo_center_v->value()" not in vr_cpp or
+     "m_duo_gaze->draw(" in vr_cpp):
+  raise RuntimeError("Fixed-center production control must not expose eye tracking")
+ for token in ('m_duo_center_v->draw(', 'm_duo_width->draw(', 'm_duo_height->draw(', 'm_duo_periphery->draw(',
                'm_duo_density->draw(', 'm_duo_feather->draw(', 'm_duo_debug_source->draw('):
   if token not in vr_cpp: raise RuntimeError("DuoView quality UI missing "+token)
  for token in ('"DuoViewCropWidth"', '"DuoViewPeripheralScale"', '"DuoViewFovealDensity"',
-               '"DuoViewFoveaSourceView"', '"DuoViewCropSmoothingMs"'):
+               '"DuoViewCropSmoothingMs"', '"DuoViewCropSmoothingMs"'):
   if token not in vr_header: raise RuntimeError("Persisted DuoView setting missing "+token)
  hook=(a.backend/"src/mods/vr/FFakeStereoRenderingHook.cpp").read_text(encoding="utf-8")
  if "frame->config.settings.fovea_view" not in hook or "duo_frame->config.settings.fovea_view" not in hook:
   raise RuntimeError("Actual source index and UE projection must follow frozen source-view selection")
- if "apply_frame_projection(double_matrix,*frame" not in hook or "can_independent_shading(key,state)" not in hook:
-  raise RuntimeError("Frozen producer projection and guarded shading constructor are required")
+ if "apply_frame_projection(double_matrix,*frame" not in hook or "can_independent_shading(key,state)" in hook:
+  raise RuntimeError("Production foveal projection missing or experimental independent shading still active")
  if ".fovea_view=static_cast<uint32_t>(m_duo_fovea_view->value())" not in vr_cpp:
   raise RuntimeError("UE source selector must be connected to immutable frame settings")
  if "vertex_shader_bytecode[]" not in shaders or "pixel_shader_bytecode[]" not in shaders:
