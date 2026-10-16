@@ -141,6 +141,15 @@ int main() try {
             temporal.projection({7,2},0) && temporal.projection({7,2},1) &&
             temporal.camera({7,2},0,camera) && temporal.scene({7,2},0,100),"Shading source contract rejected");
     require(!temporal.can_independent_shading({7,2},100),"Shared ViewState must block primary adaptation");
+    // DuoView's actual Native Fix source protocol must NOT inherit the
+    // experimental independent-shading toggle. Guard by frame+ViewState pair.
+    require(!temporal.can_native_fix_secondary_source({7,2},100),
+            "Native source transaction must reject aliased source ViewState");
+    require(temporal.can_native_fix_secondary_source({7,2},200),
+            "Coherent distinct UE secondary ViewState should admit source parity");
+    require(!temporal.can_native_fix_secondary_source({7,1},200),
+            "Native source transaction accepted a stale render frame");
+
     require(temporal.can_independent_shading({7,2},200),"Distinct ViewStates should permit guarded adaptation");
     stable.independent_shading=false; require(temporal.configure(stable),"Shading off rejected");
     require(temporal.snapshot({7,2})->config.settings.independent_shading,"Mid-frame toggle split the source pair");
