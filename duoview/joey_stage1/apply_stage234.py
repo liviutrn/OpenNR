@@ -86,11 +86,12 @@ def main():
     // Render-thread callbacks report failures; only the game thread changes
     // rendering modes at the normal Mono-family transaction boundary.
     std::atomic<uint32_t> m_duoview_consecutive_failures{0};
+    std::atomic<bool> m_duoview_ever_presented{false};
     std::atomic<bool> m_duoview_fallback_requested{false};
     std::once_flag m_duoview_settings_once;
     std::atomic<const char*> m_mono_status{"Not selected"};''')
     edit(header,'    void on_device_reset() override {\n        get_runtime()->on_device_reset();',
-        '    void on_device_reset() override {\n        m_duoview.retire();\n        get_runtime()->on_device_reset();')
+        '    void on_device_reset() override {\n        m_duoview.retire();\n        m_duoview_ever_presented.store(false, std::memory_order_release);\n        m_duoview_consecutive_failures.store(0, std::memory_order_release);\n        m_duoview_fallback_requested.store(false, std::memory_order_release);\n        get_runtime()->on_device_reset();')
     edit(header,'        m_options = {',
         '''        m_options = {
             *m_duo_width, *m_duo_height, *m_duo_periphery, *m_duo_density,
@@ -205,7 +206,7 @@ def main():
     }
     service_mono_transition_game_thread();''')
     edit(cpp,'    m_mono_main_view_token = 0;\n    m_mono_attachment_token = 0;',
-        '    m_duoview.retire();\n    m_duoview_consecutive_failures.store(0,std::memory_order_release);\n    m_duoview_fallback_requested.store(false,std::memory_order_release);\n    m_duo_shading->value()=false;\n    configure_duoview();\n    m_mono_main_view_token = 0;\n    m_mono_attachment_token = 0;')
+        '    m_duoview.retire();\n    m_duoview_ever_presented.store(false,std::memory_order_release);\n    m_duoview_consecutive_failures.store(0,std::memory_order_release);\n    m_duoview_fallback_requested.store(false,std::memory_order_release);\n    m_duo_shading->value()=false;\n    configure_duoview();\n    m_mono_main_view_token = 0;\n    m_mono_attachment_token = 0;')
     changed[cpp]+='''
 // Update the immutable state from persisted controls only on changes.
 void VR::configure_duoview() {
@@ -274,12 +275,14 @@ void VR::duoview_abort(const char* reason) {
     // A transient missing frame during startup/reconfigure is not a reason
     // to discard DuoView. Four CONSECUTIVE failures request a real switch
     // to Joey Mono; never attempt to re-label a partial DuoView atlas.
-    if (uevr::duoview::should_fallback_to_mono(failures))
+    const bool ever_presented=m_duoview_ever_presented.load(std::memory_order_acquire);
+    if (uevr::duoview::should_fallback_to_mono(failures,ever_presented))
         m_duoview_fallback_requested.store(true,std::memory_order_release);
-    SPDLOG_WARNING_EVERY_N_SEC(2,"[DuoView] Pair/compositor failure {}/4; {}. Fallback target: Joey Mono ID5", failures, reason);
+    SPDLOG_WARNING_EVERY_N_SEC(2,"[DuoView] Pair/compositor failure {} (startup_warmup={}): {}. Fallback: Joey Mono ID5", failures, !ever_presented, reason);
     set_mono_status("DuoView source fault; retrying, then fallback to Joey Mono ID5");
 }
 void VR::duoview_frame_success() {
+    m_duoview_ever_presented.store(true,std::memory_order_release);
     m_duoview_consecutive_failures.store(0,std::memory_order_release);
     m_duoview_fallback_requested.store(false,std::memory_order_release);
 }
@@ -561,6 +564,8 @@ void VR::duoview_frame_success() {
     # snapshot instead of probing an XR frame that never exists on OpenVR.
     edit(dx,'''    if (vr->mono_frame_gate_required()) {
         if (!vr->m_openxr->has_mono_frame(static_cast<uint32_t>(vr->m_frame_count))) {
+            if (vr->is_using_duoview_mono())
+                vr->duoview_abort("OpenXR frame/projection gate not ready");
             vr->set_mono_status("Waiting for a current main-view pose and validated common projection");
             vr->m_openxr->end_mono_transition_frame();
             return vr::VRCompositorError_None;
