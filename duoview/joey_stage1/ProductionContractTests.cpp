@@ -145,7 +145,16 @@ int main() try {
             "Second same-pose view observations rejected");
     require(!state.consume({4,101}),"Wrong engine frame must not compose");
     require(!state.consume({3,100}),"Wrong renderer generation must not compose");
-    require(state.consume(key).has_value(),"Current coherent pair rejected");
+    require(!state.consume(key),"View pair with no UE source states must not compose");
+    require(state.scene(key,0,101) && state.scene(key,1,101,true),
+            "Could not publish intentionally aliased source states");
+    require(!state.consume(key),"Aliased scene histories must not be presented as distinct UE views");
+    require(state.scene(key,1,202,false),
+            "Could not publish untreated secondary source for negative test");
+    require(!state.consume(key),"Untreated secondary Lumen/shadow source must not compose");
+    require(state.scene(key,1,202,true),
+            "Guarded secondary Native Fix constructor transaction not published");
+    require(state.consume(key).has_value(),"Distinct Native Fix-treated current UE source pair rejected");
     require(!state.consume(key),"Double submission of a frame must be rejected");
     settings.diagnostic_view=1; settings.gpu_timing=true;
     require(state.configure(settings),"Quality settings change rejected");
