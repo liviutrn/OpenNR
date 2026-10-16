@@ -113,12 +113,20 @@ def main():
         rt->should_recalculate_eye_projections=true;
         rt->should_update_eye_matrices=true;
     }''')
-    # STALKER2 DX12 only: Joey Mono must be legal on OpenVR too, otherwise
-    # transitioning from mode6 to mode5 is immediately invalidated and
-    # the original OpenVR double-wide copy would submit a missing right eye.
+    # Keep original Joey Mono OpenXR-only for every OTHER game.
+    # Only verified STALKER2 DX12 may use Mono ID5 / DuoView ID6 on SteamVR
+    # OpenVR. Otherwise a global runtime capability change would silently
+    # expose an unvalidated Mono submission path for other titles.
+    edit(cpp,
+        '    return uevr::mono::unavailable_reason({',
+        '''    static const bool duoview_stalker2_title=[] {
+        const auto p=utility::get_module_pathw(utility::get_executable());
+        return p && uevr::stalker2_native::is_executable(*p);
+    }();
+    return uevr::mono::unavailable_reason({''')
     edit(cpp,
         '        .openxr = runtime != nullptr && runtime->is_openxr(),',
-        '        .openxr = runtime != nullptr && (runtime->is_openxr() || runtime->is_openvr()),')
+        '        .openxr = runtime != nullptr && (runtime->is_openxr() || (runtime->is_openvr() &&\n            g_framework != nullptr && g_framework->is_dx12() && duoview_stalker2_title)),')
     edit(cpp,'        if (rendering_method_changed && !is_mono_transition_pending() && get_runtime() != nullptr) {',
     '''        if (is_using_duoview_mono() || requested_rendering_method() == RenderingMethod::DUOVIEW_MONO) {
             if (ImGui::TreeNode("DuoView Mono — quality and diagnostics")) {
