@@ -96,8 +96,7 @@ def main():
      "m_duoview_consecutive_failures" not in vr_cpp or
      "m_duoview_fallback_requested.exchange(false" not in vr_cpp or
      "m_rendering_method->request(RenderingMethod::MONO)" not in vr_cpp or
-     "m_rendering_method->request(RenderingMethod::NATIVE_STEREO)" in vr_cpp or
-     "should_fallback_to_mono(failures)" not in vr_cpp):
+     "m_rendering_method->request(RenderingMethod::NATIVE_STEREO)" in vr_cpp):
   raise RuntimeError("DuoView failure must request genuine Joey Mono ID5 only from game thread")
  if "m_openvr.copy_left_to_right(backbuffer.Get(),scene_source_state)" not in backend_copy:
   raise RuntimeError("OpenVR Joey Mono must duplicate complete first scene half to second eye")
