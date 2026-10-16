@@ -9,6 +9,13 @@ namespace uevr::duoview {
 // GPU-retired mode-6 to mode-5 transaction on the main/game thread.
 // Transient loss (including one frame during runtime resize) retries DuoView.
 // Never produce Native Stereo mode ID0 as an automatic failure destination.
+// Fault observations are bounded to one per game tick, not one per callback.
+// Multiple setup/copy/submit callbacks for the same tick must not trigger an
+// immediate 6 -> 5 downgrade. Successful composition wins within that tick.
+constexpr uint64_t duoview_unseen_tick = ~uint64_t{0};
+constexpr bool is_distinct_failed_tick(uint64_t tick, uint64_t previous_failure, uint64_t last_success) {
+    return tick != previous_failure && tick != last_success;
+}
 constexpr uint32_t mono_fallback_failure_threshold = 4u;
 constexpr uint32_t mono_fallback_startup_grace_frames = 60u;
 constexpr bool should_fallback_to_mono(uint32_t consecutive_failures, bool previously_presented=true) {
