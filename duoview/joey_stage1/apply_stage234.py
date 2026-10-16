@@ -463,7 +463,10 @@ void VR::duoview_abort(const char* reason) {
         if (vr->is_native_stereo_fix_texture_array_submit_enabled()) {
             auto native_array_create_info = standard_swapchain_create_info;''')
     edit(dx,'                    if (vr->is_using_mono()) {\n                        bool recorded = false;',
-    '''                    if (vr->is_duoview_renderer_active()) {
+    '''                    if (vr->is_using_duoview_mono() && !vr->is_duoview_renderer_active()) {
+                        vr->duoview_abort("mode6 selected but validated DX12/VR producer unavailable");
+                        vr->m_openxr->note_mono_copy(static_cast<uint32_t>(frame_count), false);
+                    } else if (vr->is_duoview_renderer_active()) {
                         bool recorded = false;
                         bool duo_recorded = false;
                         const auto frame = vr->duoview_state().consume(
@@ -535,6 +538,11 @@ void VR::duoview_abort(const char* reason) {
                 m_openvr.copy_left(backbuffer.Get(), scene_source_state);''',
     '''            auto openvr = vr->get_runtime<runtimes::OpenVR>();
             const auto submit_pose = openvr->get_pose_for_submit();
+            if (vr->is_using_duoview_mono() && !vr->is_duoview_renderer_active()) {
+                vr->duoview_abort("OpenVR mode6 selected but scene-source prerequisites missing");
+                runtime->frame_synced=false;
+                return vr::VRCompositorError_None;
+            }
             Microsoft::WRL::ComPtr<ID3D12Resource> duo_scene{};
             if (vr->is_duoview_renderer_active()) {
                 auto frame=vr->duoview_state().consume(
