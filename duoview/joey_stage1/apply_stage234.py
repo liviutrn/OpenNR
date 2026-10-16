@@ -655,8 +655,10 @@ void VR::duoview_frame_success() {
                 auto& context=m_openvr.duoview_commands;
                 if (frame && m_openvr.duoview_output &&
                     m_openvr.duoview_compositor && context.ready()) {
-                    context.wait(INFINITE);
-                    if (m_openvr.duoview_compositor->record(device,
+                    // A failed/poisoned GPU fence must never permit recording
+                    // into an in-flight or reset DX12 command allocator.
+                    if (context.wait(INFINITE) &&
+                        m_openvr.duoview_compositor->record(device,
                         context.cmd_list.Get(),backbuffer.Get(),
                         m_openvr.duoview_output.Get(),scene_source_state,frame->config)) {
                         if (m_openvr.duoview_compositor->recorded_commands())
