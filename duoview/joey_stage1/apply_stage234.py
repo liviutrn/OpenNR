@@ -159,7 +159,7 @@ def main():
     # before the game's first eligible viewport transaction. Any subsequent
     # user mode selection is never overwritten during this injection.
     edit(cpp,
-        'void VR::on_pre_engine_tick(sdk::UGameEngine* engine, float delta) {\\n    service_mono_transition_game_thread();',
+        'void VR::on_pre_engine_tick(sdk::UGameEngine* engine, float delta) {\n    service_mono_transition_game_thread();',
         '''void VR::on_pre_engine_tick(sdk::UGameEngine* engine, float delta) {
     if (!m_duoview_autostart_done.load(std::memory_order_acquire) && m_is_d3d12) {
         const auto runtime=get_runtime();
