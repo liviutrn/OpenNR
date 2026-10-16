@@ -68,8 +68,9 @@ def main():
  for token in ('m_duo_center_v->draw(', 'm_duo_width->draw(', 'm_duo_height->draw(', 'm_duo_periphery->draw(',
                'm_duo_density->draw(', 'm_duo_feather->draw(', 'm_duo_debug_source->draw('):
   if token not in vr_cpp: raise RuntimeError("DuoView quality UI missing "+token)
- for token in ('"DuoViewCropWidth"', '"DuoViewPeripheralScale"', '"DuoViewFovealDensity"',
-               '"DuoViewCropSmoothingMs"', '"DuoViewCropSmoothingMs"'):
+ for token in ('"DuoViewCropWidth"', '"DuoViewCropHeight"', '"DuoViewPeripheralScale"',
+               '"DuoViewFovealDensity"', '"DuoViewFixedCenterVertical"',
+               '"DuoViewFoveaSourceView"', '"DuoViewCropSmoothingMs"'):
   if token not in vr_header: raise RuntimeError("Persisted DuoView setting missing "+token)
  hook=(a.backend/"src/mods/vr/FFakeStereoRenderingHook.cpp").read_text(encoding="utf-8")
  if "frame->config.settings.fovea_view" not in hook or "duo_frame->config.settings.fovea_view" not in hook:
@@ -88,12 +89,18 @@ def main():
  if ("DuoView OpenVR compositor" not in backend_copy or
      "OpenVR paired-source composition unavailable" not in backend_copy):
   raise RuntimeError("OpenVR two-view DX12 presentation path missing")
- if "can_native_fix_secondary_source" not in (a.backend/"src/mods/vr/DuoViewState.hpp").read_text(encoding="utf-8"):
-  raise RuntimeError("Dedicated guarded Native Fix source pair proof missing")
+ state_source=(a.backend/"src/mods/vr/DuoViewState.hpp").read_text(encoding="utf-8")
+ if ("can_native_fix_secondary_source" not in state_source or
+     "slot->scene_states[0] == slot->scene_states[1]" not in state_source or
+     "!slot->shading_applied" not in state_source):
+  raise RuntimeError("DuoView must not present aliased or untreated secondary UE sources")
  if ("m_duoview_ever_presented" not in vr_header or
      "should_fallback_to_mono(failures,ever_presented)" not in vr_cpp or
      "OpenXR frame/projection gate not ready" not in backend_copy or
      "m_duoview_consecutive_failures" not in vr_cpp or
+     "m_duoview_last_failure_tick.compare_exchange_weak(" not in vr_cpp or
+     "m_duoview_game_tick_serial.fetch_add(" not in vr_cpp or
+     "is_distinct_failed_tick(" not in vr_cpp or
      "m_duoview_fallback_requested.exchange(false" not in vr_cpp or
      "m_rendering_method->request(RenderingMethod::MONO)" not in vr_cpp or
      "m_rendering_method->request(RenderingMethod::NATIVE_STEREO)" in vr_cpp):
@@ -107,8 +114,10 @@ def main():
  if (".openxr = runtime != nullptr && (runtime->is_openxr() || (runtime->is_openvr() &&" not in vr_cpp or
      "g_framework->is_dx12() && duoview_stalker2_title" not in vr_cpp):
   raise RuntimeError("SteamVR Mono fallback must be allowed ONLY for STALKER2 DX12")
- if "m_duo_center_v->value()" not in vr_cpp or "m_duoview_autostart_done" not in vr_header:
-  raise RuntimeError("Startup or fixed-center vertical control not connected")
+ if ("m_duo_center_v->value()" not in vr_cpp or
+     "m_duoview_autostart_done" not in vr_header or
+     "requested_rendering_method()!=RenderingMethod::DUOVIEW_MONO" not in vr_cpp):
+  raise RuntimeError("DuoView must auto-start after a saved Mono fallback and preserve fixed-center control")
  openvr=(a.backend/"src/mods/vr/runtimes/OpenVR.cpp").read_text(encoding="utf-8")
  if ("uevr::mono::geometry(optical)" not in openvr or
      "owner->is_using_mono()" not in openvr or
