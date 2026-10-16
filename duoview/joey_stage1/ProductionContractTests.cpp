@@ -196,6 +196,28 @@ int main() try {
             temporal.projection({7,2},0) && temporal.projection({7,2},1) &&
             temporal.camera({7,2},0,camera) && temporal.scene({7,2},0,100),"Shading source contract rejected");
     require(!temporal.can_independent_shading({7,2},100),"Shared ViewState must block primary adaptation");
+    // The Native Fix source transaction runs IN the secondary constructor:
+    // it must be possible after the first view completes, BEFORE second
+    // rectangle/projection/camera observations can be published.
+    State pre_secondary;
+    Settings source_test{};
+    require(pre_secondary.configure(source_test),"Pre-constructor setup rejected");
+    const FrameKey source_key{41,1};
+    auto source_frame=pre_secondary.begin(source_key,3000,3000,p,
+        []()->std::optional<UV>{return UV{.5f,.5f};});
+    require(source_frame.has_value(),"Missing stable primary source snapshot");
+    require(!pre_secondary.can_native_fix_secondary_source(source_key,202),
+        "Secondary constructor adapted before primary source existed");
+    require(pre_secondary.rectangle(source_key,0) && pre_secondary.projection(source_key,0) &&
+            pre_secondary.camera(source_key,0,camera) &&
+            pre_secondary.scene(source_key,0,101),
+            "Could not publish first constructor source");
+    require(pre_secondary.can_native_fix_secondary_source(source_key,202),
+        "Native Fix source unnecessarily demanded already-constructed secondary view");
+    require(!pre_secondary.can_native_fix_secondary_source(source_key,101) &&
+            !pre_secondary.can_native_fix_secondary_source({41,2},202),
+        "Native Fix accepted aliased ViewState or incorrect frame");
+
     // DuoView's actual Native Fix source protocol must NOT inherit the
     // experimental independent-shading toggle. Guard by frame+ViewState pair.
     require(!temporal.can_native_fix_secondary_source({7,2},100),
