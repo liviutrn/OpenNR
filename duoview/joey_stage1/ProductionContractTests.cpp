@@ -11,6 +11,41 @@ static void require(bool test, const char* what) {
     if (!test) throw std::runtime_error(what);
 }
 int main() try {
+    // Do not downgrade for momentary 1-3 frame gaps during initialization.
+    // Exactly 4 consecutive missing compositor/scene observations require
+    // a game-thread transition to true Mono mode5; never Native Stereo ID0.
+    require(!should_fallback_to_mono(0) &&
+            !should_fallback_to_mono(1) &&
+            !should_fallback_to_mono(3) &&
+            should_fallback_to_mono(4) &&
+            should_fallback_to_mono(10),
+            "Transient DuoView frames triggered a premature Mono mode-switch");
+    require(uevr::mono::is_mono_family(uevr::mono::method_id) &&
+            uevr::mono::is_mono_family(uevr::mono::duoview_method_id) &&
+            !uevr::mono::is_mono_family(0),
+            "Joey Mono fallback destination must retain the Mono-family path");
+    {
+        // Producer fallback uses Joey's existing GPU-retirement transaction,
+        // not an instant switch to Native Stereo.
+        uevr::mono::Selection transition;
+        transition.initialize(uevr::mono::duoview_method_id);
+        require(transition.active()==0 && transition.pending(),
+                "Boot-time DuoView must defer before GPU lifetime is safe");
+        transition.consumers_retired(transition.request_token());
+        require(transition.commit_at_game_frame_boundary() &&
+                transition.active()==uevr::mono::duoview_method_id,
+                "Boot-time DuoView could not start safely");
+        transition.request(uevr::mono::method_id);
+        require(transition.active()==uevr::mono::duoview_method_id &&
+                transition.pending(),"Fallback to Joey Mono switched mid-frame");
+        require(!transition.commit_at_game_frame_boundary(),
+                "Fallback advanced without GPU consumer retirement");
+        transition.consumers_retired(transition.request_token());
+        require(transition.commit_at_game_frame_boundary() &&
+                transition.active()==uevr::mono::method_id &&
+                transition.active()!=0,
+                "DuoView fallback did not resolve to real Joey Mono ID5");
+    }
     // The OpenVR path must use the same shared binocular, mono-scene optical
     // union as Joey OpenXR: symmetric common frustum and valid eye crop bounds.
     const std::array<uevr::mono::Eye,2> eyes{{
