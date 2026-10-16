@@ -5,6 +5,14 @@
 #include <functional>
 
 namespace uevr::duoview {
+// Four consecutive bad frame/compositor observations initiate a *real*
+// GPU-retired mode-6 to mode-5 transaction on the main/game thread.
+// Transient loss (including one frame during runtime resize) retries DuoView.
+// Never produce Native Stereo mode ID0 as an automatic failure destination.
+constexpr uint32_t mono_fallback_failure_threshold = 4u;
+constexpr bool should_fallback_to_mono(uint32_t consecutive_failures) {
+    return consecutive_failures >= mono_fallback_failure_threshold;
+}
 struct CameraPose {
     std::array<double, 3> rotation{}, position{};
     bool operator==(const CameraPose&) const = default;
