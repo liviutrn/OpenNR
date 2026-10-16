@@ -502,6 +502,18 @@ void VR::duoview_abort(const char* reason) {
                         }
                     } else if (vr->is_using_mono()) {
                         bool recorded = false;''')
+    # Protect DuoView's OpenVR compositor and output against GPU-use-after-free
+    # during transition, device reset and render-target recreation. The original
+    # modes have no allocated DuoView output and retain their existing behavior.
+    edit(dx,'    return shf_scene_consumers_retired(true) &&',
+    '''    if (m_openvr.duoview_output) {
+        if (!m_openvr.duoview_commands.references_retired()) return false;
+        for (auto& ctx : m_openvr.left_eye_tex)
+            if (!ctx.commands.references_retired()) return false;
+        for (auto& ctx : m_openvr.right_eye_tex)
+            if (!ctx.commands.references_retired()) return false;
+    }
+    return shf_scene_consumers_retired(true) &&''')
     # OpenVR uses a SteamVR pose/texture presentation path, not OpenXR's
     # mono-frame projection bookkeeping. Require a coherent current producer
     # snapshot instead of probing an XR frame that never exists on OpenVR.
