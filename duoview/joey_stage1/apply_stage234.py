@@ -274,12 +274,14 @@ void VR::duoview_abort(const char* reason) {
     // A transient missing frame during startup/reconfigure is not a reason
     // to discard DuoView. Four CONSECUTIVE failures request a real switch
     // to Joey Mono; never attempt to re-label a partial DuoView atlas.
-    if (failures>=4u) m_duoview_fallback_requested.store(true,std::memory_order_release);
+    if (uevr::duoview::should_fallback_to_mono(failures))
+        m_duoview_fallback_requested.store(true,std::memory_order_release);
     SPDLOG_WARNING_EVERY_N_SEC(2,"[DuoView] Pair/compositor failure {}/4; {}. Fallback target: Joey Mono ID5", failures, reason);
     set_mono_status("DuoView source fault; retrying, then fallback to Joey Mono ID5");
 }
 void VR::duoview_frame_success() {
     m_duoview_consecutive_failures.store(0,std::memory_order_release);
+    m_duoview_fallback_requested.store(false,std::memory_order_release);
 }
 '''
     hook="src/mods/vr/FFakeStereoRenderingHook.cpp"
@@ -537,6 +539,14 @@ void VR::duoview_frame_success() {
     # Protect DuoView's OpenVR compositor and output against GPU-use-after-free
     # during transition, device reset and render-target recreation. The original
     # modes have no allocated DuoView output and retain their existing behavior.
+    # Full renderer setup failures (swapchain, RT, GPU prewarm) must count
+    # towards the fallback rather than silently retrying forever.
+    edit(dx,'''        if (!setup()) {
+            SPDLOG_ERROR_EVERY_N_SEC(1, "[D3D12 VR] Could not set up, trying again next frame");''',
+        '''        if (!setup()) {
+            if (vr->is_using_duoview_mono())
+                vr->duoview_abort("D3D12 setup/device/swapchain preparation failed");
+            SPDLOG_ERROR_EVERY_N_SEC(1, "[D3D12 VR] Could not set up, trying again next frame");''')
     edit(dx,'    return shf_scene_consumers_retired(true) &&',
     '''    if (m_openvr.duoview_output) {
         if (!m_openvr.duoview_commands.references_retired()) return false;
