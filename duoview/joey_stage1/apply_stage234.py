@@ -171,9 +171,9 @@ def main():
             const auto path=utility::get_module_pathw(utility::get_executable());
             if (path && uevr::stalker2_native::is_executable(*path)) {
                 m_duoview_autostart_done.store(true,std::memory_order_release);
-                if (requested_rendering_method()!=RenderingMethod::DUOVIEW_MONO) {
+                if (requested_rendering_method()==RenderingMethod::NATIVE_STEREO) {
                     m_rendering_method->request(RenderingMethod::DUOVIEW_MONO);
-                    SPDLOG_INFO("[DuoView] Auto-requested mode 6 for STALKER 2; later manual selections honored");
+                    SPDLOG_INFO("[DuoView] Auto-requested mode 6 for STALKER 2 at VR-ready first tick");
                 }
             }
         }
@@ -499,6 +499,32 @@ void VR::duoview_abort(const char* reason) {
                         }
                     } else if (vr->is_using_mono()) {
                         bool recorded = false;''')
+    # OpenVR uses a SteamVR pose/texture presentation path, not OpenXR's
+    # mono-frame projection bookkeeping. Require a coherent current producer
+    # snapshot instead of probing an XR frame that never exists on OpenVR.
+    edit(dx,'''    if (vr->mono_frame_gate_required()) {
+        if (!vr->m_openxr->has_mono_frame(static_cast<uint32_t>(vr->m_frame_count))) {
+            vr->set_mono_status("Waiting for a current main-view pose and validated common projection");
+            vr->m_openxr->end_mono_transition_frame();
+            return vr::VRCompositorError_None;
+        }
+        vr->note_mono_frame_ready(m_mono_generation);
+    }''',
+    '''    if (vr->mono_frame_gate_required()) {
+        if (vr->is_duoview_renderer_active() && vr->get_runtime()->is_openvr()) {
+            const auto source=vr->duoview_state().snapshot(
+                vr->duoview_key(static_cast<uint32_t>(vr->m_frame_count)));
+            if (!source) {
+                vr->set_mono_status("OpenVR: waiting for current-frame DuoView source");
+                return vr::VRCompositorError_None;
+            }
+        } else if (!vr->m_openxr->has_mono_frame(static_cast<uint32_t>(vr->m_frame_count))) {
+            vr->set_mono_status("Waiting for a current main-view pose and validated common projection");
+            vr->m_openxr->end_mono_transition_frame();
+            return vr::VRCompositorError_None;
+        }
+        vr->note_mono_frame_ready(m_mono_generation);
+    }''')
     # OpenVR source-pair composition: reuse the same validated compositor
     # and current-frame pair key, but submit through SteamVR's existing two
     # 6DoF pose-aware per-eye textures instead of OpenXR swapchains.
