@@ -60,7 +60,8 @@ def main():
     void configure_duoview();
     void note_duoview_gpu_ms(float ms) { m_duo_gpu_ms.store(ms, std::memory_order_relaxed); }
     std::optional<uevr::duoview::ViewFrame> duoview_begin_frame();
-    void duoview_abort(const char* reason);''')
+    void duoview_abort(const char* reason);
+    void duoview_frame_success();''')
     edit(header,'    std::atomic<const char*> m_mono_status{"Not selected"};',
         '''    // Legacy-style persistent options; never sampled by the XR compositor.
     const ModSlider::Ptr m_duo_width{ModSlider::create(generate_name("DuoViewCropWidth"), .10f, 1.f, .50f)};
@@ -82,6 +83,10 @@ def main():
     uevr::duoview::State m_duoview;
     uevr::duoview::psvr2::Reader m_duoview_gaze;
     std::atomic<bool> m_duoview_autostart_done{false};
+    // Render-thread callbacks report failures; only the game thread changes
+    // rendering modes at the normal Mono-family transaction boundary.
+    std::atomic<uint32_t> m_duoview_consecutive_failures{0};
+    std::atomic<bool> m_duoview_fallback_requested{false};
     std::once_flag m_duoview_settings_once;
     std::atomic<const char*> m_mono_status{"Not selected"};''')
     edit(header,'    void on_device_reset() override {\n        get_runtime()->on_device_reset();',
@@ -107,11 +112,12 @@ def main():
         rt->should_recalculate_eye_projections=true;
         rt->should_update_eye_matrices=true;
     }''')
-    # Original Joey Mono is OpenXR-only; keep ID5 unchanged. Only validated
-    # DuoView ID6 may use OpenVR's existing per-eye DX12 submission path.
+    # STALKER2 DX12 only: Joey Mono must be legal on OpenVR too, otherwise
+    # transitioning from mode6 to mode5 is immediately invalidated and
+    # the original OpenVR double-wide copy would submit a missing right eye.
     edit(cpp,
         '        .openxr = runtime != nullptr && runtime->is_openxr(),',
-        '        .openxr = runtime != nullptr && (runtime->is_openxr() ||\n            (runtime->is_openvr() && (is_using_duoview_mono() ||\n             requested_rendering_method() == RenderingMethod::DUOVIEW_MONO))),')
+        '        .openxr = runtime != nullptr && (runtime->is_openxr() || runtime->is_openvr()),')
     edit(cpp,'        if (rendering_method_changed && !is_mono_transition_pending() && get_runtime() != nullptr) {',
     '''        if (is_using_duoview_mono() || requested_rendering_method() == RenderingMethod::DUOVIEW_MONO) {
             if (ImGui::TreeNode("DuoView Mono — quality and diagnostics")) {
@@ -188,9 +194,18 @@ def main():
             }
         }
     }
+    // Defer mode changes until the game thread; preserve original Joey
+    // Mono retire/copy/pose lifecycle. Never request ID0 here.
+    if (m_duoview_fallback_requested.exchange(false,std::memory_order_acq_rel) &&
+        is_using_duoview_mono() &&
+        requested_rendering_method()==RenderingMethod::DUOVIEW_MONO) {
+        m_rendering_method->request(RenderingMethod::MONO);
+        set_mono_status("DuoView failed: switching to Joey Mono ID5 (not Native Stereo)");
+        SPDLOG_WARN("[DuoView] Consecutive paired-view errors; requested safe Joey Mono ID5");
+    }
     service_mono_transition_game_thread();''')
     edit(cpp,'    m_mono_main_view_token = 0;\n    m_mono_attachment_token = 0;',
-        '    m_duoview.retire();\n    m_duo_shading->value()=false;\n    configure_duoview();\n    m_mono_main_view_token = 0;\n    m_mono_attachment_token = 0;')
+        '    m_duoview.retire();\n    m_duoview_consecutive_failures.store(0,std::memory_order_release);\n    m_duoview_fallback_requested.store(false,std::memory_order_release);\n    m_duo_shading->value()=false;\n    configure_duoview();\n    m_mono_main_view_token = 0;\n    m_mono_attachment_token = 0;')
     changed[cpp]+='''
 // Update the immutable state from persisted controls only on changes.
 void VR::configure_duoview() {
@@ -218,8 +233,7 @@ void VR::configure_duoview() {
         SPDLOG_WARNING_EVERY_N_SEC(2, "[DuoView] Requested quality settings exceed atlas geometry; preserving previous valid settings");
 }
 
-// Stage 5: sample native PSVR2 gaze ONCE per immutable source frame.
- // CAPI unavailable or invalid => fixed center. Never adjust mid-frame.
+// Fixed-center mode 6 always uses its frozen optical projection and does not read eye gaze.
 bool VR::is_duoview_renderer_active() const {
     if (!is_using_duoview_mono() || !m_is_d3d12) return false;
     const auto runtime = get_runtime();
@@ -256,8 +270,16 @@ std::optional<uevr::duoview::ViewFrame> VR::duoview_begin_frame() {
 
 void VR::duoview_abort(const char* reason) {
     if (!is_using_duoview_mono()) return;
-    SPDLOG_WARNING_EVERY_N_SEC(2, "[DuoView] Two-view source unavailable; mode6 retained and no Mono fallback: {}", reason);
-    set_mono_status("DuoView frame not ready: mode 6 retained; automatic Mono fallback prohibited");
+    const auto failures=m_duoview_consecutive_failures.fetch_add(1,std::memory_order_acq_rel)+1;
+    // A transient missing frame during startup/reconfigure is not a reason
+    // to discard DuoView. Four CONSECUTIVE failures request a real switch
+    // to Joey Mono; never attempt to re-label a partial DuoView atlas.
+    if (failures>=4u) m_duoview_fallback_requested.store(true,std::memory_order_release);
+    SPDLOG_WARNING_EVERY_N_SEC(2,"[DuoView] Pair/compositor failure {}/4; {}. Fallback target: Joey Mono ID5", failures, reason);
+    set_mono_status("DuoView source fault; retrying, then fallback to Joey Mono ID5");
+}
+void VR::duoview_frame_success() {
+    m_duoview_consecutive_failures.store(0,std::memory_order_release);
 }
 '''
     hook="src/mods/vr/FFakeStereoRenderingHook.cpp"
@@ -482,10 +504,9 @@ void VR::duoview_abort(const char* reason) {
                         const auto frame = vr->duoview_state().consume(
                             vr->duoview_key(static_cast<uint32_t>(frame_count)));
                         vr->m_openxr->note_mono_copy(static_cast<uint32_t>(frame_count), false);
-                        // No native Mono copy, stale source, or internal mode
-                        // quarantine is permitted. Missing paired evidence
-                        // suppresses the scene copy for this frame; next frame
-                        // keeps trying DuoView ID6 with current camera/projection.
+                        // Never present the partial DuoView atlas as a whole Mono image.
+                        // Request real Joey Mono mode5 after repeated failures via
+                        // normal main-thread, GPU-retired mode transition.
                         if (!frame) {
                             vr->duoview_abort("current-frame paired Unreal views unavailable");
                         } else {
@@ -508,7 +529,8 @@ void VR::duoview_abort(const char* reason) {
                                 std::nullopt, backbuffer.Get());
                             vr->m_openxr->note_mono_copy(static_cast<uint32_t>(frame_count), submitted && recorded);
                             if (!submitted || !recorded)
-                                vr->duoview_abort("DX12 composite/copy unavailable; keeping DuoView active");
+                                vr->duoview_abort("OpenXR DX12 composite/copy unavailable");
+                            else vr->duoview_frame_success();
                         }
                     } else if (vr->is_using_mono()) {
                         bool recorded = false;''')
@@ -536,11 +558,12 @@ void VR::duoview_abort(const char* reason) {
         vr->note_mono_frame_ready(m_mono_generation);
     }''',
     '''    if (vr->mono_frame_gate_required()) {
-        if (vr->is_duoview_renderer_active() && vr->get_runtime()->is_openvr()) {
-            const auto source=vr->duoview_state().snapshot(
-                vr->duoview_key(static_cast<uint32_t>(vr->m_frame_count)));
-            if (!source) {
-                vr->set_mono_status("OpenVR: waiting for current-frame DuoView source");
+        if (vr->is_using_mono() && vr->get_runtime()->is_openvr()) {
+            // Native OpenVR has no OpenXR mono_frame history. Mode 6's
+            // pair is independently checked by consume() at composition.
+            // Mode 5 safely submits the one full engine view twice.
+            if (!vr->get_runtime<runtimes::OpenVR>()->got_first_valid_poses) {
+                vr->set_mono_status("OpenVR: waiting for a valid headset pose");
                 return vr::VRCompositorError_None;
             }
         } else if (!vr->m_openxr->has_mono_frame(static_cast<uint32_t>(vr->m_frame_count))) {
@@ -550,16 +573,15 @@ void VR::duoview_abort(const char* reason) {
         }
         vr->note_mono_frame_ready(m_mono_generation);
     }''')
-    # OpenVR never computed the Mono shared optical union used by Joey's
-    # OpenXR backend. Derive the same canted-eye-aware geometry for ID6 only.
-    # Native Stereo and original OpenVR modes remain bit-for-bit unchanged.
+    # OpenVR uses the SAME calibrated binocular single-scene union for both
+    # Joey Mono ID5 and DuoView ID6; other modes keep regular stereo.
     openvr="src/mods/vr/runtimes/OpenVR.cpp"
     edit(openvr,'#include "../SteamFrameInput.hpp"',
         '#include "../SteamFrameInput.hpp"\n#include "../MonoRenderingPolicy.hpp"\n#include <glm/gtc/quaternion.hpp>')
     edit(openvr,'''        this->projections[vr::Eye_Right] = get_mat(vr::Eye_Right);
         this->should_recalculate_eye_projections = false;''',
     '''        this->projections[vr::Eye_Right] = get_mat(vr::Eye_Right);
-        if (auto owner=VR::get(); owner && owner->is_duoview_renderer_active()) {
+        if (auto owner=VR::get(); owner && owner->is_using_mono()) {
             std::array<uevr::mono::Eye,2> optical{};
             for (size_t eye=0; eye<2; ++eye) {
                 const auto q=glm::quat_cast(glm::mat3(this->eyes[eye]));
@@ -580,9 +602,9 @@ void VR::duoview_abort(const char* reason) {
                     for (size_t edge=0;edge<4;++edge)
                         this->view_bounds[eye][edge]=common->bounds[eye][edge];
                 }
-                SPDLOG_INFO_ONCE("[DuoView][OpenVR] Shared optical frustum calibrated for both eyes");
+                spdlog::info("[Mono/DuoView][OpenVR] Calibrated shared optical frustum for two per-eye display bounds");
             } else {
-                SPDLOG_ERROR_EVERY_N_SEC(2,"[DuoView][OpenVR] Invalid common Mono optical geometry");
+                spdlog::error("[Mono/DuoView][OpenVR] Invalid common Mono optical geometry");
                 this->should_recalculate_eye_projections=true;
                 return VRRuntime::Error::SUCCESS;
             }
@@ -622,9 +644,12 @@ void VR::duoview_abort(const char* reason) {
                 }
                 if (!duo_scene) {
                     vr->duoview_abort("OpenVR paired-source composition unavailable");
-                    // Do not substitute native stereo or original Mono.
+                    // Do not misinterpret the partial atlas as Mono in this
+                    // current frame; transition to true ID5 at frame boundary.
                     runtime->frame_synced=false;
                     return vr::VRCompositorError_None;
+                } else {
+                    vr->duoview_frame_success();
                 }
             }
 
@@ -635,6 +660,10 @@ void VR::duoview_abort(const char* reason) {
                     m_openvr.copy_right(backbuffer.Get(), scene_source_state);''',
     '''                if (duo_scene) {
                     m_openvr.copy_right(duo_scene.Get(),D3D12_RESOURCE_STATE_RENDER_TARGET);
+                } else if (vr->is_using_mono() && !vr->is_using_duoview_mono()) {
+                    // True single-view Joey Mono has one engine view in the
+                    // first half; duplicate that half, not the empty right.
+                    m_openvr.copy_left_to_right(backbuffer.Get(),scene_source_state);
                 } else if (native_stereo_packet == nullptr || m_scene_capture_tex.texture.Get() == nullptr) {
                     m_openvr.copy_right(backbuffer.Get(), scene_source_state);''')
     # Copy reference modules into exact checked-out Joey tree. No private SDK
@@ -660,7 +689,7 @@ void VR::duoview_abort(const char* reason) {
         str(root/"src/mods/vr/DuoViewShaderSource.hpp")], check=True)
     for path,text in changed.items():
         (source_root(path)/path).write_text(text,encoding="utf-8",newline="")
-    print("Applied fixed-center v22 source, guarded Native Fix constructor parity, strict no-Mono fallback (experimental).")
+    print("Applied DuoView-first with four-failure transition to true Joey Mono ID5 (never Native Stereo), for OpenXR/OpenVR (experimental).")
 
 if __name__=="__main__":
     main()
