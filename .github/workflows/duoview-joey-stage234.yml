@@ -1,8 +1,11 @@
 name: DuoView Joey v22 Fixed Center Recovery - CI (experimental)
 run-name: DuoView Joey v22 fixed-center recovery with exact SDK (${{ github.run_number }})
-# Astra source review hold: no push-triggered builds. The reviewer may
-# explicitly dispatch a Windows compile once the code is approved.
+# Source verification checkpoint completed; one scoped branch-push Windows build.
+# Reviewed DuoView source originates at f34788699ff5724fd8ccb95d7ef2b559c1caf645.
 on:
+  push:
+    branches: [experiments/duoview-joey-v22-astra-build-20261017]
+    paths: ['.github/workflows/duoview-joey-stage234.yml']
   workflow_dispatch:
 permissions:
   contents: read
@@ -147,7 +150,7 @@ jobs:
           Copy-Item evidence/duoview-stage234-hashes.json package/
           @'
           JOEY DUOVIEW v22 FIXED-CENTER RECOVERY — EXPERIMENTAL. HEADSET UNVERIFIED.
-          Source branch: experiments/duoview-joey-v22-fixed-center-recovery.
+          Source branch: experiments/duoview-joey-v22-astra-build-20261017 (reviewed source f34788699ff5724fd8ccb95d7ef2b559c1caf645).
           Backend: joeyhodge/UEVR 5ac7edc207866569334175e4ed8a7517971547f6 plus isolated exact-anchor patches.
           Restricted UESDK: joeyhodge/UESDK 3cffbc82429b6165ceec2714f0f0d9ae48f55596, unchanged.
           Matching frontend: joeyhodge/uevr-frontend 60be4b0f9a646109fd9fdf448bacd41477234091 plus ID6.
