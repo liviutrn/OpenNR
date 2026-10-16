@@ -37,3 +37,30 @@ This branch is **EXPERIMENTAL / NOT READY FOR HEADSET RELEASE**. Do not replace 
 - Recovery workflow: https://github.com/liviutrn/OpenNR/actions/workflows/duoview-joey-stage234.yml
 - Run #110: https://github.com/liviutrn/OpenNR/actions/runs/38888304642 (independent legacy default-gaze unit test failure; fixed in later commits)
 - Run #113: https://github.com/liviutrn/OpenNR/actions/runs/38888693890 (check completion and artifact before claiming success)
+
+
+## Recovery implementation update — October 16, 2026, later checkpoint
+
+**Source integration:** Recovery source HEAD before this documentation update: `feeb8f88dc10516887a44eb26e9ed88e8824a786`. Pinned Windows run #127: https://github.com/liviutrn/OpenNR/actions/runs/38893275956 (status requires independent check).
+
+### Committed work after first recovery checkpoint
+- `DuoViewState.hpp`: `can_native_fix_secondary_source` demands exact frame key, camera, both view rectangles and projections, distinct non-null source ViewStates and no consumed/invalid frame.
+- `apply_stage234.py`: temporary SECONDARY->PRIMARY constructor pass relabeling **plus temporary mask of existing UE view-family singleton**, restored using Joey's existing constructor cleanup and guard. This models the **source-construction** part of Joey Native Stereo Fix without globally enabling Native Fix's capture/copy/submit path. It is NOT proven visually equivalent; further in-headset Lumen/shadow comparison is mandatory.
+- `apply_stage234.py`: removed internal DuoView quarantine and emergency original-Mono copy. Incomplete frame now remains ID6 and does not send a falsely labeled current-frame Mono scene. This can visibly interrupt VR if source pairs remain invalid; diagnostics are critical. No assertion of uninterrupted runtime is made.
+- OpenVR integration: mode6-specific capability override, automatic selection after the SteamVR runtime is ready, OpenVR-specific source-frame gate and DX12 composer feeding both SteamVR pose-aware per-eye textures. Original Joey ID0 and ID5 modes retain their normal paths.
+- OpenVR optical calibration: `src/mods/vr/runtimes/OpenVR.cpp` computes a binocular common Mono perspective with `uevr::mono::geometry`, including canted-eye rotations and per-eye view bounds. Safe rendering-mode transactions invalidate OpenVR projection caches to switch between regular stereo and shared Mono frustum.
+- OpenVR output lifetime: explicit DX12 command-context/source-user retirement before reallocating and releasing compositor output.
+- Source verifiers and independent pinned tests check fixed vertical center, no live gaze consumption, dedicated constructor validity, optical union geometry and source-code integration.
+
+### Remaining verification requirements
+1. Verify #127 full Windows build passes. Earlier #113 succeeded **before** these later runtime changes, so it is not evidence of #127 correctness.
+2. Audit the final injector package SHA and whether the OpenVR optical projection is correctly applied on first injection/transition, followed by 6DoF and dual-view actual current-frame compositing.
+3. Confirm whether the temporary view-family singleton mask actually restores Native Stereo Fix-equivalent Lumen/shadow behavior in STALKER 2; source-contract tests cannot prove rendering parity.
+4. Test missing-frame behavior, level transitions, DLSS changes, resolution changes, repeated injections and device/swapchain reset. No silent fallback is guaranteed by source logic, but consecutive missed frames may suppress VR scene submissions.
+5. Test native SteamVR/OpenVR separately from SteamVR OpenXR: original Joey Mono only supported OpenXR, so this new branch is a substantial new integration and has not yet been user-tested. Validate runtime bounds, pose-space, IPD, canted eye and visual stitching against both-eye headset observation.
+6. Do not overwrite or replace proven Build 3. Never label this candidate production stable until test observations justify it.
+
+### Links
+- [Recovery branch](https://github.com/liviutrn/OpenNR/tree/experiments/duoview-joey-v22-fixed-center-recovery)
+- [Latest Windows workflow](https://github.com/liviutrn/OpenNR/actions/workflows/duoview-joey-stage234.yml)
+- [Full run #127](https://github.com/liviutrn/OpenNR/actions/runs/38893275956)
