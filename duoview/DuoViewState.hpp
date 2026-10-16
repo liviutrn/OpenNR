@@ -65,6 +65,22 @@ public:
         if (view==1) slot->shading_applied=shading_applied;
         return true;
     }
+    // Independent of the old experimental primary-shading toggle.
+    // The secondary constructor may impersonate PRIMARY only while the
+    // current main-view pair has both latched rects/projections, camera and a
+    // distinct valid UE ViewState. No stale frame, secondary-only or detached
+    // capture family is allowed. The caller must also verify main RT identity,
+    // exact family count and restore the engine's original constructor inputs.
+    bool can_native_fix_secondary_source(FrameKey key, uintptr_t secondary_state) const {
+        std::scoped_lock lock{mutex_};
+        const auto& slot=frames_[key.frame % frames_.size()];
+        return slot && slot->config.key==key && !slot->invalid && !slot->consumed &&
+            slot->camera_valid &&
+            slot->rectangles[0] && slot->rectangles[1] &&
+            slot->projections[0] && slot->projections[1] &&
+            slot->scene_states[0] && secondary_state &&
+            slot->scene_states[0]!=secondary_state;
+    }
     bool can_independent_shading(FrameKey key, uintptr_t secondary_state) const {
         std::scoped_lock lock{mutex_};
         const auto& slot=frames_[key.frame%frames_.size()];
