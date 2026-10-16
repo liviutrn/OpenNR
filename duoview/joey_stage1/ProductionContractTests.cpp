@@ -20,6 +20,11 @@ int main() try {
             should_fallback_to_mono(4) &&
             should_fallback_to_mono(10),
             "Transient DuoView frames triggered a premature Mono mode-switch");
+    require(!should_fallback_to_mono(3,false) &&
+            !should_fallback_to_mono(59,false) &&
+            should_fallback_to_mono(60,false) &&
+            should_fallback_to_mono(100,false),
+            "DuoView warmup was prematurely downgraded to Mono or never recovered");
     require(uevr::mono::is_mono_family(uevr::mono::method_id) &&
             uevr::mono::is_mono_family(uevr::mono::duoview_method_id) &&
             !uevr::mono::is_mono_family(0),
