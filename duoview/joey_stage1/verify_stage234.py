@@ -84,8 +84,8 @@ def main():
   raise RuntimeError("Prohibited DuoView-to-Mono quarantine detected")
  if "m_openxr.duoview_compositors" not in backend_copy or "duoview_abort" not in backend_copy:
   raise RuntimeError("OpenXR DuoView fault handling missing")
- if "DuoView OpenVR compositor" not in backend_copy or
-    "OpenVR paired-source composition unavailable" not in backend_copy:
+ if ("DuoView OpenVR compositor" not in backend_copy or
+     "OpenVR paired-source composition unavailable" not in backend_copy):
   raise RuntimeError("OpenVR two-view DX12 presentation path missing")
  if "can_native_fix_secondary_source" not in (a.backend/"src/mods/vr/DuoViewState.hpp").read_text(encoding="utf-8"):
   raise RuntimeError("Dedicated guarded Native Fix source pair proof missing")
