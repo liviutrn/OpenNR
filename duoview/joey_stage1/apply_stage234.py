@@ -82,6 +82,7 @@ def main():
     uevr::duoview::State m_duoview;
     uevr::duoview::psvr2::Reader m_duoview_gaze;
     std::atomic<bool> m_duoview_quarantined{false};
+    std::atomic<bool> m_duoview_autostart_done{false};
     std::once_flag m_duoview_settings_once;
     std::atomic<const char*> m_mono_status{"Not selected"};''')
     edit(header,'    void on_device_reset() override {\n        get_runtime()->on_device_reset();',
@@ -154,6 +155,26 @@ def main():
         if (rendering_method_changed && !is_mono_transition_pending() && get_runtime() != nullptr) {''')
     edit(cpp,'    // Load camera offsets\n    load_cameras();',
         '    // Load camera offsets\n    load_cameras();\n    configure_duoview();')
+    # Request fixed-center DuoView exactly once after OpenXR is loaded and
+    # before the game's first eligible viewport transaction. Any subsequent
+    # user mode selection is never overwritten during this injection.
+    edit(cpp,
+        'void VR::on_pre_engine_tick(sdk::UGameEngine* engine, float delta) {\\n    service_mono_transition_game_thread();',
+        '''void VR::on_pre_engine_tick(sdk::UGameEngine* engine, float delta) {
+    if (!m_duoview_autostart_done.load(std::memory_order_acquire) && m_is_d3d12) {
+        const auto runtime=get_runtime();
+        if (runtime && runtime->is_openxr() && runtime->loaded) {
+            const auto path=utility::get_module_pathw(utility::get_executable());
+            if (path && uevr::stalker2_native::is_executable(*path)) {
+                m_duoview_autostart_done.store(true,std::memory_order_release);
+                if (requested_rendering_method()!=RenderingMethod::DUOVIEW_MONO) {
+                    m_rendering_method->request(RenderingMethod::DUOVIEW_MONO);
+                    SPDLOG_INFO("[DuoView] Auto-requested mode 6 for STALKER 2; later manual selections honored");
+                }
+            }
+        }
+    }
+    service_mono_transition_game_thread();''')
     edit(cpp,'    m_mono_main_view_token = 0;\n    m_mono_attachment_token = 0;',
         '    m_duoview.retire();\n    m_duo_shading->value()=false;\n    configure_duoview();\n    if (selection.active() == RenderingMethod::DUOVIEW_MONO) m_duoview_quarantined.store(false, std::memory_order_release);\n    m_mono_main_view_token = 0;\n    m_mono_attachment_token = 0;')
     changed[cpp]+='''
