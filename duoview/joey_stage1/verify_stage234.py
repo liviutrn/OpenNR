@@ -90,7 +90,10 @@ def main():
   raise RuntimeError("OpenVR two-view DX12 presentation path missing")
  if "can_native_fix_secondary_source" not in (a.backend/"src/mods/vr/DuoViewState.hpp").read_text(encoding="utf-8"):
   raise RuntimeError("Dedicated guarded Native Fix source pair proof missing")
- if ("m_duoview_consecutive_failures" not in vr_cpp or
+ if ("m_duoview_ever_presented" not in vr_header or
+     "should_fallback_to_mono(failures,ever_presented)" not in vr_cpp or
+     "OpenXR frame/projection gate not ready" not in backend_copy or
+     "m_duoview_consecutive_failures" not in vr_cpp or
      "m_duoview_fallback_requested.exchange(false" not in vr_cpp or
      "m_rendering_method->request(RenderingMethod::MONO)" not in vr_cpp or
      "m_rendering_method->request(RenderingMethod::NATIVE_STEREO)" in vr_cpp or
