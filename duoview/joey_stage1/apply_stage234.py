@@ -97,6 +97,16 @@ def main():
         'ImGui::TextWrapped("DuoView Stage 1: rendering uses original Joey Mono unchanged. Two-view foveation and gaze are NOT active.");',
         'ImGui::TextWrapped(is_duoview_renderer_active() ? "DuoView ID6: fixed-center two-view Mono" : "DuoView ID6: two-view renderer inactive (inspect diagnostics)");')
     edit(cpp, '#include "VR.hpp"', '#include "VR.hpp"\n#include <cstring>')
+    # OpenVR only caches HMD projection matrices. A Mono -> DuoView or DuoView
+    # -> Native mode transition must invalidate the per-eye cache, otherwise
+    # it keeps the wrong source projection until an unrelated near-Z change.
+    edit(cpp,'    m_openxr->reset_mono_projection_history();',
+    '''    m_openxr->reset_mono_projection_history();
+    if (auto rt=get_runtime(); rt && rt->is_openvr()) {
+        std::unique_lock lock{rt->eyes_mtx};
+        rt->should_recalculate_eye_projections=true;
+        rt->should_update_eye_matrices=true;
+    }''')
     # Original Joey Mono is OpenXR-only; keep ID5 unchanged. Only validated
     # DuoView ID6 may use OpenVR's existing per-eye DX12 submission path.
     edit(cpp,
