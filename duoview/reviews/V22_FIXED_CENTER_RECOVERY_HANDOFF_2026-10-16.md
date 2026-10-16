@@ -64,3 +64,33 @@ This branch is **EXPERIMENTAL / NOT READY FOR HEADSET RELEASE**. Do not replace 
 - [Recovery branch](https://github.com/liviutrn/OpenNR/tree/experiments/duoview-joey-v22-fixed-center-recovery)
 - [Latest Windows workflow](https://github.com/liviutrn/OpenNR/actions/workflows/duoview-joey-stage234.yml)
 - [Full run #127](https://github.com/liviutrn/OpenNR/actions/runs/38893275956)
+
+
+## Updated fallback policy — same-day revision, supersedes the strict no-fallback section above
+
+**User decision**: DuoView ID6 is primary; if unable to render valid two-view frames, downgrade to real Joey Mono ID5. Automatic Native Stereo ID0 is prohibited. The user prioritizes maintaining Mono performance over suppressing indefinitely invalid DuoView scene frames.
+
+Source implementation:
+- `duoview_abort(reason)` counts consecutive producer/compositor failures in atomics.
+- Before DuoView's first successful composite the threshold is 60 observations, to avoid a premature downgrade while STALKER2 initializes. After the first success the threshold is 4 consecutive failures.
+- The normal `on_pre_engine_tick` game-thread callback consumes the pending fallback flag and calls `m_rendering_method->request(RenderingMethod::MONO)` (ID5). The original Joey `mono::Selection` retirement transaction makes the active switch at a safe frame boundary; no call requests ID0.
+- A successfully recorded DuoView composite resets the failure streak and pending fallback flag.
+- OpenXR source/projection gate, DX12 setup failure, missing pair, and failed composition signal DuoView faults. In-progress DuoView atlas never masquerades as a complete Mono image. Rendering full mono begins after the safe ID5 transition.
+- OpenVR Mono ID5 has a real GPU submission path: reuse the single complete left engine view for the right OpenVR eye; the two eyes use the shared binocular optical projection and proper per-eye display bounds. This is new relative to original Joey Mono's OpenXR-only support.
+- The failover does **not** automatically retry DuoView during the same session. Choosing mode6 manually retries with a fresh source generation. Preserving original Joey Build3 remains nonnegotiable.
+
+Known Windows CI history:
+- #113 passed **before** OpenVR/Native Fix changes, is not proof of this revision.
+- #127 failed backend DLL compilation because newly added logging macros in OpenVR.cpp were undefined; replaced with standard `spdlog::info/error`.
+- #137 failed guarded patch application after an accidental modification of an original source-match anchor; corrected.
+- #138 source audit rejected an obsolete fallback assertion; corrected.
+- #139 (https://github.com/liviutrn/OpenNR/actions/runs/38902027894) is the new source contract run; check its current status and then rerun for the newest documentation-only commit if necessary.
+
+**Still required**:
+1. Latest exact SHA Windows run fully passes pinned source comparison, all C++/WARP/compatibility tests, SDK-backed UEVR DLL compilation, frontend and final package.
+2. Confirm in STALKER2 DX12/PSVR2 headset on **both OpenXR and OpenVR** that fixed-center mode6 has 6DoF tracking, fovea+periphery, correct shared/canted optical rays, and Native Stereo Fix-equivalent shading. CI tests do not prove these behaviors.
+3. Deliberately invalidate a paired source, verify automatic transition **6→5** and never 6→0, then compare Mono FPS to known Joey original. Verify full source display after fallback (not incomplete/stale DuoView atlas).
+4. Stress test game/reload, level transitions, high resolution, DLSS/screen percentage changes, repeated mode6 retry, GPU resets/resize, and 30+ minutes of play.
+5. Assess startup transition before any high-resolution native-stereo allocation and whether an automatic prior-session Mono fallback is persisted by profile. Do not claim those edge cases resolved by this commit.
+
+Until completed, the branch is **experimental/unverified; do not ship as a proven headset release**.
