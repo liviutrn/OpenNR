@@ -86,12 +86,17 @@ def main():
     // Render-thread callbacks report failures; only the game thread changes
     // rendering modes at the normal Mono-family transaction boundary.
     std::atomic<uint32_t> m_duoview_consecutive_failures{0};
+    // Count at most one render fault per game tick, even when multiple
+    // setup/submit callbacks report the same missing pair.
+    std::atomic<uint64_t> m_duoview_game_tick_serial{0};
+    std::atomic<uint64_t> m_duoview_last_failure_tick{uevr::duoview::duoview_unseen_tick};
+    std::atomic<uint64_t> m_duoview_last_success_tick{uevr::duoview::duoview_unseen_tick};
     std::atomic<bool> m_duoview_ever_presented{false};
     std::atomic<bool> m_duoview_fallback_requested{false};
     std::once_flag m_duoview_settings_once;
     std::atomic<const char*> m_mono_status{"Not selected"};''')
     edit(header,'    void on_device_reset() override {\n        get_runtime()->on_device_reset();',
-        '    void on_device_reset() override {\n        m_duoview.retire();\n        m_duoview_ever_presented.store(false, std::memory_order_release);\n        m_duoview_consecutive_failures.store(0, std::memory_order_release);\n        m_duoview_fallback_requested.store(false, std::memory_order_release);\n        get_runtime()->on_device_reset();')
+        '    void on_device_reset() override {\n        m_duoview.retire();\n        m_duoview_ever_presented.store(false, std::memory_order_release);\n        m_duoview_consecutive_failures.store(0, std::memory_order_release);\n        m_duoview_last_failure_tick.store(uevr::duoview::duoview_unseen_tick, std::memory_order_release);\n        m_duoview_last_success_tick.store(uevr::duoview::duoview_unseen_tick, std::memory_order_release);\n        m_duoview_fallback_requested.store(false, std::memory_order_release);\n        get_runtime()->on_device_reset();')
     edit(header,'        m_options = {',
         '''        m_options = {
             *m_duo_width, *m_duo_height, *m_duo_periphery, *m_duo_density,
@@ -190,13 +195,16 @@ def main():
     edit(cpp,
         'void VR::on_pre_engine_tick(sdk::UGameEngine* engine, float delta) {\n    service_mono_transition_game_thread();',
         '''void VR::on_pre_engine_tick(sdk::UGameEngine* engine, float delta) {
+    m_duoview_game_tick_serial.fetch_add(1, std::memory_order_acq_rel);
     if (!m_duoview_autostart_done.load(std::memory_order_acquire) && m_is_d3d12) {
         const auto runtime=get_runtime();
         if (runtime && (runtime->is_openxr() || runtime->is_openvr()) && runtime->loaded) {
             const auto path=utility::get_module_pathw(utility::get_executable());
             if (path && uevr::stalker2_native::is_executable(*path)) {
                 m_duoview_autostart_done.store(true,std::memory_order_release);
-                if (requested_rendering_method()==RenderingMethod::NATIVE_STEREO) {
+                if (requested_rendering_method()!=RenderingMethod::DUOVIEW_MONO) {
+                    // A saved fallback ID5 must not prevent ID6 auto-start
+                    // on the next game launch.
                     m_rendering_method->request(RenderingMethod::DUOVIEW_MONO);
                     SPDLOG_INFO("[DuoView] Auto-requested mode 6 for STALKER 2 at VR-ready first tick");
                 }
@@ -207,14 +215,17 @@ def main():
     // Mono retire/copy/pose lifecycle. Never request ID0 here.
     if (m_duoview_fallback_requested.exchange(false,std::memory_order_acq_rel) &&
         is_using_duoview_mono() &&
-        requested_rendering_method()==RenderingMethod::DUOVIEW_MONO) {
+        requested_rendering_method()==RenderingMethod::DUOVIEW_MONO &&
+        uevr::duoview::should_fallback_to_mono(
+            m_duoview_consecutive_failures.load(std::memory_order_acquire),
+            m_duoview_ever_presented.load(std::memory_order_acquire))) {
         m_rendering_method->request(RenderingMethod::MONO);
         set_mono_status("DuoView failed: switching to Joey Mono ID5 (not Native Stereo)");
         SPDLOG_WARN("[DuoView] Consecutive paired-view errors; requested safe Joey Mono ID5");
     }
     service_mono_transition_game_thread();''')
     edit(cpp,'    m_mono_main_view_token = 0;\n    m_mono_attachment_token = 0;',
-        '    m_duoview.retire();\n    m_duoview_ever_presented.store(false,std::memory_order_release);\n    m_duoview_consecutive_failures.store(0,std::memory_order_release);\n    m_duoview_fallback_requested.store(false,std::memory_order_release);\n    m_duo_shading->value()=false;\n    configure_duoview();\n    m_mono_main_view_token = 0;\n    m_mono_attachment_token = 0;')
+        '    m_duoview.retire();\n    m_duoview_ever_presented.store(false,std::memory_order_release);\n    m_duoview_consecutive_failures.store(0,std::memory_order_release);\n    m_duoview_last_failure_tick.store(uevr::duoview::duoview_unseen_tick,std::memory_order_release);\n    m_duoview_last_success_tick.store(uevr::duoview::duoview_unseen_tick,std::memory_order_release);\n    m_duoview_fallback_requested.store(false,std::memory_order_release);\n    m_duo_shading->value()=false;\n    configure_duoview();\n    m_mono_main_view_token = 0;\n    m_mono_attachment_token = 0;')
     changed[cpp]+='''
 // Update the immutable state from persisted controls only on changes.
 void VR::configure_duoview() {
@@ -279,17 +290,29 @@ std::optional<uevr::duoview::ViewFrame> VR::duoview_begin_frame() {
 
 void VR::duoview_abort(const char* reason) {
     if (!is_using_duoview_mono()) return;
-    const auto failures=m_duoview_consecutive_failures.fetch_add(1,std::memory_order_acq_rel)+1;
-    // A transient missing frame during startup/reconfigure is not a reason
-    // to discard DuoView. Four CONSECUTIVE failures request a real switch
-    // to Joey Mono; never attempt to re-label a partial DuoView atlas.
-    const bool ever_presented=m_duoview_ever_presented.load(std::memory_order_acquire);
-    if (uevr::duoview::should_fallback_to_mono(failures,ever_presented))
-        m_duoview_fallback_requested.store(true,std::memory_order_release);
-    SPDLOG_WARNING_EVERY_N_SEC(2,"[DuoView] Pair/compositor failure {} (startup_warmup={}): {}. Fallback: Joey Mono ID5", failures, !ever_presented, reason);
-    set_mono_status("DuoView source fault; retrying, then fallback to Joey Mono ID5");
+    const auto tick=m_duoview_game_tick_serial.load(std::memory_order_acquire);
+    auto previous=m_duoview_last_failure_tick.load(std::memory_order_acquire);
+    while (uevr::duoview::is_distinct_failed_tick(
+            tick, previous, m_duoview_last_success_tick.load(std::memory_order_acquire))) {
+        if (m_duoview_last_failure_tick.compare_exchange_weak(
+                previous, tick, std::memory_order_acq_rel, std::memory_order_acquire)) {
+            // A successful compositor callback takes priority over an error
+            // reported for the same game tick.
+            if (m_duoview_last_success_tick.load(std::memory_order_acquire)==tick) return;
+            const auto failures=m_duoview_consecutive_failures.fetch_add(1,std::memory_order_acq_rel)+1;
+            const bool ever_presented=m_duoview_ever_presented.load(std::memory_order_acquire);
+            if (uevr::duoview::should_fallback_to_mono(failures,ever_presented))
+                m_duoview_fallback_requested.store(true,std::memory_order_release);
+            SPDLOG_WARNING_EVERY_N_SEC(2,"[DuoView] Faulted game tick {}: failure streak {} (startup_warmup={}): {}. Fallback: Joey Mono ID5",
+                tick, failures, !ever_presented, reason);
+            set_mono_status("DuoView fault; waiting for valid pair or Joey Mono ID5");
+            return;
+        }
+    }
 }
 void VR::duoview_frame_success() {
+    m_duoview_last_success_tick.store(m_duoview_game_tick_serial.load(std::memory_order_acquire),
+        std::memory_order_release);
     m_duoview_ever_presented.store(true,std::memory_order_release);
     m_duoview_consecutive_failures.store(0,std::memory_order_release);
     m_duoview_fallback_requested.store(false,std::memory_order_release);
