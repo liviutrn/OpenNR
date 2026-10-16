@@ -71,3 +71,20 @@ Original first-ready-tick autostart requested ID6 only if saved/requested ID was
 ## Current verdict
 
 **Source changes are committed for Astra review, NOT signed off as functional in-game or ready to compile/release automatically.** The known unguarded secondary source, same-tick multiple fault callbacks, prior-ID5 auto-start regression and misleading package gate have concrete corrections. The main remaining blockers require pinned Windows compilation and actual PSVR2 game behavior. No backend DLL, ZIP headset build or compilation was created during this source-only audit.
+
+
+## Addendum — independent OpenVR submission audit (same day)
+
+### P0-F05: A GPU-recorded composite was incorrectly marked presented before SteamVR accepted either eye — corrected
+The original v22 OpenVR path invoked `vr->duoview_frame_success()` as soon as the compositor command was recorded and enqueued, *before* `VRCompositor()->Submit` for left/right eyes. Thus the four-failure policy could continually reset despite SteamVR rejecting a presented eye. The fixed `apply_stage234.py` now tracks the left-eye result, reports right-eye submit errors, and only calls `duoview_frame_success()` after **both** Submit calls return `VRCompositorError_None`. The source verifier requires this gate. It does not establish that asynchronous GPU work ultimately completes, or that the pose and optical bounds are correct.
+
+Additional commits:
+- OpenVR both-eye success gate: `ddf4820a50d52cb4a255bc1b1776b512ea8a5449`
+- Verifier gate for both-eye success: `0bbc5e1980cedc6ece9f3dde8c9f3d666ec0818a`
+
+### Independent no-compile static spot checks
+Through GitHub, compared the two new exact-anchor OpenVR submit snippets to pinned `joeyhodge/UEVR@5ac7edc207866569334175e4ed8a7517971547f6`: each appears **exactly once** in that source. Confirmed the source has the guarded secondary ViewState/parity test, game-tick CAS, DuoView restart condition, two-eye SteamVR success guard and correct future package wording. Confirmed `duoview-joey-stage234.yml` has `workflow_dispatch` and no `push` trigger.
+
+Historical run `38902027894` / workflow run #139 **completed successfully** at `708b6e184cd94131ecec182f7a260cad8fa8b468`; that is an **earlier commit** and must not be used to certify this independently patched audit head. No new Windows DuoView compilation was launched for this audit.
+
+Source-only remaining warnings: game-tick fault deduplication does not prove exact cross-thread render frame attribution; C++ compile, source anchor execution in Stage1+Stage234 order, real SteamVR optical/pose behavior, UE Lumen parity and headset tests are still needed.
