@@ -14,6 +14,13 @@ int main() try {
     // Do not downgrade for momentary 1-3 frame gaps during initialization.
     // Exactly 4 consecutive missing compositor/scene observations require
     // a game-thread transition to true Mono mode5; never Native Stereo ID0.
+    // Multiple callbacks during the same game tick cannot count as
+    // multiple failures, and a successful composite wins that tick.
+    require(is_distinct_failed_tick(11,duoview_unseen_tick,duoview_unseen_tick) &&
+            !is_distinct_failed_tick(11,11,duoview_unseen_tick) &&
+            !is_distinct_failed_tick(11,duoview_unseen_tick,11) &&
+            is_distinct_failed_tick(12,11,10),
+            "DuoView fault callbacks were not deduplicated by game tick");
     require(!should_fallback_to_mono(0) &&
             !should_fallback_to_mono(1) &&
             !should_fallback_to_mono(3) &&
