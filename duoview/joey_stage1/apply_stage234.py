@@ -97,6 +97,11 @@ def main():
         'ImGui::TextWrapped("DuoView Stage 1: rendering uses original Joey Mono unchanged. Two-view foveation and gaze are NOT active.");',
         'ImGui::TextWrapped(is_duoview_renderer_active() ? "DuoView ID6: fixed-center two-view Mono" : "DuoView ID6: two-view renderer inactive (inspect diagnostics)");')
     edit(cpp, '#include "VR.hpp"', '#include "VR.hpp"\n#include <cstring>')
+    # Original Joey Mono is OpenXR-only; keep ID5 unchanged. Only validated
+    # DuoView ID6 may use OpenVR's existing per-eye DX12 submission path.
+    edit(cpp,
+        '        .openxr = runtime != nullptr && runtime->is_openxr(),',
+        '        .openxr = runtime != nullptr && (runtime->is_openxr() ||\n            (runtime->is_openvr() && (is_using_duoview_mono() ||\n             requested_rendering_method() == RenderingMethod::DUOVIEW_MONO))),')
     edit(cpp,'        if (rendering_method_changed && !is_mono_transition_pending() && get_runtime() != nullptr) {',
     '''        if (is_using_duoview_mono() || requested_rendering_method() == RenderingMethod::DUOVIEW_MONO) {
             if (ImGui::TreeNode("DuoView Mono — quality and diagnostics")) {
@@ -162,7 +167,7 @@ def main():
         '''void VR::on_pre_engine_tick(sdk::UGameEngine* engine, float delta) {
     if (!m_duoview_autostart_done.load(std::memory_order_acquire) && m_is_d3d12) {
         const auto runtime=get_runtime();
-        if (runtime && runtime->is_openxr() && runtime->loaded) {
+        if (runtime && (runtime->is_openxr() || runtime->is_openvr()) && runtime->loaded) {
             const auto path=utility::get_module_pathw(utility::get_executable());
             if (path && uevr::stalker2_native::is_executable(*path)) {
                 m_duoview_autostart_done.store(true,std::memory_order_release);
@@ -208,7 +213,7 @@ void VR::configure_duoview() {
 bool VR::is_duoview_renderer_active() const {
     if (!is_using_duoview_mono() || !m_is_d3d12) return false;
     const auto runtime = get_runtime();
-    if (!runtime || !runtime->is_openxr()) return false;
+    if (!runtime || (!runtime->is_openxr() && !runtime->is_openvr())) return false;
     static const bool stalker2 = [] {
         const auto path = utility::get_module_pathw(utility::get_executable());
         return path && uevr::stalker2_native::is_executable(*path);
@@ -378,10 +383,56 @@ void VR::duoview_abort(const char* reason) {
     dxh="src/mods/vr/D3D12Component.hpp"
     edit(dxh,'#include "d3d12/TextureContext.hpp"',
         '#include "d3d12/TextureContext.hpp"\n#include "DuoViewD3D12.hpp"')
+    edit(dxh,'''        std::array<d3d12::TextureContext, 3> right_eye_tex{};
+        d3d12::TextureContext ui_tex{};''',
+        '''        std::array<d3d12::TextureContext, 3> right_eye_tex{};
+        // OpenVR's source pair is composed to the same full-width Mono texture
+        // as OpenXR, then both eye textures receive the two identical halves.
+        Microsoft::WRL::ComPtr<ID3D12Resource> duoview_output{};
+        d3d12::CommandContext duoview_commands{};
+        std::unique_ptr<uevr::duoview::dx12::Compositor> duoview_compositor{};
+        d3d12::TextureContext ui_tex{};''')
     edit(dxh,'        std::unordered_map<uint32_t, SwapchainContext> contexts{};',
         '''        std::unordered_map<uint32_t, SwapchainContext> contexts{};
         std::unordered_map<d3d12::CommandContext*, std::unique_ptr<uevr::duoview::dx12::Compositor>> duoview_compositors;''')
     dx="src/mods/vr/D3D12Component.cpp"
+    edit(dx,'''    for (auto& ctx : m_openvr.left_eye_tex) {
+        ctx.reset();
+    }''',
+        '''    m_openvr.duoview_commands.reset();
+    m_openvr.duoview_compositor.reset();
+    m_openvr.duoview_output.Reset();
+    for (auto& ctx : m_openvr.left_eye_tex) {
+        ctx.reset();
+    }''')
+    # Allocate/prewarm the OpenVR DuoView output in normal setup, never in
+    # SteamVR Submit or a live compositor hot path.
+    edit(dx,'        // Set up the UI texture to match the engine-provided UI extent when available.',
+    '''        if (vr->is_duoview_renderer_active()) {
+            auto duo_desc=backbuffer_desc;
+            duo_desc.Width=backbuffer_desc.Width*2;
+            if (duo_desc.Width==0 || duo_desc.Width>32768 ||
+                FAILED(device->CreateCommittedResource(&heap_props,D3D12_HEAP_FLAG_NONE,
+                    &duo_desc,D3D12_RESOURCE_STATE_RENDER_TARGET,nullptr,
+                    IID_PPV_ARGS(&m_openvr.duoview_output)))) {
+                SPDLOG_ERROR("[DuoView][OpenVR] Full-size compositor target allocation failed");
+                return false;
+            }
+            if (!m_openvr.duoview_commands.setup(L"DuoView OpenVR compositor"))
+                return false;
+            m_openvr.duoview_compositor=std::make_unique<uevr::duoview::dx12::Compositor>();
+            UINT64 frequency{};
+            if (auto queue=hook->get_command_queue();queue)
+                queue->GetTimestampFrequency(&frequency);
+            if (!m_openvr.duoview_compositor->prewarm(device,
+                static_cast<UINT>(backbuffer_desc.Width),
+                backbuffer_desc.Height,false,frequency)) {
+                SPDLOG_ERROR("[DuoView][OpenVR] Compositor prewarm failed");
+                return false;
+            }
+        }
+
+        // Set up the UI texture to match the engine-provided UI extent when available.''')
     edit(dx,'    this->contexts.clear();\n    vr->m_openxr->swapchains.clear();',
         '    this->duoview_compositors.clear();\n    this->contexts.clear();\n    vr->m_openxr->swapchains.clear();')
     edit(dx,'    this->contexts.clear();\n\n    auto create_swapchain',
@@ -448,6 +499,50 @@ void VR::duoview_abort(const char* reason) {
                         }
                     } else if (vr->is_using_mono()) {
                         bool recorded = false;''')
+    # OpenVR source-pair composition: reuse the same validated compositor
+    # and current-frame pair key, but submit through SteamVR's existing two
+    # 6DoF pose-aware per-eye textures instead of OpenXR swapchains.
+    edit(dx,'''            auto openvr = vr->get_runtime<runtimes::OpenVR>();
+            const auto submit_pose = openvr->get_pose_for_submit();
+
+            if (!is_afr) {
+                m_openvr.copy_left(backbuffer.Get(), scene_source_state);''',
+    '''            auto openvr = vr->get_runtime<runtimes::OpenVR>();
+            const auto submit_pose = openvr->get_pose_for_submit();
+            Microsoft::WRL::ComPtr<ID3D12Resource> duo_scene{};
+            if (vr->is_duoview_renderer_active()) {
+                auto frame=vr->duoview_state().consume(
+                    vr->duoview_key(static_cast<uint32_t>(frame_count)));
+                auto& context=m_openvr.duoview_commands;
+                if (frame && m_openvr.duoview_output &&
+                    m_openvr.duoview_compositor && context.ready()) {
+                    context.wait(INFINITE);
+                    if (m_openvr.duoview_compositor->record(device,
+                        context.cmd_list.Get(),backbuffer.Get(),
+                        m_openvr.duoview_output.Get(),scene_source_state,frame->config)) {
+                        if (m_openvr.duoview_compositor->recorded_commands())
+                            context.has_commands=true;
+                        context.execute();
+                        duo_scene=m_openvr.duoview_output;
+                    }
+                }
+                if (!duo_scene) {
+                    vr->duoview_abort("OpenVR paired-source composition unavailable");
+                    // Do not substitute native stereo or original Mono.
+                    runtime->frame_synced=false;
+                    return vr::VRCompositorError_None;
+                }
+            }
+
+            if (!is_afr) {
+                m_openvr.copy_left(duo_scene ? duo_scene.Get() : backbuffer.Get(),
+                    duo_scene ? D3D12_RESOURCE_STATE_RENDER_TARGET : scene_source_state);''')
+    edit(dx,'''                if (native_stereo_packet == nullptr || m_scene_capture_tex.texture.Get() == nullptr) {
+                    m_openvr.copy_right(backbuffer.Get(), scene_source_state);''',
+    '''                if (duo_scene) {
+                    m_openvr.copy_right(duo_scene.Get(),D3D12_RESOURCE_STATE_RENDER_TARGET);
+                } else if (native_stereo_packet == nullptr || m_scene_capture_tex.texture.Get() == nullptr) {
+                    m_openvr.copy_right(backbuffer.Get(), scene_source_state);''')
     # Copy reference modules into exact checked-out Joey tree. No private SDK
     # declarations or altered SDK files.
     for name in ("DuoViewGeometry.hpp","DuoViewGaze.hpp","DuoViewPSVR2Gaze.hpp","DuoViewCropStability.hpp","DuoViewFrame.hpp",
