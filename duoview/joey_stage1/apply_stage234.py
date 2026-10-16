@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Apply bounded fixed-center two-view integration after verified Stage 1.
-Original Joey modes 0/5 are protected. STALKER 2 DX12 OpenXR mode 6 only.
-An incomplete pair quarantines the renderer inside mode 6; a single fault
-frame may contain incomplete atlas pixels, then later frames use Joey Mono.
+"""Apply isolated fixed-center two-view integration after verified Stage 1.
+Joey original Mono ID5 and Native Stereo ID0 remain unmodified source modes.
+STALKER2 DX12 supports OpenXR and native OpenVR with DuoView ID6; eye gaze OFF.
+Reject incomplete/untreated pairs; after 60 initial or 4 subsequent failed
+game ticks, safely request real Joey Mono ID5 (never automatic ID0).
 All original-source anchors must match exactly or the build fails.
 """
 from pathlib import Path
@@ -737,7 +738,7 @@ void VR::duoview_frame_success() {
         str(root/"src/mods/vr/DuoViewShaderSource.hpp")], check=True)
     for path,text in changed.items():
         (source_root(path)/path).write_text(text,encoding="utf-8",newline="")
-    print("Applied DuoView-first with four-failure transition to true Joey Mono ID5 (never Native Stereo), for OpenXR/OpenVR (experimental).")
+    print("Applied fixed-center DuoView ID6 for STALKER2 DX12 OpenXR/OpenVR; 60-startup/4-steady failed ticks -> Joey Mono ID5 only (experimental).")
 
 if __name__=="__main__":
     main()
