@@ -87,8 +87,11 @@ def main():
  if "m_openxr.duoview_compositors" not in backend_copy or "duoview_abort" not in backend_copy:
   raise RuntimeError("OpenXR DuoView fault handling missing")
  if ("DuoView OpenVR compositor" not in backend_copy or
-     "OpenVR paired-source composition unavailable" not in backend_copy):
-  raise RuntimeError("OpenVR two-view DX12 presentation path missing")
+     "OpenVR paired-source composition unavailable" not in backend_copy or
+     "duo_left_submit_ok=(e==vr::VRCompositorError_None)" not in backend_copy or
+     "if (duo_left_submit_ok) vr->duoview_frame_success()" not in backend_copy or
+     "OpenVR right-eye Submit failed" not in backend_copy):
+  raise RuntimeError("OpenVR must only call DuoView frame-success after BOTH eye submissions")
  state_source=(a.backend/"src/mods/vr/DuoViewState.hpp").read_text(encoding="utf-8")
  if ("can_native_fix_secondary_source" not in state_source or
      "slot->scene_states[0] == slot->scene_states[1]" not in state_source or
