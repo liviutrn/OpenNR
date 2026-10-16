@@ -146,55 +146,40 @@ jobs:
           Copy-Item evidence/duoview-stage1-source-hashes.json package/
           Copy-Item evidence/duoview-stage234-hashes.json package/
           @'
-          DUOVIEW TEMPORAL v23 — STABLE CROP, FROZEN PROJECTION AND OPTIONAL PRIMARY SHADING. HEADSET UNVERIFIED.
-          Backend: exact Joey 5ac7edc207866569334175e4ed8a7517971547f6 + guarded DuoView modifications.
-          Restricted SDK unchanged: joeyhodge/UESDK 3cffbc82429b6165ceec2714f0f0d9ae48f55596.
-          Matching frontend source: 60be4b0f9a646109fd9fdf448bacd41477234091, plus ID 6.
-          Modes 0 and 5 are routed to ORIGINAL JOEY. Experimental mode ID6 is active ONLY in STALKER 2 DX12 OpenXR.
-          ID6 restores persistent per-profile crop width/height, fovea density, peripheral scale, blend feather and gaze controls.
-          Old source defaults: 0.50x0.50 crop at 1.0x density, 0.20x periphery, gaze ON, fovea UE0/periphery UE1.
-          Press Restore old DuoView settings once if an existing profile retains newer settings. Increase density to match your old preferred tuning; exact historical tuning is unknown.
-          Foveal atlas rectangle starts at x=0, matching Injector-5. Gaze uses the inverse left optical rotation, matching the old coordinate path.
-          Smooth gaze crop is ON by default, optional OFF. Continuous guard 0-25% (default 8%), smoothing 0-250ms (default 85ms), max 1.4 full-UV/s, single source-pixel alignment. Deliberate saccades move gradually, no recenter teleport.
-          Missing/invalid gaze holds the crop 100ms then eases toward center. Reused CAPI gaze UV is frozen together with its original optical transform, preventing stale-ray head-motion reprojection. No old image is reused.
-          Both UE views use the exact frozen producer projection; native engine histories/motion vectors remain engine-owned.
-          Independent primary shading starts OFF on EACH injection/mode transition; toggle it in-game after DuoView settles.
-          The shading toggle temporarily constructs the SECONDARY source as PRIMARY only with proven distinct source ViewStates and matching main family. It does not enable the full Native Fix capture/submission path.
-          Toggle OFF to return to the existing shading path on the next producer frame. Actual shading parity and temporal stability require headset testing.
-          Optional GPU timing is OFF by default. Query resources prewarm at swapchain creation; no GPU waits or render-callback allocation for timing.
-          Debug source 0=blended output, 1=periphery only, 2=fovea only (dark outside ROI).
-          Source view0 is the first UE pass (old prototype default), view1 is the second (Build19 default).
-          Both source passes share exactly the same Mono camera.
-          Stage5 reads combined calibrated PSVR2 Toolkit CAPI gaze ONCE per frame. No DLL bundled.
-          If CAPI is unavailable/invalid or blinked, ID6 stays at fixed center; no OpenXR gaze layer required.
-          Menu shows whether PSVR2 gaze is fresh, center fallback, or Mono quarantine.
-          Uses same Mono camera, off-axis foveal projection, DX12 raster composition and original XR submission.
-          On failure, DuoView is QUARANTINED internally inside ID6; the next frame uses Joey original Mono.
-          The fault frame attempts a current-frame original Mono copy but may show incomplete atlas contents.
-          DXBC shaders are precompiled during CI; per-XR-image PSOs/textures are prewarmed on swapchain setup.
-          Changing source formats or unexpected swapchain lifecycle may still cause reconstruction. Monitor frame pacing.
-          Experimental: Source/test/CI passing cannot prove exact game GPU producer completion or headset stability.
-          NEVER overwrite 30-minute-proven Build3! Extract this ZIP into a SEPARATE TEST DIRECTORY.
-          Built-in gaze freshness/age counters are read from the UI; smooth crop is configurable and OFF when tracking is OFF.
-          Stage5 gaze requires installed PSVR2 Toolkit CAPI and still requires headset calibration validation.
-          Restored engine view order and optical gaze mapping are source verified. Actual Lumen/shadow/exposure and visual parity require a headset test; no gamma correction applied.
-          The eye-tracked source/compositor and first-use pacing are NOT headset verified.
+          JOEY DUOVIEW v22 FIXED-CENTER RECOVERY — EXPERIMENTAL. HEADSET UNVERIFIED.
+          Source branch: experiments/duoview-joey-v22-fixed-center-recovery.
+          Backend: joeyhodge/UEVR 5ac7edc207866569334175e4ed8a7517971547f6 plus isolated exact-anchor patches.
+          Restricted UESDK: joeyhodge/UESDK 3cffbc82429b6165ceec2714f0f0d9ae48f55596, unchanged.
+          Matching frontend: joeyhodge/uevr-frontend 60be4b0f9a646109fd9fdf448bacd41477234091 plus ID6.
+          STALKER2 DX12: request ID6 DuoView on startup for OpenXR or SteamVR/OpenVR.
+          DuoView renders fixed-center fovea plus lower-resolution periphery through two UE source views with a shared Mono camera.
+          Eye tracking is disabled. Adjust DuoViewFixedCenterVertical 0-1 in game (0=top, 1=bottom).
+          Default crop 50% width x 50% height, foveal density 1.0, peripheral resolution scale 0.20.
+          Other quality controls: feather, periphery resolution, source order, border/debug source, optional GPU timing.
+          The secondary view requires distinct UE ViewStates and successful Native Stereo Fix-style source construction before composition; visual equivalence to Native Stereo Fix is NOT proven.
+          Mode ID6 is preferred. Repeated bad game ticks (60 startup; 4 after first valid composite) request REAL Joey Mono ID5 through safe GPU-retired transition.
+          Automatic Native Stereo ID0 fallback is forbidden. An incomplete atlas is not presented as valid Mono.
+          If a previous session fell back to ID5, the next STALKER2 DX12 launch attempts ID6 anew.
+          OpenVR Mono ID5 presents the same single full-scene view to both eyes through calibrated per-eye optical bounds.
+          SOURCE GATES AND CI CANNOT PROVE 6DoF TRACKING, GPU PERF, NATIVE FIX LUMEN PARITY OR HEADSET SAFETY.
+          Before treating this ZIP as a release, test OpenXR and OpenVR, high resolution/DLSS changes, 6->5 failure and 6->5->6 retry.
+          DO NOT REPLACE user-tested Joey Build 3. Extract into a SEPARATE TEST DIRECTORY.
           '@ | Set-Content package/READ_FIRST.txt
           $needed=@('UEVRBackend.dll','UEVRPluginNullifier.dll','LuaVR.dll','READ_FIRST.txt','duoview-stage234-hashes.json','exact-baseline-source.json')
           foreach ($name in $needed) { if (!(Test-Path ("package/" + $name))) { throw "Missing critical package file: $name" } }
           if (@(Get-ChildItem package -File -Filter *.exe).Count -lt 1) { throw "Missing Joey frontend executable" }
-          if ((Get-Content package/READ_FIRST.txt -Raw) -notmatch 'QUARANTINED internally') { throw 'Stale fallback instructions' }
+          if ((Get-Content package/READ_FIRST.txt -Raw) -notmatch 'Automatic Native Stereo ID0 fallback is forbidden') { throw 'Stale fallback instructions' }
           Get-ChildItem package -Recurse -File | Get-FileHash -Algorithm SHA256 | ConvertTo-Json | Set-Content evidence/package-sha256.json
-          $zip="Joey-DuoView-Temporal-v23-${{ github.run_number }}.zip"
+          $zip="Joey-DuoView-v22-FixedCenter-${{ github.run_number }}.zip"
           Compress-Archive -Path package/* -DestinationPath $zip -Force
           (Get-FileHash $zip -Algorithm SHA256).Hash | Set-Content "$zip.sha256"
       - uses: actions/upload-artifact@v4
         if: success()
         with:
-          name: Joey-DuoView-Temporal-v23-${{ github.run_number }}
+          name: Joey-DuoView-v22-FixedCenter-${{ github.run_number }}
           path: |
-            Joey-DuoView-Temporal-v23-*.zip
-            Joey-DuoView-Temporal-v23-*.zip.sha256
+            Joey-DuoView-v22-FixedCenter-*.zip
+            Joey-DuoView-v22-FixedCenter-*.zip.sha256
           if-no-files-found: error
           retention-days: 90
       - name: Record public source and dependency provenance
