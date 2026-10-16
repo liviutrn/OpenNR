@@ -76,18 +76,20 @@ public:
         return true;
     }
     // Independent of the old experimental primary-shading toggle.
-    // The secondary constructor may impersonate PRIMARY only while the
-    // current main-view pair has both latched rects/projections, camera and a
-    // distinct valid UE ViewState. No stale frame, secondary-only or detached
-    // capture family is allowed. The caller must also verify main RT identity,
-    // exact family count and restore the engine's original constructor inputs.
+    // Called DURING secondary view construction, before the second view has
+    // necessarily published its rectangle or projection. Waiting for those
+    // secondary observations would deadlock this source-stage Native Fix.
+    // Require a coherent current PRIMARY snapshot, immutable frame geometry,
+    // main-view camera, and distinct non-null source ViewStates. The caller
+    // separately checks exact family/RT identity, secondary constructor pass,
+    // and restores the temporary UE constructor inputs on every return.
     bool can_native_fix_secondary_source(FrameKey key, uintptr_t secondary_state) const {
         std::scoped_lock lock{mutex_};
         const auto& slot=frames_[key.frame % frames_.size()];
         return slot && slot->config.key==key && !slot->invalid && !slot->consumed &&
-            slot->camera_valid &&
-            slot->rectangles[0] && slot->rectangles[1] &&
-            slot->projections[0] && slot->projections[1] &&
+            slot->camera_valid && slot->cameras[0] &&
+            slot->rectangles[0] && slot->projections[0] &&
+            layout_valid(slot->config.layout) &&
             slot->scene_states[0] && secondary_state &&
             slot->scene_states[0]!=secondary_state;
     }
