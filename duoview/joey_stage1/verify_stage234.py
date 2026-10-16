@@ -104,8 +104,9 @@ def main():
   raise RuntimeError("DX12 prewarm/RT setup errors must trigger DuoView-to-Mono policy")
  if "owner->is_using_mono()" not in (a.backend/"src/mods/vr/runtimes/OpenVR.cpp").read_text(encoding="utf-8"):
   raise RuntimeError("OpenVR Mono ID5 missing shared binocular optical calibration")
- if ".openxr = runtime != nullptr && (runtime->is_openxr() || runtime->is_openvr())" not in vr_cpp:
-  raise RuntimeError("Original Joey Mono ID5 fallback is not legal on SteamVR OpenVR")
+ if (".openxr = runtime != nullptr && (runtime->is_openxr() || (runtime->is_openvr() &&" not in vr_cpp or
+     "g_framework->is_dx12() && duoview_stalker2_title" not in vr_cpp):
+  raise RuntimeError("SteamVR Mono fallback must be allowed ONLY for STALKER2 DX12")
  if "m_duo_center_v->value()" not in vr_cpp or "m_duoview_autostart_done" not in vr_header:
   raise RuntimeError("Startup or fixed-center vertical control not connected")
  openvr=(a.backend/"src/mods/vr/runtimes/OpenVR.cpp").read_text(encoding="utf-8")
