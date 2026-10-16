@@ -545,7 +545,7 @@ void VR::duoview_abort(const char* reason) {
     # Native Stereo and original OpenVR modes remain bit-for-bit unchanged.
     openvr="src/mods/vr/runtimes/OpenVR.cpp"
     edit(openvr,'#include "../SteamFrameInput.hpp"',
-        '#include "../SteamFrameInput.hpp"\\n#include "../MonoRenderingPolicy.hpp"\\n#include <glm/gtc/quaternion.hpp>')
+        '#include "../SteamFrameInput.hpp"\n#include "../MonoRenderingPolicy.hpp"\n#include <glm/gtc/quaternion.hpp>')
     edit(openvr,'''        this->projections[vr::Eye_Right] = get_mat(vr::Eye_Right);
         this->should_recalculate_eye_projections = false;''',
     '''        this->projections[vr::Eye_Right] = get_mat(vr::Eye_Right);
