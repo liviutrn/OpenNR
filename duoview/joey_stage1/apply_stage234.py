@@ -697,10 +697,9 @@ void VR::duoview_frame_success() {
                     // current frame; transition to true ID5 at frame boundary.
                     runtime->frame_synced=false;
                     return vr::VRCompositorError_None;
-                } else {
-                    vr->duoview_frame_success();
                 }
             }
+            bool duo_left_submit_ok=false;
 
             if (!is_afr) {
                 m_openvr.copy_left(duo_scene ? duo_scene.Get() : backbuffer.Get(),
@@ -715,6 +714,31 @@ void VR::duoview_frame_success() {
                     m_openvr.copy_left_to_right(backbuffer.Get(),scene_source_state);
                 } else if (native_stereo_packet == nullptr || m_scene_capture_tex.texture.Get() == nullptr) {
                     m_openvr.copy_right(backbuffer.Get(), scene_source_state);''')
+    # Mark a DuoView frame as successfully presented only after BOTH SteamVR
+    # Submit calls succeeded. A successful GPU record is insufficient and
+    # must not zero the fault streak before the headset submission.
+    edit(dx,'''                auto e = vr::VRCompositor()->Submit(vr::Eye_Left, &left_eye, &left_bounds, vr::EVRSubmitFlags::Submit_TextureWithPose);
+                record_native_submit(frame_diag::Runtime::openvr, frame_diag::Stage::submit_result, static_cast<int32_t>(e), 0);''',
+    '''                auto e = vr::VRCompositor()->Submit(vr::Eye_Left, &left_eye, &left_bounds, vr::EVRSubmitFlags::Submit_TextureWithPose);
+                duo_left_submit_ok=(e==vr::VRCompositorError_None);
+                record_native_submit(frame_diag::Runtime::openvr, frame_diag::Stage::submit_result, static_cast<int32_t>(e), 0);''')
+    edit(dx,'''            if (e != vr::VRCompositorError_None) {
+                spdlog::error("[VR] VRCompositor failed to submit right eye: {}", (int)e);
+                return e;
+            } else {
+                vr->m_submitted = true;
+            }''',
+    '''            if (e != vr::VRCompositorError_None) {
+                if (duo_scene) vr->duoview_abort("OpenVR right-eye Submit failed");
+                spdlog::error("[VR] VRCompositor failed to submit right eye: {}", (int)e);
+                return e;
+            } else {
+                if (duo_scene) {
+                    if (duo_left_submit_ok) vr->duoview_frame_success();
+                    else vr->duoview_abort("OpenVR left-eye Submit failed");
+                }
+                vr->m_submitted = true;
+            }''')
     # Copy reference modules into exact checked-out Joey tree. No private SDK
     # declarations or altered SDK files.
     for name in ("DuoViewGeometry.hpp","DuoViewGaze.hpp","DuoViewPSVR2Gaze.hpp","DuoViewCropStability.hpp","DuoViewFrame.hpp",
