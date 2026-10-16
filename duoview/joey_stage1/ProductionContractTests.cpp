@@ -4,12 +4,27 @@
 #include <iostream>
 #include <stdexcept>
 #include "DuoViewState.hpp"
+#include "MonoRenderingPolicy.hpp"
 
 using namespace uevr::duoview;
 static void require(bool test, const char* what) {
     if (!test) throw std::runtime_error(what);
 }
 int main() try {
+    // The OpenVR path must use the same shared binocular, mono-scene optical
+    // union as Joey OpenXR: symmetric common frustum and valid eye crop bounds.
+    const std::array<uevr::mono::Eye,2> eyes{{
+        {{0.f,0.f,0.f,1.f},{-.032f,0.f,0.f},{-1.84f,.95f,1.33f,-1.33f}},
+        {{0.f,0.f,0.f,1.f},{ .032f,0.f,0.f},{-.95f,1.84f,1.33f,-1.33f}}
+    }};
+    const auto shared=uevr::mono::geometry(eyes);
+    require(shared && shared->horizontal>1.83f && shared->vertical>1.32f,
+            "SteamVR source cameras must use one calibrated binocular Mono frustum");
+    for (auto& bounds:shared->bounds)
+        require(bounds[0]>=0.f && bounds[1]<=1.f &&
+                bounds[2]>=0.f && bounds[3]<=1.f && bounds[0]<bounds[1] &&
+                bounds[2]<bounds[3], "Invalid per-eye SteamVR Mono optical crop");
+
     for (auto wh: {std::array{2000u,2000u},std::array{3000u,3000u},
                    std::array{3400u,3172u},std::array{4096u,2160u}}) {
         const auto l=make_layout(wh[0],wh[1],.30f,.30f,.25f,2.5f,.5f,.5f);
