@@ -564,8 +564,6 @@ void VR::duoview_frame_success() {
     # snapshot instead of probing an XR frame that never exists on OpenVR.
     edit(dx,'''    if (vr->mono_frame_gate_required()) {
         if (!vr->m_openxr->has_mono_frame(static_cast<uint32_t>(vr->m_frame_count))) {
-            if (vr->is_using_duoview_mono())
-                vr->duoview_abort("OpenXR frame/projection gate not ready");
             vr->set_mono_status("Waiting for a current main-view pose and validated common projection");
             vr->m_openxr->end_mono_transition_frame();
             return vr::VRCompositorError_None;
@@ -582,6 +580,8 @@ void VR::duoview_frame_success() {
                 return vr::VRCompositorError_None;
             }
         } else if (!vr->m_openxr->has_mono_frame(static_cast<uint32_t>(vr->m_frame_count))) {
+            if (vr->is_using_duoview_mono())
+                vr->duoview_abort("OpenXR frame/projection gate not ready");
             vr->set_mono_status("Waiting for a current main-view pose and validated common projection");
             vr->m_openxr->end_mono_transition_frame();
             return vr::VRCompositorError_None;
