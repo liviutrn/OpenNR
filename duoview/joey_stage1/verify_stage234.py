@@ -7,7 +7,8 @@ EDITED_BACKEND = {
  "src/mods/vr/MonoRenderingPolicy.hpp", "src/mods/vr/CompatibilityPolicy.hpp",
  "src/mods/VR.hpp", "src/mods/VR.cpp",
  "src/mods/vr/FFakeStereoRenderingHook.cpp", "src/mods/vr/D3D12Component.hpp",
- "src/mods/vr/D3D12Component.cpp", "tests/MonoRenderingTests.hpp",
+ "src/mods/vr/D3D12Component.cpp", "src/mods/vr/runtimes/OpenVR.cpp",
+ "tests/MonoRenderingTests.hpp",
 }
 ADDED_BACKEND = {
  "src/mods/vr/DuoViewGeometry.hpp", "src/mods/vr/DuoViewGaze.hpp",
@@ -91,6 +92,11 @@ def main():
   raise RuntimeError("Dedicated guarded Native Fix source pair proof missing")
  if "m_duo_center_v->value()" not in vr_cpp or "m_duoview_autostart_done" not in vr_header:
   raise RuntimeError("Startup or fixed-center vertical control not connected")
+ openvr=(a.backend/"src/mods/vr/runtimes/OpenVR.cpp").read_text(encoding="utf-8")
+ if ("uevr::mono::geometry(optical)" not in openvr or
+     "owner->is_duoview_renderer_active()" not in openvr or
+     "this->view_bounds[eye][edge]=common->bounds[eye][edge]" not in openvr):
+  raise RuntimeError("OpenVR shared Mono optical calibration or per-eye submission bounds missing")
  if ".fovea_view=static_cast<uint32_t>(m_duo_fovea_view->value())" not in vr_cpp:
   raise RuntimeError("UE source selector must be connected to immutable frame settings")
  if "vertex_shader_bytecode[]" not in shaders or "pixel_shader_bytecode[]" not in shaders:
