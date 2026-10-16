@@ -128,9 +128,16 @@ public:
     std::optional<ViewFrame> consume(FrameKey key) {
         std::scoped_lock lock{mutex_};
         auto& slot = frames_[key.frame % frames_.size()];
+        // An observed pair is not sufficient: independent current-frame UE
+        // source states and the guarded Native Fix secondary-constructor
+        // transaction are mandatory before we may present the periphery.
+        // Otherwise the image could be fully populated but retain the known
+        // incorrect Lumen/shadow history of the untreated secondary source.
         if (!slot || slot->config.key != key || slot->consumed || slot->invalid || !slot->main_family ||
             !slot->camera_valid || !slot->rectangles[0] || !slot->rectangles[1] ||
-            !slot->projections[0] || !slot->projections[1] || !slot->cameras[0] || !slot->cameras[1]) return {};
+            !slot->projections[0] || !slot->projections[1] || !slot->cameras[0] || !slot->cameras[1] ||
+            !slot->scene_states[0] || !slot->scene_states[1] ||
+            slot->scene_states[0] == slot->scene_states[1] || !slot->shading_applied) return {};
         slot->consumed = true;
         return slot;
     }
