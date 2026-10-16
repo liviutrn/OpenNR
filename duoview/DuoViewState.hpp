@@ -10,8 +10,10 @@ namespace uevr::duoview {
 // Transient loss (including one frame during runtime resize) retries DuoView.
 // Never produce Native Stereo mode ID0 as an automatic failure destination.
 constexpr uint32_t mono_fallback_failure_threshold = 4u;
-constexpr bool should_fallback_to_mono(uint32_t consecutive_failures) {
-    return consecutive_failures >= mono_fallback_failure_threshold;
+constexpr uint32_t mono_fallback_startup_grace_frames = 60u;
+constexpr bool should_fallback_to_mono(uint32_t consecutive_failures, bool previously_presented=true) {
+    return consecutive_failures >= (previously_presented
+        ? mono_fallback_failure_threshold : mono_fallback_startup_grace_frames);
 }
 struct CameraPose {
     std::array<double, 3> rotation{}, position{};
