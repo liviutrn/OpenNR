@@ -73,8 +73,24 @@ def main():
  hook=(a.backend/"src/mods/vr/FFakeStereoRenderingHook.cpp").read_text(encoding="utf-8")
  if "frame->config.settings.fovea_view" not in hook or "duo_frame->config.settings.fovea_view" not in hook:
   raise RuntimeError("Actual source index and UE projection must follow frozen source-view selection")
- if "apply_frame_projection(double_matrix,*frame" not in hook or "can_independent_shading(key,state)" in hook:
-  raise RuntimeError("Production foveal projection missing or experimental independent shading still active")
+ if ("apply_frame_projection(double_matrix,*frame" not in hook or
+     "can_native_fix_secondary_source(key,state)" not in hook or
+     "views_original_count=views->count" not in hook):
+  raise RuntimeError("DuoView source-parity constructor transaction or original-family restoration contract absent")
+ # Neither an incomplete DuoView pair nor a GPU composite failure may copy
+ # Joey's original Mono atlas or permanently disable the two-view producer.
+ backend_copy=(a.backend/"src/mods/vr/D3D12Component.cpp").read_text(encoding="utf-8")
+ if "duoview_quarantined" in vr_header or "duoview_quarantined" in vr_cpp:
+  raise RuntimeError("Prohibited DuoView-to-Mono quarantine detected")
+ if "m_openxr.duoview_compositors" not in backend_copy or "duoview_abort" not in backend_copy:
+  raise RuntimeError("OpenXR DuoView fault handling missing")
+ if "DuoView OpenVR compositor" not in backend_copy or
+    "OpenVR paired-source composition unavailable" not in backend_copy:
+  raise RuntimeError("OpenVR two-view DX12 presentation path missing")
+ if "can_native_fix_secondary_source" not in (a.backend/"src/mods/vr/DuoViewState.hpp").read_text(encoding="utf-8"):
+  raise RuntimeError("Dedicated guarded Native Fix source pair proof missing")
+ if "m_duo_center_v->value()" not in vr_cpp or "m_duoview_autostart_done" not in vr_header:
+  raise RuntimeError("Startup or fixed-center vertical control not connected")
  if ".fovea_view=static_cast<uint32_t>(m_duo_fovea_view->value())" not in vr_cpp:
   raise RuntimeError("UE source selector must be connected to immutable frame settings")
  if "vertex_shader_bytecode[]" not in shaders or "pixel_shader_bytecode[]" not in shaders:
