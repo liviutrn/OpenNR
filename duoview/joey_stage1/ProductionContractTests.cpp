@@ -43,6 +43,23 @@ int main() try {
     settings.eye_tracked=false;
     settings.fovea_view=1;
     require(state.configure(settings),"Fixed-center configuration rejected");
+    // Fixed center remains vertical-adjustable but never calls the gaze provider.
+    State fixed_center;
+    Settings static_center{};
+    static_center.fixed_center_v=.70f;
+    static_center.eye_tracked=false;
+    require(fixed_center.configure(static_center),"Vertical-center settings rejected");
+    std::array<float,16> fixed_projection{}; fixed_projection[0]=fixed_projection[5]=fixed_projection[10]=fixed_projection[15]=1.f;
+    bool gaze_was_called=false;
+    auto fixed_snap=fixed_center.begin({99,1},3000,3000,fixed_projection,
+        [&]()->std::optional<UV>{gaze_was_called=true;return UV{.01f,.99f};});
+    require(fixed_snap && !gaze_was_called,"Fixed center incorrectly sampled headset gaze");
+    require(std::abs(fixed_snap->config.gaze.u-.5f)<1e-6f &&
+            std::abs(fixed_snap->config.gaze.v-.7f)<1e-6f,
+            "Fixed-center vertical setting did not reach the projection and compositor");
+    static_center.fixed_center_v=1.01f;
+    require(!fixed_center.configure(static_center),"Out-of-range vertical center accepted");
+
     settings.diagnostic_view=3;
     require(!state.configure(settings),"Invalid diagnostic accepted");
     settings.diagnostic_view=1;
@@ -91,7 +108,7 @@ int main() try {
     require(state.begin({5,1},3000,3000,m,[]()->std::optional<UV>{return UV{.5f,.5f};}).has_value(),
             "New generation after reset must be supported");
     State temporal;
-    Settings stable; stable.crop_width=stable.crop_height=.30f;
+    Settings stable; stable.crop_width=stable.crop_height=.30f; stable.eye_tracked=true;
     stable.independent_shading=true;
     require(temporal.configure(stable),"Temporal settings rejected");
     std::array<float,16> p{}; p[0]=p[5]=2; p[11]=1; p[14]=.1f;
@@ -133,6 +150,7 @@ int main() try {
     // and bounded frame-to-frame movement even across an eye saccade.
     CropStability smoother;
     Settings follow{};
+    follow.eye_tracked=true;
     follow.stabilize_crop=true;
     follow.crop_width=follow.crop_height=.5f;
     follow.guard_fraction=.10f;
