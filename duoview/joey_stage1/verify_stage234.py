@@ -78,8 +78,8 @@ def main():
      "can_native_fix_secondary_source(key,state)" not in hook or
      "views_original_count=views->count" not in hook):
   raise RuntimeError("DuoView source-parity constructor transaction or original-family restoration contract absent")
- # Neither an incomplete DuoView pair nor a GPU composite failure may copy
- # Joey's original Mono atlas or permanently disable the two-view producer.
+ # An incomplete DuoView atlas must never be presented as a full mono scene.
+ # Persistent failure must request genuine mode5 on the game thread, never ID0.
  backend_copy=(a.backend/"src/mods/vr/D3D12Component.cpp").read_text(encoding="utf-8")
  if "duoview_quarantined" in vr_header or "duoview_quarantined" in vr_cpp:
   raise RuntimeError("Prohibited DuoView-to-Mono quarantine detected")
@@ -90,11 +90,25 @@ def main():
   raise RuntimeError("OpenVR two-view DX12 presentation path missing")
  if "can_native_fix_secondary_source" not in (a.backend/"src/mods/vr/DuoViewState.hpp").read_text(encoding="utf-8"):
   raise RuntimeError("Dedicated guarded Native Fix source pair proof missing")
+ if ("m_duoview_consecutive_failures" not in vr_cpp or
+     "m_duoview_fallback_requested.exchange(false" not in vr_cpp or
+     "m_rendering_method->request(RenderingMethod::MONO)" not in vr_cpp or
+     "m_rendering_method->request(RenderingMethod::NATIVE_STEREO)" in vr_cpp or
+     "should_fallback_to_mono(failures)" not in vr_cpp):
+  raise RuntimeError("DuoView failure must request genuine Joey Mono ID5 only from game thread")
+ if "m_openvr.copy_left_to_right(backbuffer.Get(),scene_source_state)" not in backend_copy:
+  raise RuntimeError("OpenVR Joey Mono must duplicate complete first scene half to second eye")
+ if "duoview_abort(\"D3D12 setup/device/swapchain preparation failed\"")" not in backend_copy:
+  raise RuntimeError("DX12 prewarm/RT setup errors must trigger DuoView-to-Mono policy")
+ if "owner->is_using_mono()" not in (a.backend/"src/mods/vr/runtimes/OpenVR.cpp").read_text(encoding="utf-8"):
+  raise RuntimeError("OpenVR Mono ID5 missing shared binocular optical calibration")
+ if ".openxr = runtime != nullptr && (runtime->is_openxr() || runtime->is_openvr())" not in vr_cpp:
+  raise RuntimeError("Original Joey Mono ID5 fallback is not legal on SteamVR OpenVR")
  if "m_duo_center_v->value()" not in vr_cpp or "m_duoview_autostart_done" not in vr_header:
   raise RuntimeError("Startup or fixed-center vertical control not connected")
  openvr=(a.backend/"src/mods/vr/runtimes/OpenVR.cpp").read_text(encoding="utf-8")
  if ("uevr::mono::geometry(optical)" not in openvr or
-     "owner->is_duoview_renderer_active()" not in openvr or
+     "owner->is_using_mono()" not in openvr or
      "this->view_bounds[eye][edge]=common->bounds[eye][edge]" not in openvr):
   raise RuntimeError("OpenVR shared Mono optical calibration or per-eye submission bounds missing")
  if ".fovea_view=static_cast<uint32_t>(m_duo_fovea_view->value())" not in vr_cpp:
