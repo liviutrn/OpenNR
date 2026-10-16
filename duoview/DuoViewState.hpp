@@ -39,7 +39,7 @@ public:
             (key.generation==last_begin_.generation && key.frame<=last_begin_.frame)) return {};
         for (float x:projection) if (!std::isfinite(x)) return {};
         const auto s = config_.current_settings();
-        const auto gaze = s.eye_tracked ? read_gaze() : std::optional<UV>{UV{}};
+        const auto gaze = s.eye_tracked ? read_gaze() : std::optional<UV>{UV{.5f, s.fixed_center_v}};
         auto stability=stability_;
         const auto center=stability.update(key,w,h,s,gaze,now_ms);
         const auto frozen = config_.for_frame(key, w, h, center);
