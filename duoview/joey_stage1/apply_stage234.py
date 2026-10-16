@@ -81,7 +81,6 @@ def main():
     std::atomic<float> m_duo_gpu_ms{-1.f};
     uevr::duoview::State m_duoview;
     uevr::duoview::psvr2::Reader m_duoview_gaze;
-    std::atomic<bool> m_duoview_quarantined{false};
     std::atomic<bool> m_duoview_autostart_done{false};
     std::once_flag m_duoview_settings_once;
     std::atomic<const char*> m_mono_status{"Not selected"};''')
@@ -176,7 +175,7 @@ def main():
     }
     service_mono_transition_game_thread();''')
     edit(cpp,'    m_mono_main_view_token = 0;\n    m_mono_attachment_token = 0;',
-        '    m_duoview.retire();\n    m_duo_shading->value()=false;\n    configure_duoview();\n    if (selection.active() == RenderingMethod::DUOVIEW_MONO) m_duoview_quarantined.store(false, std::memory_order_release);\n    m_mono_main_view_token = 0;\n    m_mono_attachment_token = 0;')
+        '    m_duoview.retire();\n    m_duo_shading->value()=false;\n    configure_duoview();\n    m_mono_main_view_token = 0;\n    m_mono_attachment_token = 0;')
     changed[cpp]+='''
 // Update the immutable state from persisted controls only on changes.
 void VR::configure_duoview() {
@@ -207,7 +206,7 @@ void VR::configure_duoview() {
 // Stage 5: sample native PSVR2 gaze ONCE per immutable source frame.
  // CAPI unavailable or invalid => fixed center. Never adjust mid-frame.
 bool VR::is_duoview_renderer_active() const {
-    if (!is_using_duoview_mono() || !m_is_d3d12 || m_duoview_quarantined.load(std::memory_order_acquire)) return false;
+    if (!is_using_duoview_mono() || !m_is_d3d12) return false;
     const auto runtime = get_runtime();
     if (!runtime || !runtime->is_openxr()) return false;
     static const bool stalker2 = [] {
@@ -242,10 +241,8 @@ std::optional<uevr::duoview::ViewFrame> VR::duoview_begin_frame() {
 
 void VR::duoview_abort(const char* reason) {
     if (!is_using_duoview_mono()) return;
-    SPDLOG_WARNING_EVERY_N_SEC(2, "[DuoView] Quarantining two-view path; continuing original Mono inside ID6: {}", reason);
-    m_duoview_quarantined.store(true, std::memory_order_release);
-    m_duoview.retire();
-    set_mono_status("DuoView fault: rendering original Mono inside ID6; reselect ID6 to retry");
+    SPDLOG_WARNING_EVERY_N_SEC(2, "[DuoView] Two-view source unavailable; mode6 retained and no Mono fallback: {}", reason);
+    set_mono_status("DuoView frame not ready: mode 6 retained; automatic Mono fallback prohibited");
 }
 '''
     hook="src/mods/vr/FFakeStereoRenderingHook.cpp"
@@ -344,7 +341,8 @@ void VR::duoview_abort(const char* reason) {
             vr->duoview_state().family(vr->duoview_key(frame_count), main_family, views_ptr->count);
         }''')
     edit(hook, '    std::optional<uint32_t> views_original_count{};',
-    '''    if (vr->is_duoview_renderer_active() && g_hook->is_in_viewport_client_draw()) {
+    '''    std::optional<uint32_t> views_original_count{};
+    if (vr->is_duoview_renderer_active() && g_hook->is_in_viewport_client_draw()) {
         const auto family=init_options_view_family;
         const auto rtm=g_hook->get_render_target_manager();
         const auto views=family ? family->get_views() : nullptr;
@@ -356,10 +354,25 @@ void VR::duoview_abort(const char* reason) {
             const auto key=vr->duoview_producer_key();
             const auto state=reinterpret_cast<uintptr_t>(init_options_scene_state);
             bool applied=false;
+            // Same source-construction pair treatment as Native Stereo Fix:
+            // SECONDARY impersonates PRIMARY only during the constructor,
+            // temporarily hiding the already-constructed view-family list.
+            // Both original values are restored by Joey's established guards.
+            if (index==1 && views->count==1 &&
+                is_readable_process_range(state,sizeof(uintptr_t)) &&
+                vr->duoview_state().can_native_fix_secondary_source(key,state)) {
+                set_effective_stereo_pass(EStereoscopicPass::eSSP_PRIMARY);
+                applied=get_effective_stereo_pass()==EStereoscopicPass::eSSP_PRIMARY;
+                if (applied) {
+                    views_original_count=views->count;
+                    views->count=0;
+                    restore_init_options_after_constructor=true;
+                    SPDLOG_INFO_ONCE("[DuoView] Native Fix source construction: temporary PRIMARY pass + hidden family singleton");
+                }
+            }
             vr->duoview_state().scene(key,index,state,applied);
         }
-    }
-    std::optional<uint32_t> views_original_count{};''')
+    }''')
     # Engine construction observes camera/rect/projection; a complete pair is
     # required before composition, not before we let the engine build its views.
     dxh="src/mods/vr/D3D12Component.hpp"
@@ -391,7 +404,7 @@ void VR::duoview_abort(const char* reason) {
                 if (!comp) comp = std::make_unique<uevr::duoview::dx12::Compositor>();
                 if (!comp->prewarm(device, vr->get_hmd_width(), vr->get_hmd_height(), duo_srgb, duo_frequency)) {
                     SPDLOG_WARNING_EVERY_N_SEC(2,
-                        "[DuoView] DX12 prewarm failed; guarded compositing/fallback remains available");
+                        "[DuoView] DX12 prewarm failed: retaining DuoView for next frame");
                 }
             }
         }
@@ -402,20 +415,22 @@ void VR::duoview_abort(const char* reason) {
     '''                    if (vr->is_duoview_renderer_active()) {
                         bool recorded = false;
                         bool duo_recorded = false;
-                        bool duo_failed = false;
                         const auto frame = vr->duoview_state().consume(
                             vr->duoview_key(static_cast<uint32_t>(frame_count)));
                         vr->m_openxr->note_mono_copy(static_cast<uint32_t>(frame_count), false);
-                        // Do not skip the OpenXR copy if pair evidence fails.
-                        // Emergency copy may be an incomplete atlas; quarantine ID6
-                        // after this callback, then original Joey Mono on the next frame.
-                        const bool submitted = m_openxr.copy(
-                            (uint32_t)runtimes::OpenXR::SwapchainIndex::DOUBLE_WIDE, nullptr,
-                            [this, source=backbuffer, scene_source_state, device, frame,
-                             &recorded, &duo_recorded, &duo_failed](
-                                d3d12::CommandContext& commands, ID3D12Resource* destination) {
-                                if (!commands.ready()) return;
-                                if (frame) {
+                        // No native Mono copy, stale source, or internal mode
+                        // quarantine is permitted. Missing paired evidence
+                        // suppresses the scene copy for this frame; next frame
+                        // keeps trying DuoView ID6 with current camera/projection.
+                        if (!frame) {
+                            vr->duoview_abort("current-frame paired Unreal views unavailable");
+                        } else {
+                            const bool submitted = m_openxr.copy(
+                                (uint32_t)runtimes::OpenXR::SwapchainIndex::DOUBLE_WIDE, nullptr,
+                                [this, source=backbuffer, scene_source_state, device, frame,
+                                 &recorded, &duo_recorded](
+                                    d3d12::CommandContext& commands, ID3D12Resource* destination) {
+                                    if (!commands.ready()) return;
                                     auto& item = m_openxr.duoview_compositors[&commands];
                                     if (!item) item = std::make_unique<uevr::duoview::dx12::Compositor>();
                                     duo_recorded = item->record(device, commands.cmd_list.Get(),
@@ -424,21 +439,13 @@ void VR::duoview_abort(const char* reason) {
                                     if (frame->config.settings.gpu_timing)
                                         VR::get()->note_duoview_gpu_ms(item->gpu_milliseconds());
                                     if (item->recorded_commands()) commands.has_commands = true;
-                                }
-                                if (!duo_recorded) {
-                                    recorded = uevr::mono::dx12::copy_scene(
-                                        commands.cmd_list.Get(), device, source.Get(), destination,
-                                        scene_source_state, D3D12_RESOURCE_STATE_RENDER_TARGET);
-                                    if (recorded) commands.has_commands = true;
-                                    duo_failed = true; // handle after OpenXR copy returns
-                                } else {
-                                    recorded = true;
-                                }
-                            }, std::nullopt, scene_source_state, nullptr,
-                            std::nullopt, backbuffer.Get());
-                        vr->m_openxr->note_mono_copy(static_cast<uint32_t>(frame_count), submitted && recorded);
-                        if (duo_failed || !submitted || !recorded)
-                            vr->duoview_abort("XR copy/composite fault; safe original Mono requested");
+                                    recorded=duo_recorded;
+                                }, std::nullopt, scene_source_state, nullptr,
+                                std::nullopt, backbuffer.Get());
+                            vr->m_openxr->note_mono_copy(static_cast<uint32_t>(frame_count), submitted && recorded);
+                            if (!submitted || !recorded)
+                                vr->duoview_abort("DX12 composite/copy unavailable; keeping DuoView active");
+                        }
                     } else if (vr->is_using_mono()) {
                         bool recorded = false;''')
     # Copy reference modules into exact checked-out Joey tree. No private SDK
@@ -464,7 +471,7 @@ void VR::duoview_abort(const char* reason) {
         str(root/"src/mods/vr/DuoViewShaderSource.hpp")], check=True)
     for path,text in changed.items():
         (source_root(path)/path).write_text(text,encoding="utf-8",newline="")
-    print("Applied fixed-center v22 source, vertical-center control, no gaze consumption or primary-pass override (experimental).")
+    print("Applied fixed-center v22 source, guarded Native Fix constructor parity, strict no-Mono fallback (experimental).")
 
 if __name__=="__main__":
     main()
