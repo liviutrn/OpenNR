@@ -13,7 +13,7 @@ permissions:
   contents: read
 concurrency:
   group: minimal-joey-duoview-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: true
 env:
   PYTHONDONTWRITEBYTECODE: '1'
 jobs:
