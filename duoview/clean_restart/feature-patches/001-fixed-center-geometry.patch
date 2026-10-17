@@ -1,0 +1,219 @@
+From e90411bf4924aa3f6c2ce5ae1b31ab9bc346502e Mon Sep 17 00:00:00 2001
+From: Codex <codex@openai.com>
+Date: Sat, 17 Oct 2026 23:58:24 +0200
+Subject: [PATCH] Add fixed-center DuoView geometry helper
+
+---
+ src/mods/vr/DuoViewGeometry.hpp | 117 ++++++++++++++++++++++++++++++++
+ tests/MonoD3D12Tests.cpp        |  60 ++++++++++++++++
+ 2 files changed, 177 insertions(+)
+ create mode 100644 src/mods/vr/DuoViewGeometry.hpp
+
+diff --git a/src/mods/vr/DuoViewGeometry.hpp b/src/mods/vr/DuoViewGeometry.hpp
+new file mode 100644
+index 00000000..61f467f4
+--- /dev/null
++++ b/src/mods/vr/DuoViewGeometry.hpp
+@@ -0,0 +1,117 @@
++#pragma once
++
++#include <algorithm>
++#include <cmath>
++#include <cstdint>
++#include <limits>
++
++namespace uevr::duoview {
++
++struct Parameters {
++    float fovea_width{0.50f};
++    float fovea_height{0.50f};
++    float fovea_scale{1.00f};
++    float periphery_scale{0.30f};
++    float vertical_center{0.50f};
++    float feather_pixels{8.0f};
++};
++
++struct Extent {
++    uint32_t width{};
++    uint32_t height{};
++};
++
++struct Rect {
++    uint32_t left{};
++    uint32_t top{};
++    uint32_t right{};
++    uint32_t bottom{};
++    uint32_t width() const { return right - left; }
++    uint32_t height() const { return bottom - top; }
++};
++
++struct Geometry {
++    Rect crop{};
++    Extent fovea{};
++    Extent periphery{};
++    float u0{}, v0{}, u1{1.0f}, v1{1.0f};
++    float center_y{0.5f};
++    float feather_pixels{};
++};
++
++inline bool valid(const Parameters& p) {
++    return std::isfinite(p.fovea_width) && p.fovea_width >= 0.20f && p.fovea_width <= 1.0f &&
++        std::isfinite(p.fovea_height) && p.fovea_height >= 0.20f && p.fovea_height <= 1.0f &&
++        std::isfinite(p.fovea_scale) && p.fovea_scale >= 0.20f && p.fovea_scale <= 1.0f &&
++        std::isfinite(p.periphery_scale) && p.periphery_scale >= 0.20f && p.periphery_scale <= 1.0f &&
++        std::isfinite(p.vertical_center) && p.vertical_center >= 0.0f && p.vertical_center <= 1.0f &&
++        std::isfinite(p.feather_pixels) && p.feather_pixels >= 0.0f && p.feather_pixels <= 4096.0f;
++}
++
++inline uint32_t rounded_extent(uint32_t reference, float fraction, float scale, uint32_t allocation) {
++    if (reference == 0 || allocation == 0 || !std::isfinite(fraction) || !std::isfinite(scale)) { return 0; }
++    const auto value = static_cast<double>(reference) * fraction * scale;
++    if (!std::isfinite(value) || value < 0.5 || value > std::numeric_limits<uint32_t>::max()) { return 0; }
++    const auto rounded = static_cast<uint32_t>(std::llround(value));
++    return std::clamp(rounded, 1u, allocation);
++}
++
++inline bool calculate(uint32_t width, uint32_t height, Extent fovea_allocation,
++    Extent periphery_allocation, const Parameters& requested, Geometry& out) {
++    if (!valid(requested) || width == 0 || height == 0 || width > 32768 || height > 32768 ||
++        fovea_allocation.width == 0 || fovea_allocation.height == 0 ||
++        periphery_allocation.width == 0 || periphery_allocation.height == 0) { return false; }
++
++    const auto center_y = std::clamp(requested.vertical_center,
++        requested.fovea_height * 0.5f, 1.0f - requested.fovea_height * 0.5f);
++    const auto left = static_cast<uint32_t>(std::llround(width * (0.5 - requested.fovea_width * 0.5)));
++    const auto right = static_cast<uint32_t>(std::llround(width * (0.5 + requested.fovea_width * 0.5)));
++    const auto top = static_cast<uint32_t>(std::llround(height * (center_y - requested.fovea_height * 0.5)));
++    const auto bottom = static_cast<uint32_t>(std::llround(height * (center_y + requested.fovea_height * 0.5)));
++    if (right <= left || bottom <= top) { return false; }
++
++    Geometry result{};
++    result.crop = {left, top, right, bottom};
++    result.u0 = static_cast<float>(left) / width;
++    result.v0 = static_cast<float>(top) / height;
++    result.u1 = static_cast<float>(right) / width;
++    result.v1 = static_cast<float>(bottom) / height;
++    result.center_y = center_y;
++    result.feather_pixels = requested.fovea_width >= 1.0f && requested.fovea_height >= 1.0f
++        ? 0.0f
++        : std::min(requested.feather_pixels,
++            0.5f * static_cast<float>(std::min(result.crop.width(), result.crop.height())));
++    result.fovea = {
++        rounded_extent(width, requested.fovea_width, requested.fovea_scale, fovea_allocation.width),
++        rounded_extent(height, requested.fovea_height, requested.fovea_scale, fovea_allocation.height),
++    };
++    result.periphery = {
++        rounded_extent(width, requested.periphery_scale, 1.0f, periphery_allocation.width),
++        rounded_extent(height, requested.periphery_scale, 1.0f, periphery_allocation.height),
++    };
++    if (!result.fovea.width || !result.fovea.height || !result.periphery.width || !result.periphery.height) { return false; }
++    out = result;
++    return true;
++}
++
++template <class Matrix>
++inline bool crop_projection(Matrix& matrix, const Geometry& geometry) {
++    const auto crop_width = geometry.u1 - geometry.u0;
++    const auto crop_height = geometry.v1 - geometry.v0;
++    if (!std::isfinite(crop_width) || !std::isfinite(crop_height) || crop_width <= 0.0f || crop_height <= 0.0f) {
++        return false;
++    }
++    const auto center_x_ndc = geometry.u0 + geometry.u1 - 1.0f;
++    const auto center_y_ndc = 1.0f - geometry.v0 - geometry.v1;
++    const auto scale_x = 1.0f / crop_width;
++    const auto scale_y = 1.0f / crop_height;
++    const auto offset_x = -center_x_ndc * scale_x;
++    const auto offset_y = -center_y_ndc * scale_y;
++    for (uint32_t column = 0; column != 4; ++column) {
++        matrix[column][0] = scale_x * matrix[column][0] + offset_x * matrix[column][3];
++        matrix[column][1] = scale_y * matrix[column][1] + offset_y * matrix[column][3];
++    }
++    return true;
++}
++
++} // namespace uevr::duoview
+diff --git a/tests/MonoD3D12Tests.cpp b/tests/MonoD3D12Tests.cpp
+index 993e4b0e..91a083b7 100644
+--- a/tests/MonoD3D12Tests.cpp
++++ b/tests/MonoD3D12Tests.cpp
+@@ -1,9 +1,13 @@
+ #include "mods/vr/MonoD3D12.hpp"
++#include "mods/vr/DuoViewGeometry.hpp"
+ 
+ #include <d3d12sdklayers.h>
+ #include <dxgi1_4.h>
++#include <array>
++#include <cmath>
+ #include <cstdio>
+ #include <cstring>
++#include <limits>
+ #include <stdexcept>
+ #include <vector>
+ 
+@@ -17,7 +21,63 @@ static void require(HRESULT hr, const char* message) {
+     if (FAILED(hr)) { throw std::runtime_error(message); }
+ }
+ 
++static void test_duoview_geometry() {
++    namespace duo = uevr::duoview;
++    duo::Geometry geometry{};
++    const duo::Extent allocation{3000, 3000};
++    const duo::Parameters defaults{};
++    expect(duo::calculate(3000, 3000, allocation, allocation, defaults, geometry), "default DuoView geometry validates");
++    expect(geometry.crop.left == 750 && geometry.crop.top == 750 && geometry.crop.right == 2250 && geometry.crop.bottom == 2250,
++        "default crop is centered at half width and height");
++    expect(geometry.fovea.width == 1500 && geometry.fovea.height == 1500 &&
++        geometry.periphery.width == 900 && geometry.periphery.height == 900,
++        "linear per-axis scales produce 1500x1500 fovea and 900x900 periphery");
++
++    auto top = defaults;
++    top.vertical_center = 0.0f;
++    expect(duo::calculate(3000, 3000, allocation, allocation, top, geometry) && geometry.crop.top == 0,
++        "vertical center clamps at the top edge");
++    auto bottom = defaults;
++    bottom.vertical_center = 1.0f;
++    expect(duo::calculate(3000, 3000, allocation, allocation, bottom, geometry) && geometry.crop.bottom == 3000,
++        "vertical center clamps at the bottom edge");
++
++    auto odd = defaults;
++    odd.fovea_width = 0.37f;
++    odd.fovea_height = 0.63f;
++    odd.vertical_center = 0.19f;
++    odd.fovea_scale = 0.2f;
++    odd.periphery_scale = 0.2f;
++    expect(duo::calculate(1919, 1081, {1919, 1081}, {1919, 1081}, odd, geometry), "odd extents and minimum scales validate");
++    expect(geometry.fovea.width == 142 && geometry.fovea.height == 136 &&
++        geometry.periphery.width == 384 && geometry.periphery.height == 216,
++        "odd extents round each source axis independently");
++    expect(geometry.crop.top == 0 && geometry.v0 == 0.0f, "vertical center is clamped against crop height");
++
++    auto full = defaults;
++    full.fovea_width = full.fovea_height = 1.0f;
++    full.feather_pixels = 80.0f;
++    expect(duo::calculate(301, 199, {301, 199}, {301, 199}, full, geometry) &&
++        geometry.crop.left == 0 && geometry.crop.top == 0 && geometry.crop.right == 301 && geometry.crop.bottom == 199 &&
++        geometry.feather_pixels == 0.0f,
++        "full-field crop has no artificial outer feather");
++    auto invalid = defaults;
++    invalid.fovea_width = std::numeric_limits<float>::quiet_NaN();
++    expect(!duo::calculate(3000, 3000, allocation, allocation, invalid, geometry), "nonfinite geometry input is rejected");
++
++    std::array<std::array<double, 4>, 4> projection{};
++    projection[0][0] = 2.0;
++    projection[1][1] = 4.0;
++    projection[2][2] = 1.0;
++    projection[3][3] = 1.0;
++    expect(duo::calculate(100, 100, {100, 100}, {100, 100}, defaults, geometry) &&
++        duo::crop_projection(projection, geometry), "crop projection composes on the supplied base matrix");
++    expect(std::abs(projection[0][0] - 4.0) < 1e-9 && std::abs(projection[1][1] - 8.0) < 1e-9,
++        "projection scales match the effective crop bounds");
++}
++
+ int main() try {
++    test_duoview_geometry();
+     ComPtr<ID3D12Debug> debug;
+     if (SUCCEEDED(D3D12GetDebugInterface(IID_PPV_ARGS(&debug)))) { debug->EnableDebugLayer(); }
+     ComPtr<IDXGIFactory4> factory;
+-- 
+2.51.1
+
