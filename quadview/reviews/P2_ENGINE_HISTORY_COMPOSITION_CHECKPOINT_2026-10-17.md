@@ -103,3 +103,42 @@ https://dev.epicgames.com/documentation/unreal-engine/API/Runtime/Engine/ULocalP
 
 NOTE: No private SDK source redistributed; no speculative engine memory patch
 was made. This checkpoint is meant to be recoverable and honest.
+
+
+## Historical Praydog QuadView branch discovered and audited
+
+Public historical implementation: `praydog/UEVR`, branch `quad-views`
+at commit `8acc274fabc12a2a86e004e5ae1a247d32e6d7d0` (2023-12-13).
+The immediately preceding "Quad view test stuff" commit
+`46e9c98d5284f3be2784e4b5d1f1ad927c7225ea` contains the important
+prototype, not just the last view-rectangle arithmetic fix:
+https://github.com/praydog/UEVR/commit/46e9c98d5284f3be2784e4b5d1f1ad927c7225ea
+
+It changed the `GetDesiredNumberOfViews` hook from 2 to **4**, including
+`inside_post_init_properties`. The official Unreal
+`IStereoRendering::GetDesiredNumberOfViews` contract explicitly exists
+to let XR devices allocate additional view states:
+https://dev.epicgames.com/documentation/unreal-engine/API/Runtime/Engine/IStereoRendering/GetDesiredNumberOfViews
+
+It also expanded runtime projection storage to 4, remapped view indices
+with %4, tried narrow projections and a four-region atlas. Importantly,
+this was an **early 2023 experimental single four-view path**, not two
+verified independently shaded same-eye NativeStereo pairs. It has neither
+demonstrated compatibility with STALKER2 UE5.5, Lumen parity nor safe
+same-tick two-family temporal ownership. Its view rectangle was later
+fixed in commit `8acc274`; the prototype was not merged as production.
+
+Next technical investigation: check the existing P1 `[QuadP1] desired`
+events from REAL STALKER2 injection to establish whether
+`GetDesiredNumberOfViews` is called during natural ULocalPlayer owner
+allocation, after initialization, or during a synthetic PostInit replay.
+**Do not blindly port the historical return-4 patch:** STALKER2 Synced
+intentionally skips PostInitProperties replay, because replay can
+reset/duplicate game objects/delegates; changing a return after native
+allocation may leave 2 owned states even when 4 were requested. Engine
+source/history owner evidence across >=2 frames is required first.
+
+If UE5.5 safely allocates 4 at original owner initialization, this might
+remove the need to resolve the private FSceneViewStateReference ABI manually,
+but getting two independent UE families and four source captures still
+requires additional actual renderer work.
