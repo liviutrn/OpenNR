@@ -73,23 +73,62 @@ def replace_once(haystack: str, old: str, new: str) -> str:
         raise RuntimeError(f"Expected one exact source anchor, found {count}: {old[:100]!r}")
     return haystack.replace(old, new, 1)
 
+def source_bytes(path: Path) -> tuple[str,str,bytes]:
+    raw=path.read_bytes()
+    newline="\r\n" if b"\r\n" in raw else "\n"
+    normalized=raw.decode("utf-8").replace("\r\n","\n")
+    if normalized.replace("\n",newline).encode("utf-8")!=raw:
+        raise RuntimeError("Mixed line endings would violate narrow source-diff contract")
+    return normalized,newline,raw
+
+def digest(payload: bytes) -> str:
+    return hashlib.sha256(payload).hexdigest()
+
+def verify(base: Path, frontend: Path, evidence: Path) -> None:
+    path=base/"src/mods/vr/FFakeStereoRenderingHook.cpp"
+    modified,newline,actual=source_bytes(path)
+    manifest=json.loads((evidence/"quad-p1-probe.json").read_text(encoding="utf-8"))
+    locks=json.loads((evidence/"duoview-stage234-hashes.json").read_text(encoding="utf-8"))
+    relative="src/mods/vr/FFakeStereoRenderingHook.cpp"
+    if digest(actual)!=manifest["after_sha256"]:
+        raise RuntimeError("QuadView probe source mutated after exact installation")
+    restored=replace_once(modified,SCOPE+DRAW+"\n    QuadP1DrawScope quad_p1_draw_scope{};",DRAW)
+    restored=replace_once(restored,CONSTRUCTOR+POST_VIEW,CONSTRUCTOR)
+    original=restored.replace("\n",newline).encode("utf-8")
+    if digest(original)!=manifest["before_sha256"] or \
+       digest(original)!=locks["backend"][relative]:
+        raise RuntimeError("Unmodified Joey/DuoView source was not recovered byte-for-byte")
+    # Preserve all OTHER transformed files and the matching frontend bitwise.
+    for name,expected in locks["backend"].items():
+        if name==relative: continue
+        if digest((base/name).read_bytes())!=expected:
+            raise RuntimeError(f"Unexpected backend source mutation: {name}")
+    for name,expected in locks["frontend"].items():
+        if digest((frontend/name).read_bytes())!=expected:
+            raise RuntimeError(f"Unexpected frontend source mutation: {name}")
+    print("Exact read-only QuadView probe reversible; backend/frontend source hashes unchanged")
+
 def main() -> int:
-    if len(sys.argv) != 3:
-        print("usage: apply_read_only_probe.py <transformed_joey_backend> <evidence_directory>")
+    if len(sys.argv) not in (3,5) or (len(sys.argv)==5 and sys.argv[4]!="--verify"):
+        print("apply: <backend> <evidence>; verify: <backend> <evidence> <frontend> --verify")
         return 2
     base=Path(sys.argv[1]).resolve()
     evidence=Path(sys.argv[2]).resolve()
+    if len(sys.argv)==5:
+        verify(base,Path(sys.argv[3]).resolve(),evidence)
+        return 0
     path=base/"src/mods/vr/FFakeStereoRenderingHook.cpp"
-    source=path.read_text(encoding="utf-8")
+    source,newline,raw=source_bytes(path)
     if "duo_scene_observation" not in source:
         raise RuntimeError("DuoView stage234 source identity absent; refusing unexpected source")
     if "g_quad_p1_active_draw" in source:
-        raise RuntimeError("Probe is already installed; refusing duplicate instrumentation")
-    before=hashlib.sha256(source.encode()).hexdigest()
+        raise RuntimeError("Probe already installed; refusing duplicate instrumentation")
+    before=digest(raw)
     source=replace_once(source,DRAW,SCOPE+DRAW+"\n    QuadP1DrawScope quad_p1_draw_scope{};")
     source=replace_once(source,CONSTRUCTOR,CONSTRUCTOR+POST_VIEW)
-    after=hashlib.sha256(source.encode()).hexdigest()
-    path.write_text(source,encoding="utf-8",newline="\n")
+    new_bytes=source.replace("\n",newline).encode("utf-8")
+    after=digest(new_bytes)
+    path.write_bytes(new_bytes)
     evidence.mkdir(parents=True,exist_ok=True)
     (evidence/"quad-p1-probe.json").write_text(
         json.dumps({
@@ -97,12 +136,14 @@ def main() -> int:
             "path":"src/mods/vr/FFakeStereoRenderingHook.cpp",
             "before_sha256":before,
             "after_sha256":after,
+            "line_ending":"CRLF" if newline=="\r\n" else "LF",
             "mode":"opt-in read-only; UEVR_QUAD_P1_PROBE=1",
             "four_history_allocation":False,
             "quadview_renderer_active":False,
             "extra_draw":False
         },indent=2)+"\n",encoding="utf-8")
-    print("Installed opt-in source-only QuadView view-state probe; no rendering paths changed")
+    print("Installed opt-in read-only QuadView view-state probe; no rendering paths changed")
     return 0
+
 if __name__ == "__main__":
     sys.exit(main())
