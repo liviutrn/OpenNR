@@ -1,0 +1,33 @@
+name: Joey QuadView native pairs P0 portable validation
+on:
+  push:
+    branches:
+      - experiments/joey-quadview-nativepairs-p0-20261017
+    paths:
+      - 'quadview/**'
+      - '.github/workflows/quadview-nativepairs-p0.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  quadpair-source-contract:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2022, ubuntu-24.04]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S quadview -B quadview/out -DCMAKE_BUILD_TYPE=Release
+      - name: Compile
+        run: cmake --build quadview/out --config Release --parallel 2
+      - name: Execute tests
+        run: ctest --test-dir quadview/out --build-config Release --output-on-failure
+      - name: Attach contract test binary, not a VR plugin
+        if: matrix.os == 'windows-2022'
+        uses: actions/upload-artifact@v4
+        with:
+          name: QUAD_P0_CONTRACT_TEST_EXE_ONLY_NOT_UEVR
+          path: quadview/out/Release/QuadPairLedgerTests.exe
+          if-no-files-found: error
