@@ -9,6 +9,7 @@
 #include <functional>
 #include <optional>
 #include <thread>
+#include <utility>
 
 namespace uevr::quadview {
 struct EngineState {
