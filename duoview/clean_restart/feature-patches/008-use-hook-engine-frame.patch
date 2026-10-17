@@ -1,0 +1,78 @@
+From 2bec1300f1f67953d12a8fd87da2d0e65568b816 Mon Sep 17 00:00:00 2001
+From: Codex <codex@openai.com>
+Date: Sun, 18 Oct 2026 01:00:24 +0200
+Subject: [PATCH] Use hook engine frame for native DuoView
+
+---
+ src/mods/vr/D3D12Component.cpp           | 9 +++++----
+ src/mods/vr/FFakeStereoRenderingHook.cpp | 4 ++++
+ src/mods/vr/FFakeStereoRenderingHook.hpp | 1 +
+ 3 files changed, 10 insertions(+), 4 deletions(-)
+
+diff --git a/src/mods/vr/D3D12Component.cpp b/src/mods/vr/D3D12Component.cpp
+index 74eac535..ffcebca5 100644
+--- a/src/mods/vr/D3D12Component.cpp
++++ b/src/mods/vr/D3D12Component.cpp
+@@ -3054,11 +3054,12 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
+     // The source hooks select DuoView before this Present and crop the two
+     // Native Fix views. Keep that selection separate from packet validity so
+     // a missing/rejected packet can never fall through as ordinary stereo.
+-    const bool native_duoview_source_selected = vr->is_native_duoview_selected_for_frame(g_frame_count);
++    const auto duoview_engine_frame = ffsr->get_native_duoview_engine_frame();
++    const bool native_duoview_source_selected = vr->is_native_duoview_selected_for_frame(duoview_engine_frame);
+     const bool native_duoview_packet = native_stereo_packet != nullptr && native_stereo_packet->duoview;
+     const bool native_duoview_frame = native_duoview_source_selected || native_duoview_packet;
+     const bool native_duoview_native_fix_path = native_duoview_packet ||
+-        (native_duoview_source_selected && vr->native_duoview_uses_native_stereo_fix_for_frame(g_frame_count));
++        (native_duoview_source_selected && vr->native_duoview_uses_native_stereo_fix_for_frame(duoview_engine_frame));
+     bool duoview_scene_valid = !native_duoview_frame;
+     auto* const native_stereo_hook = ffsr.get();
+     const auto record_native_submit = [&](frame_diag::Runtime api, frame_diag::Stage stage,
+@@ -3726,7 +3727,7 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
+                 {static_cast<uint32_t>(periphery_desc.Width), periphery_desc.Height},
+                 native_stereo_packet->duoview_parameters, duoview_geometry);
+         } else if (!native_duoview_native_fix_path && backbuffer != nullptr && ffsr != nullptr) {
+-            const auto view_rects = ffsr->get_native_duoview_view_rects(g_frame_count);
++            const auto view_rects = ffsr->get_native_duoview_view_rects(duoview_engine_frame);
+             const auto source_desc = backbuffer->GetDesc();
+             const auto expected_width = static_cast<uint64_t>(vr->get_hmd_width()) * 2;
+             const bool source_extent_valid = source_desc.Dimension == D3D12_RESOURCE_DIMENSION_TEXTURE2D &&
+@@ -3745,7 +3746,7 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
+                     vr->get_hmd_width(), vr->get_hmd_height(),
+                     {vr->get_hmd_width(), vr->get_hmd_height()},
+                     {vr->get_hmd_width(), vr->get_hmd_height()},
+-                    vr->native_duoview_parameters_for_frame(g_frame_count), duoview_geometry);
++                    vr->native_duoview_parameters_for_frame(duoview_engine_frame), duoview_geometry);
+             }
+         }
+     }
+diff --git a/src/mods/vr/FFakeStereoRenderingHook.cpp b/src/mods/vr/FFakeStereoRenderingHook.cpp
+index 9a320590..5a82e6a1 100644
+--- a/src/mods/vr/FFakeStereoRenderingHook.cpp
++++ b/src/mods/vr/FFakeStereoRenderingHook.cpp
+@@ -27397,6 +27397,10 @@ std::optional<std::array<FIntRect, 2>> FFakeStereoRenderingHook::get_native_duov
+     return result;
+ }
+ 
++uint32_t FFakeStereoRenderingHook::get_native_duoview_engine_frame() const {
++    return g_frame_count;
++}
++
+ std::shared_ptr<const FFakeStereoRenderingHook::NativeStereoFramePacket>
+ FFakeStereoRenderingHook::get_native_stereo_frame_packet_for_submit(int32_t render_frame,
+     uevr::native_frame::Backend backend, uevr::native_frame::Ticket* diagnostic_ticket) const
+diff --git a/src/mods/vr/FFakeStereoRenderingHook.hpp b/src/mods/vr/FFakeStereoRenderingHook.hpp
+index 28ca6d2b..1ee33800 100644
+--- a/src/mods/vr/FFakeStereoRenderingHook.hpp
++++ b/src/mods/vr/FFakeStereoRenderingHook.hpp
+@@ -882,6 +882,7 @@ public:
+ 
+     bool is_nascar_native_ready() const { return m_nascar_native_ready.load(std::memory_order_acquire); }
+ 
++    uint32_t get_native_duoview_engine_frame() const;
+     std::shared_ptr<const NativeStereoFramePacket> get_native_stereo_frame_packet_for_submit(
+         int32_t render_frame, uevr::native_frame::Backend backend = uevr::native_frame::Backend::unknown,
+         uevr::native_frame::Ticket* diagnostic_ticket = nullptr) const;
+-- 
+2.51.1
+
