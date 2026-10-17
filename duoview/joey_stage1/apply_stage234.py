@@ -292,7 +292,7 @@ void VR::request_duoview_autostart_if_ready() {
     }
 
     const auto runtime=get_runtime();
-    if (runtime && !runtime->error.empty()) {
+    if (runtime && runtime->error.has_value()) {
         m_duoview_autostart_done.store(true, std::memory_order_release);
         return;
     }
@@ -333,7 +333,7 @@ bool VR::defer_duoview_bootstrap_draw() {
 
     request_duoview_autostart_if_ready();
     const auto runtime=get_runtime();
-    if (runtime && !runtime->error.empty()) {
+    if (runtime && runtime->error.has_value()) {
         m_duoview_bootstrap_draw_gate.store(false, std::memory_order_release);
         m_duoview_autostart_done.store(true, std::memory_order_release);
         return false;
