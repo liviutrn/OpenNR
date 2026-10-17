@@ -145,7 +145,7 @@ jobs:
           Feature patch source: $branchUrl
           Windows build and test workflow: $runUrl
 
-          Enable the existing Native Stereo Fix in ID 0. The left Native Fix source is the cropped high-resolution fovea; the right source is the lower-resolution full-field periphery. One composite is submitted to both headset eyes. Six live controls are under Native Stereo Fix > Fixed-center DuoView (ID 0).
+          Use ID 0 with the D3D12 Native Stereo path. With the existing Native Stereo Fix enabled, the left capture supplies the cropped high-resolution fovea and the separate right capture supplies the lower-resolution full-field periphery. With Native Fix disabled, both sources use disjoint regions of the existing double-wide scene. One composite is submitted to both headset eyes. Six live controls are under Native Stereo Fix > Fixed-center DuoView (ID 0).
 
           This ZIP includes optimized backend PDB symbols, the exact source patch series, source pins, and SHA-256 manifests. It is machine-built on Windows; headset verification is still pending.
           Extract to a separate folder before use. Keep your existing installation and configuration available for rollback.
