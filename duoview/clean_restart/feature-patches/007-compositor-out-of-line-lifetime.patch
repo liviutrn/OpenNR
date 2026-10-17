@@ -1,0 +1,41 @@
+From 6748882abe7a112fbac736434f32a89b123e5514 Mon Sep 17 00:00:00 2001
+From: Codex <codex@openai.com>
+Date: Sun, 18 Oct 2026 00:40:10 +0200
+Subject: [PATCH] Define DuoView compositor lifetime out of line
+
+---
+ src/mods/vr/DuoViewCompositor.cpp | 3 +++
+ src/mods/vr/DuoViewCompositor.hpp | 3 +++
+ 2 files changed, 6 insertions(+)
+
+diff --git a/src/mods/vr/DuoViewCompositor.cpp b/src/mods/vr/DuoViewCompositor.cpp
+index e1606dfc..ccd68a35 100644
+--- a/src/mods/vr/DuoViewCompositor.cpp
++++ b/src/mods/vr/DuoViewCompositor.cpp
+@@ -101,6 +101,9 @@ struct D3D12Compositor::OutputSlot {
+     DXGI_FORMAT rtv_format{DXGI_FORMAT_UNKNOWN};
+ };
+ 
++D3D12Compositor::D3D12Compositor() = default;
++D3D12Compositor::~D3D12Compositor() = default;
++
+ bool D3D12Compositor::ensure_pipeline(ID3D12Device* device) {
+     if (device == nullptr) { return false; }
+     if (m_device.Get() == device && m_root_signature != nullptr && m_unorm_pipeline != nullptr && m_srgb_pipeline != nullptr) {
+diff --git a/src/mods/vr/DuoViewCompositor.hpp b/src/mods/vr/DuoViewCompositor.hpp
+index 79af3159..a39c2db7 100644
+--- a/src/mods/vr/DuoViewCompositor.hpp
++++ b/src/mods/vr/DuoViewCompositor.hpp
+@@ -21,6 +21,9 @@ struct SourceRect {
+ 
+ class D3D12Compositor {
+ public:
++    D3D12Compositor();
++    ~D3D12Compositor();
++
+     bool record_double_wide(
+         ID3D12Device* device,
+         ID3D12GraphicsCommandList* command_list,
+-- 
+2.51.1
+
