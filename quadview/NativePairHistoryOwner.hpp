@@ -93,8 +93,27 @@ public:
         queue_ = queue; consumer_fence_ = consumer_fence;
         state_ = State::GpuPending; return true;
     }
+    // Ordinary frame retirement keeps all four persistent Unreal histories
+    // alive for TAA/Lumen on the next frame. NEVER destroy states per frame.
+    bool retire_frame(uint64_t queue, uint64_t completed_fence) {
+        if (!correct_thread() || teardown_requested_ ||
+            state_ != State::GpuPending || queue != queue_ ||
+            completed_fence < consumer_fence_) return false;
+        if (!all_live()) { state_ = State::Quarantined; return false; }
+        queue_ = 0; consumer_fence_ = 0; state_ = State::Ready;
+        return true;
+    }
+    // Mode/scene teardown is explicitly requested by integration, NOT inferred
+    // from a completed frame. While GPU pending, continue to hold UE owners.
+    bool request_teardown() {
+        if (!correct_thread() ||
+            (state_ != State::Ready && state_ != State::GpuPending))
+            return false;
+        teardown_requested_ = true; return true;
+    }
     bool destroy_after_retirement(uint64_t queue, uint64_t completed_fence) {
-        if (!correct_thread() || state_ != State::GpuPending ||
+        if (!correct_thread() || !teardown_requested_ ||
+            state_ != State::GpuPending ||
             queue != queue_ || completed_fence < consumer_fence_) return false;
         if (!all_live()) { state_ = State::Quarantined; return false; }
         return destroy_all();
@@ -151,7 +170,7 @@ private:
         }
         prior_generation_ = generation_; scene_ = 0; lifecycle_ = 0;
         generation_ = 0; queue_ = 0; consumer_fence_ = 0;
-        last_frame_.reset(); state_ = State::Empty;
+        last_frame_.reset(); teardown_requested_ = false; state_ = State::Empty;
         api_ = {}; return true;
     }
     VerifiedEngineHistoryApi api_{};
@@ -160,6 +179,7 @@ private:
     std::thread::id thread_{};
     uint64_t scene_{}, lifecycle_{}, generation_{}, prior_generation_{};
     uint64_t queue_{}, consumer_fence_{};
+    bool teardown_requested_{};
     State state_{State::Empty};
 };
 } // namespace uevr::quadview
