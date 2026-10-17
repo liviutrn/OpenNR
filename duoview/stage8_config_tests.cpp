@@ -30,7 +30,11 @@ int main() {
     auto still=latch.for_frame({5,12},3000,3000,{.5f,.5f});
     assert(still && still->settings_revision==2);
     latch.retire();
-    assert(!latch.for_frame({5,12},3000,3000,{.5f,.5f}));
+    // The shipped header must agree with its patched backend copy: a
+    // post-retire bootstrap may reuse the same generation/frame key.
+    auto restarted=latch.for_frame({5,12},3000,3000,{.5f,.5f});
+    assert(restarted && restarted->key.frame==12);
+    assert(!latch.for_frame({5,11},3000,3000,{.5f,.5f}));
     auto fresh=latch.for_frame({6,1},3000,3000,{.5f,.5f});
     assert(fresh && fresh->key.generation==6);
     std::cout<<"DuoView immutable per-frame config/gaze tests passed\n";
