@@ -1,0 +1,113 @@
+name: DuoView v22 Offline Claude Review Source Bundle
+on:
+  push:
+    branches: [review/duoview-offline-claude-20261017]
+    paths: ['.github/workflows/duoview-offline-claude-source-bundle.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  source-bundle:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: project
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: joeyhodge/UEVR
+          ref: 5ac7edc207866569334175e4ed8a7517971547f6
+          path: upstream/backend
+          persist-credentials: false
+          submodules: false
+      - uses: actions/checkout@v4
+        with:
+          repository: joeyhodge/uevr-frontend
+          ref: 60be4b0f9a646109fd9fdf448bacd41477234091
+          path: upstream/frontend
+          persist-credentials: false
+      - name: Apply Stage1 and Stage234 in source-only mode
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p evidence
+          python project/duoview/joey_stage1/apply_stage1.py upstream/backend upstream/frontend evidence
+          python project/duoview/joey_stage1/apply_stage234.py upstream/backend upstream/frontend project/duoview --source-only
+          python project/duoview/joey_stage1/verify_stage234.py upstream/backend upstream/frontend evidence --source-only
+          git -C upstream/backend diff --binary > evidence/transformed-backend.patch
+          git -C upstream/frontend diff --binary > evidence/transformed-frontend.patch
+          git -C upstream/backend diff --name-only > evidence/transformed-backend-paths.txt
+          git -C upstream/backend ls-files --others --exclude-standard > evidence/new-backend-paths.txt
+          git -C upstream/frontend diff --name-only > evidence/transformed-frontend-paths.txt
+      - name: Make self-contained relevant-source review bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import hashlib,json,shutil,subprocess,zipfile
+          from pathlib import Path
+          root=Path('claude_source_bundle'); root.mkdir()
+          def cp(src,dst):
+              src=Path(src); dst=root / dst; dst.parent.mkdir(parents=True,exist_ok=True)
+              if src.is_dir():
+                  shutil.copytree(src,dst,dirs_exist_ok=True,ignore=shutil.ignore_patterns('.git','__pycache__','*.pyc','bin','obj'))
+              elif src.is_file(): shutil.copy2(src,dst)
+          cp('project/duoview','project_duoview')
+          cp('project/.github/workflows/duoview-joey-stage234.yml','project_workflows/duoview-joey-stage234.yml')
+          cp('project/.github/workflows/duoview-offline-claude-source-bundle.yml','project_workflows/duoview-offline-claude-source-bundle.yml')
+          cp('upstream/backend/src/mods/vr','transformed_joey_backend/src/mods/vr')
+          for f in ['src/mods/VR.cpp','src/mods/VR.hpp','src/Framework.cpp','src/Framework.hpp','tests/MonoRenderingTests.hpp']:
+              cp('upstream/backend/'+f,'transformed_joey_backend/'+f)
+          cp('upstream/frontend/UEVR','transformed_joey_frontend/UEVR')
+          cp('upstream/frontend/tests/RenderingModes','transformed_joey_frontend/tests/RenderingModes')
+          cp('evidence','source_evidence')
+          # Exact, original HEAD versions of all tracked files changed by the transform.
+          paths=subprocess.check_output(['git','-C','upstream/backend','diff','--name-only','HEAD'],text=True).splitlines()
+          for p in paths:
+              raw=subprocess.check_output(['git','-C','upstream/backend','show','HEAD:'+p])
+              dest=root/'original_pinned_joey_backend'/p;dest.parent.mkdir(parents=True,exist_ok=True);dest.write_bytes(raw)
+          paths_f=subprocess.check_output(['git','-C','upstream/frontend','diff','--name-only','HEAD'],text=True).splitlines()
+          for p in paths_f:
+              try:raw=subprocess.check_output(['git','-C','upstream/frontend','show','HEAD:'+p],stderr=subprocess.DEVNULL)
+              except subprocess.CalledProcessError:continue
+              dest=root/'original_pinned_joey_frontend'/p;dest.parent.mkdir(parents=True,exist_ok=True);dest.write_bytes(raw)
+          (root/'READ_FIRST.md').write_text("""# Offline Claude Review — Fixed Center DuoView v22
+
+          Source checkpoint OpenNR 580c4b85172a95c9cfbbcc9d4d05320282a76a1e; packaging branch adds only this workflow.
+          Base Joey backend 5ac7edc207866569334175e4ed8a7517971547f6.
+          Base Joey frontend 60be4b0f9a646109fd9fdf448bacd41477234091.
+          UESDK (PRIVATE) gitlink pin 3cffbc82429b6165ceec2714f0f0d9ae48f55596 — NOT DISTRIBUTED.
+          Applied Stage1 then Stage234 --source-only. No shader generation or fresh build.
+          transformed_joey_backend/ contains all VR backend source and key adjacent files after patches.
+          original_pinned_joey_backend/ contains pre-patch versions of every edited tracked file.
+          transformed_joey_frontend/ contains affected frontend tree.
+          project_duoview/ contains all implementation code, exact-anchor patchers, verifiers, CMake tests, reviews.
+          source_evidence/ contains patch diffs, source-only hashes, path lists.
+          Diff original and transformed, review full source, follow the project reports, and identify defects.
+          The private SDK is deliberately excluded; validate SDK ABI against authorized separately provided declarations.
+          Do not confuse source-only pass with build/headset verification or assume QuadView code is part of v22.
+          """.replace('          ',''),encoding='utf-8')
+          manifest={'source_checkpoint':'580c4b85172a95c9cfbbcc9d4d05320282a76a1e',
+             'backend_pin':'5ac7edc207866569334175e4ed8a7517971547f6',
+             'frontend_pin':'60be4b0f9a646109fd9fdf448bacd41477234091',
+             'private_sdk_pin_excluded':'3cffbc82429b6165ceec2714f0f0d9ae48f55596',
+             'source_only':True,'compiled_here':False,'headset_verified':False,
+             'files':{}}
+          for p in sorted(root.rglob('*')):
+              if p.is_file():
+                  manifest['files'][str(p.relative_to(root))]=hashlib.sha256(p.read_bytes()).hexdigest()
+          (root/'SHA256_MANIFEST.json').write_text(json.dumps(manifest,indent=2),encoding='utf-8')
+          with zipfile.ZipFile('DuoView_v22_Offline_Claude_Source.zip','w',zipfile.ZIP_DEFLATED,compresslevel=7) as z:
+              for p in sorted(root.rglob('*')):
+                  if p.is_file():z.write(p,p.relative_to(root))
+          print('Packaged files:',len(manifest['files'])+1)
+          print('ZIP bytes:',Path('DuoView_v22_Offline_Claude_Source.zip').stat().st_size)
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: DuoView-v22-Full-Offline-Claude-Source
+          path: DuoView_v22_Offline_Claude_Source.zip
+          if-no-files-found: error
+          retention-days: 30
