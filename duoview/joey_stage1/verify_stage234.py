@@ -76,6 +76,10 @@ def main():
   raise RuntimeError("Production VR headers missing DuoView frame state")
  vr_cpp=(a.backend/"src/mods/VR.cpp").read_text(encoding="utf-8")
  vr_header=(a.backend/"src/mods/VR.hpp").read_text(encoding="utf-8")
+ # VRRuntime::error is std::optional<std::string>, NOT std::string.
+ # This regression passed old CMake contracts but failed full MSVC backend.
+ if vr_cpp.count("runtime && runtime->error.has_value()") != 2 or "runtime->error.empty()" in vr_cpp:
+  raise RuntimeError("DuoView bootstrap guards must check optional runtime error engagement")
  if (".eye_tracked=false" not in vr_cpp or
      ".fixed_center_v=m_duo_center_v->value()" not in vr_cpp or
      "m_duo_gaze->draw(" in vr_cpp):
