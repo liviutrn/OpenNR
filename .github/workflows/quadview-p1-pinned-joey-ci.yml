@@ -1,6 +1,7 @@
 name: QuadView P1 pinned Joey foundation build (NOT QuadView DLL)
 run-name: QuadView P1 pinned Joey foundation C++/C#/WARP (${{ github.run_number }})
 # Isolated compile audit; produces EVIDENCE ONLY, no headset zip.
+# New source-pin compile attempt: std::optional runtime-error checks corrected.
 # Rerun with corrected stage-10 source fixture and executable Release assertions.
 # This job validates the unchanged, pinned Joey+ID6 foundation, not QuadView ID7.
 on:
