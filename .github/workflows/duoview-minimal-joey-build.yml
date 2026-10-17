@@ -87,6 +87,106 @@ jobs:
           cmake -S backend -B backend/build -G 'Visual Studio 17 2022' -A x64 -DCMAKE_BUILD_TYPE=RelWithDebInfo -DUEVR_BUILD_COMPATIBILITY_TESTS=ON *> evidence/configure.log
           $code=$LASTEXITCODE; Get-Content evidence/configure.log | Select-Object -Last 80
           if ($code -ne 0) { throw "DuoView configuration failed ($code)" }
+      - name: Build and run the focused D3D12 WARP compositor test first
+        shell: pwsh
+        run: |
+          cmake --build backend/build --config RelWithDebInfo --parallel 2 --target mono-d3d12-tests *> evidence/duoview-warp-build.log
+          $code=$LASTEXITCODE; Get-Content evidence/duoview-warp-build.log | Select-Object -Last 80
+          if ($code -ne 0) { throw "DuoView WARP test target failed to compile ($code)" }
+          ctest --test-dir backend/build -C RelWithDebInfo -R '^mono-d3d12-tests        shell: pwsh
+        run: |
+          cmake --build backend/build --config RelWithDebInfo --parallel 2 --target uevr *> evidence/production-build.log
+          $code=$LASTEXITCODE; Get-Content evidence/production-build.log | Select-Object -Last 120
+          if ($code -ne 0) { throw "DuoView production backend failed to compile ($code)" }
+      - name: Build compatibility targets
+        shell: pwsh
+        run: |
+          cmake --build backend/build --config RelWithDebInfo --parallel 2 --target compatibility-policy-tests steam-frame-input-tests stock-frame-migration-tests gamepad-recovery-tests kananlib-decode-window-tests diagnostic-safety-tests prospi-camera-trace-tests prospi-camera-framing-tests prospi-celebration-framing-tests prospi-roof-visibility-tests hifi-hook-memory-tests nascar-hook-compatibility-tests input-hook-installation-tests mono-d3d11-tests mono-d3d12-tests ui-alpha-tests ui-alpha-lifecycle-tests ui-composition-tests lua-fname-binding-tests lua-context-dispatch-tests lua-controller-input-tests stalker2-native-policy-tests stalker2-native-d3d12-tests vr-plugin-nullifier LuaVR *> evidence/build.log
+          $code=$LASTEXITCODE; Get-Content evidence/build.log | Select-Object -Last 120
+          if ($code -ne 0) { throw "DuoView compatibility targets failed to compile ($code)" }
+      - name: Run all compatibility tests, including the WARP compositor test
+        shell: pwsh
+        run: |
+          ctest --test-dir backend/build -C RelWithDebInfo --output-on-failure --no-tests=error *> evidence/tests.log
+          $code=$LASTEXITCODE; Get-Content evidence/tests.log
+          if ($code -ne 0) { throw "Windows compatibility tests failed ($code)" }
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '6.0.x'
+      - name: Build the matching pinned frontend
+        shell: pwsh
+        run: |
+          dotnet run --project frontend/tests/RenderingModes --configuration Release *> evidence/frontend-tests.log
+          $code=$LASTEXITCODE; Get-Content evidence/frontend-tests.log
+          if ($code -ne 0) { throw 'Pinned frontend rendering-ID tests failed' }
+          dotnet publish frontend/UEVR/UEVR.csproj --output package --configuration Release *> evidence/frontend-build.log
+          $code=$LASTEXITCODE; Get-Content evidence/frontend-build.log | Select-Object -Last 80
+          if ($code -ne 0) { throw 'Pinned frontend publish failed' }
+      - name: Package installable candidate, symbols, provenance, and hashes
+        shell: pwsh
+        run: |
+          Copy-Item backend/build/bin/uevr/*.dll package/
+          Copy-Item backend/build/bin/vr-plugin-nullifier/UEVRPluginNullifier.dll package/
+          Copy-Item backend/build/bin/LuaVR/LuaVR.dll package/
+          $symbolRoot = Join-Path (Resolve-Path package).Path 'symbols'
+          New-Item -ItemType Directory -Path $symbolRoot -Force | Out-Null
+          $binRoot = (Resolve-Path backend/build/bin).Path
+          $symbols = Get-ChildItem backend/build/bin -Recurse -File -Filter '*.pdb'
+          if (-not ($symbols | Where-Object { $_.FullName.StartsWith((Join-Path $binRoot 'uevr'), [StringComparison]::OrdinalIgnoreCase) })) {
+            throw 'The optimized UEVR backend PDB was not produced'
+          }
+          foreach ($symbol in $symbols) {
+            $relative = $symbol.FullName.Substring($binRoot.Length).TrimStart('\')
+            $destination = Join-Path $symbolRoot $relative
+            New-Item -ItemType Directory -Path (Split-Path $destination) -Force | Out-Null
+            Copy-Item $symbol.FullName $destination
+          }
+          New-Item -ItemType Directory -Path package/source/feature-patches -Force | Out-Null
+          Copy-Item workspace/duoview/clean_restart/feature-patches/*.patch package/source/feature-patches/
+          Copy-Item workspace/duoview/clean_restart/baseline.lock.json package/source/
+          Copy-Item evidence/applied-feature-source.patch package/source/
+          Copy-Item evidence/backend-baseline-commit.txt package/source/
+          $runUrl = '${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}'
+          $branchUrl = '${{ github.server_url }}/${{ github.repository }}/tree/codex/minimal-joey-duoview/duoview/clean_restart/feature-patches'
+          @"
+          Fixed-center mono DuoView build for the exact Joey 101226HELLRAISERp1 baseline.
+          Backend baseline: 5ac7edc207866569334175e4ed8a7517971547f6
+          Original restricted SDK: 3cffbc82429b6165ceec2714f0f0d9ae48f55596
+          Frontend baseline: 60be4b0f9a646109fd9fdf448bacd41477234091
+          Feature patch source: $branchUrl
+          Windows build and test workflow: $runUrl
+
+          Use ID 0 with the D3D12 Native Stereo path. With the existing Native Stereo Fix enabled, the left capture supplies the cropped high-resolution fovea and the separate right capture supplies the lower-resolution full-field periphery. With Native Fix disabled, both sources use disjoint regions of the existing double-wide scene. One composite is submitted to both headset eyes. Six live controls are under Native Stereo Fix > Fixed-center DuoView (ID 0).
+
+          This ZIP includes optimized backend PDB symbols, the exact source patch series, source pins, and SHA-256 manifests. It is machine-built on Windows; headset verification is still pending.
+          Extract to a separate folder before use. Keep your existing installation and configuration available for rollback.
+          "@ | Set-Content package/READ_FIRST.txt
+          Get-ChildItem package -Recurse -File | ForEach-Object {
+            $relative = $_.FullName.Substring((Resolve-Path package).Path.Length).TrimStart('\')
+            [pscustomobject]@{ path = $relative; sha256 = (Get-FileHash $_.FullName -Algorithm SHA256).Hash }
+          } | ConvertTo-Json -Depth 3 | Set-Content package/SHA256.json
+          $zip = "Joey-Minimal-DuoView-${{ github.run_number }}.zip"
+          Compress-Archive -Path package/* -DestinationPath $zip -Force
+          (Get-FileHash $zip -Algorithm SHA256).Hash | Set-Content "$zip.sha256"
+      - uses: actions/upload-artifact@v4
+        if: success()
+        with:
+          name: Joey-Minimal-DuoView-${{ github.run_number }}
+          path: |
+            Joey-Minimal-DuoView-*.zip
+            Joey-Minimal-DuoView-*.zip.sha256
+          if-no-files-found: error
+          retention-days: 90
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Joey-Minimal-DuoView-build-evidence-${{ github.run_number }}
+          path: evidence/
+          if-no-files-found: error
+          retention-days: 90
+ --output-on-failure *> evidence/duoview-warp-test.log
+          $code=$LASTEXITCODE; Get-Content evidence/duoview-warp-test.log
+          if ($code -ne 0) { throw "DuoView WARP compositor test failed ($code)" }
       - name: Build production backend first
         shell: pwsh
         run: |
