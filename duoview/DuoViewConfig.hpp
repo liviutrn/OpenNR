@@ -87,6 +87,9 @@ public:
     void retire() {
         std::scoped_lock lock{mutex_};
         cached_.reset();
+        // Runtime/mode recreation may reuse a frame number. Discard the
+        // retired epoch watermark together with the cached frame.
+        last_key_ = {};
     }
 private:
     mutable std::mutex mutex_{};
