@@ -60,7 +60,9 @@ def audit(text: str)->dict:
         if len(states)!=len(set(states)):
             rejected.append(f"view-state alias within Draw {d}")
         if (len(views)==2 and len(families)==1 and set(passes)=={1,2} and
-            len(set(states))==2 and all(v["frame"]==rec.get("begin_frame") for v in views) and
+            len(set(states))==2 and len({v["view"] for v in views})==2 and
+            all(v["view"] and v["family"] and v["state"] for v in views) and
+            all(v["frame"]==rec.get("begin_frame") for v in views) and
             rec.get("begin_frame")==rec.get("end_frame") and not missing):
             clean.append(d)
     for a,b in zip(clean,clean[1:]):
