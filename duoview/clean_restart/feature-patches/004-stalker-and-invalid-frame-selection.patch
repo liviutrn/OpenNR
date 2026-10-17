@@ -1,0 +1,229 @@
+From ec5c2c9a1629eb93309e9ec2ffb3cc11de5ad98c Mon Sep 17 00:00:00 2001
+From: Codex <codex@openai.com>
+Date: Sun, 18 Oct 2026 00:20:32 +0200
+Subject: [PATCH] Keep fixed-center DuoView selected across native frame
+ failures
+
+---
+ src/mods/VR.cpp                          |  2 --
+ src/mods/VR.hpp                          | 38 +++++++++++++++-------
+ src/mods/vr/D3D12Component.cpp           | 40 +++++++++++++++++-------
+ src/mods/vr/FFakeStereoRenderingHook.cpp |  8 ++---
+ 4 files changed, 59 insertions(+), 29 deletions(-)
+
+diff --git a/src/mods/VR.cpp b/src/mods/VR.cpp
+index 6edf3b13..1e6627dd 100644
+--- a/src/mods/VR.cpp
++++ b/src/mods/VR.cpp
+@@ -15462,8 +15462,6 @@ void VR::on_draw_sidebar_entry(std::string_view name) {
+                     draw_status_badge("DuoView status:", "unsupported: D3D12 required", blocked_color);
+                 } else if (uevr::nascar::is_target()) {
+                     draw_status_badge("DuoView status:", "unsupported: NASCAR keeps its validated Native Fix path", blocked_color);
+-                } else if (should_force_native_stereo_fix_same_pass()) {
+-                    draw_status_badge("DuoView status:", "unsupported: preserved Stalker 2 same-pass policy", blocked_color);
+                 } else if (is_native_duoview_active()) {
+                     draw_status_badge("DuoView status:", "active with Native Stereo Fix", active_color);
+                 } else {
+diff --git a/src/mods/VR.hpp b/src/mods/VR.hpp
+index b9f0a8fe..6d19bb5e 100644
+--- a/src/mods/VR.hpp
++++ b/src/mods/VR.hpp
+@@ -704,22 +704,18 @@ public:
+ 
+     bool is_native_duoview_active() const {
+         return m_is_d3d12 && is_native_stereo_fix_enabled() && !uevr::nascar::is_target() &&
+-            !should_force_native_stereo_fix_same_pass() && !is_using_2d_screen();
++            !is_using_2d_screen();
++    }
++
++    bool is_native_duoview_selected_for_frame(uint32_t engine_frame) {
++        std::scoped_lock lock{m_native_duoview_snapshot_mtx};
++        update_native_duoview_snapshot_locked(engine_frame);
++        return m_native_duoview_snapshot_active;
+     }
+ 
+     uevr::duoview::Parameters native_duoview_parameters_for_frame(uint32_t engine_frame) {
+         std::scoped_lock lock{m_native_duoview_snapshot_mtx};
+-        if (m_native_duoview_snapshot_frame != engine_frame) {
+-            m_native_duoview_snapshot = {
+-                m_duoview_fovea_width->value() / 100.0f,
+-                m_duoview_fovea_height->value() / 100.0f,
+-                m_duoview_fovea_scale->value() / 100.0f,
+-                m_duoview_periphery_scale->value() / 100.0f,
+-                m_duoview_vertical_center->value() / 100.0f,
+-                m_duoview_feather_pixels->value(),
+-            };
+-            m_native_duoview_snapshot_frame = engine_frame;
+-        }
++        update_native_duoview_snapshot_locked(engine_frame);
+         return m_native_duoview_snapshot;
+     }
+ 
+@@ -1935,6 +1931,7 @@ private:
+     std::mutex m_native_duoview_snapshot_mtx{};
+     uint32_t m_native_duoview_snapshot_frame{std::numeric_limits<uint32_t>::max()};
+     uevr::duoview::Parameters m_native_duoview_snapshot{};
++    bool m_native_duoview_snapshot_active{};
+     const ModToggle::Ptr m_native_stereo_fix_same_pass{ ModToggle::create(generate_name("NativeStereoFixSamePass"), true) };
+     const ModToggle::Ptr m_native_stereo_fix_preserve_secondary_pass{ ModToggle::create(generate_name("NativeStereoFixPreserveSecondaryPass"), true) };
+     const ModToggle::Ptr m_native_stereo_fix_texture_array_submit{ ModToggle::create(generate_name("NativeStereoFixTextureArraySubmit"), false) };
+@@ -2477,6 +2474,23 @@ public:
+     }
+ 
+ private:
++    void update_native_duoview_snapshot_locked(uint32_t engine_frame) {
++        if (m_native_duoview_snapshot_frame == engine_frame) { return; }
++
++        // Publish one immutable parameter set for the entire native frame.
++        // The view hooks and the compositor consume this same snapshot.
++        m_native_duoview_snapshot_active = is_native_duoview_active();
++        m_native_duoview_snapshot = {
++            .fovea_width = m_duoview_fovea_width->value() / 100.0f,
++            .fovea_height = m_duoview_fovea_height->value() / 100.0f,
++            .fovea_scale = m_duoview_fovea_scale->value() / 100.0f,
++            .periphery_scale = m_duoview_periphery_scale->value() / 100.0f,
++            .vertical_center = m_duoview_vertical_center->value() / 100.0f,
++            .feather_pixels = m_duoview_feather_pixels->value(),
++        };
++        m_native_duoview_snapshot_frame = engine_frame;
++    }
++
+     bool m_stereo_emulation_mode{false}; // not a good config option, just for debugging
+     bool m_wait_for_present{true};
+     const ModToggle::Ptr m_controllers_allowed{ ModToggle::create(generate_name("ControllersAllowed"), true) };
+diff --git a/src/mods/vr/D3D12Component.cpp b/src/mods/vr/D3D12Component.cpp
+index 64302cfc..735041d6 100644
+--- a/src/mods/vr/D3D12Component.cpp
++++ b/src/mods/vr/D3D12Component.cpp
+@@ -3051,7 +3051,12 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
+         native_stereo_packet = ffsr->get_native_stereo_frame_packet_for_submit(
+             frame_count, frame_diag::Backend::d3d12, &native_frame_ticket);
+     }
+-    const bool native_duoview_frame = native_stereo_packet != nullptr && native_stereo_packet->duoview;
++    // The source hooks select DuoView before this Present and crop the two
++    // Native Fix views. Keep that selection separate from packet validity so
++    // a missing/rejected packet can never fall through as ordinary stereo.
++    const bool native_duoview_source_selected = vr->is_native_duoview_selected_for_frame(g_frame_count);
++    const bool native_duoview_packet = native_stereo_packet != nullptr && native_stereo_packet->duoview;
++    const bool native_duoview_frame = native_duoview_source_selected || native_duoview_packet;
+     bool duoview_scene_valid = !native_duoview_frame;
+     auto* const native_stereo_hook = ffsr.get();
+     const auto record_native_submit = [&](frame_diag::Runtime api, frame_diag::Stage stage,
+@@ -3691,7 +3696,12 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
+     uevr::duoview::SourceRect duoview_fovea_rect{};
+     uevr::duoview::SourceRect duoview_periphery_rect{};
+     bool duoview_inputs_valid = false;
+-    if (native_duoview_frame && native_stereo_packet != nullptr && scene_capture_packet_ready &&
++    const bool native_duoview_packet_pair_valid = native_duoview_packet &&
++        native_stereo_packet->left_view != nullptr && native_stereo_packet->right_view != nullptr &&
++        native_stereo_packet->left_view != native_stereo_packet->right_view &&
++        native_stereo_packet->left_pass == static_cast<uint32_t>(EStereoscopicPass::eSSP_PRIMARY) &&
++        native_stereo_packet->right_pass == static_cast<uint32_t>(EStereoscopicPass::eSSP_SECONDARY);
++    if (native_duoview_frame && native_duoview_packet_pair_valid && scene_capture_packet_ready &&
+         native_stereo_packet->duoview_projections_valid && m_game_tex.texture != nullptr &&
+         m_scene_capture_tex.texture != nullptr)
+     {
+@@ -3793,15 +3803,7 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
+             .back = 1
+         };
+ 
+-        if (stalker_exact) {
+-            if (!commands.ready()) { return; }
+-            ComPtr<ID3D12Device> device;
+-            if (FAILED(render_target->GetDevice(IID_PPV_ARGS(&device)))) { return; }
+-            stalker_composed = uevr::stalker2_native::record_pair(commands.cmd_list.Get(), device.Get(),
+-                left_source.Get(), right_source.Get(), render_target, left_width, left_height);
+-            if (!stalker_composed) { return; }
+-            commands.has_commands = true;
+-        } else if (native_duoview_frame) {
++        if (native_duoview_frame) {
+             if (!commands.ready() || !duoview_inputs_valid) { return; }
+             ComPtr<ID3D12Device> output_device{};
+             if (FAILED(render_target->GetDevice(IID_PPV_ARGS(&output_device)))) { return; }
+@@ -3810,6 +3812,15 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
+                 duoview_fovea_rect, duoview_periphery_rect, duoview_geometry,
+                 D3D12_RESOURCE_STATE_RENDER_TARGET, render_target, D3D12_RESOURCE_STATE_RENDER_TARGET);
+             if (!duoview_composed) { return; }
++            if (stalker_exact) { stalker_composed = true; }
++            commands.has_commands = true;
++        } else if (stalker_exact) {
++            if (!commands.ready()) { return; }
++            ComPtr<ID3D12Device> device;
++            if (FAILED(render_target->GetDevice(IID_PPV_ARGS(&device)))) { return; }
++            stalker_composed = uevr::stalker2_native::record_pair(commands.cmd_list.Get(), device.Get(),
++                left_source.Get(), right_source.Get(), render_target, left_width, left_height);
++            if (!stalker_composed) { return; }
+             commands.has_commands = true;
+         } else if (nascar25_native_copy_states) {
+             uevr::nascar::title25::copy_native_eye_pair(commands,
+@@ -3885,6 +3896,7 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
+                 const bool submitted = m_openxr.copy(static_cast<uint32_t>(runtimes::OpenXR::SwapchainIndex::DOUBLE_WIDE),
+                     nullptr, current_copy, std::nullopt, D3D12_RESOURCE_STATE_RENDER_TARGET);
+                 if (submitted && recorded) {
++                    duoview_scene_valid = native_duoview_frame;
+                     xr->set_stalker2_pair_submit(runtimes::OpenXR::Stalker2PairSubmit{
+                         native_stereo_packet->stalker_views, identity.epoch, identity.generation, stalker_frame});
+                     ffsr->note_native_stereo_frame_packet_consumed(native_stereo_packet->serial);
+@@ -3912,6 +3924,7 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
+                 ffsr->get_render_target_manager()->get_scene_capture_generation() == identity.generation;
+             m_stalker2_pair_cache.commit(pair, identity, now, current);
+             if (current && pair->validity.submitted) {
++                duoview_scene_valid = native_duoview_frame;
+                 m_stalker2_established_epoch = identity.epoch;
+                 SPDLOG_INFO_EVERY_N_SEC(5, "[Stalker2][NativeFix][ExactPair] Confirmed serial={} primary={} secondary={} consumer={} pose={} epoch={} generation={} queue={:x} device={:x} fence={}",
+                     native_stereo_packet->serial, native_stereo_packet->stalker_key.primary,
+@@ -5412,6 +5425,11 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
+                             std::nullopt,
+                             D3D12_RESOURCE_STATE_RENDER_TARGET,
+                             nullptr);
++                    } else if (native_duoview_frame && (!native_duoview_packet_pair_valid || !duoview_inputs_valid)) {
++                        // Source geometry was selected for this frame, but the
++                        // packet cannot prove both views and their projections.
++                        // Close the XR frame without submitting a scene.
++                        duoview_scene_valid = false;
+                     } else if (stalker_exact) {
+                         copy_stalker_pair();
+                     } else if (native_duoview_frame) {
+diff --git a/src/mods/vr/FFakeStereoRenderingHook.cpp b/src/mods/vr/FFakeStereoRenderingHook.cpp
+index c878c7ac..bee6128e 100644
+--- a/src/mods/vr/FFakeStereoRenderingHook.cpp
++++ b/src/mods/vr/FFakeStereoRenderingHook.cpp
+@@ -25969,7 +25969,7 @@ void FFakeStereoRenderingHook::begin_render_viewfamily_real(void* render_module,
+         packet->right_pass = native_right_metadata.original_stereo_pass;
+         packet->left_view_rect = native_left_metadata.view_rect;
+         packet->right_view_rect = native_right_metadata.view_rect;
+-        packet->duoview = vr->is_native_duoview_active();
++        packet->duoview = vr->is_native_duoview_selected_for_frame(g_frame_count);
+         packet->duoview_parameters = packet->duoview
+             ? vr->native_duoview_parameters_for_frame(g_frame_count)
+             : uevr::duoview::Parameters{};
+@@ -29933,7 +29933,7 @@ void FFakeStereoRenderingHook::adjust_view_rect(FFakeStereoRendering* stereo, in
+         ? index - 1
+         : (index_starts_from_one ? ((index + 1) % 2) : (index % 2));
+ 
+-    if (VR::get()->is_native_duoview_active()) {
++    if (VR::get()->is_native_duoview_selected_for_frame(g_frame_count)) {
+         const auto parameters = VR::get()->native_duoview_parameters_for_frame(g_frame_count);
+         uevr::duoview::Geometry geometry{};
+         const auto width = VR::get()->get_hmd_width();
+@@ -30043,7 +30043,7 @@ __forceinline void FFakeStereoRenderingHook::calculate_stereo_view_offset(
+     const auto rot_d = (Rotator<double>*)view_rotation;
+ 
+     const bool mono = vr->is_using_mono();
+-    const bool duoview = vr->is_native_duoview_active();
++    const bool duoview = vr->is_native_duoview_selected_for_frame(g_frame_count);
+     if (mono && !is_full_pass) { true_index = 0; }
+     if (vr->is_using_afr() && !is_full_pass) {
+         true_index = g_frame_count % 2;
+@@ -30678,7 +30678,7 @@ __forceinline Matrix4x4f* FFakeStereoRenderingHook::calculate_stereo_projection_
+             ? view_index - 1
+             : (index_starts_from_one ? ((view_index + 1) % 2) : (view_index % 2));
+         const auto source_index = true_index;
+-        const auto duoview = vr->is_native_duoview_active();
++        const auto duoview = vr->is_native_duoview_selected_for_frame(g_frame_count);
+     
+         if (vr->is_using_afr()) {
+             true_index = g_frame_count % 2;
+-- 
+2.51.1
+
