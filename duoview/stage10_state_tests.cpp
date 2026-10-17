@@ -27,6 +27,10 @@ int main() {
     assert(state.camera(first,1)->position==pose.position);
     assert(!state.family(first,false,2) && !state.family(first,true,1));
     assert(state.family(first,true,2));
+    // A complete pair must have two independent engine ViewStates and a validated
+    // secondary NativeFix constructor transaction before it can be consumed.
+    assert(state.scene(first,0,0x100));
+    assert(state.scene(first,1,0x200,true));
     auto b=state.begin(second,3000,3000,matrix,read);
     assert(b && b->config.settings.fovea_view==1 && gaze_reads==2);
     assert(state.snapshot(first)->config.layout.crop_width==.5f);
