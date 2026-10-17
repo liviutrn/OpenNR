@@ -65,6 +65,7 @@ public:
     // UE owner references. This is a prerequisite, not proof of correct
     // rendered projection, singleton renderer isolation or compositor output.
     bool verify_frame(Key frame) {
+        if (teardown_requested_) return false;
         if (!correct_thread() || state_ != State::Ready ||
             frame.generation != generation_ || !frame.serial ||
             !frame.simulation_tick || !frame.xr_frame ||
@@ -78,13 +79,14 @@ public:
         last_frame_ = frame; return true;
     }
     std::optional<EngineState> get(Eye eye, Role role) const {
-        if (!correct_thread() || state_ != State::Ready) return {};
+        if (!correct_thread() || teardown_requested_ || state_ != State::Ready) return {};
         const unsigned i = (eye == Eye::Right ? 2u : 0u) +
                            (role == Role::Periphery ? 1u : 0u);
         return handles_[i];
     }
     // Terminal consumer/composite fence, NOT a producer-only fence.
     bool mark_composite_submitted(uint64_t queue, uint64_t consumer_fence) {
+        if (teardown_requested_) return false;
         if (!correct_thread() || state_ != State::Ready || !last_frame_ ||
             !queue || !consumer_fence ||
             (last_queue_ && queue != last_queue_) ||
