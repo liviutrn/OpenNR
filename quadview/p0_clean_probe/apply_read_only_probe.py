@@ -42,7 +42,7 @@ struct QuadP0DrawScope {
                 serial, g_frame_count, ::GetCurrentThreadId(), old_draw != 0);
     }
     ~QuadP0DrawScope() {
-        if (serial && (serial <= 512 || (serial % 60) == 0)
+        if (serial && (serial <= 512 || (serial % 60) == 0))
             SPDLOG_INFO("[QuadP0] draw=end serial={} engine_frame={} thread={}",
                 serial, g_frame_count, ::GetCurrentThreadId());
         g_quad_p0_active_draw = old_draw;
