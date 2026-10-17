@@ -87,12 +87,18 @@ jobs:
           cmake -S backend -B backend/build -G 'Visual Studio 17 2022' -A x64 -DCMAKE_BUILD_TYPE=RelWithDebInfo -DUEVR_BUILD_COMPATIBILITY_TESTS=ON *> evidence/configure.log
           $code=$LASTEXITCODE; Get-Content evidence/configure.log | Select-Object -Last 80
           if ($code -ne 0) { throw "DuoView configuration failed ($code)" }
-      - name: Build production and compatibility targets
+      - name: Build production backend first
         shell: pwsh
         run: |
-          cmake --build backend/build --config RelWithDebInfo --parallel 2 --target compatibility-policy-tests steam-frame-input-tests stock-frame-migration-tests gamepad-recovery-tests kananlib-decode-window-tests diagnostic-safety-tests prospi-camera-trace-tests prospi-camera-framing-tests prospi-celebration-framing-tests prospi-roof-visibility-tests hifi-hook-memory-tests nascar-hook-compatibility-tests input-hook-installation-tests mono-d3d11-tests mono-d3d12-tests ui-alpha-tests ui-alpha-lifecycle-tests ui-composition-tests lua-fname-binding-tests lua-context-dispatch-tests lua-controller-input-tests stalker2-native-policy-tests stalker2-native-d3d12-tests uevr vr-plugin-nullifier LuaVR *> evidence/build.log
+          cmake --build backend/build --config RelWithDebInfo --parallel 2 --target uevr *> evidence/production-build.log
+          $code=$LASTEXITCODE; Get-Content evidence/production-build.log | Select-Object -Last 120
+          if ($code -ne 0) { throw "DuoView production backend failed to compile ($code)" }
+      - name: Build compatibility targets
+        shell: pwsh
+        run: |
+          cmake --build backend/build --config RelWithDebInfo --parallel 2 --target compatibility-policy-tests steam-frame-input-tests stock-frame-migration-tests gamepad-recovery-tests kananlib-decode-window-tests diagnostic-safety-tests prospi-camera-trace-tests prospi-camera-framing-tests prospi-celebration-framing-tests prospi-roof-visibility-tests hifi-hook-memory-tests nascar-hook-compatibility-tests input-hook-installation-tests mono-d3d11-tests mono-d3d12-tests ui-alpha-tests ui-alpha-lifecycle-tests ui-composition-tests lua-fname-binding-tests lua-context-dispatch-tests lua-controller-input-tests stalker2-native-policy-tests stalker2-native-d3d12-tests vr-plugin-nullifier LuaVR *> evidence/build.log
           $code=$LASTEXITCODE; Get-Content evidence/build.log | Select-Object -Last 120
-          if ($code -ne 0) { throw "DuoView production/test targets failed to compile ($code)" }
+          if ($code -ne 0) { throw "DuoView compatibility targets failed to compile ($code)" }
       - name: Run all compatibility tests, including the WARP compositor test
         shell: pwsh
         run: |
