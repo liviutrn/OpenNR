@@ -142,3 +142,12 @@ If UE5.5 safely allocates 4 at original owner initialization, this might
 remove the need to resolve the private FSceneViewStateReference ABI manually,
 but getting two independent UE families and four source captures still
 requires additional actual renderer work.
+
+
+## Later P2 lifecycle CI confirmation
+Follow-up Windows+Ubuntu run
+https://github.com/liviutrn/OpenNR/actions/runs/39043784204
+returned **success for both Windows and Ubuntu**, including the
+cross-frame fence persistence, explicit-teardown and shader tests.
+The native STALKER2 DLL has still NOT received a real ID7 rendering hook;
+source-only CI is not a headset validation.
