@@ -1,0 +1,588 @@
+From 38b73a48d8bae022e34532ceb226caca04aa0e1b Mon Sep 17 00:00:00 2001
+From: Codex <codex@openai.com>
+Date: Sun, 18 Oct 2026 00:31:07 +0200
+Subject: [PATCH] Implement shared-source native DuoView
+
+---
+ src/mods/VR.cpp                          |  6 +-
+ src/mods/VR.hpp                          | 14 +++-
+ src/mods/vr/D3D12Component.cpp           | 92 +++++++++++++++++-------
+ src/mods/vr/DuoViewCompositor.cpp        | 15 ++--
+ src/mods/vr/DuoViewGeometry.hpp          | 10 +--
+ src/mods/vr/FFakeStereoRenderingHook.cpp | 58 +++++++++++++--
+ src/mods/vr/FFakeStereoRenderingHook.hpp |  1 +
+ tests/MonoD3D12Tests.cpp                 | 78 ++++++++++++++++++--
+ 8 files changed, 224 insertions(+), 50 deletions(-)
+
+diff --git a/src/mods/VR.cpp b/src/mods/VR.cpp
+index 1e6627dd..cedff59b 100644
+--- a/src/mods/VR.cpp
++++ b/src/mods/VR.cpp
+@@ -15457,15 +15457,15 @@ void VR::on_draw_sidebar_entry(std::string_view name) {
+                 m_duoview_periphery_scale->draw("Periphery resolution scale (%)");
+                 m_duoview_vertical_center->draw("Fovea vertical center (%)");
+                 m_duoview_feather_pixels->draw("Edge blend width (output px)");
+-                ImGui::TextWrapped("ID 0 is the fixed-center mono DuoView build: Native Fix left source is the high-resolution fovea, right capture is the low-resolution full-field periphery, and one composite is sent to both eyes.");
++                ImGui::TextWrapped("ID 0 uses the fixed-center mono DuoView source path. With Native Stereo Fix enabled, the left source is the high-resolution fovea and the separate right capture is the lower-resolution full-field periphery. With Native Fix disabled, both regions use the existing double-wide source. One composite is sent to both eyes.");
+                 if (!m_is_d3d12) {
+                     draw_status_badge("DuoView status:", "unsupported: D3D12 required", blocked_color);
+                 } else if (uevr::nascar::is_target()) {
+                     draw_status_badge("DuoView status:", "unsupported: NASCAR keeps its validated Native Fix path", blocked_color);
+                 } else if (is_native_duoview_active()) {
+-                    draw_status_badge("DuoView status:", "active with Native Stereo Fix", active_color);
++                    draw_status_badge("DuoView status:", "active in Native Stereo", active_color);
+                 } else {
+-                    draw_status_badge("DuoView status:", "waiting: enable Native Stereo Fix in ID 0", skipped_color);
++                    draw_status_badge("DuoView status:", "waiting: Native Stereo required", skipped_color);
+                 }
+                 ImGui::TreePop();
+             }
+diff --git a/src/mods/VR.hpp b/src/mods/VR.hpp
+index 6d19bb5e..70608c8e 100644
+--- a/src/mods/VR.hpp
++++ b/src/mods/VR.hpp
+@@ -703,8 +703,10 @@ public:
+     }
+ 
+     bool is_native_duoview_active() const {
+-        return m_is_d3d12 && is_native_stereo_fix_enabled() && !uevr::nascar::is_target() &&
+-            !is_using_2d_screen();
++        return m_is_d3d12 &&
++            m_rendering_method->value() == RenderingMethod::NATIVE_STEREO &&
++            !is_mono_transition_quiescing() && !is_using_afr() &&
++            !uevr::nascar::is_target() && !is_using_2d_screen();
+     }
+ 
+     bool is_native_duoview_selected_for_frame(uint32_t engine_frame) {
+@@ -713,6 +715,12 @@ public:
+         return m_native_duoview_snapshot_active;
+     }
+ 
++    bool native_duoview_uses_native_stereo_fix_for_frame(uint32_t engine_frame) {
++        std::scoped_lock lock{m_native_duoview_snapshot_mtx};
++        update_native_duoview_snapshot_locked(engine_frame);
++        return m_native_duoview_snapshot_native_stereo_fix;
++    }
++
+     uevr::duoview::Parameters native_duoview_parameters_for_frame(uint32_t engine_frame) {
+         std::scoped_lock lock{m_native_duoview_snapshot_mtx};
+         update_native_duoview_snapshot_locked(engine_frame);
+@@ -1932,6 +1940,7 @@ private:
+     uint32_t m_native_duoview_snapshot_frame{std::numeric_limits<uint32_t>::max()};
+     uevr::duoview::Parameters m_native_duoview_snapshot{};
+     bool m_native_duoview_snapshot_active{};
++    bool m_native_duoview_snapshot_native_stereo_fix{};
+     const ModToggle::Ptr m_native_stereo_fix_same_pass{ ModToggle::create(generate_name("NativeStereoFixSamePass"), true) };
+     const ModToggle::Ptr m_native_stereo_fix_preserve_secondary_pass{ ModToggle::create(generate_name("NativeStereoFixPreserveSecondaryPass"), true) };
+     const ModToggle::Ptr m_native_stereo_fix_texture_array_submit{ ModToggle::create(generate_name("NativeStereoFixTextureArraySubmit"), false) };
+@@ -2480,6 +2489,7 @@ private:
+         // Publish one immutable parameter set for the entire native frame.
+         // The view hooks and the compositor consume this same snapshot.
+         m_native_duoview_snapshot_active = is_native_duoview_active();
++        m_native_duoview_snapshot_native_stereo_fix = is_native_stereo_fix_enabled();
+         m_native_duoview_snapshot = {
+             .fovea_width = m_duoview_fovea_width->value() / 100.0f,
+             .fovea_height = m_duoview_fovea_height->value() / 100.0f,
+diff --git a/src/mods/vr/D3D12Component.cpp b/src/mods/vr/D3D12Component.cpp
+index 735041d6..74eac535 100644
+--- a/src/mods/vr/D3D12Component.cpp
++++ b/src/mods/vr/D3D12Component.cpp
+@@ -3057,6 +3057,8 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
+     const bool native_duoview_source_selected = vr->is_native_duoview_selected_for_frame(g_frame_count);
+     const bool native_duoview_packet = native_stereo_packet != nullptr && native_stereo_packet->duoview;
+     const bool native_duoview_frame = native_duoview_source_selected || native_duoview_packet;
++    const bool native_duoview_native_fix_path = native_duoview_packet ||
++        (native_duoview_source_selected && vr->native_duoview_uses_native_stereo_fix_for_frame(g_frame_count));
+     bool duoview_scene_valid = !native_duoview_frame;
+     auto* const native_stereo_hook = ffsr.get();
+     const auto record_native_submit = [&](frame_diag::Runtime api, frame_diag::Stage stage,
+@@ -3695,27 +3697,57 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
+     uevr::duoview::Geometry duoview_geometry{};
+     uevr::duoview::SourceRect duoview_fovea_rect{};
+     uevr::duoview::SourceRect duoview_periphery_rect{};
++    ComPtr<ID3D12Resource> duoview_fovea_source{};
++    ComPtr<ID3D12Resource> duoview_periphery_source{};
++    auto duoview_source_state = scene_source_state;
+     bool duoview_inputs_valid = false;
+     const bool native_duoview_packet_pair_valid = native_duoview_packet &&
+         native_stereo_packet->left_view != nullptr && native_stereo_packet->right_view != nullptr &&
+         native_stereo_packet->left_view != native_stereo_packet->right_view &&
+         native_stereo_packet->left_pass == static_cast<uint32_t>(EStereoscopicPass::eSSP_PRIMARY) &&
+         native_stereo_packet->right_pass == static_cast<uint32_t>(EStereoscopicPass::eSSP_SECONDARY);
+-    if (native_duoview_frame && native_duoview_packet_pair_valid && scene_capture_packet_ready &&
+-        native_stereo_packet->duoview_projections_valid && m_game_tex.texture != nullptr &&
+-        m_scene_capture_tex.texture != nullptr)
+-    {
+-        const auto fovea_desc = m_game_tex.texture->GetDesc();
+-        const auto periphery_desc = m_scene_capture_tex.texture->GetDesc();
+-        const auto& fovea_bounds = native_stereo_packet->left_view_rect.bounds;
+-        const auto& periphery_bounds = native_stereo_packet->right_view_rect.bounds;
+-        duoview_fovea_rect = {fovea_bounds[0], fovea_bounds[1], fovea_bounds[2], fovea_bounds[3]};
+-        duoview_periphery_rect = {periphery_bounds[0], periphery_bounds[1], periphery_bounds[2], periphery_bounds[3]};
+-        duoview_inputs_valid = uevr::duoview::calculate(
+-            vr->get_hmd_width(), vr->get_hmd_height(),
+-            {static_cast<uint32_t>(fovea_desc.Width), fovea_desc.Height},
+-            {static_cast<uint32_t>(periphery_desc.Width), periphery_desc.Height},
+-            native_stereo_packet->duoview_parameters, duoview_geometry);
++    if (native_duoview_frame) {
++        if (native_duoview_native_fix_path && native_duoview_packet_pair_valid && scene_capture_packet_ready &&
++            native_stereo_packet->duoview_projections_valid && m_game_tex.texture != nullptr &&
++            m_scene_capture_tex.texture != nullptr)
++        {
++            duoview_fovea_source = m_game_tex.texture;
++            duoview_periphery_source = m_scene_capture_tex.texture;
++            const auto fovea_desc = duoview_fovea_source->GetDesc();
++            const auto periphery_desc = duoview_periphery_source->GetDesc();
++            const auto& fovea_bounds = native_stereo_packet->left_view_rect.bounds;
++            const auto& periphery_bounds = native_stereo_packet->right_view_rect.bounds;
++            duoview_fovea_rect = {fovea_bounds[0], fovea_bounds[1], fovea_bounds[2], fovea_bounds[3]};
++            duoview_periphery_rect = {periphery_bounds[0], periphery_bounds[1], periphery_bounds[2], periphery_bounds[3]};
++            duoview_source_state = D3D12_RESOURCE_STATE_RENDER_TARGET;
++            duoview_inputs_valid = uevr::duoview::calculate(
++                vr->get_hmd_width(), vr->get_hmd_height(),
++                {static_cast<uint32_t>(fovea_desc.Width), fovea_desc.Height},
++                {static_cast<uint32_t>(periphery_desc.Width), periphery_desc.Height},
++                native_stereo_packet->duoview_parameters, duoview_geometry);
++        } else if (!native_duoview_native_fix_path && backbuffer != nullptr && ffsr != nullptr) {
++            const auto view_rects = ffsr->get_native_duoview_view_rects(g_frame_count);
++            const auto source_desc = backbuffer->GetDesc();
++            const auto expected_width = static_cast<uint64_t>(vr->get_hmd_width()) * 2;
++            const bool source_extent_valid = source_desc.Dimension == D3D12_RESOURCE_DIMENSION_TEXTURE2D &&
++                source_desc.Width == expected_width && source_desc.Height == vr->get_hmd_height() &&
++                source_desc.DepthOrArraySize == 1 && source_desc.MipLevels == 1 &&
++                source_desc.SampleDesc.Count == 1;
++            if (view_rects.has_value() && source_extent_valid) {
++                duoview_fovea_source = backbuffer;
++                duoview_periphery_source = backbuffer;
++                const auto& fovea_bounds = (*view_rects)[0].bounds;
++                const auto& periphery_bounds = (*view_rects)[1].bounds;
++                duoview_fovea_rect = {fovea_bounds[0], fovea_bounds[1], fovea_bounds[2], fovea_bounds[3]};
++                duoview_periphery_rect = {periphery_bounds[0], periphery_bounds[1], periphery_bounds[2], periphery_bounds[3]};
++                duoview_source_state = scene_source_state;
++                duoview_inputs_valid = uevr::duoview::calculate(
++                    vr->get_hmd_width(), vr->get_hmd_height(),
++                    {vr->get_hmd_width(), vr->get_hmd_height()},
++                    {vr->get_hmd_width(), vr->get_hmd_height()},
++                    vr->native_duoview_parameters_for_frame(g_frame_count), duoview_geometry);
++            }
++        }
+     }
+ 
+     if (!scene_capture_packet_ready) {
+@@ -3766,6 +3798,8 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
+         this,
+         left_source = m_game_tex.texture,
+         right_source = m_scene_capture_tex.texture,
++        duoview_fovea_source,
++        duoview_periphery_source,
+         left_width = m_backbuffer_size[0] / 2,
+         left_height = m_backbuffer_size[1],
+         right_width = m_scene_capture_width,
+@@ -3773,7 +3807,9 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
+         nascar25_native_copy_states,
+         stalker_exact,
+         native_duoview_frame,
++        native_duoview_native_fix_path,
+         duoview_inputs_valid,
++        duoview_source_state,
+         duoview_geometry,
+         duoview_fovea_rect,
+         duoview_periphery_rect,
+@@ -3782,7 +3818,8 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
+         native_stereo_packet,
+         native_frame_ticket,
+         native_stereo_hook](d3d12::CommandContext& commands, ID3D12Resource* render_target) {
+-        if (render_target == nullptr || left_source == nullptr || right_source == nullptr || native_stereo_packet == nullptr) {
++        if (render_target == nullptr || (!native_duoview_frame &&
++            (left_source == nullptr || right_source == nullptr || native_stereo_packet == nullptr))) {
+             return;
+         }
+ 
+@@ -3805,12 +3842,14 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
+ 
+         if (native_duoview_frame) {
+             if (!commands.ready() || !duoview_inputs_valid) { return; }
++            if (duoview_fovea_source == nullptr || duoview_periphery_source == nullptr ||
++                (native_duoview_native_fix_path && native_stereo_packet == nullptr)) { return; }
+             ComPtr<ID3D12Device> output_device{};
+             if (FAILED(render_target->GetDevice(IID_PPV_ARGS(&output_device)))) { return; }
+             duoview_composed = this->m_duoview_compositor.record_double_wide(
+-                output_device.Get(), commands.cmd_list.Get(), left_source.Get(), right_source.Get(),
++                output_device.Get(), commands.cmd_list.Get(), duoview_fovea_source.Get(), duoview_periphery_source.Get(),
+                 duoview_fovea_rect, duoview_periphery_rect, duoview_geometry,
+-                D3D12_RESOURCE_STATE_RENDER_TARGET, render_target, D3D12_RESOURCE_STATE_RENDER_TARGET);
++                duoview_source_state, render_target, D3D12_RESOURCE_STATE_RENDER_TARGET);
+             if (!duoview_composed) { return; }
+             if (stalker_exact) { stalker_composed = true; }
+             commands.has_commands = true;
+@@ -3837,7 +3876,7 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
+             );
+         }
+ 
+-        if (native_stereo_hook != nullptr) {
++        if (native_stereo_hook != nullptr && native_stereo_packet != nullptr) {
+             if (native_frame_ticket && (!native_duoview_frame || duoview_composed)) {
+                 native_stereo_hook->record_native_frame_stage(*native_stereo_packet, native_frame_ticket,
+                     frame_diag::Backend::d3d12, frame_diag::Runtime::openxr, frame_diag::Stage::copy_recorded,
+@@ -5425,7 +5464,9 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
+                             std::nullopt,
+                             D3D12_RESOURCE_STATE_RENDER_TARGET,
+                             nullptr);
+-                    } else if (native_duoview_frame && (!native_duoview_packet_pair_valid || !duoview_inputs_valid)) {
++                    } else if (native_duoview_frame &&
++                               ((native_duoview_native_fix_path && !native_duoview_packet_pair_valid) ||
++                                !duoview_inputs_valid)) {
+                         // Source geometry was selected for this frame, but the
+                         // packet cannot prove both views and their projections.
+                         // Close the XR frame without submitting a scene.
+@@ -5472,18 +5513,19 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
+                 const auto right_fence_before = right_context.commands.fence_value;
+                 bool left_recorded = false;
+                 bool right_recorded = false;
+-                if (duoview_inputs_valid && scene_capture_packet_ready &&
++                if (duoview_inputs_valid &&
++                    (!native_duoview_native_fix_path || scene_capture_packet_ready) &&
+                     left_context.texture != nullptr && right_context.texture != nullptr &&
+                     left_context.commands.ready() && right_context.commands.ready())
+                 {
+                     left_recorded = m_duoview_compositor.record_eye(
+-                        device.Get(), left_context.commands.cmd_list.Get(), m_game_tex.texture.Get(), m_scene_capture_tex.texture.Get(),
++                        device.Get(), left_context.commands.cmd_list.Get(), duoview_fovea_source.Get(), duoview_periphery_source.Get(),
+                         duoview_fovea_rect, duoview_periphery_rect, duoview_geometry,
+-                        D3D12_RESOURCE_STATE_RENDER_TARGET, left_context.texture.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
++                        duoview_source_state, left_context.texture.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+                     right_recorded = m_duoview_compositor.record_eye(
+-                        device.Get(), right_context.commands.cmd_list.Get(), m_game_tex.texture.Get(), m_scene_capture_tex.texture.Get(),
++                        device.Get(), right_context.commands.cmd_list.Get(), duoview_fovea_source.Get(), duoview_periphery_source.Get(),
+                         duoview_fovea_rect, duoview_periphery_rect, duoview_geometry,
+-                        D3D12_RESOURCE_STATE_RENDER_TARGET, right_context.texture.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
++                        duoview_source_state, right_context.texture.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+                 }
+                 if (left_recorded) { left_context.commands.has_commands = true; }
+                 if (right_recorded) { right_context.commands.has_commands = true; }
+diff --git a/src/mods/vr/DuoViewCompositor.cpp b/src/mods/vr/DuoViewCompositor.cpp
+index f2d47010..e1606dfc 100644
+--- a/src/mods/vr/DuoViewCompositor.cpp
++++ b/src/mods/vr/DuoViewCompositor.cpp
+@@ -209,7 +209,7 @@ bool D3D12Compositor::record(
+     D3D12_RESOURCE_STATES destination_state, uint32_t eye_count)
+ {
+     if (command_list == nullptr || fovea == nullptr || periphery == nullptr || destination == nullptr ||
+-        fovea == periphery || destination == fovea || destination == periphery ||
++        destination == fovea || destination == periphery ||
+         geometry.reference.width == 0 || geometry.reference.height == 0 ||
+         !std::isfinite(geometry.u0) || !std::isfinite(geometry.v0) ||
+         !std::isfinite(geometry.u1) || !std::isfinite(geometry.v1) ||
+@@ -225,6 +225,9 @@ bool D3D12Compositor::record(
+     const auto periphery_desc = periphery->GetDesc();
+     const auto destination_desc = destination->GetDesc();
+     if (!valid_rect(fovea_rect, fovea_desc) || !valid_rect(periphery_rect, periphery_desc) ||
++        (fovea == periphery &&
++            fovea_rect.left < periphery_rect.right && periphery_rect.left < fovea_rect.right &&
++            fovea_rect.top < periphery_rect.bottom && periphery_rect.top < fovea_rect.bottom) ||
+         (eye_count == 2 && (destination_desc.Width < 2 || (destination_desc.Width % 2) != 0))) {
+         return false;
+     }
+@@ -301,7 +304,9 @@ bool D3D12Compositor::record(
+         barrier.Transition.StateAfter = after;
+     };
+     add_transition(fovea, source_state, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+-    add_transition(periphery, source_state, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
++    if (periphery != fovea) {
++        add_transition(periphery, source_state, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
++    }
+     add_transition(destination, destination_state, D3D12_RESOURCE_STATE_RENDER_TARGET);
+     if (barrier_count != 0) { command_list->ResourceBarrier(barrier_count, barriers.data()); }
+ 
+@@ -315,7 +320,7 @@ bool D3D12Compositor::record(
+     command_list->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+     command_list->OMSetRenderTargets(1, &slot.rtv_handle, FALSE, nullptr);
+ 
+-    const auto eye_count_safe = std::min(eye_count, 2u);
++    const auto eye_count_safe = (std::min)(eye_count, 2u);
+     for (uint32_t eye = 0; eye < eye_count_safe; ++eye) {
+         const auto x = static_cast<UINT>(eye * eye_width);
+         const D3D12_VIEWPORT viewport{static_cast<float>(x), 0.0f, static_cast<float>(eye_width), static_cast<float>(output_height), 0.0f, 1.0f};
+@@ -327,7 +332,9 @@ bool D3D12Compositor::record(
+ 
+     barrier_count = 0;
+     add_transition(destination, D3D12_RESOURCE_STATE_RENDER_TARGET, destination_state);
+-    add_transition(periphery, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, source_state);
++    if (periphery != fovea) {
++        add_transition(periphery, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, source_state);
++    }
+     add_transition(fovea, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, source_state);
+     if (barrier_count != 0) { command_list->ResourceBarrier(barrier_count, barriers.data()); }
+     return true;
+diff --git a/src/mods/vr/DuoViewGeometry.hpp b/src/mods/vr/DuoViewGeometry.hpp
+index dce7fc4a..269564c8 100644
+--- a/src/mods/vr/DuoViewGeometry.hpp
++++ b/src/mods/vr/DuoViewGeometry.hpp
+@@ -52,9 +52,9 @@ inline bool valid(const Parameters& p) {
+ inline uint32_t rounded_extent(uint32_t reference, float fraction, float scale, uint32_t allocation) {
+     if (reference == 0 || allocation == 0 || !std::isfinite(fraction) || !std::isfinite(scale)) { return 0; }
+     const auto value = static_cast<double>(reference) * fraction * scale;
+-    if (!std::isfinite(value) || value < 0.5 || value > std::numeric_limits<uint32_t>::max()) { return 0; }
++    if (!std::isfinite(value) || value < 0.5 || value > (std::numeric_limits<uint32_t>::max)()) { return 0; }
+     const auto rounded = static_cast<uint32_t>(std::llround(value));
+-    return std::clamp(rounded, 1u, allocation);
++    return (std::clamp)(rounded, 1u, allocation);
+ }
+ 
+ inline bool calculate(uint32_t width, uint32_t height, Extent fovea_allocation,
+@@ -63,7 +63,7 @@ inline bool calculate(uint32_t width, uint32_t height, Extent fovea_allocation,
+         fovea_allocation.width == 0 || fovea_allocation.height == 0 ||
+         periphery_allocation.width == 0 || periphery_allocation.height == 0) { return false; }
+ 
+-    const auto center_y = std::clamp(requested.vertical_center,
++    const auto center_y = (std::clamp)(requested.vertical_center,
+         requested.fovea_height * 0.5f, 1.0f - requested.fovea_height * 0.5f);
+     const auto left = static_cast<uint32_t>(std::llround(width * (0.5 - requested.fovea_width * 0.5)));
+     const auto right = static_cast<uint32_t>(std::llround(width * (0.5 + requested.fovea_width * 0.5)));
+@@ -81,8 +81,8 @@ inline bool calculate(uint32_t width, uint32_t height, Extent fovea_allocation,
+     result.center_y = center_y;
+     result.feather_pixels = requested.fovea_width >= 1.0f && requested.fovea_height >= 1.0f
+         ? 0.0f
+-        : std::min(requested.feather_pixels,
+-            0.5f * static_cast<float>(std::min(result.crop.width(), result.crop.height())));
++        : (std::min)(requested.feather_pixels,
++            0.5f * static_cast<float>((std::min)(result.crop.width(), result.crop.height())));
+     result.fovea = {
+         rounded_extent(width, requested.fovea_width, requested.fovea_scale, fovea_allocation.width),
+         rounded_extent(height, requested.fovea_height, requested.fovea_scale, fovea_allocation.height),
+diff --git a/src/mods/vr/FFakeStereoRenderingHook.cpp b/src/mods/vr/FFakeStereoRenderingHook.cpp
+index bee6128e..a5f73ebb 100644
+--- a/src/mods/vr/FFakeStereoRenderingHook.cpp
++++ b/src/mods/vr/FFakeStereoRenderingHook.cpp
+@@ -22633,7 +22633,7 @@ sdk::FSceneView* FFakeStereoRenderingHook::sceneview_constructor(sdk::FSceneView
+     const bool capture_passive_ue58_native_metadata =
+         !inside_viewport_client_draw &&
+         vr->is_hmd_active() &&
+-        vr->is_native_stereo_fix_enabled() &&
++        (vr->is_native_stereo_fix_enabled() || vr->is_native_duoview_selected_for_frame(g_frame_count)) &&
+         is_ue_5_8();
+ 
+     if (capture_passive_ue58_native_metadata) {
+@@ -23877,7 +23877,7 @@ sdk::FSceneView* FFakeStereoRenderingHook::sceneview_constructor(sdk::FSceneView
+ 
+     auto result = g_hook->m_sceneview_data.constructor_hook.unsafe_call<sdk::FSceneView*>(view, init_options, a3, a4);
+ 
+-    if (vr->is_native_stereo_fix_enabled()) {
++    if (vr->is_native_stereo_fix_enabled() || vr->is_native_duoview_selected_for_frame(g_frame_count)) {
+         auto& native_views = g_hook->m_sceneview_data.native_stereo_views;
+         if (g_hook->m_sceneview_data.native_stereo_metadata_frame != g_frame_count) {
+             native_views.clear();
+@@ -27347,6 +27347,50 @@ void FFakeStereoRenderingHook::publish_native_stereo_frame_packet(
+     }
+ }
+ 
++std::optional<std::array<FIntRect, 2>> FFakeStereoRenderingHook::get_native_duoview_view_rects(
++    uint32_t engine_frame) const
++{
++    std::scoped_lock lock{m_sceneview_data.mtx};
++    if (m_sceneview_data.native_stereo_metadata_frame != engine_frame) {
++        return std::nullopt;
++    }
++
++    const auto rect_is_sane = [](const FIntRect& rect) {
++        const auto width = static_cast<int64_t>(rect.bounds[2]) - rect.bounds[0];
++        const auto height = static_cast<int64_t>(rect.bounds[3]) - rect.bounds[1];
++        return width > 0 && height > 0 && width <= 32768 && height <= 32768 &&
++            rect.bounds[0] >= 0 && rect.bounds[1] >= 0;
++    };
++
++    std::optional<std::array<FIntRect, 2>> result{};
++    const auto& views = m_sceneview_data.native_stereo_views;
++    for (const auto& [primary_view, primary] : views) {
++        if (primary_view == nullptr || primary.frame != engine_frame ||
++            primary.original_stereo_pass != EStereoscopicPass::eSSP_PRIMARY ||
++            primary.family == nullptr || !primary.projection_valid || !rect_is_sane(primary.view_rect)) {
++            continue;
++        }
++
++        for (const auto& [secondary_view, secondary] : views) {
++            if (secondary_view == nullptr || secondary_view == primary_view ||
++                secondary.frame != engine_frame ||
++                secondary.original_stereo_pass != EStereoscopicPass::eSSP_SECONDARY ||
++                secondary.family != primary.family || secondary.scene != primary.scene ||
++                secondary.player_index_valid != primary.player_index_valid ||
++                (primary.player_index_valid && secondary.player_index != primary.player_index) ||
++                !secondary.projection_valid || !rect_is_sane(secondary.view_rect)) {
++                continue;
++            }
++
++            if (result.has_value()) {
++                return std::nullopt;
++            }
++            result = std::array<FIntRect, 2>{primary.view_rect, secondary.view_rect};
++        }
++    }
++    return result;
++}
++
+ std::shared_ptr<const FFakeStereoRenderingHook::NativeStereoFramePacket>
+ FFakeStereoRenderingHook::get_native_stereo_frame_packet_for_submit(int32_t render_frame,
+     uevr::native_frame::Backend backend, uevr::native_frame::Ticket* diagnostic_ticket) const
+@@ -29934,14 +29978,20 @@ void FFakeStereoRenderingHook::adjust_view_rect(FFakeStereoRendering* stereo, in
+         : (index_starts_from_one ? ((index + 1) % 2) : (index % 2));
+ 
+     if (VR::get()->is_native_duoview_selected_for_frame(g_frame_count)) {
++        const auto& vr = VR::get();
+         const auto parameters = VR::get()->native_duoview_parameters_for_frame(g_frame_count);
+         uevr::duoview::Geometry geometry{};
+         const auto width = VR::get()->get_hmd_width();
+         const auto height = VR::get()->get_hmd_height();
+         if (uevr::duoview::calculate(width, height, {width, height}, {width, height}, parameters, geometry)) {
+-            *x = 0;
+-            *y = 0;
+             const auto source = true_index == 0 ? geometry.fovea : geometry.periphery;
++            if (vr->native_duoview_uses_native_stereo_fix_for_frame(g_frame_count)) {
++                *x = 0;
++                *y = 0;
++            } else {
++                *x = static_cast<int32_t>(true_index * width + (width - source.width) / 2);
++                *y = static_cast<int32_t>((height - source.height) / 2);
++            }
+             *w = source.width;
+             *h = source.height;
+             return;
+diff --git a/src/mods/vr/FFakeStereoRenderingHook.hpp b/src/mods/vr/FFakeStereoRenderingHook.hpp
+index 357c86e4..b947e298 100644
+--- a/src/mods/vr/FFakeStereoRenderingHook.hpp
++++ b/src/mods/vr/FFakeStereoRenderingHook.hpp
+@@ -885,6 +885,7 @@ public:
+     std::shared_ptr<const NativeStereoFramePacket> get_native_stereo_frame_packet_for_submit(
+         int32_t render_frame, uevr::native_frame::Backend backend = uevr::native_frame::Backend::unknown,
+         uevr::native_frame::Ticket* diagnostic_ticket = nullptr) const;
++    std::optional<std::array<FIntRect, 2>> get_native_duoview_view_rects(uint32_t engine_frame) const;
+     void note_native_stereo_frame_packet_consumed(uint64_t serial);
+     void reject_native_stereo_frame_packet(uint64_t serial, const char* detail);
+     void sync_stalker2_native_experiment(bool enabled);
+diff --git a/tests/MonoD3D12Tests.cpp b/tests/MonoD3D12Tests.cpp
+index 4eb8dd7c..7ddf0065 100644
+--- a/tests/MonoD3D12Tests.cpp
++++ b/tests/MonoD3D12Tests.cpp
+@@ -117,6 +117,9 @@ static void test_duoview_compositor(ID3D12Device* device, ID3D12CommandQueue* qu
+     auto fovea = make_resource(fovea_desc, D3D12_HEAP_TYPE_DEFAULT, D3D12_RESOURCE_STATE_COPY_DEST);
+     auto periphery = make_resource(periphery_desc, D3D12_HEAP_TYPE_DEFAULT, D3D12_RESOURCE_STATE_COPY_DEST);
+     auto output = make_resource(output_desc, D3D12_HEAP_TYPE_DEFAULT, D3D12_RESOURCE_STATE_RENDER_TARGET);
++    const auto aliased_source_desc = texture_desc(output_width, source_height);
++    auto aliased_source = make_resource(aliased_source_desc, D3D12_HEAP_TYPE_DEFAULT, D3D12_RESOURCE_STATE_COPY_DEST);
++    auto aliased_output = make_resource(output_desc, D3D12_HEAP_TYPE_DEFAULT, D3D12_RESOURCE_STATE_RENDER_TARGET);
+     std::vector<ComPtr<ID3D12Resource>> upload_resources;
+ 
+     const auto upload_solid = [&](ID3D12Resource* destination, const D3D12_RESOURCE_DESC& desc, uint32_t color) {
+@@ -147,10 +150,36 @@ static void test_duoview_compositor(ID3D12Device* device, ID3D12CommandQueue* qu
+     upload_solid(fovea.Get(), fovea_desc, 0xff0000ffu);
+     upload_solid(periphery.Get(), periphery_desc, 0xff00ff00u);
+ 
+-    std::array<D3D12_RESOURCE_BARRIER, 2> source_barriers{};
++    D3D12_PLACED_SUBRESOURCE_FOOTPRINT aliased_footprint{};
++    UINT64 aliased_upload_size{};
++    device->GetCopyableFootprints(&aliased_source_desc, 0, 1, 0, &aliased_footprint, nullptr, nullptr, &aliased_upload_size);
++    const D3D12_RESOURCE_DESC aliased_upload_desc{D3D12_RESOURCE_DIMENSION_BUFFER, 0, aliased_upload_size, 1, 1, 1,
++        DXGI_FORMAT_UNKNOWN, {1, 0}, D3D12_TEXTURE_LAYOUT_ROW_MAJOR, D3D12_RESOURCE_FLAG_NONE};
++    auto aliased_upload = make_resource(aliased_upload_desc, D3D12_HEAP_TYPE_UPLOAD, D3D12_RESOURCE_STATE_GENERIC_READ);
++    void* aliased_mapped{};
++    const D3D12_RANGE aliased_no_read{0, 0};
++    require(aliased_upload->Map(0, &aliased_no_read, &aliased_mapped), "DuoView alias upload map");
++    for (UINT y = 0; y < source_height; ++y) {
++        auto* row = reinterpret_cast<uint32_t*>(static_cast<uint8_t*>(aliased_mapped) +
++            aliased_footprint.Offset + y * aliased_footprint.Footprint.RowPitch);
++        std::fill_n(row, static_cast<size_t>(output_width), 0xff00ff00u);
++        if (y >= 16 && y < 48) { std::fill_n(row, 32, 0xff0000ffu); }
++    }
++    aliased_upload->Unmap(0, nullptr);
++    upload_resources.push_back(aliased_upload);
++    D3D12_TEXTURE_COPY_LOCATION aliased_from{};
++    aliased_from.pResource = aliased_upload.Get();
++    aliased_from.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
++    aliased_from.PlacedFootprint = aliased_footprint;
++    D3D12_TEXTURE_COPY_LOCATION aliased_to{};
++    aliased_to.pResource = aliased_source.Get();
++    aliased_to.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
++    commands->CopyTextureRegion(&aliased_to, 0, 0, 0, &aliased_from, nullptr);
++
++    std::array<D3D12_RESOURCE_BARRIER, 3> source_barriers{};
+     for (size_t i = 0; i != source_barriers.size(); ++i) {
+         source_barriers[i].Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+-        source_barriers[i].Transition = {i == 0 ? fovea.Get() : periphery.Get(),
++        source_barriers[i].Transition = {i == 0 ? fovea.Get() : i == 1 ? periphery.Get() : aliased_source.Get(),
+             D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_RENDER_TARGET};
+     }
+     commands->ResourceBarrier(static_cast<UINT>(source_barriers.size()), source_barriers.data());
+@@ -169,17 +198,35 @@ static void test_duoview_compositor(ID3D12Device* device, ID3D12CommandQueue* qu
+         return;
+     }
+ 
+-    D3D12_RESOURCE_BARRIER output_barrier{};
+-    output_barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+-    output_barrier.Transition = {output.Get(), D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES,
+-        D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_COPY_SOURCE};
+-    commands->ResourceBarrier(1, &output_barrier);
++    const auto alias_fovea_rect = duo::SourceRect{0, 16, 32, 48};
++    const auto alias_periphery_rect = duo::SourceRect{64, 0, 128, 64};
++    expect(!compositor.record_double_wide(device, commands.Get(), aliased_source.Get(), aliased_source.Get(),
++        {0, 16, 48, 48}, {32, 16, 96, 48}, geometry, D3D12_RESOURCE_STATE_RENDER_TARGET,
++        aliased_output.Get(), D3D12_RESOURCE_STATE_RENDER_TARGET),
++        "overlapping source regions are rejected when both inputs alias one texture");
++    const bool alias_recorded = compositor.record_double_wide(device, commands.Get(), aliased_source.Get(), aliased_source.Get(),
++        alias_fovea_rect, alias_periphery_rect, geometry, D3D12_RESOURCE_STATE_RENDER_TARGET,
++        aliased_output.Get(), D3D12_RESOURCE_STATE_RENDER_TARGET);
++    expect(alias_recorded, "disjoint fovea and periphery regions compose from one WARP texture");
++    if (!alias_recorded) {
++        commands->Close();
++        return;
++    }
++
++    std::array<D3D12_RESOURCE_BARRIER, 2> output_barriers{};
++    for (size_t i = 0; i != output_barriers.size(); ++i) {
++        output_barriers[i].Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
++        output_barriers[i].Transition = {i == 0 ? output.Get() : aliased_output.Get(), D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES,
++            D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_COPY_SOURCE};
++    }
++    commands->ResourceBarrier(static_cast<UINT>(output_barriers.size()), output_barriers.data());
+     D3D12_PLACED_SUBRESOURCE_FOOTPRINT readback_footprint{};
+     UINT64 readback_size{};
+     device->GetCopyableFootprints(&output_desc, 0, 1, 0, &readback_footprint, nullptr, nullptr, &readback_size);
+     const D3D12_RESOURCE_DESC readback_desc{D3D12_RESOURCE_DIMENSION_BUFFER, 0, readback_size, 1, 1, 1,
+         DXGI_FORMAT_UNKNOWN, {1, 0}, D3D12_TEXTURE_LAYOUT_ROW_MAJOR, D3D12_RESOURCE_FLAG_NONE};
+     auto readback = make_resource(readback_desc, D3D12_HEAP_TYPE_READBACK, D3D12_RESOURCE_STATE_COPY_DEST);
++    auto aliased_readback = make_resource(readback_desc, D3D12_HEAP_TYPE_READBACK, D3D12_RESOURCE_STATE_COPY_DEST);
+     D3D12_TEXTURE_COPY_LOCATION from{};
+     from.pResource = output.Get();
+     from.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+@@ -188,6 +235,9 @@ static void test_duoview_compositor(ID3D12Device* device, ID3D12CommandQueue* qu
+     to.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+     to.PlacedFootprint = readback_footprint;
+     commands->CopyTextureRegion(&to, 0, 0, 0, &from, nullptr);
++    from.pResource = aliased_output.Get();
++    to.pResource = aliased_readback.Get();
++    commands->CopyTextureRegion(&to, 0, 0, 0, &from, nullptr);
+ 
+     require(commands->Close(), "close DuoView command list");
+     ID3D12CommandList* lists[]{commands.Get()};
+@@ -216,6 +266,20 @@ static void test_duoview_compositor(ID3D12Device* device, ID3D12CommandQueue* qu
+     expect(green > 0 && green < 255 && blue > 0 && blue < 255,
+         "feather pixels blend fovea and periphery");
+     readback->Unmap(0, nullptr);
++
++    void* alias_readback_mapped{};
++    require(aliased_readback->Map(0, nullptr, &alias_readback_mapped), "DuoView alias readback map");
++    const auto alias_pixel = [&](UINT x, UINT y) {
++        const auto* row = reinterpret_cast<const uint32_t*>(static_cast<const uint8_t*>(alias_readback_mapped) +
++            readback_footprint.Offset + y * readback_footprint.Footprint.RowPitch);
++        return row[x];
++    };
++    const auto alias_center_left = alias_pixel(32, 32);
++    const auto alias_center_right = alias_pixel(source_width + 32, 32);
++    expect(alias_pixel(1, 4) == 0xff00ff00u, "aliased periphery region supplies the full field");
++    expect(alias_center_left == 0xff0000ffu && alias_center_right == alias_center_left,
++        "aliased fovea region is composed identically into both eye regions");
++    aliased_readback->Unmap(0, nullptr);
+ }
+ 
+ int main() try {
+-- 
+2.51.1
+
