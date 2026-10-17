@@ -19,6 +19,7 @@ add_portable_test(QuadPairLedgerTests tests/QuadPairLedgerTests.cpp)
 add_portable_test(QuadPairCoordinatorTests tests/QuadPairCoordinatorTests.cpp)
 add_portable_test(FourHistoryLeaseTests tests/FourHistoryLeaseTests.cpp)
 add_portable_test(NativePairHistoryOwnerTests tests/NativePairHistoryOwnerTests.cpp)
+add_portable_test(QuadStereoCompositeTests tests/QuadStereoCompositeTests.cpp)
 # Verifies the previously failed v22 source contract without invoking its
 # nonportable UEVR backend; all three are CPU-only test executables.
 add_portable_test(DuoViewStage10Tests ../duoview/stage10_state_tests.cpp)
