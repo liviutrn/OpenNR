@@ -76,6 +76,23 @@ int main() {
     collect(incomplete,read);
     assert(!incomplete.submitted_composite(7,14) && incomplete.failed());
 
+    FourHistoryLease coalesced;
+    collect(coalesced,read);
+    assert(coalesced.submitted_joint_producer_batch(7,25,true));
+    assert(coalesced.submitted_composite(7,26));
+    assert(!coalesced.retire(7,25,read)); // producer fence alone insufficient
+    assert(coalesced.retire(7,26,read));
+
+    FourHistoryLease partial_batch;
+    collect(partial_batch,read);
+    assert(!partial_batch.submitted_joint_producer_batch(7,25,false) &&
+           partial_batch.failed());
+    FourHistoryLease mixed_batch;
+    collect(mixed_batch,read);
+    assert(mixed_batch.submitted_source(Eye::Left,Role::Fovea,7,10));
+    assert(!mixed_batch.submitted_joint_producer_batch(7,25,true) &&
+           mixed_batch.failed());
+
     FourHistoryLease bad_queue;
     collect(bad_queue,read);
     assert(bad_queue.submitted_source(Eye::Left,Role::Fovea,7,10));
