@@ -9,6 +9,7 @@ import sys
 from pathlib import Path
 
 DRAW = """void FFakeStereoRenderingHook::game_viewport_client_draw_hook(sdk::UGameViewportClient* viewport_client, sdk::FViewport* viewport, sdk::FCanvas* canvas, void* a4) {"""
+DESIRED = """uint32_t FFakeStereoRenderingHook::get_desired_number_of_views_hook(FFakeStereoRendering* stereo, bool is_stereo_enabled) {"""
 CONSTRUCTOR = """    if (result && duo_scene_observation) {
         const auto& observation=*duo_scene_observation;
         vr->duoview_state().scene(observation.key,observation.index,observation.state,observation.shading);
@@ -67,6 +68,18 @@ POST_VIEW = r"""
                 ::GetCurrentThreadId());
     }
 """
+DESIRED_OBSERVATION = r"""
+    if (quad_p1_probe_enabled() && stalker2_is_current_game() &&
+        g_framework != nullptr && g_framework->is_dx12()) {
+        static std::atomic<uint64_t> desired_serial{0};
+        const auto count = desired_serial.fetch_add(1, std::memory_order_relaxed) + 1;
+        if (count <= 256 || (count % 128) == 0)
+            SPDLOG_INFO("[QuadP1] desired seq={} stereo={} post_init={} engine_frame={} draw={} thread={}",
+                count, is_stereo_enabled,
+                g_hook->m_sceneview_data.inside_post_init_properties, g_frame_count,
+                g_quad_p1_active_draw, ::GetCurrentThreadId());
+    }
+"""
 def replace_once(haystack: str, old: str, new: str) -> str:
     count=haystack.count(old)
     if count != 1:
@@ -94,6 +107,7 @@ def verify(base: Path, frontend: Path, evidence: Path) -> None:
         raise RuntimeError("QuadView probe source mutated after exact installation")
     restored=replace_once(modified,SCOPE+DRAW+"\n    QuadP1DrawScope quad_p1_draw_scope{};",DRAW)
     restored=replace_once(restored,CONSTRUCTOR+POST_VIEW,CONSTRUCTOR)
+    restored=replace_once(restored,DESIRED+DESIRED_OBSERVATION,DESIRED)
     original=restored.replace("\n",newline).encode("utf-8")
     if digest(original)!=manifest["before_sha256"] or \
        digest(original)!=locks["backend"][relative]:
@@ -126,6 +140,7 @@ def main() -> int:
     before=digest(raw)
     source=replace_once(source,DRAW,SCOPE+DRAW+"\n    QuadP1DrawScope quad_p1_draw_scope{};")
     source=replace_once(source,CONSTRUCTOR,CONSTRUCTOR+POST_VIEW)
+    source=replace_once(source,DESIRED,DESIRED+DESIRED_OBSERVATION)
     new_bytes=source.replace("\n",newline).encode("utf-8")
     after=digest(new_bytes)
     path.write_bytes(new_bytes)
