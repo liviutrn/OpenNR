@@ -123,3 +123,42 @@ allocation API and map two per draw. Never append raw bytes to the protected
 \`ULocalPlayer::ViewStates\` TArray, call unvalidated virtual slots or assume
 that a transient four-view bootstrap is safe. Its exact STALKER2 ABI, feature
 level, constructor/destructor and owner replacement remain UNPROVEN.
+
+
+## Windows CI backend compile correction (later on 17 October)
+
+Pinned Joey foundation run 39031901742 passed Stage234 source identity, 3
+production contracts, 6 DuoView independent tests and all 41 original Joey
+compatibility tests, then MSVC C2039 failed in transformed
+\`src/mods/VR.cpp\` lines 17865 and 17906: two calls to
+\`runtime->error.empty()\`. Joey declares runtime \`error\` as
+\`std::optional<std::string>\`, not \`std::string\`. The historical source
+itself checks \`if (runtime->error)\`. Root cause was the
+\`apply_stage234.py\` startup gate code; correction **replaces both** with
+\`runtime && runtime->error.has_value()\`, so any engaged runtime error closes
+the startup gate. Patch commit 945ce8294fc0cb99a8ce31abe1615b5b676561aa;
+source verifier added explicit two-guard ABI check in commit
+dcc17fd35cd6c310de2bda30d8a28ca2bd3beaa7. Portable regression
+\`quadview/p1_probe/test_vr_optional.py\` and CI now check both sites.
+
+Rerun foundation Windows full C++/C#/WARP:
+https://github.com/liviutrn/OpenNR/actions/runs/39033345486
+Read-only instrumented Windows backend:
+https://github.com/liviutrn/OpenNR/actions/runs/39033348248
+
+These builds **were not yet certified successful when this note was made**.
+Inspect their final outcome and logs; do not confuse compilation in progress
+with a functional UEVR headset plugin.
+
+## Engine-owned four histories: GetDesiredNumberOfViews clarification
+The source-backed Joey \`get_desired_number_of_views_hook\` (original
+\`FFakeStereoRenderingHook.cpp\` ~30831-30911) **returns 2 when
+inside_post_init_properties is true**. The UE4.25/4.26 branch documented
+around lines ~9223-9226 allocates LocalPlayer ViewStates from that method.
+That behavior does not establish a callable 4-state allocator for STALKER2
+UE5.5; it is another reason NOT to fake a four-history LocalPlayer array.
+STALKER2 Synced intentionally avoids PostInitProperties replay to prevent
+resetting game delegates/objects (~31345 and ~31372).
+
+The passive probe in P1 is a diagnostic prerequisite, not an implementation
+of four real histories or a releasable new rendering mode.
