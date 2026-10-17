@@ -1,0 +1,59 @@
+From 106ee7debfd175d911c264739f82a53ed99885ca Mon Sep 17 00:00:00 2001
+From: Codex <codex@openai.com>
+Date: Sun, 18 Oct 2026 00:33:05 +0200
+Subject: [PATCH] Select DuoView rects from the active viewport family
+
+---
+ src/mods/vr/FFakeStereoRenderingHook.cpp | 10 ++++++++--
+ src/mods/vr/FFakeStereoRenderingHook.hpp |  2 +-
+ 2 files changed, 9 insertions(+), 3 deletions(-)
+
+diff --git a/src/mods/vr/FFakeStereoRenderingHook.cpp b/src/mods/vr/FFakeStereoRenderingHook.cpp
+index a5f73ebb..9a320590 100644
+--- a/src/mods/vr/FFakeStereoRenderingHook.cpp
++++ b/src/mods/vr/FFakeStereoRenderingHook.cpp
+@@ -27348,12 +27348,17 @@ void FFakeStereoRenderingHook::publish_native_stereo_frame_packet(
+ }
+ 
+ std::optional<std::array<FIntRect, 2>> FFakeStereoRenderingHook::get_native_duoview_view_rects(
+-    uint32_t engine_frame) const
++    uint32_t engine_frame)
+ {
+     std::scoped_lock lock{m_sceneview_data.mtx};
+     if (m_sceneview_data.native_stereo_metadata_frame != engine_frame) {
+         return std::nullopt;
+     }
++    auto* const render_target_manager = get_render_target_manager();
++    auto* const expected_viewport = render_target_manager != nullptr
++        ? render_target_manager->get_view_family_render_target()
++        : nullptr;
++    if (expected_viewport == nullptr) { return std::nullopt; }
+ 
+     const auto rect_is_sane = [](const FIntRect& rect) {
+         const auto width = static_cast<int64_t>(rect.bounds[2]) - rect.bounds[0];
+@@ -27367,7 +27372,8 @@ std::optional<std::array<FIntRect, 2>> FFakeStereoRenderingHook::get_native_duov
+     for (const auto& [primary_view, primary] : views) {
+         if (primary_view == nullptr || primary.frame != engine_frame ||
+             primary.original_stereo_pass != EStereoscopicPass::eSSP_PRIMARY ||
+-            primary.family == nullptr || !primary.projection_valid || !rect_is_sane(primary.view_rect)) {
++            primary.family == nullptr || primary.family->get_render_target() != expected_viewport ||
++            primary.scene == nullptr || !primary.projection_valid || !rect_is_sane(primary.view_rect)) {
+             continue;
+         }
+ 
+diff --git a/src/mods/vr/FFakeStereoRenderingHook.hpp b/src/mods/vr/FFakeStereoRenderingHook.hpp
+index b947e298..28ca6d2b 100644
+--- a/src/mods/vr/FFakeStereoRenderingHook.hpp
++++ b/src/mods/vr/FFakeStereoRenderingHook.hpp
+@@ -885,7 +885,7 @@ public:
+     std::shared_ptr<const NativeStereoFramePacket> get_native_stereo_frame_packet_for_submit(
+         int32_t render_frame, uevr::native_frame::Backend backend = uevr::native_frame::Backend::unknown,
+         uevr::native_frame::Ticket* diagnostic_ticket = nullptr) const;
+-    std::optional<std::array<FIntRect, 2>> get_native_duoview_view_rects(uint32_t engine_frame) const;
++    std::optional<std::array<FIntRect, 2>> get_native_duoview_view_rects(uint32_t engine_frame);
+     void note_native_stereo_frame_packet_consumed(uint64_t serial);
+     void reject_native_stereo_frame_packet(uint64_t serial, const char* detail);
+     void sync_stalker2_native_experiment(bool enabled);
+-- 
+2.51.1
+
