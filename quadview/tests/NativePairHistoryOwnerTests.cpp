@@ -92,6 +92,27 @@ int main() {
     assert(drift.state() == NativePairHistoryOwner::State::Quarantined);
     assert(stale.destroyed == 0);
 
+    EngineFixture fence_reuse;
+    NativePairHistoryOwner reused_fence;
+    assert(reused_fence.allocate(400,9,1,55,fence_reuse.callbacks()));
+    assert(reused_fence.verify_frame(Key{1,1,10,1}));
+    assert(reused_fence.mark_composite_submitted(7,100));
+    assert(reused_fence.retire_frame(7,100));
+    assert(reused_fence.verify_frame(Key{1,2,11,2}));
+    assert(!reused_fence.mark_composite_submitted(7,100));
+    assert(reused_fence.state() == NativePairHistoryOwner::State::Quarantined);
+    assert(fence_reuse.destroyed == 0);
+
+    EngineFixture queue_switch;
+    NativePairHistoryOwner switched_queue;
+    assert(switched_queue.allocate(400,9,1,55,queue_switch.callbacks()));
+    assert(switched_queue.verify_frame(Key{1,1,10,1}));
+    assert(switched_queue.mark_composite_submitted(7,100));
+    assert(switched_queue.retire_frame(7,100));
+    assert(switched_queue.verify_frame(Key{1,2,11,2}));
+    assert(!switched_queue.mark_composite_submitted(8,101));
+    assert(switched_queue.state() == NativePairHistoryOwner::State::Quarantined);
+
     EngineFixture wrong_clock;
     NativePairHistoryOwner monotonic;
     assert(monotonic.allocate(400,9,1,55,wrong_clock.callbacks()));
