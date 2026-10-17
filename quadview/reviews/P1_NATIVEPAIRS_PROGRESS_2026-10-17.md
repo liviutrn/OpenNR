@@ -162,3 +162,38 @@ resetting game delegates/objects (~31345 and ~31372).
 
 The passive probe in P1 is a diagnostic prerequisite, not an implementation
 of four real histories or a releasable new rendering mode.
+
+
+## Continuation checkpoint: verified pinned Windows probe and distributable diagnostic workflow
+
+Status checked 17 October 2026 after earlier P1 handoff.
+- Windows pinned foundation run 39033345486: **SUCCESS**.
+- Windows read-only probe run 39033348248: **SUCCESS**. Evidence artifact
+  `QuadView-P1-READONLY-PROBE-WIN64-Evidence-2`, ID 12101337369.
+- Checked Windows probe job 117398447377: compiled
+  `backend/build/bin/uevr/UEVRBackend.dll` and passed all 41 original
+  compatibility tests, frontend rendering-ID tests and reversible source hashes.
+- Earlier run 39031901742 failed MSVC C2039 on invalid optional.empty()
+  in Stage234 VR.cpp generated code; newer commit 945ce829 corrected both,
+  verifier dcc17fd checks their ABI, and both newer runs passed.
+- Work resumed with commit `9272b0a4c3a24ed6a4326802b4d9e0d80e3cce31`
+  adding **diagnostic-only** binary packaging to
+  `.github/workflows/quadview-p1-probe-ci.yml`. The workflow is push-triggered
+  by edits to that workflow on this branch. Check the NEW run's actual final
+  result and downloadable artifact; do not infer it passed from the prior jobs.
+  Package contains compiled backend/auxiliary DLLs, matching frontend, probe
+  and SHA-256 digest if its packaging checks succeed.
+
+HARD STOP: No QuadView ID7 implementation exists yet. This downloadable
+diagnostic (if CI completes) is **not** a working four-source QuadView build.
+The high-risk missing layer remains safe UE5.5/STALKER2 creation/ownership of
+four non-aliased temporal states, then two same-eye native-style view families,
+phase scheduler, four producer render targets, compositor and XR submission.
+
+Most actionable next evidence: with `UEVR_QUAD_P1_PROBE=1`, capture UEVR
+`[QuadP1]` logs from STALKER2 DX12 in separately selected NativeStereo+Fix
+and SyncedSequential sessions. Run `quadview/p1_probe/audit_log.py` against
+the logs and verify 2+ logical-frame stability before claiming four owners.
+Do not copy engine-owned states or write beyond LocalPlayer TArray capacity.
+Do not overwrite known-good Joey Build3. Mono ID5 is the allowed fallback,
+not NativeStereo ID0.
