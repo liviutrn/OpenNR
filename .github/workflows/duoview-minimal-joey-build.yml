@@ -1,0 +1,175 @@
+name: Minimal fixed-center Joey DuoView build
+run-name: Minimal Joey DuoView candidate (${{ github.run_number }})
+on:
+  push:
+    branches: [codex/minimal-joey-duoview]
+    paths:
+      - '.github/workflows/duoview-minimal-joey-build.yml'
+      - 'duoview/clean_restart/feature-patches/**'
+      - 'duoview/clean_restart/baseline.lock.json'
+      - 'duoview/clean_restart/verify_exact_baseline.py'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: minimal-joey-duoview-${{ github.ref }}
+  cancel-in-progress: false
+env:
+  PYTHONDONTWRITEBYTECODE: '1'
+jobs:
+  build-and-package:
+    runs-on: windows-2022
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: workspace
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: joeyhodge/UEVR
+          ref: 5ac7edc207866569334175e4ed8a7517971547f6
+          fetch-depth: 0
+          path: backend
+          persist-credentials: false
+      - name: Require access to the original pinned SDK
+        shell: pwsh
+        env:
+          SDK_SOURCE_TOKEN: ${{ secrets.UEVR_SOURCE_TOKEN || secrets.PAT_TOKEN }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:SDK_SOURCE_TOKEN)) {
+            throw 'Add the repository Actions secret UEVR_SOURCE_TOKEN using an Epic-authorized account; this workflow requires the exact original SDK.'
+          }
+          'Configured SDK source credential detected.'
+      - uses: actions/checkout@v4
+        with:
+          repository: joeyhodge/UESDK
+          ref: 3cffbc82429b6165ceec2714f0f0d9ae48f55596
+          token: ${{ secrets.UEVR_SOURCE_TOKEN || secrets.PAT_TOKEN }}
+          path: backend/dependencies/submodules/UESDK
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: joeyhodge/uevr-frontend
+          ref: 60be4b0f9a646109fd9fdf448bacd41477234091
+          path: frontend
+          persist-credentials: false
+      - name: Verify exact original source pins before applying the feature
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory evidence -Force | Out-Null
+          git -C backend submodule update --init --depth 1 -- dependencies/submodules/glm dependencies/submodules/imgui dependencies/submodules/spdlog
+          if ($LASTEXITCODE -ne 0) { throw 'Pinned public submodule checkout failed' }
+          python workspace/duoview/clean_restart/verify_exact_baseline.py workspace/duoview/clean_restart/baseline.lock.json backend frontend evidence
+          if ($LASTEXITCODE -ne 0) { throw 'Exact source identity or completeness verification failed' }
+      - name: Apply the isolated DuoView patch series
+        shell: pwsh
+        run: |
+          $patches = Get-ChildItem workspace/duoview/clean_restart/feature-patches -Filter '*.patch' | Sort-Object Name
+          if ($patches.Count -lt 1) { throw 'No DuoView feature patches were checked in' }
+          foreach ($patch in $patches) {
+            Write-Host "Applying $($patch.Name)"
+            git -C backend apply --check $patch.FullName
+            if ($LASTEXITCODE -ne 0) { throw "Patch check failed: $($patch.Name)" }
+            git -C backend apply $patch.FullName
+            if ($LASTEXITCODE -ne 0) { throw "Patch apply failed: $($patch.Name)" }
+          }
+          git -C backend diff --check
+          if ($LASTEXITCODE -ne 0) { throw 'Feature patch whitespace check failed' }
+          git -C backend rev-parse HEAD | Set-Content evidence/backend-baseline-commit.txt
+          Get-ChildItem workspace/duoview/clean_restart/feature-patches -Filter '*.patch' |
+            Sort-Object Name | Get-FileHash -Algorithm SHA256 | ConvertTo-Json |
+            Set-Content evidence/feature-patches-sha256.json
+          git -C backend diff --binary | Set-Content evidence/applied-feature-source.patch
+      - name: Configure the optimized backend with debug symbols and tests
+        shell: pwsh
+        run: |
+          cmake -S backend -B backend/build -G 'Visual Studio 17 2022' -A x64 -DCMAKE_BUILD_TYPE=RelWithDebInfo -DUEVR_BUILD_COMPATIBILITY_TESTS=ON *> evidence/configure.log
+          $code=$LASTEXITCODE; Get-Content evidence/configure.log | Select-Object -Last 80
+          if ($code -ne 0) { throw "DuoView configuration failed ($code)" }
+      - name: Build production and compatibility targets
+        shell: pwsh
+        run: |
+          cmake --build backend/build --config RelWithDebInfo --parallel 2 --target compatibility-policy-tests steam-frame-input-tests stock-frame-migration-tests gamepad-recovery-tests kananlib-decode-window-tests diagnostic-safety-tests prospi-camera-trace-tests prospi-camera-framing-tests prospi-celebration-framing-tests prospi-roof-visibility-tests hifi-hook-memory-tests nascar-hook-compatibility-tests input-hook-installation-tests mono-d3d11-tests mono-d3d12-tests ui-alpha-tests ui-alpha-lifecycle-tests ui-composition-tests lua-fname-binding-tests lua-context-dispatch-tests lua-controller-input-tests stalker2-native-policy-tests stalker2-native-d3d12-tests uevr vr-plugin-nullifier LuaVR *> evidence/build.log
+          $code=$LASTEXITCODE; Get-Content evidence/build.log | Select-Object -Last 120
+          if ($code -ne 0) { throw "DuoView production/test targets failed to compile ($code)" }
+      - name: Run all compatibility tests, including the WARP compositor test
+        shell: pwsh
+        run: |
+          ctest --test-dir backend/build -C RelWithDebInfo --output-on-failure --no-tests=error *> evidence/tests.log
+          $code=$LASTEXITCODE; Get-Content evidence/tests.log
+          if ($code -ne 0) { throw "Windows compatibility tests failed ($code)" }
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '6.0.x'
+      - name: Build the matching pinned frontend
+        shell: pwsh
+        run: |
+          dotnet run --project frontend/tests/RenderingModes --configuration Release *> evidence/frontend-tests.log
+          $code=$LASTEXITCODE; Get-Content evidence/frontend-tests.log
+          if ($code -ne 0) { throw 'Pinned frontend rendering-ID tests failed' }
+          dotnet publish frontend/UEVR/UEVR.csproj --output package --configuration Release *> evidence/frontend-build.log
+          $code=$LASTEXITCODE; Get-Content evidence/frontend-build.log | Select-Object -Last 80
+          if ($code -ne 0) { throw 'Pinned frontend publish failed' }
+      - name: Package installable candidate, symbols, provenance, and hashes
+        shell: pwsh
+        run: |
+          Copy-Item backend/build/bin/uevr/*.dll package/
+          Copy-Item backend/build/bin/vr-plugin-nullifier/UEVRPluginNullifier.dll package/
+          Copy-Item backend/build/bin/LuaVR/LuaVR.dll package/
+          $symbolRoot = Join-Path (Resolve-Path package).Path 'symbols'
+          New-Item -ItemType Directory -Path $symbolRoot -Force | Out-Null
+          $binRoot = (Resolve-Path backend/build/bin).Path
+          $symbols = Get-ChildItem backend/build/bin -Recurse -File -Filter '*.pdb'
+          if (-not ($symbols | Where-Object { $_.FullName.StartsWith((Join-Path $binRoot 'uevr'), [StringComparison]::OrdinalIgnoreCase) })) {
+            throw 'The optimized UEVR backend PDB was not produced'
+          }
+          foreach ($symbol in $symbols) {
+            $relative = $symbol.FullName.Substring($binRoot.Length).TrimStart('\')
+            $destination = Join-Path $symbolRoot $relative
+            New-Item -ItemType Directory -Path (Split-Path $destination) -Force | Out-Null
+            Copy-Item $symbol.FullName $destination
+          }
+          New-Item -ItemType Directory -Path package/source/feature-patches -Force | Out-Null
+          Copy-Item workspace/duoview/clean_restart/feature-patches/*.patch package/source/feature-patches/
+          Copy-Item workspace/duoview/clean_restart/baseline.lock.json package/source/
+          Copy-Item evidence/applied-feature-source.patch package/source/
+          Copy-Item evidence/backend-baseline-commit.txt package/source/
+          $runUrl = '${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}'
+          $branchUrl = '${{ github.server_url }}/${{ github.repository }}/tree/codex/minimal-joey-duoview/duoview/clean_restart/feature-patches'
+          @"
+          Fixed-center mono DuoView build for the exact Joey 101226HELLRAISERp1 baseline.
+          Backend baseline: 5ac7edc207866569334175e4ed8a7517971547f6
+          Original restricted SDK: 3cffbc82429b6165ceec2714f0f0d9ae48f55596
+          Frontend baseline: 60be4b0f9a646109fd9fdf448bacd41477234091
+          Feature patch source: $branchUrl
+          Windows build and test workflow: $runUrl
+
+          Enable the existing Native Stereo Fix in ID 0. The left Native Fix source is the cropped high-resolution fovea; the right source is the lower-resolution full-field periphery. One composite is submitted to both headset eyes. Six live controls are under Native Stereo Fix > Fixed-center DuoView (ID 0).
+
+          This ZIP includes optimized backend PDB symbols, the exact source patch series, source pins, and SHA-256 manifests. It is machine-built on Windows; headset verification is still pending.
+          Extract to a separate folder before use. Keep your existing installation and configuration available for rollback.
+          "@ | Set-Content package/READ_FIRST.txt
+          Get-ChildItem package -Recurse -File | ForEach-Object {
+            $relative = $_.FullName.Substring((Resolve-Path package).Path.Length).TrimStart('\')
+            [pscustomobject]@{ path = $relative; sha256 = (Get-FileHash $_.FullName -Algorithm SHA256).Hash }
+          } | ConvertTo-Json -Depth 3 | Set-Content package/SHA256.json
+          $zip = "Joey-Minimal-DuoView-${{ github.run_number }}.zip"
+          Compress-Archive -Path package/* -DestinationPath $zip -Force
+          (Get-FileHash $zip -Algorithm SHA256).Hash | Set-Content "$zip.sha256"
+      - uses: actions/upload-artifact@v4
+        if: success()
+        with:
+          name: Joey-Minimal-DuoView-${{ github.run_number }}
+          path: |
+            Joey-Minimal-DuoView-*.zip
+            Joey-Minimal-DuoView-*.zip.sha256
+          if-no-files-found: error
+          retention-days: 90
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Joey-Minimal-DuoView-build-evidence-${{ github.run_number }}
+          path: evidence/
+          if-no-files-found: error
+          retention-days: 90
