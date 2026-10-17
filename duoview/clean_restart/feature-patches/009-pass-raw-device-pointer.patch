@@ -1,0 +1,30 @@
+From 2b100574d99f5afe871654ed75706f843b791da3 Mon Sep 17 00:00:00 2001
+From: Codex <codex@openai.com>
+Date: Sun, 18 Oct 2026 01:10:09 +0200
+Subject: [PATCH] Pass native device pointer to OpenVR compositor
+
+---
+ src/mods/vr/D3D12Component.cpp | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/src/mods/vr/D3D12Component.cpp b/src/mods/vr/D3D12Component.cpp
+index ffcebca5..4809ed05 100644
+--- a/src/mods/vr/D3D12Component.cpp
++++ b/src/mods/vr/D3D12Component.cpp
+@@ -5520,11 +5520,11 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
+                     left_context.commands.ready() && right_context.commands.ready())
+                 {
+                     left_recorded = m_duoview_compositor.record_eye(
+-                        device.Get(), left_context.commands.cmd_list.Get(), duoview_fovea_source.Get(), duoview_periphery_source.Get(),
++                        device, left_context.commands.cmd_list.Get(), duoview_fovea_source.Get(), duoview_periphery_source.Get(),
+                         duoview_fovea_rect, duoview_periphery_rect, duoview_geometry,
+                         duoview_source_state, left_context.texture.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+                     right_recorded = m_duoview_compositor.record_eye(
+-                        device.Get(), right_context.commands.cmd_list.Get(), duoview_fovea_source.Get(), duoview_periphery_source.Get(),
++                        device, right_context.commands.cmd_list.Get(), duoview_fovea_source.Get(), duoview_periphery_source.Get(),
+                         duoview_fovea_rect, duoview_periphery_rect, duoview_geometry,
+                         duoview_source_state, right_context.texture.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+                 }
+-- 
+2.51.1
+
