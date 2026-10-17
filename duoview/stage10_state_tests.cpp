@@ -30,6 +30,16 @@ int main() {
     auto b=state.begin(second,3000,3000,matrix,read);
     assert(b && b->config.settings.fovea_view==1 && gaze_reads==2);
     assert(state.snapshot(first)->config.layout.crop_width==.5f);
+    // Hardened production gate requires distinct UE ViewStates and a
+    // validated NativeFix-style secondary constructor transaction.
+    // Failure cases first: no histories, aliased history, untreated secondary.
+    assert(!state.consume(first));
+    assert(state.scene(first,0,100));
+    assert(state.scene(first,1,100,true));
+    assert(!state.consume(first));
+    assert(state.scene(first,1,200,false));
+    assert(!state.consume(first));
+    assert(state.scene(first,1,200,true));
     assert(state.consume(first) && !state.consume(first));
     assert(!state.begin({1,99},3000,3000,matrix,read));
     assert(state.snapshot(second));
