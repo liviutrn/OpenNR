@@ -15,6 +15,7 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
+  statuses: write
 jobs:
   quadpair-source-contract:
     strategy:
@@ -36,6 +37,20 @@ jobs:
         run: python quadview/p1_probe/test_audit_log.py
       - name: Guard startup optional type correctness in production source patch
         run: python quadview/p1_probe/test_vr_optional.py
+      - name: Report exact portable test status for GitHub review
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.repos.createCommitStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              sha: context.sha,
+              state: '${{ job.status }}' === 'success' ? 'success' : 'failure',
+              context: 'quadview/portable-${{ matrix.os }}',
+              description: 'QuadView portable C++ and Python tests: ${{ job.status }}',
+              target_url: 'https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}'
+            });
       - name: Attach contract test binary, not a VR plugin
         if: matrix.os == 'windows-2022'
         uses: actions/upload-artifact@v4
