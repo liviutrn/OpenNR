@@ -86,11 +86,15 @@ public:
     // Terminal consumer/composite fence, NOT a producer-only fence.
     bool mark_composite_submitted(uint64_t queue, uint64_t consumer_fence) {
         if (!correct_thread() || state_ != State::Ready || !last_frame_ ||
-            !queue || !consumer_fence || !all_live()) {
+            !queue || !consumer_fence ||
+            (last_queue_ && queue != last_queue_) ||
+            (last_consumer_fence_ && consumer_fence <= last_consumer_fence_) ||
+            !all_live()) {
             if (state_ == State::Ready) state_ = State::Quarantined;
             return false;
         }
         queue_ = queue; consumer_fence_ = consumer_fence;
+        last_queue_ = queue; last_consumer_fence_ = consumer_fence;
         state_ = State::GpuPending; return true;
     }
     // Ordinary frame retirement keeps all four persistent Unreal histories
@@ -170,6 +174,7 @@ private:
         }
         prior_generation_ = generation_; scene_ = 0; lifecycle_ = 0;
         generation_ = 0; queue_ = 0; consumer_fence_ = 0;
+        last_queue_ = 0; last_consumer_fence_ = 0;
         last_frame_.reset(); teardown_requested_ = false; state_ = State::Empty;
         api_ = {}; return true;
     }
@@ -178,7 +183,7 @@ private:
     std::optional<Key> last_frame_{};
     std::thread::id thread_{};
     uint64_t scene_{}, lifecycle_{}, generation_{}, prior_generation_{};
-    uint64_t queue_{}, consumer_fence_{};
+    uint64_t queue_{}, consumer_fence_{}, last_queue_{}, last_consumer_fence_{};
     bool teardown_requested_{};
     State state_{State::Empty};
 };
