@@ -1,0 +1,44 @@
+From 7dc66f308a4e0c68cd283f30d4928e8b90a5320f Mon Sep 17 00:00:00 2001
+From: Codex <codex@openai.com>
+Date: Sun, 18 Oct 2026 01:11:53 +0200
+Subject: [PATCH] Set valid DuoView graphics pipeline defaults
+
+---
+ src/mods/vr/DuoViewCompositor.cpp | 15 ++++++++++++++-
+ 1 file changed, 14 insertions(+), 1 deletion(-)
+
+diff --git a/src/mods/vr/DuoViewCompositor.cpp b/src/mods/vr/DuoViewCompositor.cpp
+index ccd68a35..648d0c32 100644
+--- a/src/mods/vr/DuoViewCompositor.cpp
++++ b/src/mods/vr/DuoViewCompositor.cpp
+@@ -154,13 +154,26 @@ bool D3D12Compositor::ensure_pipeline(ID3D12Device* device) {
+         desc.pRootSignature = root.Get();
+         desc.VS = {vertex_shader->GetBufferPointer(), vertex_shader->GetBufferSize()};
+         desc.PS = {pixel_shader->GetBufferPointer(), pixel_shader->GetBufferSize()};
+-        desc.BlendState.RenderTarget[0].RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
++        auto& blend = desc.BlendState.RenderTarget[0];
++        blend.BlendEnable = FALSE;
++        blend.LogicOpEnable = FALSE;
++        blend.SrcBlend = blend.SrcBlendAlpha = D3D12_BLEND_ONE;
++        blend.DestBlend = blend.DestBlendAlpha = D3D12_BLEND_ZERO;
++        blend.BlendOp = blend.BlendOpAlpha = D3D12_BLEND_OP_ADD;
++        blend.LogicOp = D3D12_LOGIC_OP_NOOP;
++        blend.RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
+         desc.SampleMask = UINT_MAX;
+         desc.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID;
+         desc.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
+         desc.RasterizerState.DepthClipEnable = TRUE;
+         desc.DepthStencilState.DepthEnable = FALSE;
++        desc.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ZERO;
++        desc.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_ALWAYS;
+         desc.DepthStencilState.StencilEnable = FALSE;
++        desc.DepthStencilState.StencilReadMask = 0xff;
++        desc.DepthStencilState.StencilWriteMask = 0xff;
++        desc.DepthStencilState.FrontFace = desc.DepthStencilState.BackFace = {
++            D3D12_STENCIL_OP_KEEP, D3D12_STENCIL_OP_KEEP, D3D12_STENCIL_OP_KEEP, D3D12_COMPARISON_FUNC_ALWAYS};
+         desc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+         desc.NumRenderTargets = 1;
+         desc.RTVFormats[0] = format;
+-- 
+2.51.1
+
