@@ -27,6 +27,8 @@ jobs:
         run: ctest --test-dir quadview/out --build-config Release --output-on-failure
       - name: Verify exact-source probe on LF and CRLF fixtures
         run: python quadview/p1_probe/test_read_only_probe.py
+      - name: Validate offline four-history log parser
+        run: python quadview/p1_probe/test_audit_log.py
       - name: Attach contract test binary, not a VR plugin
         if: matrix.os == 'windows-2022'
         uses: actions/upload-artifact@v4
