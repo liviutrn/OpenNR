@@ -91,6 +91,23 @@ public:
         return true;
     }
 
+    // Efficient alternative for a single ordered D3D12 producer submission:
+    // the caller must prove the *same queue* recorded all four source captures
+    // BEFORE signaling one final fence for the whole producer batch. Do not
+    // call after partial coverage, and never label CPU completion as a GPU fence.
+    // This attestation is an integration obligation, not measured by the ledger.
+    bool submitted_joint_producer_batch(uint64_t queue, uint64_t terminal_fence,
+                                        bool all_four_captures_recorded) {
+        if (state_ != State::Sealed || queue == 0 || terminal_fence == 0 ||
+            !all_four_captures_recorded || fence_queue_ ||
+            std::any_of(recorded_.begin(), recorded_.end(), [](bool v){return v;}))
+            return reject();
+        fence_queue_=queue;
+        producer_fences_.fill(terminal_fence);
+        recorded_.fill(true);
+        return true;
+    }
+
     bool submitted_composite(uint64_t queue, uint64_t fence) {
         if (state_ != State::Sealed || queue == 0 || queue != fence_queue_ ||
             fence == 0 || !std::all_of(recorded_.begin(), recorded_.end(), [](bool n){return n;}) ||
