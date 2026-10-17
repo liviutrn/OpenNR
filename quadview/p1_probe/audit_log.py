@@ -10,8 +10,8 @@ from collections import Counter
 
 DRAW = re.compile(r"\[QuadP1\] draw=(begin|end) serial=(\d+) engine_frame=(\d+) thread=(\d+)(?: nested=(true|false))?")
 DESIRED = re.compile(
-    r"\\[QuadP1\\] desired seq=(\\d+) stereo=(true|false|0|1) post_init=(true|false|0|1) "
-    r"engine_frame=(\\d+) draw=(\\d+) thread=(\\d+)"
+    r"\[QuadP1\] desired seq=(\d+) stereo=(true|false|0|1) post_init=(true|false|0|1) "
+    r"engine_frame=(\d+) draw=(\d+) thread=(\d+)"
 )
 VIEW = re.compile(
     r"\[QuadP1\] constructor seq=(\d+) draw=(\d+) engine_frame=(\d+) "
