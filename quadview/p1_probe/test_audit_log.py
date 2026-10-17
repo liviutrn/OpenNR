@@ -32,11 +32,11 @@ t=audit(bad_tick)
 assert t["same_engine_frame_four_distinct_state_candidates"]==[]
 assert any("changed within Draw" in e for e in t["warnings"])
 
-desired="\\n".join([
+desired="\n".join([
     "[QuadP1] desired seq=1 stereo=true post_init=true engine_frame=10 draw=0 thread=7",
     "[QuadP1] desired seq=2 stereo=false post_init=false engine_frame=10 draw=1 thread=7"
 ])
-q=audit(good+"\\n"+desired)
+q=audit(good+"\n"+desired)
 assert len(q["desired_view_count_call_observations"])==2
 assert q["post_init_desired_call_count"]==1
 assert q["desired_view_count_call_observations"][0]["active_draw"]==0
