@@ -1,0 +1,172 @@
+name: QuadView P1 read-only STALKER2 provenance probe Windows build
+run-name: QuadView P1 SOURCE PROBE pinned Joey SDK/Windows (${{ github.run_number }})
+# Isolated compile audit; produces EVIDENCE ONLY, no headset zip.
+# Rerun with corrected stage-10 source fixture and executable Release assertions.
+# This job validates the unchanged, pinned Joey+ID6 foundation, not QuadView ID7.
+on:
+  push:
+    branches:
+      - experiments/joey-quadview-nativepairs-p0-20261017
+    paths:
+      - '.github/workflows/quadview-p1-probe-ci.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: quadview-probe-${{ github.ref }}
+  cancel-in-progress: true
+env:
+  PYTHONDONTWRITEBYTECODE: '1'
+jobs:
+  quadview-read-only-source-probe:
+    runs-on: windows-2022
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: workspace
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: joeyhodge/UEVR
+          ref: 5ac7edc207866569334175e4ed8a7517971547f6
+          fetch-depth: 0
+          path: backend
+          persist-credentials: false
+      - name: Require the SDK source credential
+        shell: pwsh
+        env:
+          SDK_SOURCE_TOKEN: ${{ secrets.UEVR_SOURCE_TOKEN || secrets.PAT_TOKEN }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:SDK_SOURCE_TOKEN)) {
+            throw 'Add the repository Actions secret UEVR_SOURCE_TOKEN using a token from your Epic-authorized GitHub account; the default repository token cannot access this SDK.'
+          }
+          'Configured SDK source credential detected; access will be checked against the exact original repository.'
+      - name: Check out the original restricted SDK at the exact gitlink
+        uses: actions/checkout@v4
+        with:
+          repository: joeyhodge/UESDK
+          ref: 3cffbc82429b6165ceec2714f0f0d9ae48f55596
+          token: ${{ secrets.UEVR_SOURCE_TOKEN || secrets.PAT_TOKEN }}
+          path: backend/dependencies/submodules/UESDK
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: joeyhodge/uevr-frontend
+          ref: 60be4b0f9a646109fd9fdf448bacd41477234091
+          path: frontend
+          persist-credentials: false
+      - name: Verify the unchanged exact source and public dependencies
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory evidence -Force | Out-Null
+          git -C backend submodule update --init --depth 1 -- dependencies/submodules/glm dependencies/submodules/imgui dependencies/submodules/spdlog
+          if ($LASTEXITCODE -ne 0) { throw 'Pinned public submodule checkout failed' }
+          python workspace/duoview/clean_restart/verify_exact_baseline.py workspace/duoview/clean_restart/baseline.lock.json backend frontend evidence
+          if ($LASTEXITCODE -ne 0) { throw 'Exact source identity or completeness verification failed' }
+      - name: Apply exact-anchor Stage 1 fallback patch
+        shell: pwsh
+        run: |
+          python workspace/duoview/joey_stage1/apply_stage1.py backend frontend evidence
+          if ($LASTEXITCODE -ne 0) { throw 'Failed to apply guarded DuoView Stage 1 edits' }
+          python workspace/duoview/joey_stage1/verify_stage1.py backend frontend evidence
+          if ($LASTEXITCODE -ne 0) { throw 'Unexpected source changes in DuoView Stage 1' }
+      - name: Apply isolated two-view source changes
+        shell: pwsh
+        run: |
+          python workspace/duoview/joey_stage1/apply_stage234.py backend frontend workspace/duoview
+          if ($LASTEXITCODE -ne 0) { throw 'Stage 2-4 source anchors did not match original Joey' }
+          python workspace/duoview/joey_stage1/verify_stage234.py backend frontend evidence
+          if ($LASTEXITCODE -ne 0) { throw 'Stage 2-4 violated original-source or SDK boundaries' }
+      - name: Install and validate exact read-only QuadView source probe
+        shell: pwsh
+        run: |
+          python workspace/quadview/p1_probe/apply_read_only_probe.py backend evidence
+          if ($LASTEXITCODE -ne 0) { throw 'Read-only constructor/Draw source instrumentation failed' }
+          python workspace/quadview/p1_probe/apply_read_only_probe.py backend evidence frontend --verify
+          if ($LASTEXITCODE -ne 0) { throw 'Probe changed unrelated pinned source or failed reversible diff validation' }
+      - name: Verify pinned production geometry and pair-state contracts
+        shell: pwsh
+        run: |
+          cmake -S workspace/duoview/joey_stage1 -B duo_pinned_tests -G 'Visual Studio 17 2022' -A x64 "-DJOYEY_BACKEND_DIR=$((Resolve-Path backend).Path)" *> evidence/pinned-config.log
+          $code=$LASTEXITCODE; Get-Content evidence/pinned-config.log | Select-Object -Last 40
+          if ($code -ne 0) { throw "Pinned production test configuration failed ($code)" }
+          cmake --build duo_pinned_tests --config Release --parallel 2 *> evidence/pinned-build.log
+          $code=$LASTEXITCODE; Get-Content evidence/pinned-build.log | Select-Object -Last 80
+          if ($code -ne 0) { throw "Pinned production tests failed compilation ($code)" }
+          ctest --test-dir duo_pinned_tests -C Release --output-on-failure --no-tests=error *> evidence/pinned-results.log
+          $code=$LASTEXITCODE; Get-Content evidence/pinned-results.log
+          if ($code -ne 0) { throw "Pinned production contract failed ($code)" }
+      - name: Configure independent DuoView geometric, state, and GPU WARP tests
+        shell: pwsh
+        run: |
+          cmake -S workspace/duoview -B duo_tests -G 'Visual Studio 17 2022' -A x64 *> evidence/duo-configure.log
+          $code=$LASTEXITCODE; Get-Content evidence/duo-configure.log | Select-Object -Last 50
+          if ($code -ne 0) { throw "DuoView independent tests configuration failed ($code)" }
+          cmake --build duo_tests --config Release --parallel 2 *> evidence/duo-test-build.log
+          $code=$LASTEXITCODE; Get-Content evidence/duo-test-build.log | Select-Object -Last 100
+          if ($code -ne 0) { throw "DuoView independent tests failed compilation ($code)" }
+          ctest --test-dir duo_tests -C Release --output-on-failure --no-tests=error *> evidence/duo-test-results.log
+          $code=$LASTEXITCODE; Get-Content evidence/duo-test-results.log
+          if ($code -ne 0) { throw "DuoView independent CPU/GPU tests failed ($code)" }
+      - name: Configure original compatibility tests and production backend
+        shell: pwsh
+        run: |
+          cmake -S backend -B backend/build -G 'Visual Studio 17 2022' -A x64 -DCMAKE_BUILD_TYPE=Release -DUEVR_BUILD_COMPATIBILITY_TESTS=ON *> evidence/configure.log
+          $code=$LASTEXITCODE; Get-Content evidence/configure.log | Select-Object -Last 60
+          if ($code -ne 0) { throw "Original Joey configuration failed ($code)" }
+      - name: Build every test target used by the official matching build
+        shell: pwsh
+        run: |
+          cmake --build backend/build --config Release --parallel 2 --target compatibility-policy-tests steam-frame-input-tests stock-frame-migration-tests gamepad-recovery-tests kananlib-decode-window-tests diagnostic-safety-tests prospi-camera-trace-tests prospi-camera-framing-tests prospi-celebration-framing-tests prospi-roof-visibility-tests hifi-hook-memory-tests nascar-hook-compatibility-tests input-hook-installation-tests mono-d3d11-tests mono-d3d12-tests ui-alpha-tests ui-alpha-lifecycle-tests ui-composition-tests lua-fname-binding-tests lua-context-dispatch-tests lua-controller-input-tests stalker2-native-policy-tests stalker2-native-d3d12-tests *> evidence/test-build.log
+          $code=$LASTEXITCODE; Get-Content evidence/test-build.log | Select-Object -Last 100
+          if ($code -ne 0) { throw "Original compatibility tests failed to compile ($code)" }
+      - name: Run the complete original compatibility suite
+        shell: pwsh
+        run: |
+          ctest --test-dir backend/build -C Release --output-on-failure --no-tests=error *> evidence/compatibility-tests.log
+          $code=$LASTEXITCODE; Get-Content evidence/compatibility-tests.log
+          if ($code -ne 0) { throw "Original compatibility tests failed ($code)" }
+      - name: Build original backend and auxiliary DLLs
+        shell: pwsh
+        run: |
+          cmake --build backend/build --config Release --target uevr vr-plugin-nullifier LuaVR --parallel 2 *> evidence/backend-build.log
+          $code=$LASTEXITCODE; Get-Content evidence/backend-build.log | Select-Object -Last 100
+          if ($code -ne 0) { throw "Original latest Joey backend failed to compile ($code)" }
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '6.0.x'
+      - name: Test and build matching original frontend
+        shell: pwsh
+        run: |
+          dotnet run --project frontend/tests/RenderingModes --configuration Release *> evidence/frontend-tests.log
+          $code=$LASTEXITCODE; Get-Content evidence/frontend-tests.log
+          if ($code -ne 0) { throw 'Original rendering-ID tests failed' }
+          dotnet publish frontend/UEVR/UEVR.csproj --output package --configuration Release *> evidence/frontend-build.log
+          $code=$LASTEXITCODE; Get-Content evidence/frontend-build.log | Select-Object -Last 60
+          if ($code -ne 0) { throw 'Matching original frontend failed to compile' }
+      - name: Verify final pinned backend+frontend source identity (no release)
+        shell: pwsh
+        run: |
+          python workspace/quadview/p1_probe/apply_read_only_probe.py backend evidence frontend --verify
+          if ($LASTEXITCODE -ne 0) { throw 'Probe or pinned source identity changed during compile' }
+          @'
+          This is a QuadView prerequisite build of original Joey plus existing DuoView ID6 and an opt-in passive provenance probe.
+          No QuadView ID7, 4-source renderer, compositor or packaged headset release. UEVR_QUAD_P1_PROBE=1 enables logging without changing engine views.
+          Use only as proof of pinned SDK and original backend compilation.
+          '@ | Set-Content evidence/QUADVIEW_P1_READ_FIRST.txt
+      - name: Record public source and dependency provenance
+        if: always()
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory evidence -Force | Out-Null
+          git -C backend submodule status | Set-Content evidence/submodules.txt
+          Copy-Item workspace/duoview/clean_restart/baseline.lock.json evidence/
+          Copy-Item backend/build/Testing/Temporary/LastTest.log evidence/ -ErrorAction SilentlyContinue
+          $global:LASTEXITCODE=0
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: QuadView-P1-READONLY-PROBE-WIN64-Evidence-${{ github.run_number }}
+          path: evidence/
+          if-no-files-found: error
