@@ -105,3 +105,21 @@ No artifact from these jobs is a playable QuadView ID7 headset build.
 
 IMPORTANT: Probe/portable tests cannot substantiate image quality,
 Lumen/shading parity, true headset stereo, 6DoF or frame-time improvements.
+
+
+## Additional STALKER2 UE5.5 owner bootstrap finding
+
+Pinned Joey's \`stalker2_uses_lazy_synced_viewstates()\` (original
+\`FFakeStereoRenderingHook.cpp\` ~5738) is a game-build/mode-specific guard.
+At ~31345 and ~31370-31377 the backend explicitly **skips**
+\`ULocalPlayer::PostInitProperties\` replay in STALKER2 Synced mode, with
+a comment that Native/Native Fix must retain their own bootstrap. Thus
+forcing PostInitProperties twice to create the second Quad pair would
+reintroduce a known game-specific hazard; it is not the proposed factory.
+
+An alternate **investigation only** is to have Unreal legitimately allocate
+four \`FSceneViewStateReference\` owners through its normal feature-level-aware
+allocation API and map two per draw. Never append raw bytes to the protected
+\`ULocalPlayer::ViewStates\` TArray, call unvalidated virtual slots or assume
+that a transient four-view bootstrap is safe. Its exact STALKER2 ABI, feature
+level, constructor/destructor and owner replacement remain UNPROVEN.
