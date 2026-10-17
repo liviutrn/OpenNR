@@ -24,7 +24,7 @@ struct PhaseToken {
 class TwoPairCoordinator {
 public:
     bool begin(Plan plan,uint64_t world_scene,uint64_t world_advance_count) {
-        if(state_==State::Inside || world_scene==0 ||
+        if((state_!=State::Idle && state_!=State::Complete) || world_scene==0 ||
            world_advance_count!=plan.key.simulation_tick || !valid_plan(plan)) return reject();
         if(has_previous_ && (plan.key.generation!=previous_generation_ ||
            world_scene!=previous_scene_ || plan.key.serial<=previous_serial_ ||
