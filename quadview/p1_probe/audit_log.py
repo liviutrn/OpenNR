@@ -9,6 +9,10 @@ import re
 from collections import Counter
 
 DRAW = re.compile(r"\[QuadP1\] draw=(begin|end) serial=(\d+) engine_frame=(\d+) thread=(\d+)(?: nested=(true|false))?")
+DESIRED = re.compile(
+    r"\\[QuadP1\\] desired seq=(\\d+) stereo=(true|false|0|1) post_init=(true|false|0|1) "
+    r"engine_frame=(\\d+) draw=(\\d+) thread=(\\d+)"
+)
 VIEW = re.compile(
     r"\[QuadP1\] constructor seq=(\d+) draw=(\d+) engine_frame=(\d+) "
     r"view=([0-9a-fA-F]+) family=([0-9a-fA-F]+) "
@@ -19,6 +23,7 @@ def audit(text: str)->dict:
     draws:dict[int,dict]={}
     rejected=[]
     count_views=0
+    desired_events=[]
     for line in text.splitlines():
         a=DRAW.search(line)
         if a:
@@ -32,6 +37,15 @@ def audit(text: str)->dict:
             slot[kind+"_thread"]=thread
             if nested=="true":
                 rejected.append(f"nested viewport Draw {serial}")
+            continue
+        d=DESIRED.search(line)
+        if d:
+            seq,stereo,post_init,frame,draw,thread=d.groups()
+            desired_events.append({
+                "sequence":int(seq), "stereo_enabled":stereo in ("true","1"),
+                "post_init":post_init in ("true","1"),
+                "engine_frame":int(frame), "active_draw":int(draw), "thread":int(thread)
+            })
             continue
         b=VIEW.search(line)
         if b:
@@ -83,6 +97,8 @@ def audit(text: str)->dict:
         "protocol":"QuadP1 read-only engine-source observation",
         "draw_count":len(draws),"constructor_count":count_views,
         "complete_native_two_view_draws":len(clean),
+        "desired_view_count_call_observations":desired_events,
+        "post_init_desired_call_count":sum(1 for d in desired_events if d["post_init"]),
         "same_engine_frame_four_distinct_state_candidates":same_engine_candidates,
         "observed_pair_histories":pairs,
         "warnings":rejected,
