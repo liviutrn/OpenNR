@@ -151,3 +151,52 @@ returned **success for both Windows and Ubuntu**, including the
 cross-frame fence persistence, explicit-teardown and shader tests.
 The native STALKER2 DLL has still NOT received a real ID7 rendering hook;
 source-only CI is not a headset validation.
+
+
+## Pinned public Joey source audit: exact UE renderer restrictions (later 17 Oct)
+
+Automated original-source reading (PUBLIC joeyhodge/UEVR pin
+`5ac7edc207866569334175e4ed8a7517971547f6`, no private SDK export):
+https://github.com/liviutrn/OpenNR/actions/runs/39047652241
+Result SUCCESS, commit `af27d5c5435f8b1855437f0e0f8e7c6ba2f8a5a6`.
+
+Review conclusions, with exact original `src/mods/vr/FFakeStereoRenderingHook.cpp` lines:
+- 30831–30848: `GetDesiredNumberOfViews` returns **2** during
+  `inside_post_init_properties`. UE StereoRendering API supports asking
+  for additional views in principle, but no STALKER2 proof that returning 4
+  here allocates 4 usable persistent histories.
+- 31345–31377: `pre_get_projection_data` and `post_init_properties`
+  skip replay under `stalker2_uses_lazy_synced_viewstates()`. Forcing the
+  replay can disturb engine lifecycle and must not be used as an allocator.
+- 20957–21054: existing synchronized AFR installs `FViewport::Draw`
+  interception and enqueues a redraw at the start of the **next engine
+  tick, before world simulation advances**, with lifecycle/viewport/mode
+  guards. A second draw is not a verified same-tick Quad pair; native
+  `g_frame_count`, HMD pose, queue, world and render histories need
+  independent evidence before reuse.
+- 23191–23275: Native Stereo Fix secondary constructor path depends on
+  current capture generation, optionally relabels SECONDARY as PRIMARY
+  and hides family views; it is a *scoped* singleton adaptation, NOT a
+  safe copy/paste into another viewport draw.
+- 25233–25320: native fix renderer explicitly requires a family with
+  **exactly two validated FSceneView pointers** and corresponding
+  PRIMARY/SECONDARY passes and distinct states. A single four-view family
+  does NOT satisfy its contract. This supports the goal of two actual
+  two-view families only after extra renderer/lifetime work.
+- 12315–12399: Joey's owner resolver reads existing LocalPlayer
+  `ViewStates` array, validating header, stride and state pointers;
+  it **does not allocate** additional states. Never increase its count,
+  write a fake reference, or reinterpret without validated UE ABI.
+
+Latest complete P1 diagnostic ZIP is now proven by Windows CI
+run `39043456152`, success, GitHub artifact ID `12105247956`.
+Contents: Joey DLL/Injector matching frontend, auxiliary DLLs,
+`audit_log.py`, opt-in `[QuadP1]` probe, source hashes and README.
+The downloaded artifact was independently CRC-checked and its nested
+ZIP SHA256 matched the produced `.sha256` manifest.
+**DO NOT** call this a playable QuadView ID7; it is a diagnostics build.
+
+Next blocking evidence is REAL STALKER2 `[QuadP1]` capture for both
+NativeStereo+Fix and SyncedSequential. Runtime logs are needed to determine
+the four engine-owner scheme before touching `ULocalPlayer` state
+allocation or enabling a genuinely dual Native-pair render path.
