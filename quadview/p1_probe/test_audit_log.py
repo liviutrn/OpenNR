@@ -22,6 +22,11 @@ alias=good.replace("viewstate=18", "viewstate=16")
 a=audit(alias)
 assert a["same_engine_frame_four_distinct_state_candidates"]==[]
 
+null_history=good.replace("viewstate=18", "viewstate=0")
+assert audit(null_history)["same_engine_frame_four_distinct_state_candidates"]==[]
+duplicate_view=good.replace("view=66", "view=65")
+assert audit(duplicate_view)["complete_native_two_view_draws"]==1
+
 bad_tick=good.replace("draw=end serial=2 engine_frame=10","draw=end serial=2 engine_frame=11")
 t=audit(bad_tick)
 assert t["same_engine_frame_four_distinct_state_candidates"]==[]
