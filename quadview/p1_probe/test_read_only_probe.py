@@ -26,6 +26,7 @@ def check(newline:str):
             "// duo_scene_observation exists in exact Stage234 source\n"
             +probe.DRAW +"\n  fake_body();\n}\n"
             +"void mock_constructor() {\n"+probe.CONSTRUCTOR+"\n}\n"
+            +probe.DESIRED+"\n    return 2;\n}\n"
         )
         original=normal.replace("\n",newline).encode("utf-8")
         source.write_bytes(original)
