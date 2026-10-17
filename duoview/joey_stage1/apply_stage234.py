@@ -216,8 +216,11 @@ def main():
         'void VR::on_pre_engine_tick(sdk::UGameEngine* engine, float delta) {\n    service_mono_transition_game_thread();',
         '''void VR::on_pre_engine_tick(sdk::UGameEngine* engine, float delta) {
     m_duoview_game_tick_serial.fetch_add(1, std::memory_order_acq_rel);
-    const auto duoview_path=utility::get_module_pathw(utility::get_executable());
-    if (duoview_path && uevr::stalker2_native::is_executable(*duoview_path))
+    static const bool duoview_stalker2_exe=[] {
+        const auto path=utility::get_module_pathw(utility::get_executable());
+        return path && uevr::stalker2_native::is_executable(*path);
+    }();
+    if (duoview_stalker2_exe)
         m_duoview_launch_intent.store(true,std::memory_order_release);
     request_duoview_autostart_if_ready();
     {
@@ -292,7 +295,7 @@ void VR::request_duoview_autostart_if_ready() {
     }
 
     const auto runtime=get_runtime();
-    if (runtime && !runtime->error.empty()) {
+    if (runtime && !runtime->error.has_value()) {
         m_duoview_autostart_done.store(true, std::memory_order_release);
         return;
     }
@@ -321,6 +324,12 @@ bool VR::defer_duoview_bootstrap_draw() {
     if (m_duoview_autostart_done.load(std::memory_order_acquire) &&
         !m_duoview_bootstrap_draw_gate.load(std::memory_order_acquire)) return false;
     if (g_framework == nullptr) return false;
+    // Never convert an initialization failure into a high-resolution ID0
+    // Draw. Surface the error repeatedly at a bounded rate instead.
+    if (!g_framework->is_mods_fully_initialized()) {
+        SPDLOG_WARNING_EVERY_N_SEC(5, "[DuoView] Startup waiting for framework initialization; target DX12 Draw remains gated to prevent native-stereo VRAM allocation");
+        set_mono_status("Waiting for UEVR framework initialization before DuoView bootstrap");
+    }
 
     const bool dx12=g_framework->is_dx12() || m_is_d3d12;
     const bool dx11=g_framework->is_dx11();
@@ -333,7 +342,7 @@ bool VR::defer_duoview_bootstrap_draw() {
 
     request_duoview_autostart_if_ready();
     const auto runtime=get_runtime();
-    if (runtime && !runtime->error.empty()) {
+    if (runtime && !runtime->error.has_value()) {
         m_duoview_bootstrap_draw_gate.store(false, std::memory_order_release);
         m_duoview_autostart_done.store(true, std::memory_order_release);
         return false;
@@ -1412,10 +1421,6 @@ bool CommandContext::wait''')
         target=root/"src/mods/vr"/name
         if target.exists(): raise RuntimeError("Refusing to overwrite prior source: "+str(target))
         text=(src/name).read_text(encoding="utf-8")
-        if name=="DuoViewConfig.hpp":
-            text=replace(text,
-                '        cached_.reset();\n    }',
-                '        cached_.reset();\n        last_key_ = {};\n    }',name)
         if name=="DuoViewD3D12.hpp":
             # No timestamp work by default; note that initial PSO creation still
             # needs prewarming before a production release.
