@@ -1,6 +1,7 @@
 name: QuadView P1 read-only STALKER2 provenance probe Windows build
 run-name: QuadView P1 SOURCE PROBE pinned Joey SDK/Windows (${{ github.run_number }})
 # Isolated compile audit; produces EVIDENCE ONLY, no headset zip.
+# New source-pin compile attempt: std::optional runtime-error checks corrected.
 # Rerun with corrected stage-10 source fixture and executable Release assertions.
 # This job validates the unchanged, pinned Joey+ID6 foundation, not QuadView ID7.
 on:
