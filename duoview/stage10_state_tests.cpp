@@ -1,4 +1,7 @@
 #include "DuoViewState.hpp"
+#ifdef NDEBUG
+#undef NDEBUG // Assertions are the entire test contract; run in Release CI.
+#endif
 #include <cassert>
 #include <iostream>
 using namespace uevr::duoview;
