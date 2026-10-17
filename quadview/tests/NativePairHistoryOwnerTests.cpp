@@ -49,10 +49,19 @@ int main() {
     worker.join();
     assert(!cross_thread_accepted);
     assert(owner.mark_composite_submitted(7,100));
-    assert(!owner.destroy_after_retirement(7,99));
-    assert(!owner.destroy_after_retirement(8,100));
+    assert(!owner.retire_frame(7,99)); // GPU consumer fence not completed
+    assert(!owner.retire_frame(8,100)); // unrelated GPU queue
+    assert(!owner.destroy_after_retirement(7,100)); // no explicit teardown
     assert(fixture.destroyed == 0);
-    assert(owner.destroy_after_retirement(7,100));
+    assert(owner.retire_frame(7,100));
+    assert(fixture.destroyed == 0); // four Lumen histories persist
+    assert(owner.verify_frame(Key{1,3,12,3}));
+    assert(owner.get(Eye::Right,Role::Periphery)->scene_state == 504);
+    assert(owner.mark_composite_submitted(7,101));
+    assert(owner.request_teardown());
+    assert(!owner.retire_frame(7,101)); // teardown cannot resume normal render
+    assert(!owner.destroy_after_retirement(7,100));
+    assert(owner.destroy_after_retirement(7,101));
     assert(fixture.destroyed == 4);
     assert(owner.state() == NativePairHistoryOwner::State::Empty);
     assert(!owner.allocate(400,9,1,55,fixture.callbacks()));
