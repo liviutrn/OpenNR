@@ -37,6 +37,9 @@ jobs:
         run: python quadview/p1_probe/test_audit_log.py
       - name: Guard startup optional type correctness in production source patch
         run: python quadview/p1_probe/test_vr_optional.py
+      - name: Compile left/right fovea-periphery shader to real DXBC
+        if: matrix.os == 'windows-2022'
+        run: python quadview/compile_compositor.py quadview/out/QuadStereoComposite.cso
       - name: Report exact portable test status for GitHub review
         if: always()
         uses: actions/github-script@v7
