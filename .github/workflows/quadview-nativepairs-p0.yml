@@ -9,6 +9,8 @@ on:
       - 'quadview/tests/**'
       - 'quadview/p1_probe/**'
       - 'duoview/stage10_state_tests.cpp'
+      - 'duoview/joey_stage1/apply_stage234.py'
+      - 'duoview/joey_stage1/verify_stage234.py'
       - '.github/workflows/quadview-nativepairs-p0.yml'
   workflow_dispatch:
 permissions:
@@ -32,6 +34,8 @@ jobs:
         run: python quadview/p1_probe/test_read_only_probe.py
       - name: Validate offline four-history log parser
         run: python quadview/p1_probe/test_audit_log.py
+      - name: Guard startup optional type correctness in production source patch
+        run: python quadview/p1_probe/test_vr_optional.py
       - name: Attach contract test binary, not a VR plugin
         if: matrix.os == 'windows-2022'
         uses: actions/upload-artifact@v4
