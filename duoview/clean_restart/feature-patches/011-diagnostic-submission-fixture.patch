@@ -1,0 +1,52 @@
+From 8b04c6fd769d2b3ae5e745032047a37b7b35826c Mon Sep 17 00:00:00 2001
+From: Codex <codex@openai.com>
+Date: Sun, 18 Oct 2026 01:31:02 +0200
+Subject: [PATCH] Update DuoView diagnostic source coverage fixture
+
+---
+ tests/CadenceReplayTests.cpp | 27 +++++++++++++++++++++++++--
+ 1 file changed, 25 insertions(+), 2 deletions(-)
+
+diff --git a/tests/CadenceReplayTests.cpp b/tests/CadenceReplayTests.cpp
+index 9ef08a41..c2dfd974 100644
+--- a/tests/CadenceReplayTests.cpp
++++ b/tests/CadenceReplayTests.cpp
+@@ -313,13 +313,36 @@ int test_native_frame_adapters() {
+             pos = 0;
+             while ((pos = code.find(needle, pos)) != std::string::npos) {
+                 const auto before = code.substr(pos > 250 ? pos - 250 : 0, pos > 250 ? 250 : pos);
+-                const auto after = code.substr(pos, 500);
++                const auto open = code.find('(', pos);
++                size_t call_end = std::string::npos;
++                if (open != std::string::npos) {
++                    size_t depth{};
++                    char quote{};
++                    bool escaped{};
++                    for (size_t i = open; i < code.size(); ++i) {
++                        const auto ch = code[i];
++                        if (quote != 0) {
++                            if (escaped) { escaped = false; }
++                            else if (ch == '\\') { escaped = true; }
++                            else if (ch == quote) { quote = 0; }
++                            continue;
++                        }
++                        if (ch == '\'' || ch == '"') { quote = ch; continue; }
++                        if (ch == '(') { ++depth; }
++                        else if (ch == ')') {
++                            if (--depth == 0) { call_end = i + 1; break; }
++                        }
++                    }
++                }
++                const auto after = call_end != std::string::npos
++                    ? code.substr(call_end, 250)
++                    : std::string{};
+                 expect(before.find("Stage::submit_attempt") != std::string::npos && after.find("Stage::submit_result") != std::string::npos,
+                     "existing submission calls retain attempt and actual result observations");
+                 ++pos; ++submits;
+             }
+         }
+-        expect(copies == (std::string(backend) == "D3D11" ? 2 : 3) &&
++        expect(copies == (std::string(backend) == "D3D11" ? 2 : 4) &&
+             deferred_pair_copies == (std::string(backend) == "D3D11" ? 0 : 2) &&
+             submits == (std::string(backend) == "D3D11" ? 4 : 5),
+             "expected backend copy/submit coverage (update fixture for new paths)");
