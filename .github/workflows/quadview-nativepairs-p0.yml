@@ -25,6 +25,8 @@ jobs:
         run: cmake --build quadview/out --config Release --parallel 2
       - name: Execute tests
         run: ctest --test-dir quadview/out --build-config Release --output-on-failure
+      - name: Verify exact-source probe on LF and CRLF fixtures
+        run: python quadview/p1_probe/test_read_only_probe.py
       - name: Attach contract test binary, not a VR plugin
         if: matrix.os == 'windows-2022'
         uses: actions/upload-artifact@v4
