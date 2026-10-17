@@ -113,6 +113,18 @@ int main() {
     assert(!switched_queue.mark_composite_submitted(8,101));
     assert(switched_queue.state() == NativePairHistoryOwner::State::Quarantined);
 
+    EngineFixture idle_teardown;
+    NativePairHistoryOwner stopped;
+    assert(stopped.allocate(400,9,1,55,idle_teardown.callbacks()));
+    assert(stopped.verify_frame(Key{1,1,10,1}));
+    assert(stopped.request_teardown());
+    assert(!stopped.verify_frame(Key{1,2,11,2}));
+    assert(!stopped.get(Eye::Left,Role::Fovea));
+    assert(!stopped.mark_composite_submitted(7,100));
+    assert(stopped.state() == NativePairHistoryOwner::State::Ready);
+    assert(stopped.abandon_unsubmitted());
+    assert(idle_teardown.destroyed == 4);
+
     EngineFixture wrong_clock;
     NativePairHistoryOwner monotonic;
     assert(monotonic.allocate(400,9,1,55,wrong_clock.callbacks()));
