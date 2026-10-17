@@ -4,7 +4,10 @@ on:
     branches:
       - experiments/joey-quadview-nativepairs-p0-20261017
     paths:
-      - 'quadview/**'
+      - 'quadview/*.hpp'
+      - 'quadview/CMakeLists.txt'
+      - 'quadview/tests/**'
+      - 'quadview/p1_probe/**'
       - 'duoview/stage10_state_tests.cpp'
       - '.github/workflows/quadview-nativepairs-p0.yml'
   workflow_dispatch:
