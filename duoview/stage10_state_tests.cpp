@@ -30,6 +30,10 @@ int main() {
     auto b=state.begin(second,3000,3000,matrix,read);
     assert(b && b->config.settings.fovea_view==1 && gaze_reads==2);
     assert(state.snapshot(first)->config.layout.crop_width==.5f);
+    // Current production gate requires independent scene histories plus
+    // successful secondary Native-Fix-style constructor treatment.
+    assert(state.scene(first,0,100));
+    assert(state.scene(first,1,200,true));
     assert(state.consume(first) && !state.consume(first));
     assert(!state.begin({1,99},3000,3000,matrix,read));
     assert(state.snapshot(second));
