@@ -156,6 +156,66 @@ jobs:
           No QuadView ID7, 4-source renderer, compositor or packaged headset release. UEVR_QUAD_P1_PROBE=1 enables logging without changing engine views.
           Use only as proof of pinned SDK and original backend compilation.
           '@ | Set-Content evidence/QUADVIEW_P1_READ_FIRST.txt
+      - name: Package Windows STALKER2 QuadView diagnostic binary (NOT ID7)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          python workspace/quadview/p1_probe/apply_read_only_probe.py backend evidence frontend --verify
+          if ($LASTEXITCODE -ne 0) { throw 'Diagnostic probe source provenance failed before packaging' }
+          $requiredSources=@(
+            'backend/build/bin/uevr/UEVRBackend.dll',
+            'backend/build/bin/vr-plugin-nullifier/UEVRPluginNullifier.dll',
+            'backend/build/bin/LuaVR/LuaVR.dll',
+            'evidence/quad-p1-probe.json',
+            'evidence/duoview-stage234-hashes.json'
+          )
+          foreach ($file in $requiredSources) {
+            if (!(Test-Path $file -PathType Leaf)) { throw "Required output missing: $file" }
+          }
+          New-Item -ItemType Directory -Path package -Force | Out-Null
+          Copy-Item backend/build/bin/uevr/*.dll package/ -ErrorAction Stop
+          Copy-Item backend/build/bin/vr-plugin-nullifier/UEVRPluginNullifier.dll package/ -ErrorAction Stop
+          Copy-Item backend/build/bin/LuaVR/LuaVR.dll package/ -ErrorAction Stop
+          Copy-Item evidence/quad-p1-probe.json package/ -ErrorAction Stop
+          Copy-Item evidence/duoview-stage234-hashes.json package/ -ErrorAction Stop
+          Copy-Item workspace/quadview/p1_probe/audit_log.py package/ -ErrorAction Stop
+          @'
+          JOEY UEVR P1 READ-ONLY QUADVIEW DIAGNOSTIC — NOT A QUADVIEW RENDERER.
+          Compiled from pinned Joey UEVR + Stage 1/Stage 234 DuoView ID6 + passive QuadP1 source instrumentation.
+          QuadView ID7 does not exist. This package will NOT render four physical-eye sources.
+          Purpose: collect STALKER2 DX12 UE5.5 real FSceneView constructors, families,
+          borrowed view state pointers, engine frame IDs and original stereo passes.
+          Set the Windows environment variable UEVR_QUAD_P1_PROBE=1 BEFORE launching
+          UEVR/STALKER2 to enable logging. Collect the UEVR log lines containing [QuadP1].
+          Run each test separately in Joey Native Stereo with Native Fix and in
+          synchronized sequential mode, and provide logs for offline analysis.
+          Do not interpret four unique pointers as proof of independently owned,
+          persistent or correct left/right histories. The probe is read-only.
+          OpenVR/OpenXR injection and headset behavior have NOT been validated here.
+          Do not overwrite your known-stable Joey Build 3 or other UEVR installation.
+          Use a separate test directory with low resolution before any experiment.
+          Never use this package as a high-resolution QuadView release.
+          Source: https://github.com/liviutrn/OpenNR/tree/experiments/joey-quadview-nativepairs-p0-20261017
+          '@ | Set-Content -Path package/READ_FIRST.txt -Encoding utf8
+          $needed=@('UEVRBackend.dll','UEVRPluginNullifier.dll','LuaVR.dll','quad-p1-probe.json','audit_log.py','READ_FIRST.txt')
+          foreach ($file in $needed) { if (!(Test-Path "package/$file" -PathType Leaf)) { throw "Package validation missing: $file" } }
+          if (@(Get-ChildItem package -File -Filter *.exe).Count -lt 1) { throw 'Missing matching published Joey frontend EXE' }
+          Get-ChildItem package -Recurse -File | Get-FileHash -Algorithm SHA256 |
+            Select-Object @{n='Name';e={$_.Path.Split([IO.Path]::DirectorySeparatorChar)[-1]}},Hash |
+            ConvertTo-Json | Set-Content evidence/probe-package-sha256.json
+          Copy-Item evidence/probe-package-sha256.json package/ -ErrorAction Stop
+          $zip='JOEY_P1_STALKER2_READONLY_QUAD_DIAGNOSTIC.zip'
+          Compress-Archive -Path package/* -DestinationPath $zip -Force
+          (Get-FileHash $zip -Algorithm SHA256).Hash | Set-Content "$zip.sha256"
+      - uses: actions/upload-artifact@v4
+        if: success()
+        with:
+          name: JOEY-P1-STALKER2-READONLY-QUAD-DIAGNOSTIC-${{ github.run_number }}
+          path: |
+            JOEY_P1_STALKER2_READONLY_QUAD_DIAGNOSTIC.zip
+            JOEY_P1_STALKER2_READONLY_QUAD_DIAGNOSTIC.zip.sha256
+          if-no-files-found: error
+          retention-days: 90
       - name: Record public source and dependency provenance
         if: always()
         shell: pwsh
