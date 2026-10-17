@@ -19,6 +19,7 @@ struct PSInput {
     float2 uv : TEXCOORD0;
 };
 float4 main(PSInput input) : SV_Target0 {
+    if (PhysicalEye > 1) return float4(0.0,0.0,0.0,1.0);
     float2 uv = saturate(input.uv);
     float4 peripheral = PhysicalEye == 0
         ? LeftPeriphery.Sample(LinearClamp, uv)
@@ -28,8 +29,7 @@ float4 main(PSInput input) : SV_Target0 {
     // source visible, never sample undefined fovea UV or stale opposite eye.
     float2 extent = FoveaCrop.zw - FoveaCrop.xy;
     if (any(extent <= float2(0.00001,0.00001)) ||
-        any(FoveaCrop.xy < 0.0) || any(FoveaCrop.zw > 1.0) ||
-        PhysicalEye > 1) return peripheral;
+        any(FoveaCrop.xy < 0.0) || any(FoveaCrop.zw > 1.0)) return peripheral;
 
     float2 edgeLo = uv - FoveaCrop.xy;
     float2 edgeHi = FoveaCrop.zw - uv;
