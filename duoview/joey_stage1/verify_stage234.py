@@ -75,6 +75,8 @@ def main():
  if "DuoViewState.hpp" not in (a.backend/"src/mods/VR.hpp").read_text(encoding="utf-8"):
   raise RuntimeError("Production VR headers missing DuoView frame state")
  vr_cpp=(a.backend/"src/mods/VR.cpp").read_text(encoding="utf-8")
+ if "runtime->error.empty()" in vr_cpp or vr_cpp.count("runtime->error.has_value()") < 2:
+  raise RuntimeError("VRRuntime::error is std::optional; both bootstrap guards must use has_value()")
  vr_header=(a.backend/"src/mods/VR.hpp").read_text(encoding="utf-8")
  if (".eye_tracked=false" not in vr_cpp or
      ".fixed_center_v=m_duo_center_v->value()" not in vr_cpp or
