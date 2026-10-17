@@ -32,6 +32,17 @@ t=audit(bad_tick)
 assert t["same_engine_frame_four_distinct_state_candidates"]==[]
 assert any("changed within Draw" in e for e in t["warnings"])
 
+# A paired redraw on the next XR frame cannot establish a shared world tick.
+# Preserve it as ambiguous evidence, not a verified same-XR-frame QuadView.
+cross_frame=good.replace("engine_frame=10", "engine_frame=11", 0)
+cross_frame=good.splitlines()
+cross_frame=[row.replace("engine_frame=10","engine_frame=11") if
+             ("serial=2" in row or "draw=2" in row) else row for row in cross_frame]
+cf=audit("\n".join(cross_frame))
+assert cf["same_engine_frame_four_distinct_state_candidates"]==[]
+assert cf["cross_engine_frame_ambiguous_four_state_candidates"]==[[1,2]]
+
+
 desired="\n".join([
     "[QuadP1] desired seq=1 stereo=true post_init=true engine_frame=10 draw=0 thread=7",
     "[QuadP1] desired seq=2 stereo=false post_init=false engine_frame=10 draw=1 thread=7"
