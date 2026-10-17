@@ -26,7 +26,7 @@ def run(newline: str) -> None:
             "namespace { bool stalker2_is_current_game(); }\n"
             + probe.DRAW + "\n  fake_draw_body();\n}\n"
             "void constructor_hook() {\n"
-            "    void* result = g_hook->m_sceneview_data.constructor_hook.unsafe_call<sdk::FSceneView*>(view, init_options, a3, a4);\n"
+            "    auto result = g_hook->m_sceneview_data.constructor_hook.unsafe_call<sdk::FSceneView*>(view, init_options, a3, a4);\n"
             "    (void)result;\n"
             "}\n"
             "void duo_observation() { vr->duoview_state().scene(key,index,state,applied); }\n"
