@@ -60,6 +60,7 @@ def audit(text: str)->dict:
             count_views+=1
     clean=[]
     same_engine_candidates=[]
+    cross_engine_candidates=[]
     ordered=sorted(draws)
     for d in ordered:
         rec=draws[d]
@@ -82,13 +83,18 @@ def audit(text: str)->dict:
     for a,b in zip(clean,clean[1:]):
         if b!=a+1:continue
         x,y=draws[a],draws[b]
-        if x["begin_frame"]!=y["begin_frame"]:continue
         views=x["views"]+y["views"]
         # Still only a candidate: phase, four independently allocated owners,
         # stereo eye pose, GPU fences and world tick have NOT been established.
         if len({v["state"] for v in views})==4 and \
            len({v["family"] for v in views})==2:
-            same_engine_candidates.append([a,b])
+            if x["begin_frame"]==y["begin_frame"]:
+                same_engine_candidates.append([a,b])
+            else:
+                # Joey's existing SyncedSequential redraw may occur near the
+                # NEXT engine tick before simulation advances. Different XR
+                # frame labels alone cannot prove different WORLD ticks.
+                cross_engine_candidates.append([a,b])
     pairs={}
     for d in clean:
         vals=draws[d]["views"]
@@ -100,6 +106,7 @@ def audit(text: str)->dict:
         "desired_view_count_call_observations":desired_events,
         "post_init_desired_call_count":sum(1 for d in desired_events if d["post_init"]),
         "same_engine_frame_four_distinct_state_candidates":same_engine_candidates,
+        "cross_engine_frame_ambiguous_four_state_candidates":cross_engine_candidates,
         "observed_pair_histories":pairs,
         "warnings":rejected,
         "not_proven":["four persistent engine-owned references","two same-eye physical camera poses",
