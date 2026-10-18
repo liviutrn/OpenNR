@@ -3,6 +3,78 @@
 #include <iostream>
 using namespace uevr::duoview;
 int main() {
+    // All menu fields must update independently. One invalid/contradictory
+    // quality or gaze control may not freeze every other button or slider.
+    Settings live;
+    Settings simultaneous=live;
+    simultaneous.crop_width=.80f;
+    simultaneous.crop_height=.75f;
+    simultaneous.foveal_density=2.f; // too large for Native per-eye source
+    simultaneous.peripheral_scale=.35f;
+    simultaneous.eye_tracked=false;
+    simultaneous.native_fix_same_pass=false;
+    simultaneous.gaze_offset_v=.15f;
+    simultaneous.debug_border=true;
+    simultaneous.diagnostic_view=2;
+    auto a1=reconcile_ui_settings(simultaneous,live);
+    assert(a1.rejected & reject_density);
+    assert(!(a1.rejected & reject_width));
+    assert(a1.settings.crop_width==.80f && a1.settings.crop_height==.75f);
+    assert(a1.settings.foveal_density==live.foveal_density);
+    assert(a1.settings.peripheral_scale==.35f);
+    assert(!a1.settings.eye_tracked && !a1.settings.native_fix_same_pass);
+    assert(a1.settings.debug_border && a1.settings.diagnostic_view==2);
+    assert(a1.settings.gaze_offset_v==.15f);
+    State live_state;
+    assert(live_state.configure(a1.settings));
+    live=live_state.settings();
+    simultaneous=live;
+    simultaneous.crop_width=4.f; // invalid persisted input, outside UI range
+    simultaneous.feather_fraction=.30f;
+    simultaneous.eye_tracked=true;
+    simultaneous.native_fix_same_pass=true;
+    simultaneous.gaze_offset_u=-.15f;
+    simultaneous.gaze_still_radius=.05f;
+    simultaneous.gaze_breakout_radius=.01f; // conflicting gaze thresholds
+    auto a2=reconcile_ui_settings(simultaneous,live);
+    assert(a2.rejected & reject_width);
+    assert((a2.rejected & (reject_still|reject_breakout))!=0);
+    assert(a2.settings.crop_width==live.crop_width);
+    assert(a2.settings.feather_fraction==.30f);
+    assert(a2.settings.eye_tracked && a2.settings.native_fix_same_pass);
+    assert(a2.settings.gaze_offset_u==-.15f);
+    assert(live_state.configure(a2.settings));
+    // A valid simultaneous width increase + density decrease must apply
+    // together, not be blocked by the transient state of one slider.
+    live=live_state.settings();
+    simultaneous=live;
+    simultaneous.crop_width=.90f;
+    simultaneous.crop_height=.90f;
+    simultaneous.foveal_density=1.f;
+    simultaneous.peripheral_scale=.49f;
+    auto a3=reconcile_ui_settings(simultaneous,live);
+    assert(!a3.rejected && a3.settings.crop_width==.90f);
+    assert(live_state.configure(a3.settings));
+    // A nonsense scalar cannot stop a valid mode/gaze change.
+    live=live_state.settings();
+    simultaneous=live;
+    simultaneous.feather_fraction=NAN;
+    simultaneous.eye_tracked=false;
+    simultaneous.stabilize_crop=true;
+    simultaneous.gpu_timing=true;
+    simultaneous.gaze_hold_ms=450;
+    simultaneous.gaze_offset_u=.05f;
+    auto a4=reconcile_ui_settings(simultaneous,live);
+    assert(a4.rejected==reject_feather);
+    assert(!a4.settings.eye_tracked && a4.settings.stabilize_crop);
+    assert(a4.settings.gpu_timing && a4.settings.gaze_hold_ms==450);
+    assert(a4.settings.gaze_offset_u==.05f);
+    assert(live_state.configure(a4.settings));
+    // Direct API remains strict: UI isolation must not weaken renderer guard.
+    Settings invalid_direct=live_state.settings();
+    invalid_direct.crop_width=1.f;
+    invalid_direct.foveal_density=4.f;
+    assert(!live_state.configure(invalid_direct));
     State state;
     const FrameKey first{1,100}, second{1,101};
     std::array<float,16> matrix{};
