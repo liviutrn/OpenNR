@@ -20,6 +20,8 @@ cbuffer DuoViewCompositeConfig : register(b0)
     uint DebugBorder;
     uint DebugViewMode;
     float _reserved;
+    uint2 NativeFoveaDimensions;
+    uint2 NativePeripheryDimensions;
 };
 
 float2 AtlasSampleUV(uint4 rect, float2 localUv)
