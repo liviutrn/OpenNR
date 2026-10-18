@@ -117,6 +117,7 @@ public:
                 std::shared_ptr<const void> packet_lifetime, UINT64 frequency = 0) {
         recorded_commands_=false;
         error_.clear();
+        last_native_direct_xr_=false;
         const auto reject=[this](const char* reason) { error_=reason; return false; };
         if (!device || !cmd || !primary || !secondary || !destination ||
             primary==secondary || primary==destination || secondary==destination ||
@@ -131,6 +132,18 @@ public:
             !root_ || !srv_ || !rtv_)
             return reject("Direct Native compositor not prewarmed for frozen source extent");
         const auto p=primary->GetDesc(), s=secondary->GetDesc();
+        const auto xrd=destination->GetDesc();
+        const auto xr_format=srgb_ ? DXGI_FORMAT_B8G8R8A8_UNORM_SRGB : DXGI_FORMAT_B8G8R8A8_UNORM;
+        // Render directly to the doublewide OpenXR texture only when its
+        // render-target format matches the precompiled PSO. Keep a bit-for-bit
+        // old compositor+copy fallback for incompatible swapchain formats.
+        const bool direct_xr=
+            xrd.Dimension==D3D12_RESOURCE_DIMENSION_TEXTURE2D &&
+            xrd.Width==static_cast<uint64_t>(width_)*2 && xrd.Height==height_ &&
+            xrd.DepthOrArraySize==1 && xrd.MipLevels==1 &&
+            xrd.SampleDesc.Count==1 && xrd.SampleDesc.Quality==0 &&
+            (xrd.Flags&D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET)!=0 &&
+            (xrd.Format==xr_format || xrd.Format==DXGI_FORMAT_B8G8R8A8_TYPELESS);
         const auto& pr=frame.config.settings.fovea_view==0 ? layout.fovea : layout.periphery;
         const auto& sr=frame.config.settings.fovea_view==1 ? layout.fovea : layout.periphery;
         const auto is_bgra_family=[](DXGI_FORMAT f) {
@@ -221,14 +234,40 @@ public:
         const D3D12_RECT rect{0,0,static_cast<LONG>(width_),static_cast<LONG>(height_)};
         cmd->RSSetViewports(1,&viewport);
         cmd->RSSetScissorRects(1,&rect);
-        const auto handle=rtv_->GetCPUDescriptorHandleForHeapStart();
+        auto handle=rtv_->GetCPUDescriptorHandleForHeapStart();
+        if (direct_xr) {
+            // Each Compositor is owned by one fenced XR command slot, so its
+            // second RTV descriptor cannot be overwritten while GPU-active.
+            handle.ptr+=device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
+            D3D12_RENDER_TARGET_VIEW_DESC xr_view{};
+            xr_view.Format=xr_format; xr_view.ViewDimension=D3D12_RTV_DIMENSION_TEXTURE2D;
+            device->CreateRenderTargetView(destination,&xr_view,handle);
+        }
         cmd->OMSetRenderTargets(1,&handle,FALSE,nullptr);
         cmd->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
         cmd->DrawInstanced(3,1,0,0);
+        if (direct_xr) {
+            // Render the exact same shader a second time over eye 1. Sample
+            // coordinates are corrected by OutputOffset, not by moving the
+            // source crop or re-projecting the UE views.
+            constants.output_offset[0]=width_;
+            cmd->SetGraphicsRoot32BitConstants(1,sizeof(constants)/4,&constants,0);
+            const D3D12_VIEWPORT second_viewport{
+                static_cast<float>(width_),0,static_cast<float>(width_),
+                static_cast<float>(height_),0,1};
+            const D3D12_RECT second_rect{
+                static_cast<LONG>(width_),0,
+                static_cast<LONG>(width_*2),static_cast<LONG>(height_)};
+            cmd->RSSetViewports(1,&second_viewport);
+            cmd->RSSetScissorRects(1,&second_rect);
+            cmd->DrawInstanced(3,1,0,0);
+        }
         transition(cmd,fovea,D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,fovea_state);
         transition(cmd,periphery,D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,peripheral_state);
-        const bool copied=copy_composite_to_stereo(cmd,device,output_.Get(),destination,
-            D3D12_RESOURCE_STATE_RENDER_TARGET,D3D12_RESOURCE_STATE_RENDER_TARGET);
+        const bool copied=direct_xr ||
+            copy_composite_to_stereo(cmd,device,output_.Get(),destination,
+                D3D12_RESOURCE_STATE_RENDER_TARGET,D3D12_RESOURCE_STATE_RENDER_TARGET);
+        last_native_direct_xr_=direct_xr;
         if (timed) {
             cmd->EndQuery(queries_.Get(),D3D12_QUERY_TYPE_TIMESTAMP,1);
             cmd->ResolveQueryData(queries_.Get(),D3D12_QUERY_TYPE_TIMESTAMP,0,2,timestamps_.Get(),0);
@@ -315,6 +354,7 @@ public:
     const std::string& error() const { return error_; }
     bool recorded_commands() const { return recorded_commands_; }
     float gpu_milliseconds() const { return gpu_ms_; }
+    bool last_native_direct_xr() const { return last_native_direct_xr_; }
     UINT64 timing_frequency() const { return frequency_; }
 private:
     void read_timing() {
@@ -442,7 +482,7 @@ private:
         if (!check(device->CreateCommittedResource(&heap,D3D12_HEAP_FLAG_NONE,&atlas_desc,
             D3D12_RESOURCE_STATE_COPY_DEST,nullptr,IID_PPV_ARGS(&atlas_)),"Create Native gather atlas")) return false;
         atlas_->SetName(L"DuoView::NativeGatherAtlasFallback");
-        D3D12_DESCRIPTOR_HEAP_DESC hd{}; hd.NumDescriptors = 1; hd.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
+        D3D12_DESCRIPTOR_HEAP_DESC hd{}; hd.NumDescriptors = 2; hd.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
         if (!check(device->CreateDescriptorHeap(&hd, IID_PPV_ARGS(&rtv_)), "Create RTV heap")) return false;
         hd.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV; hd.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE; hd.NumDescriptors = 2;
         if (!check(device->CreateDescriptorHeap(&hd, IID_PPV_ARGS(&srv_)), "Create SRV heap")) return false;
@@ -460,7 +500,7 @@ private:
     ComPtr<ID3D12Resource> timestamps_;
     UINT64 frequency_{};
     float gpu_ms_{-1.f};
-    bool timing_pending_{}, recorded_commands_{};
+    bool timing_pending_{}, recorded_commands_{}, last_native_direct_xr_{};
     UINT width_{}, height_{};
     bool srgb_{};
     std::string error_;
