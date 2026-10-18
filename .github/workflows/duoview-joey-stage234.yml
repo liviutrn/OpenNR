@@ -2,7 +2,7 @@ name: DuoView Direct Native Source Compositor
 run-name: DuoView Direct Native Source Compositor exact SDK (${{ github.run_number }})
 on:
   push:
-    branches: [experiments/duoview-temporal-shading-v22, experiments/joey-duoview-native-stereo-fix-v22-20261018, fix/joey-v22-nativefix-duoview-activation-20261018, experiments/joey-v22-nativefix-gaze-hold-controls-20261018, experiments/joey-duoview-adaptive-saccade-20261018, fix/duoview-v154-controls-offcenter-20261018, fix/duoview-v154-general-controls-20261018, opt/duoview-v158-direct-sources-20261019, opt/duoview-stage2-direct-xr-output-20261019]
+    branches: [experiments/duoview-temporal-shading-v22, experiments/joey-duoview-native-stereo-fix-v22-20261018, fix/joey-v22-nativefix-duoview-activation-20261018, experiments/joey-v22-nativefix-gaze-hold-controls-20261018, experiments/joey-duoview-adaptive-saccade-20261018, fix/duoview-v154-controls-offcenter-20261018, fix/duoview-v154-general-controls-20261018, opt/duoview-v158-direct-sources-20261019, opt/duoview-stage2-direct-xr-output-20261019, opt/duoview-stage3-runtime-profile-20261019]
     paths:
       - '.github/workflows/duoview-joey-stage234.yml'
       - 'duoview/joey_stage1/**'
@@ -167,7 +167,7 @@ jobs:
           Restricted SDK unchanged: joeyhodge/UESDK 3cffbc82429b6165ceec2714f0f0d9ae48f55596.
           Matching frontend source: 60be4b0f9a646109fd9fdf448bacd41477234091, plus ID 6.
           Modes 0 and 5 are routed to ORIGINAL JOEY. Experimental mode ID6 is active ONLY in STALKER 2 DX12 OpenXR.
-          ID6 forces Joey Native Stereo Fix on and uses its original primary and secondary render sources. Native Stereo Fix settings for ordinary Native ID0 are unchanged. Both validated sources are gathered into one DuoView atlas and submitted as a combined Mono image.
+          ID6 forces Joey Native Stereo Fix on and uses its original primary and secondary render sources. Native Stereo Fix settings for ordinary Native ID0 are unchanged. Supported sources are sampled directly; the validated atlas gather remains as a format-compatibility fallback.
           Old source defaults: 0.50x0.50 crop at 1.0x density, 0.20x periphery, gaze ON, fovea UE0/periphery UE1.
           Press Restore old DuoView settings once if an existing profile retains newer settings. Increase density to match your old preferred tuning; exact historical tuning is unknown.
           Foveal atlas rectangle starts at x=0, matching Injector-5. Gaze uses the inverse left optical rotation, matching the old coordinate path.
@@ -177,14 +177,14 @@ jobs:
           The separate independent-shading option is ignored while DuoView is active; Joey Native Stereo Fix owns its normal source-rendering behavior.
           The original Native Stereo Fix secondary scene-capture target supplies the second DuoView image. Packet identity, capture generation, source geometry, and Mono pose/projection are checked before composition.
           Actual shading parity and temporal stability require headset testing.
-          Optional GPU timing is OFF by default. Compositor resources prewarm at swapchain creation and remain owned by each OpenXR command slot until its fence retires. No waits, shader compilation, or GPU resource creation occur in the XR copy callback; immutable packet lifetimes are retained through command-slot fence retirement.
+          Optional GPU timing is OFF by default; it measures the DuoView compositor only and excludes Unreal's scene rendering. Compositor resources prewarm at swapchain creation and remain owned by each OpenXR command slot until its fence retires. No waits, shader compilation, or GPU resource creation occur in the XR copy callback; immutable packet lifetimes are retained through command-slot fence retirement.
           Debug source 0=blended output, 1=periphery only, 2=fovea only (dark outside ROI).
           Source view0 is the first UE pass (old prototype default), view1 is the second (Build19 default).
           Both source passes share exactly the same Mono camera.
           Stage5 reads combined calibrated PSVR2 Toolkit CAPI gaze ONCE per frame. No DLL bundled.
           If CAPI is unavailable/invalid or blinked, ID6 stays at fixed center; no OpenXR gaze layer required.
           Menu shows whether PSVR2 gaze is fresh, center fallback, or Mono quarantine.
-          The output remains monoscopic: DuoView writes the same full-FOV image to both OpenXR eye regions. The direct-XR route uses a single raster draw when the swapchain target format matches the validated compositor format; incompatible formats use the existing composite-and-copy path.
+          The output remains monoscopic: DuoView writes the same full-FOV image to both OpenXR eye regions. The direct-XR route uses a single raster draw when the swapchain target format matches the validated compositor format; incompatible formats use the existing composite-and-copy path. The DuoView UI reports the route used by the last completed frame and the physical primary/secondary source extents.
           Until a valid Native pair is available, warmup keeps the XR transition loop live and waits for the next pair. A compositor fault after validation returns ID6 to original Joey Mono on the following frame.
           An incomplete or cropped Native source is never presented as a full-FOV Mono image.
           DXBC shaders are precompiled during CI; per-XR-image PSOs/textures are prewarmed on swapchain setup.

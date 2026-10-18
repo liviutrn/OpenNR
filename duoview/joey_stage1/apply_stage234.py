@@ -2,7 +2,9 @@
 """Apply DuoView through the original Native Stereo Fix producer pipeline.
 Original Joey modes 0/5 are protected. STALKER 2 DX12 OpenXR mode 6 only.
 Native Stereo Fix is forced on for ID6. Validated primary and secondary sources
-are gathered into a per-command-slot atlas and submitted as one Mono image.
+are sampled directly when compatible; the per-slot atlas remains a format fallback.
+Matching double-wide OpenXR targets use one direct raster draw; other targets keep
+the existing intermediate composition and copy route.
 Missing warmup packets leave the OpenXR transition loop live; actual compositor
 faults return to original Joey Mono on the next frame. All source anchors match.
 """
@@ -108,6 +110,12 @@ def main():
     bool duoview_gaze_active() const { return m_duoview.settings().eye_tracked && m_duoview_gaze.active(); }
     void configure_duoview();
     void note_duoview_gpu_ms(float ms) { m_duo_gpu_ms.store(ms, std::memory_order_relaxed); }
+    void note_duoview_output_path(bool direct_xr) {
+        m_duoview_output_path.store(direct_xr ? 1 : 0, std::memory_order_relaxed);
+    }
+    void note_duoview_source_extents(uint64_t packed) {
+        m_duoview_source_extents.store(packed,std::memory_order_relaxed);
+    }
     std::optional<uevr::duoview::ViewFrame> duoview_begin_frame();
     void duoview_abort(const char* reason);''')
     edit(header,'    std::atomic<const char*> m_mono_status{"Not selected"};',
@@ -138,6 +146,8 @@ def main():
     const ModInt32::Ptr m_duo_relock{ModSliderInt32::create(generate_name("DuoViewGazeRelockSamples"), 1, 10, 3)};
     const ModToggle::Ptr m_duo_timing{ModToggle::create(generate_name("DuoViewGpuTiming"), false)};
     std::atomic<float> m_duo_gpu_ms{-1.f};
+    std::atomic<int32_t> m_duoview_output_path{-1};
+    std::atomic<uint64_t> m_duoview_source_extents{0};
     uevr::duoview::State m_duoview;
     std::atomic<std::shared_ptr<const uevr::duoview::FrameKey>> m_duoview_candidate_key{};
     std::atomic<std::shared_ptr<const uevr::duoview::FrameKey>> m_duoview_frozen_key{};
@@ -226,6 +236,19 @@ def main():
                     if (ms >= 0.f) ImGui::Text("DuoView compositor: %.3f ms GPU (last retired slot; excludes UE scene render)", ms);
                     else ImGui::TextUnformatted("GPU timing: waiting for a completed command slot");
                 }
+                const auto output_path=m_duoview_output_path.load(std::memory_order_relaxed);
+                if (output_path < 0) ImGui::TextUnformatted("XR output path: waiting for a completed DuoView frame");
+                else ImGui::Text("XR output path: %s",
+                    output_path ? "direct double-wide raster" : "composite and copy compatibility route");
+                const auto source_extents=m_duoview_source_extents.load(std::memory_order_relaxed);
+                const auto primary_width=static_cast<uint32_t>((source_extents>>48)&0xffffu);
+                const auto primary_height=static_cast<uint32_t>((source_extents>>32)&0xffffu);
+                const auto secondary_width=static_cast<uint32_t>((source_extents>>16)&0xffffu);
+                const auto secondary_height=static_cast<uint32_t>(source_extents&0xffffu);
+                if (primary_width && primary_height && secondary_width && secondary_height)
+                    ImGui::Text("Native source allocations: primary %ux%u, secondary %ux%u",
+                        primary_width,primary_height,secondary_width,secondary_height);
+                ImGui::TextWrapped("These are Native color-resource allocations. They do not prove the depth, G-buffer, Lumen, or other UE pass extents; measure those with a GPU capture.");
                 const auto counts=m_duoview_gaze.counters();
                 ImGui::Text("PSVR2 gaze: fresh=%llu held=%llu invalid=%llu expired=%llu unavailable=%llu",
                     static_cast<unsigned long long>(counts.fresh),
@@ -786,6 +809,10 @@ void OpenXR::note_mono_main_family(uint32_t frame, bool main_family) {''')
                                         D3D12_RESOURCE_STATE_RENDER_TARGET, *packet_frame,
                                         std::static_pointer_cast<const void>(packet),
                                         packet_frame->config.settings.gpu_timing ? compositor.timing_frequency() : 0);
+                                    if (recorded) {
+                                        vr->note_duoview_output_path(compositor.last_native_direct_xr());
+                                        vr->note_duoview_source_extents(compositor.last_native_source_extents());
+                                    }
                                     if (compositor.recorded_commands()) commands.has_commands = true;
                                     if (packet_frame->config.settings.gpu_timing)
                                         vr->note_duoview_gpu_ms(compositor.gpu_milliseconds());

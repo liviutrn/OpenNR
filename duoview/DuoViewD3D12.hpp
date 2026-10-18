@@ -133,6 +133,11 @@ public:
             return reject("Direct Native compositor not prewarmed for frozen source extent");
         const auto p=primary->GetDesc(), s=secondary->GetDesc();
         const auto xrd=destination->GetDesc();
+        last_native_source_extents_=
+            (uint64_t(static_cast<uint32_t>(p.Width)&0xffffu)<<48)|
+            (uint64_t(p.Height&0xffffu)<<32)|
+            (uint64_t(static_cast<uint32_t>(s.Width)&0xffffu)<<16)|
+            uint64_t(s.Height&0xffffu);
         const auto xr_format=srgb_ ? DXGI_FORMAT_B8G8R8A8_UNORM_SRGB : DXGI_FORMAT_B8G8R8A8_UNORM;
         // Render directly to the doublewide OpenXR texture only when its
         // render-target format matches the precompiled PSO. Keep a bit-for-bit
@@ -351,6 +356,7 @@ public:
     bool recorded_commands() const { return recorded_commands_; }
     float gpu_milliseconds() const { return gpu_ms_; }
     bool last_native_direct_xr() const { return last_native_direct_xr_; }
+    uint64_t last_native_source_extents() const { return last_native_source_extents_; }
     UINT64 timing_frequency() const { return frequency_; }
 private:
     void read_timing() {
@@ -497,6 +503,7 @@ private:
     UINT64 frequency_{};
     float gpu_ms_{-1.f};
     bool timing_pending_{}, recorded_commands_{}, last_native_direct_xr_{};
+    uint64_t last_native_source_extents_{};
     UINT width_{}, height_{};
     bool srgb_{};
     std::string error_;

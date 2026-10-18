@@ -65,6 +65,10 @@ def main():
   raise RuntimeError("Runtime shader compiler still in production compositor")
  if "DuoViewPSVR2Gaze.hpp" not in (a.backend/"src/mods/VR.hpp").read_text(encoding="utf-8"):
   raise RuntimeError("Production VR headers missing native PSVR2 gaze integration")
+ if "note_duoview_output_path" not in (a.backend/"src/mods/VR.hpp").read_text(encoding="utf-8"):
+  raise RuntimeError("XR output path diagnostic is not exposed to the DuoView UI")
+ if "note_duoview_source_extents" not in (a.backend/"src/mods/vr/D3D12Component.cpp").read_text(encoding="utf-8"):
+  raise RuntimeError("Native source allocation extents are not reported")
  vr_cpp=(a.backend/"src/mods/VR.cpp").read_text(encoding="utf-8")
  vr_header=(a.backend/"src/mods/VR.hpp").read_text(encoding="utf-8")
  if ".eye_tracked=m_duo_gaze->value()" not in vr_cpp or "m_duoview_gaze.read_uv(frozen,optical)" not in vr_cpp:
