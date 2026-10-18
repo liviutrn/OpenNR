@@ -37,6 +37,40 @@ int main() {
     state.retire();
     assert(!state.snapshot(first));
     assert(state.begin({2,1},3000,3000,matrix,read));
+    // Eye tracking OFF means no PSVR2 gaze reads. Manual positioning must work
+    // without enabling the gaze pipeline or changing Native shading.
+    State manual;
+    Settings fixed; fixed.eye_tracked=false;
+    fixed.gaze_offset_u=.08f; fixed.gaze_offset_v=-.12f;
+    assert(manual.configure(fixed));
+    int forbidden_gaze_reads=0;
+    auto p0=manual.begin({41,1},3000,3000,matrix,[&]()->std::optional<UV>{
+        ++forbidden_gaze_reads; return UV{.99f,.01f};
+    },1000);
+    assert(p0 && !p0->gaze_valid && forbidden_gaze_reads==0);
+    assert(std::abs(p0->config.gaze.u-.58f)<1e-6f);
+    assert(std::abs(p0->config.gaze.v-.38f)<1e-6f);
+    fixed.gaze_offset_v=.20f;
+    assert(manual.configure(fixed));
+    auto p1=manual.begin({41,2},3000,3000,matrix,[&]()->std::optional<UV>{
+        ++forbidden_gaze_reads; return UV{.11f,.21f};
+    },1011);
+    assert(p1 && forbidden_gaze_reads==0);
+    assert(std::abs(p1->config.gaze.v-.70f)<1e-6f);
+    assert(std::abs(p0->config.gaze.v-.38f)<1e-6f);
+    fixed.eye_tracked=true;
+    assert(manual.configure(fixed));
+    auto p2=manual.begin({41,3},3000,3000,matrix,[&]()->std::optional<UV>{
+        ++forbidden_gaze_reads; return UV{.5f,.5f};
+    },1022);
+    assert(p2 && forbidden_gaze_reads==1);
+    fixed.eye_tracked=false;
+    assert(manual.configure(fixed));
+    auto p3=manual.begin({41,4},3000,3000,matrix,[&]()->std::optional<UV>{
+        ++forbidden_gaze_reads; return UV{.9f,.9f};
+    },1033);
+    assert(p3 && forbidden_gaze_reads==1 && !p3->gaze_valid);
+    assert(std::abs(p3->config.gaze.v-.70f)<1e-6f);
     CropStability stable;
     Settings controls; controls.stabilize_crop=true;
     controls.crop_width=controls.crop_height=.3f;
