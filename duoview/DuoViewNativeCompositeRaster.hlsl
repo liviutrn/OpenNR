@@ -13,7 +13,12 @@ float2 NativeSampleUV(float2 local, uint2 active, uint2 resourceSize) {
 }
 
 float4 PSNativeMain(VertexOut i) : SV_TARGET0 {
-    const float2 fullUv = (i.pos.xy - float2(OutputOffset)) / float2(OutputSize);
+    // A compatible double-wide XR target can be filled in one raster draw.
+    // Reuse the same Mono image coordinates in each half without changing
+    // either source rectangle or the eye-local blend math.
+    float2 outputPixel = i.pos.xy;
+    if (outputPixel.x >= OutputSize.x) outputPixel.x -= OutputSize.x;
+    const float2 fullUv = outputPixel / float2(OutputSize);
     const float2 peripherySample = NativeSampleUV(
         fullUv, PeripheralRect.zw, NativePeripheryDimensions);
     const float4 periphery = PeripheralNativeSource.SampleLevel(

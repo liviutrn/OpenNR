@@ -184,7 +184,7 @@ jobs:
           Stage5 reads combined calibrated PSVR2 Toolkit CAPI gaze ONCE per frame. No DLL bundled.
           If CAPI is unavailable/invalid or blinked, ID6 stays at fixed center; no OpenXR gaze layer required.
           Menu shows whether PSVR2 gaze is fresh, center fallback, or Mono quarantine.
-          The output remains monoscopic: DuoView composes to one full-FOV image and copies that image to both OpenXR eye regions.
+          The output remains monoscopic: DuoView writes the same full-FOV image to both OpenXR eye regions. The direct-XR route uses a single raster draw when the swapchain target format matches the validated compositor format; incompatible formats use the existing composite-and-copy path.
           Until a valid Native pair is available, warmup keeps the XR transition loop live and waits for the next pair. A compositor fault after validation returns ID6 to original Joey Mono on the following frame.
           An incomplete or cropped Native source is never presented as a full-FOV Mono image.
           DXBC shaders are precompiled during CI; per-XR-image PSOs/textures are prewarmed on swapchain setup.

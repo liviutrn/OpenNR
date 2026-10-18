@@ -230,10 +230,6 @@ public:
         cmd->SetPipelineState(native_pipeline_.Get());
         cmd->SetGraphicsRootDescriptorTable(0,srv_->GetGPUDescriptorHandleForHeapStart());
         cmd->SetGraphicsRoot32BitConstants(1,sizeof(constants)/4,&constants,0);
-        const D3D12_VIEWPORT viewport{0,0,static_cast<float>(width_),static_cast<float>(height_),0,1};
-        const D3D12_RECT rect{0,0,static_cast<LONG>(width_),static_cast<LONG>(height_)};
-        cmd->RSSetViewports(1,&viewport);
-        cmd->RSSetScissorRects(1,&rect);
         auto handle=rtv_->GetCPUDescriptorHandleForHeapStart();
         if (direct_xr) {
             // Each Compositor is owned by one fenced XR command slot, so its
@@ -242,24 +238,24 @@ public:
             D3D12_RENDER_TARGET_VIEW_DESC xr_view{};
             xr_view.Format=xr_format; xr_view.ViewDimension=D3D12_RTV_DIMENSION_TEXTURE2D;
             device->CreateRenderTargetView(destination,&xr_view,handle);
-        }
-        cmd->OMSetRenderTargets(1,&handle,FALSE,nullptr);
-        cmd->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-        cmd->DrawInstanced(3,1,0,0);
-        if (direct_xr) {
-            // Render the exact same shader a second time over eye 1. Sample
-            // coordinates are corrected by OutputOffset, not by moving the
-            // source crop or re-projecting the UE views.
-            constants.output_offset[0]=width_;
-            cmd->SetGraphicsRoot32BitConstants(1,sizeof(constants)/4,&constants,0);
-            const D3D12_VIEWPORT second_viewport{
-                static_cast<float>(width_),0,static_cast<float>(width_),
-                static_cast<float>(height_),0,1};
-            const D3D12_RECT second_rect{
-                static_cast<LONG>(width_),0,
-                static_cast<LONG>(width_*2),static_cast<LONG>(height_)};
-            cmd->RSSetViewports(1,&second_viewport);
-            cmd->RSSetScissorRects(1,&second_rect);
+            const D3D12_VIEWPORT viewport{
+                0,0,static_cast<float>(width_*2),static_cast<float>(height_),0,1};
+            const D3D12_RECT rect{
+                0,0,static_cast<LONG>(width_*2),static_cast<LONG>(height_)};
+            cmd->RSSetViewports(1,&viewport);
+            cmd->RSSetScissorRects(1,&rect);
+            cmd->OMSetRenderTargets(1,&handle,FALSE,nullptr);
+            cmd->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+            cmd->DrawInstanced(3,1,0,0);
+        } else {
+            const D3D12_VIEWPORT viewport{
+                0,0,static_cast<float>(width_),static_cast<float>(height_),0,1};
+            const D3D12_RECT rect{
+                0,0,static_cast<LONG>(width_),static_cast<LONG>(height_)};
+            cmd->RSSetViewports(1,&viewport);
+            cmd->RSSetScissorRects(1,&rect);
+            cmd->OMSetRenderTargets(1,&handle,FALSE,nullptr);
+            cmd->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
             cmd->DrawInstanced(3,1,0,0);
         }
         transition(cmd,fovea,D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,fovea_state);

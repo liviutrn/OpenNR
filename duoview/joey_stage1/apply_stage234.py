@@ -220,10 +220,10 @@ def main():
                 m_duo_relock->draw("Quiet samples before fovea relocks");
                 if (m_duo_stillness->value() >= m_duo_breakout->value())
                     ImGui::TextWrapped("Stillness must be below breakout; the conflicting setting is rejected, all other controls keep working.");
-                m_duo_timing->draw("GPU timing: composite + both eye copies");
+                m_duo_timing->draw("GPU timing: DuoView compositor (excludes UE scene render)");
                 if (m_duo_timing->value()) {
                     const float ms=m_duo_gpu_ms.load(std::memory_order_relaxed);
-                    if (ms >= 0.f) ImGui::Text("Composite + eye copies: %.3f ms GPU (last retired slot)", ms);
+                    if (ms >= 0.f) ImGui::Text("DuoView compositor: %.3f ms GPU (last retired slot; excludes UE scene render)", ms);
                     else ImGui::TextUnformatted("GPU timing: waiting for a completed command slot");
                 }
                 const auto counts=m_duoview_gaze.counters();

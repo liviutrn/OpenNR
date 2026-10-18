@@ -158,6 +158,11 @@ def main():
  if ("vertex_shader_bytecode[]" not in shaders or "pixel_shader_bytecode[]" not in shaders or
      "native_pixel_shader_bytecode[]" not in shaders):
   raise RuntimeError("Precompiled DXBC shader arrays missing")
+ native_shader=(Path(__file__).parents[1]/"DuoViewNativeCompositeRaster.hlsl").read_text(encoding="utf-8")
+ if "outputPixel.x >= OutputSize.x" not in native_shader or "outputPixel.x -= OutputSize.x" not in native_shader:
+  raise RuntimeError("Direct-XR double-wide coordinate mapping is missing")
+ if compositor.count("DrawInstanced(3,1,0,0)") != 2:
+  raise RuntimeError("The direct-XR route must use one draw and the compatibility route one draw")
  inputs = sorted(EDITED_BACKEND | ADDED_BACKEND)
  hashes = {"backend":{k:sha(a.backend/k) for k in inputs},
            "frontend":{k:sha(a.frontend/k) for k in sorted(EDITED_FRONTEND)}}
