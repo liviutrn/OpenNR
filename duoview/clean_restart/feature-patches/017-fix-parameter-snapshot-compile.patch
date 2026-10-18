@@ -1,0 +1,15 @@
+diff --git a/src/mods/vr/FFakeStereoRenderingHook.cpp b/src/mods/vr/FFakeStereoRenderingHook.cpp
+index 89f40ae4..8ac69471 100644
+--- a/src/mods/vr/FFakeStereoRenderingHook.cpp
++++ b/src/mods/vr/FFakeStereoRenderingHook.cpp
+@@ -27590,8 +27590,8 @@ bool FFakeStereoRenderingHook::retain_native_duoview_source_packet(
+                                     const uevr::duoview::Parameters& b) {
+         return a.fovea_width == b.fovea_width && a.fovea_height == b.fovea_height &&
+             a.fovea_scale == b.fovea_scale && a.periphery_scale == b.periphery_scale &&
+-            a.center_x == b.center_x && a.center_y == b.center_y && a.feather == b.feather &&
+-            a.vertical_offset == b.vertical_offset && a.optical_center_x == b.optical_center_x &&
++            a.vertical_center == b.vertical_center && a.feather_pixels == b.feather_pixels &&
++            a.optical_center_x == b.optical_center_x &&
+             a.optical_center_y == b.optical_center_y;
+     };
+     bool ambiguous{};
