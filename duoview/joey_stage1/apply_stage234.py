@@ -537,7 +537,7 @@ void OpenXR::note_mono_main_family(uint32_t frame, bool main_family) {''')
         auto it = m_openxr.contexts.find(
             (uint32_t)runtimes::OpenXR::SwapchainIndex::DOUBLE_WIDE);
         if (it == m_openxr.contexts.end() || it->second.texture_contexts.empty()) {
-            SPDLOG_WARNING("[DuoView][Activation] Double-wide OpenXR command contexts not ready");
+            spdlog::warn("[DuoView][Activation] Double-wide OpenXR command contexts not ready");
         } else {
             UINT64 frequency{};
             if (auto queue = g_framework->get_d3d12_hook()->get_command_queue(); queue)
@@ -551,7 +551,7 @@ void OpenXR::note_mono_main_family(uint32_t frame, bool main_family) {''')
                 if (comp->prewarm(device, vr->get_hmd_width(), vr->get_hmd_height(), srgb, frequency))
                     ++prepared;
                 else
-                    SPDLOG_WARNING("[DuoView][Activation] DX12 command-slot prewarm failed: {}", comp->error());
+                    spdlog::warn("[DuoView][Activation] DX12 command-slot prewarm failed: {}", comp->error());
             }
             SPDLOG_INFO("[DuoView][Activation] Prepared {}/{} OpenXR command slots on ID6 entry",
                 prepared, it->second.texture_contexts.size());
