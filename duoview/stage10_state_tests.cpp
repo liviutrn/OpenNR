@@ -48,7 +48,7 @@ int main() {
     auto held=stable.update({1,4},3000,3000,controls,{},1100);
     assert(held.u==moved.u && held.v==moved.v);
     auto expired=stable.update({1,5},3000,3000,controls,{},1123);
-    assert(expired.u==.5f && expired.v==.5f);
+    assert(expired.u==moved.u && expired.v==moved.v); // no blink recenter even past sensor hold
     controls.stabilize_crop=false;
     auto raw=stable.update({1,6},3000,3000,controls,UV{.61123f,.42123f},1133);
     assert(raw.u==.61123f && raw.v==.42123f);
@@ -59,8 +59,28 @@ int main() {
     assert(aligned_layout);
     const float xphase=aligned_layout->u0*aligned_layout->fovea.width/controls.crop_width;
     const float yphase=aligned_layout->v0*aligned_layout->fovea.height/controls.crop_height;
-    assert(std::abs(xphase/4.f-std::round(xphase/4.f))<.001f);
-    assert(std::abs(yphase/4.f-std::round(yphase/4.f))<.001f);
+    assert(std::abs(xphase/2.f-std::round(xphase/2.f))<.001f);
+    assert(std::abs(yphase/2.f-std::round(yphase/2.f))<.001f);
+    // Quantization independently adjustable without altering the deadzone.
+    controls.gaze_quant_pixels=8; controls.guard_fraction=0.f;
+    stable.reset();
+    auto snapped=stable.update({1,8},3400,3172,controls,UV{.71943f,.61327f},1155);
+    const auto snapped_layout=make_layout(3400,3172,controls.crop_width,controls.crop_height,
+        controls.peripheral_scale,controls.foveal_density,snapped.u,snapped.v);
+    assert(snapped_layout);
+    const float snapped_pixels=snapped_layout->u0*snapped_layout->fovea.width/controls.crop_width;
+    assert(std::abs(snapped_pixels/8.f-std::round(snapped_pixels/8.f))<.001f);
+    controls.gaze_offset_u=.1f; controls.gaze_offset_v=-.05f;
+    stable.reset();
+    auto offset=stable.update({1,9},3400,3172,controls,UV{.5f,.5f},1166);
+    assert(std::abs(offset.u-.6f)<.01f && std::abs(offset.v-.45f)<.01f);
+    auto blink=stable.update({1,10},3400,3172,controls,{},5000);
+    assert(blink.u==offset.u && blink.v==offset.v); // indefinite crop hold on lost tracking
+    controls.gaze_quant_pixels=0; controls.guard_fraction=0.f;
+    stable.reset();
+    auto unsnapped=stable.update({1,11},3400,3172,controls,UV{.514321f,.482134f},5011);
+    assert(std::abs(unsnapped.u-(.514321f+.1f))<.0001f);
+    controls.gaze_quant_pixels=2; controls.guard_fraction=.05f; controls.gaze_offset_u=0.f; controls.gaze_offset_v=0.f;
     State temporal;
     controls.independent_shading=true;
     assert(temporal.configure(controls));
