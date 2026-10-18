@@ -56,8 +56,8 @@ def main():
         if (is_duoview_renderer_active()) { return true; }
 
         return m_native_stereo_fix->value() &&''')
-    // Always retain the validated Native two-source capture. OFF changes only
-    // Unreal's secondary constructor label (stock lighting) for comparison.
+    # Always retain the validated Native two-source capture. OFF changes only
+    # Unreal's secondary constructor label (stock lighting) for comparison.
     edit(header,'''    bool is_native_stereo_fix_same_pass_enabled() const {
         if (should_force_native_stereo_fix_same_pass()) {''',
     '''    bool is_native_stereo_fix_same_pass_enabled() const {
