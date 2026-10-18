@@ -210,15 +210,15 @@ def main():
                 m_duo_quant->draw("Gaze quantization (0=off, 1-16 fovea pixels)");
                 m_duo_hold->draw("Blink / tracking-loss ray hold (milliseconds)");
                 m_duo_reacquire->draw("Consistent samples after large post-blink jump (1=instant)");
-                m_duo_offset_x->draw("Gaze horizontal calibration offset");
-                m_duo_offset_y->draw("Gaze vertical calibration offset");
+                m_duo_offset_x->draw("Fovea horizontal offset (also in fixed mode)");
+                m_duo_offset_y->draw("Fovea vertical / height offset (also in fixed mode)");
                 ImGui::TextWrapped("Adaptive response: small gaze movement holds or follows slowly; large movement jumps 1:1 and follows at full speed; then automatically locks when steady. No heavy temporal smoothing.");
                 m_duo_micro_gain->draw("Small gaze movement gain (0=locked; 1=full)");
                 m_duo_breakout->draw("Fast 1:1 breakout (fraction of full view)");
                 m_duo_stillness->draw("Stillness threshold per gaze sample (fraction of view)");
                 m_duo_relock->draw("Quiet samples before fovea relocks");
                 if (m_duo_stillness->value() >= m_duo_breakout->value())
-                    ImGui::TextWrapped("Stillness must be less than breakout; previous valid settings remain in effect.");
+                    ImGui::TextWrapped("Stillness is too high; it is clamped independently so other controls continue to work.");
                 m_duo_timing->draw("GPU timing: composite + both eye copies");
                 if (m_duo_timing->value()) {
                     const float ms=m_duo_gpu_ms.load(std::memory_order_relaxed);
@@ -256,7 +256,7 @@ def main():
                 const auto active=m_duoview.settings();
                 if (active.crop_width!=m_duo_width->value() || active.crop_height!=m_duo_height->value() ||
                     active.foveal_density!=m_duo_density->value() || active.peripheral_scale!=m_duo_periphery->value())
-                    ImGui::TextWrapped("Selected view sizes exceed existing atlas; previous valid settings remain in effect.");
+                    ImGui::TextWrapped("Requested view sizes invalid: keeping previous quality, but eye tracking, shading and offset controls remain active.");
                 ImGui::TextWrapped("Diagnostic 1 isolates the full-FOV peripheral pass. Diagnostic 2 isolates the foveal pass (dark outside crop). Compare shadows/lighting in the same scene.");
                 ImGui::TextWrapped("View 0 = FIRST Unreal pass (old prototype default), view 1 = SECOND pass (Build19 default). Identical frozen Mono camera. Switching may reset temporal history.");
                 ImGui::TreePop();
@@ -270,12 +270,11 @@ def main():
     changed[cpp]+='''
 // Update the immutable state from persisted controls only on changes.
 void VR::configure_duoview() {
-    if (m_duo_width->value()*m_duo_density->value()>1.f ||
-        m_duo_height->value()*m_duo_density->value()>1.f) {
-        SPDLOG_WARNING_EVERY_N_SEC(2, "[DuoView] Fovea exceeds Native single-view capture size; preserving previous valid quality");
-        return;
-    }
-    const uevr::duoview::Settings candidate{
+    // Never let an invalid SIZE or gaze response slider lock the eye tracking,
+    // shading, diagnostic, or fixed-position controls. A config transaction
+    // still commits atomically per UE producer frame.
+    const auto current = m_duoview.settings();
+    uevr::duoview::Settings candidate{
         .crop_width=m_duo_width->value(), .crop_height=m_duo_height->value(),
         .peripheral_scale=m_duo_periphery->value(), .foveal_density=m_duo_density->value(),
         .feather_fraction=m_duo_feather->value(), .debug_border=m_duo_border->value(),
@@ -291,7 +290,25 @@ void VR::configure_duoview() {
         .gaze_breakout_radius=m_duo_breakout->value(),
         .gaze_still_radius=m_duo_stillness->value(),
         .gaze_relock_samples=static_cast<uint32_t>(m_duo_relock->value())};
-    const auto current=m_duoview.settings();
+    const bool invalid_capture =
+        candidate.crop_width*candidate.foveal_density>1.f ||
+        candidate.crop_height*candidate.foveal_density>1.f ||
+        !uevr::duoview::make_layout(1024,1024,candidate.crop_width,
+            candidate.crop_height,candidate.peripheral_scale,candidate.foveal_density);
+    if (invalid_capture) {
+        // Preserve only the last valid QUALITY tuple; other controls must
+        // continue responding even if the user requests an impossible atlas.
+        candidate.crop_width=current.crop_width;
+        candidate.crop_height=current.crop_height;
+        candidate.peripheral_scale=current.peripheral_scale;
+        candidate.foveal_density=current.foveal_density;
+        SPDLOG_WARNING_EVERY_N_SEC(5,
+            "[DuoView][Controls] Invalid requested atlas sizes; retaining last valid quality while applying other controls");
+    }
+    if (candidate.gaze_still_radius>=candidate.gaze_breakout_radius) {
+        candidate.gaze_still_radius=(std::min)(current.gaze_still_radius,
+            candidate.gaze_breakout_radius*.5f);
+    }
     if (current.crop_width==candidate.crop_width && current.crop_height==candidate.crop_height &&
         current.peripheral_scale==candidate.peripheral_scale && current.foveal_density==candidate.foveal_density &&
         current.feather_fraction==candidate.feather_fraction && current.debug_border==candidate.debug_border &&
