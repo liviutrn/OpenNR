@@ -1,0 +1,146 @@
+--- a/src/mods/vr/DuoViewFrameTransactions.hpp
++++ b/src/mods/vr/DuoViewFrameTransactions.hpp
+@@ -19,6 +19,8 @@
+     bool source_frame_valid{};
+     bool main_family_validated{};
+     bool conflicted{};
++    uint32_t settings_frame{};
++    bool native_stereo_fix{};
+ };
+ 
+ struct MainFamilyIdentity {
+@@ -26,17 +28,25 @@
+     uintptr_t scene{};
+     uintptr_t target{};
+     uintptr_t views[2]{};
++    uint32_t view_count{2};
++    uint32_t settings_frame{};
++    bool settings_frame_valid{};
+ };
+ 
+ inline bool matches_authoritative_main_family(
+     const SourceFamilyIdentity& source, const MainFamilyIdentity& family)
+ {
++    const bool primary_singleton = family.view_count == 1 && source.native_stereo_fix &&
++        source.views[0] == family.views[0] && family.views[1] == 0;
++    const bool original_pair = family.view_count == 2 &&
++        ((source.views[0] == family.views[0] && source.views[1] == family.views[1]) ||
++         (source.views[0] == family.views[1] && source.views[1] == family.views[0]));
+     return source.selected && source.view_mask == 0x3 && !source.conflicted &&
+         source.scene != 0 && source.scene == family.scene &&
+         source.target != 0 && source.target == family.target &&
+         source.views[0] != 0 && source.views[1] != 0 && source.views[0] != source.views[1] &&
+-        ((source.views[0] == family.views[0] && source.views[1] == family.views[1]) ||
+-         (source.views[0] == family.views[1] && source.views[1] == family.views[0])) &&
++        (primary_singleton || original_pair) &&
++        (!family.settings_frame_valid || source.settings_frame == family.settings_frame) &&
+         (!source.source_frame_valid || source.source_frame == family.frame);
+ }
+ 
+--- a/src/mods/vr/FFakeStereoRenderingHook.cpp
++++ b/src/mods/vr/FFakeStereoRenderingHook.cpp
+@@ -27574,9 +27574,10 @@
+         : nullptr;
+     auto* const views = family.get_views();
+     if (expected_target == nullptr || family.get_render_target() != expected_target ||
+-        views == nullptr || views->count != 2 || views->capacity < 2 || views->data == nullptr ||
+-        !is_readable_process_range(reinterpret_cast<uintptr_t>(views->data), sizeof(void*) * 2) ||
+-        !sdk::FSceneViewFamily::validate_views(&family, views, 2)) {
++        views == nullptr || views->count < 1 || views->count > 2 ||
++        views->capacity < views->count || views->data == nullptr ||
++        !is_readable_process_range(reinterpret_cast<uintptr_t>(views->data), sizeof(void*) * views->count) ||
++        !sdk::FSceneViewFamily::validate_views(&family, views, views->count)) {
+         return;
+     }
+ 
+@@ -27584,7 +27585,11 @@
+         .frame = source_frame,
+         .scene = reinterpret_cast<uintptr_t>(family.get_scene_interface()),
+         .target = reinterpret_cast<uintptr_t>(expected_target),
+-        .views = {reinterpret_cast<uintptr_t>(views->data[0]), reinterpret_cast<uintptr_t>(views->data[1])},
++        .views = {reinterpret_cast<uintptr_t>(views->data[0]),
++            views->count == 2 ? reinterpret_cast<uintptr_t>(views->data[1]) : uintptr_t{}},
++        .view_count = static_cast<uint32_t>(views->count),
++        .settings_frame = g_frame_count,
++        .settings_frame_valid = true,
+     };
+     const auto source_identity = [](const NativeDuoViewSourceFamily& candidate) {
+         uevr::duoview::SourceFamilyIdentity identity{};
+@@ -27598,6 +27603,8 @@
+         identity.source_frame_valid = candidate.source_frame_valid;
+         identity.main_family_validated = candidate.main_family_validated;
+         identity.conflicted = candidate.conflicted;
++        identity.settings_frame = candidate.settings_frame;
++        identity.native_stereo_fix = candidate.native_stereo_fix;
+         return identity;
+     };
+     bool ambiguous{};
+--- a/tests/MonoD3D12Tests.cpp
++++ b/tests/MonoD3D12Tests.cpp
+@@ -366,6 +366,8 @@
+                 value.identity.scene = 0x55;
+                 value.identity.target = 0x66;
+                 value.identity.selected = true;
++                value.identity.settings_frame = 700;
++                value.identity.native_stereo_fix = true;
+             }
+             value.identity.views[eye] = view;
+             value.identity.view_mask |= static_cast<uint8_t>(1u << eye);
+@@ -377,7 +379,10 @@
+         .frame = 5048,
+         .scene = 0x55,
+         .target = 0x66,
+-        .views = {0x222, 0x111},
++        .views = {0x111, 0},
++        .view_count = 1,
++        .settings_frame = 700,
++        .settings_frame_valid = true,
+     };
+     const auto authoritative_bind = lifecycle_sources.mutate_unique(
+         [&](uint32_t, uintptr_t, const DuoViewLifecycleSource& value) {
+@@ -385,7 +390,7 @@
+         },
+         [&](DuoViewLifecycleSource& value) {
+             expect(duo::bind_authoritative_source_frame(value.identity, authoritative_family),
+-                "production authoritative-frame helper accepts the exact copied GT view pair");
++                "Native Fix primary GT singleton binds the retained two-view producer");
+         }, ambiguous);
+     DuoViewLifecycleSource bound_source{};
+     const bool bound_source_found = lifecycle_sources.mutate_if_present(
+@@ -394,6 +399,36 @@
+         bound_source_found && bound_source.identity.source_frame_valid &&
+         bound_source.identity.source_frame == 5048,
+         "GT render-family FrameNumber replaces stale constructor identity while preserving the settings-frame retention stamp");
++
++    auto callback = authoritative_family;
++    callback.views[0] = 0x222;
++    expect(!duo::matches_authoritative_main_family(bound_source.identity, callback),
++        "secondary singleton cannot claim the primary source transaction");
++    callback = authoritative_family;
++    callback.target = 0x77;
++    expect(!duo::matches_authoritative_main_family(bound_source.identity, callback),
++        "secondary capture target cannot bind the main viewport transaction");
++    callback = authoritative_family;
++    callback.settings_frame = 701;
++    expect(!duo::matches_authoritative_main_family(bound_source.identity, callback),
++        "reused view addresses from another settings frame cannot bind a stale producer");
++    callback = authoritative_family;
++    callback.views[0] = 0x911;
++    expect(!duo::matches_authoritative_main_family(bound_source.identity, callback),
++        "unproven GT view copies cannot bind by scene and target alone");
++    auto ordinary_source = bound_source.identity;
++    ordinary_source.native_stereo_fix = false;
++    expect(!duo::matches_authoritative_main_family(ordinary_source, authoritative_family),
++        "ordinary native rendering cannot claim a singleton family");
++    callback = authoritative_family;
++    callback.views[0] = 0x222;
++    callback.views[1] = 0x111;
++    callback.view_count = 2;
++    expect(duo::matches_authoritative_main_family(ordinary_source, callback),
++        "ordinary native pair still binds with reversed view-array order");
++    callback.view_count = 3;
++    expect(!duo::matches_authoritative_main_family(ordinary_source, callback),
++        "unsupported callback topology cannot claim a two-view source");
+ 
+     const uintptr_t copied_gt_family = 0x888;
+     uint32_t packet_family_frame{};
