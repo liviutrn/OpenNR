@@ -56,6 +56,18 @@ def main():
         if (is_duoview_renderer_active()) { return true; }
 
         return m_native_stereo_fix->value() &&''')
+    // Always retain the validated Native two-source capture. OFF changes only
+    // Unreal's secondary constructor label (stock lighting) for comparison.
+    edit(header,'''    bool is_native_stereo_fix_same_pass_enabled() const {
+        if (should_force_native_stereo_fix_same_pass()) {''',
+    '''    bool is_native_stereo_fix_same_pass_enabled() const {
+        if (is_duoview_renderer_active()) return m_duoview.settings().native_fix_same_pass;
+        if (should_force_native_stereo_fix_same_pass()) {''')
+    edit(header,'''    bool is_native_stereo_fix_preserve_secondary_pass_enabled() const {
+        return m_native_stereo_fix_preserve_secondary_pass->value();''',
+    '''    bool is_native_stereo_fix_preserve_secondary_pass_enabled() const {
+        if (is_duoview_renderer_active() && !m_duoview.settings().native_fix_same_pass) return true;
+        return m_native_stereo_fix_preserve_secondary_pass->value();''')
     edit(header,'    bool is_using_duoview_mono() const { return m_rendering_method->value() == RenderingMethod::DUOVIEW_MONO; }',
         '''    bool is_using_duoview_mono() const { return m_rendering_method->value() == RenderingMethod::DUOVIEW_MONO; }
     bool is_duoview_renderer_active() const;
@@ -112,6 +124,12 @@ def main():
     const ModToggle::Ptr m_duo_stabilize{ModToggle::create(generate_name("DuoViewCropStability"), true)};
     const ModSlider::Ptr m_duo_guard{ModSlider::create(generate_name("DuoViewCropGuard"), 0.f, .05f, .05f)};
     const ModToggle::Ptr m_duo_shading{ModToggle::create(generate_name("DuoViewIndependentShading"), false)};
+    const ModToggle::Ptr m_duo_native_fix{ModToggle::create(generate_name("DuoViewNativeFixSamePass"), true)};
+    const ModInt32::Ptr m_duo_quant{ModSliderInt32::create(generate_name("DuoViewQuantizationPixels"), 0, 16, 2)};
+    const ModInt32::Ptr m_duo_hold{ModSliderInt32::create(generate_name("DuoViewGazeHoldMs"), 50, 2000, 350)};
+    const ModInt32::Ptr m_duo_reacquire{ModSliderInt32::create(generate_name("DuoViewGazeReacquireSamples"), 1, 4, 2)};
+    const ModSlider::Ptr m_duo_offset_x{ModSlider::create(generate_name("DuoViewGazeOffsetX"), -.25f, .25f, 0.f)};
+    const ModSlider::Ptr m_duo_offset_y{ModSlider::create(generate_name("DuoViewGazeOffsetY"), -.25f, .25f, 0.f)};
     const ModToggle::Ptr m_duo_timing{ModToggle::create(generate_name("DuoViewGpuTiming"), false)};
     std::atomic<float> m_duo_gpu_ms{-1.f};
     uevr::duoview::State m_duoview;
@@ -127,14 +145,17 @@ def main():
         '''        m_options = {
             *m_duo_width, *m_duo_height, *m_duo_periphery, *m_duo_density,
             *m_duo_feather, *m_duo_gaze, *m_duo_border, *m_duo_debug_source,
-            *m_duo_fovea_view, *m_duo_timing, *m_duo_stabilize, *m_duo_guard,''')
+            *m_duo_fovea_view, *m_duo_timing, *m_duo_stabilize, *m_duo_guard,
+            *m_duo_native_fix, *m_duo_quant, *m_duo_hold, *m_duo_reacquire,
+            *m_duo_offset_x, *m_duo_offset_y,''')
     cpp="src/mods/VR.cpp"
     edit(cpp,'''bool VR::should_force_native_stereo_fix_same_pass() const {
     if (is_using_mono()) { return false; }
     if (!m_native_stereo_fix->value() || is_using_afr() || !stalker2_native_fix_requires_same_pass_cached()) {''',
     '''bool VR::should_force_native_stereo_fix_same_pass() const {
     if (is_duoview_renderer_active()) {
-        if (is_using_afr() || !stalker2_native_fix_requires_same_pass_cached()) { return false; }
+        if (!m_duoview.settings().native_fix_same_pass ||
+            is_using_afr() || !stalker2_native_fix_requires_same_pass_cached()) { return false; }
         SPDLOG_INFO_ONCE("[DuoView][NativeStereoFix] Preserving the validated same-pass STALKER 2 layout");
         return true;
     }
@@ -161,6 +182,9 @@ def main():
                     m_duo_feather->value()=.08f; m_duo_gaze->value()=true;
                     m_duo_border->value()=false; m_duo_fovea_view->value()=0;
                     m_duo_debug_source->value()=0;
+                    m_duo_native_fix->value()=true; m_duo_quant->value()=2;
+                    m_duo_hold->value()=350; m_duo_reacquire->value()=2;
+                    m_duo_offset_x->value()=0.f; m_duo_offset_y->value()=0.f;
                 }
                 m_duo_width->draw("Fovea width / full FOV");
                 m_duo_height->draw("Fovea height / full FOV");
@@ -173,7 +197,13 @@ def main():
                 m_duo_fovea_view->draw("Fovea UE source view (0 or 1)");
                 m_duo_stabilize->draw("Stable gaze crop (OpenNR r10 policy)");
                 if (m_duo_stabilize->value()) m_duo_guard->draw("Crop centre guard (fraction of crop)");
-                ImGui::TextWrapped("Joey Native Stereo Fix is forced ON in ID6. Its original secondary pass supplies the second DuoView image; independent shading is ignored while DuoView is active.");
+                m_duo_native_fix->draw("Native Stereo Fix shading (OFF = stock secondary-pass)");
+                ImGui::TextWrapped("Both choices keep Joey's proven two-texture DuoView capture. ON relabels the UE secondary pass as PRIMARY (Build 149). OFF preserves its stock SECONDARY label for a hybrid native-fix capture + stock-style lighting. Compare Lumen visually; this does not disable the underlying two-target capture.");
+                m_duo_quant->draw("Gaze quantization (0=off, 1-16 fovea pixels)");
+                m_duo_hold->draw("Blink / tracking-loss ray hold (milliseconds)");
+                m_duo_reacquire->draw("Consistent samples after large post-blink jump (1=instant)");
+                m_duo_offset_x->draw("Gaze horizontal calibration offset");
+                m_duo_offset_y->draw("Gaze vertical calibration offset");
                 m_duo_timing->draw("GPU timing: composite + both eye copies");
                 if (m_duo_timing->value()) {
                     const float ms=m_duo_gpu_ms.load(std::memory_order_relaxed);
@@ -237,7 +267,11 @@ void VR::configure_duoview() {
         .eye_tracked=m_duo_gaze->value(), .fovea_view=static_cast<uint32_t>(m_duo_fovea_view->value()),
         .diagnostic_view=static_cast<uint32_t>(m_duo_debug_source->value()),
         .gpu_timing=m_duo_timing->value(), .stabilize_crop=m_duo_stabilize->value(),
-        .guard_fraction=m_duo_guard->value(), .independent_shading=false};
+        .guard_fraction=m_duo_guard->value(), .independent_shading=false,
+        .native_fix_same_pass=m_duo_native_fix->value(),
+        .gaze_quant_pixels=static_cast<uint32_t>(m_duo_quant->value()),
+        .gaze_hold_ms=m_duo_hold->value(), .gaze_reacquire_samples=m_duo_reacquire->value(),
+        .gaze_offset_u=m_duo_offset_x->value(), .gaze_offset_v=m_duo_offset_y->value()};
     const auto current=m_duoview.settings();
     if (current.crop_width==candidate.crop_width && current.crop_height==candidate.crop_height &&
         current.peripheral_scale==candidate.peripheral_scale && current.foveal_density==candidate.foveal_density &&
@@ -245,7 +279,13 @@ void VR::configure_duoview() {
         current.eye_tracked==candidate.eye_tracked && current.fovea_view==candidate.fovea_view &&
         current.diagnostic_view==candidate.diagnostic_view && current.gpu_timing==candidate.gpu_timing &&
         current.stabilize_crop==candidate.stabilize_crop && current.guard_fraction==candidate.guard_fraction &&
-        current.independent_shading==candidate.independent_shading) return;
+        current.independent_shading==candidate.independent_shading &&
+        current.native_fix_same_pass==candidate.native_fix_same_pass &&
+        current.gaze_quant_pixels==candidate.gaze_quant_pixels &&
+        current.gaze_hold_ms==candidate.gaze_hold_ms &&
+        current.gaze_reacquire_samples==candidate.gaze_reacquire_samples &&
+        current.gaze_offset_u==candidate.gaze_offset_u &&
+        current.gaze_offset_v==candidate.gaze_offset_v) return;
     if (!m_duoview.configure(candidate))
         SPDLOG_WARNING_EVERY_N_SEC(2, "[DuoView] Requested quality settings exceed atlas geometry; preserving previous valid settings");
 }
@@ -290,6 +330,9 @@ std::optional<uevr::duoview::ViewFrame> VR::duoview_begin_frame() {
         eye[0][0],eye[0][1],eye[0][2],
         eye[1][0],eye[1][1],eye[1][2],
         eye[2][0],eye[2][1],eye[2][2]};
+    const auto settings=m_duoview.settings();
+    m_duoview_gaze.set_recovery_controls(static_cast<uint32_t>(settings.gaze_hold_ms),
+        static_cast<uint32_t>(settings.gaze_reacquire_samples));
     auto frame=m_duoview.begin(key, get_hmd_width(), get_hmd_height(), frozen,
         [this, frozen, optical]() -> std::optional<uevr::duoview::UV> {
             return m_duoview_gaze.read_uv(frozen,optical);
