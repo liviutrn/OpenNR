@@ -1,0 +1,517 @@
+diff --git a/src/mods/vr/DuoViewFrameTransactions.hpp b/src/mods/vr/DuoViewFrameTransactions.hpp
+index 2fb00599..fcd5e4cd 100644
+--- a/src/mods/vr/DuoViewFrameTransactions.hpp
++++ b/src/mods/vr/DuoViewFrameTransactions.hpp
+@@ -9,6 +9,49 @@
+ 
+ namespace uevr::duoview {
+ 
++struct SourceFamilyIdentity {
++    uint32_t source_frame{};
++    uintptr_t scene{};
++    uintptr_t target{};
++    uintptr_t views[2]{};
++    uint8_t view_mask{};
++    bool selected{};
++    bool source_frame_valid{};
++    bool main_family_validated{};
++    bool conflicted{};
++};
++
++struct MainFamilyIdentity {
++    uint32_t frame{};
++    uintptr_t scene{};
++    uintptr_t target{};
++    uintptr_t views[2]{};
++};
++
++inline bool matches_authoritative_main_family(
++    const SourceFamilyIdentity& source, const MainFamilyIdentity& family)
++{
++    return source.selected && source.view_mask == 0x3 && !source.conflicted &&
++        source.scene != 0 && source.scene == family.scene &&
++        source.target != 0 && source.target == family.target &&
++        source.views[0] != 0 && source.views[1] != 0 && source.views[0] != source.views[1] &&
++        ((source.views[0] == family.views[0] && source.views[1] == family.views[1]) ||
++         (source.views[0] == family.views[1] && source.views[1] == family.views[0])) &&
++        (!source.source_frame_valid || source.source_frame == family.frame);
++}
++
++inline bool bind_authoritative_source_frame(
++    SourceFamilyIdentity& source, const MainFamilyIdentity& family)
++{
++    if (!matches_authoritative_main_family(source, family)) {
++        return false;
++    }
++    source.source_frame = family.frame;
++    source.source_frame_valid = true;
++    source.main_family_validated = true;
++    return true;
++}
++
+ // Joins the game-thread Native Fix packet to the exact RHI frame token. The
+ // callbacks may arrive in either order; callers publish only when take_ready
+ // returns a token, and repeated Presents/callbacks cannot complete it twice.
+@@ -213,6 +256,16 @@ public:
+         return Match{selected->frame, selected->owner, selected->payload};
+     }
+ 
++    template <class Fn>
++    void visit(Fn&& fn) const {
++        std::scoped_lock lock{m_mutex};
++        for (const auto& slot : m_slots) {
++            if (slot.owner != 0) {
++                fn(slot.frame, slot.owner, slot.payload);
++            }
++        }
++    }
++
+     void clear() {
+         std::scoped_lock lock{m_mutex};
+         for (auto& slot : m_slots) { slot = {}; }
+diff --git a/src/mods/vr/FFakeStereoRenderingHook.cpp b/src/mods/vr/FFakeStereoRenderingHook.cpp
+index 8ac69471..0315f616 100644
+--- a/src/mods/vr/FFakeStereoRenderingHook.cpp
++++ b/src/mods/vr/FFakeStereoRenderingHook.cpp
+@@ -23911,31 +23911,38 @@ sdk::FSceneView* FFakeStereoRenderingHook::sceneview_constructor(sdk::FSceneView
+             if (vr->is_native_duoview_selected_for_frame(g_frame_count)) {
+                 const auto family_address = reinterpret_cast<uintptr_t>(init_options_view_family);
+                 const auto frame_offset = SceneViewExtensionAnalyzer::frame_count_offset;
+-                if (frame_offset != 0 && frame_offset < 0x4000 &&
+-                    is_readable_process_range(family_address + frame_offset, sizeof(uint32_t))) {
+-                    uint32_t family_frame{};
++                uint32_t family_frame = std::numeric_limits<uint32_t>::max();
++                const bool constructor_frame_valid = frame_offset != 0 && frame_offset < 0x4000 &&
++                    is_readable_process_range(family_address + frame_offset, sizeof(uint32_t));
++                if (constructor_frame_valid) {
+                     std::memcpy(&family_frame,
+                         reinterpret_cast<const void*>(family_address + frame_offset), sizeof(family_frame));
+-                    native_views[result].family_frame = family_frame;
+-                    native_views[result].family_frame_valid = true;
+-                    const auto source_eye = init_options_original_stereo_pass == EStereoscopicPass::eSSP_PRIMARY ? 0u : 1u;
+-                    NativeDuoViewSourceFamily source{};
+-                    source.family = init_options_view_family;
+-                    source.views[source_eye] = result;
+-                    source.scene = init_options_scene;
+-                    source.target = init_options_view_family->get_render_target();
+-                    source.source_frame = family_frame;
+-                    source.settings_frame = g_frame_count;
+-                    source.rects[source_eye] = native_view_rect;
+-                    source.parameters = vr->native_duoview_parameters_for_frame(g_frame_count);
+-                    source.selected = true;
+-                    source.native_stereo_fix = vr->native_duoview_uses_native_stereo_fix_for_frame(g_frame_count);
+-                    source.projection_valid[source_eye] = native_projection_valid;
+-                    g_hook->record_native_duoview_source_view(source, source_eye);
+-                } else {
++                }
++                // This field can still be a constructor/setup value. It is
++                // diagnostic only; GT binds the pair to the authoritative frame.
++                native_views[result].family_frame = family_frame;
++                native_views[result].family_frame_valid = false;
++                const auto source_eye = init_options_original_stereo_pass == EStereoscopicPass::eSSP_PRIMARY ? 0u : 1u;
++                NativeDuoViewSourceFamily source{};
++                source.family = init_options_view_family;
++                source.views[source_eye] = result;
++                source.scene = init_options_scene;
++                source.target = init_options_view_family->get_render_target();
++                source.source_frame = family_frame;
++                source.constructor_frame = family_frame;
++                source.settings_frame = g_frame_count;
++                source.rects[source_eye] = native_view_rect;
++                source.parameters = vr->native_duoview_parameters_for_frame(g_frame_count);
++                source.selected = true;
++                source.native_stereo_fix = vr->native_duoview_uses_native_stereo_fix_for_frame(g_frame_count);
++                source.constructor_frame_valid = constructor_frame_valid;
++                source.source_frame_valid = false;
++                source.projection_valid[source_eye] = native_projection_valid;
++                g_hook->record_native_duoview_source_view(source, source_eye);
++                if (!constructor_frame_valid) {
+                     SPDLOG_WARNING_EVERY_N_SEC(2,
+-                        "[DuoView] Cannot retain source owner because the validated family frame field is unavailable settings_frame={}",
+-                        g_frame_count);
++                        "[DuoView] Retained source views without constructor FrameNumber; waiting for GT authority settings_frame={} family={:x}",
++                        g_frame_count, family_address);
+                 }
+             }
+         }
+@@ -26006,6 +26013,26 @@ void FFakeStereoRenderingHook::begin_render_viewfamily_real(void* render_module,
+         packet->duoview_parameters = packet->duoview
+             ? vr->native_duoview_parameters_for_frame(g_frame_count)
+             : uevr::duoview::Parameters{};
++        if (packet->duoview) {
++            // Metadata was copied before the primary renderer invoked the GT
++            // family callback. Refresh only the authoritative frame binding
++            // after that callback has joined the exact source-view pair.
++            std::scoped_lock lock{g_hook->m_sceneview_data.mtx};
++            const auto refresh_family_frame = [&](sdk::FSceneView* source_view,
++                                                  NativeStereoViewMetadata& metadata) {
++                const auto found = g_hook->m_sceneview_data.native_stereo_views.find(source_view);
++                if (found == g_hook->m_sceneview_data.native_stereo_views.end() ||
++                    found->second.scene != view_family_scene ||
++                    found->second.frame != metadata.frame ||
++                    !found->second.family_frame_valid) {
++                    return;
++                }
++                metadata.family_frame = found->second.family_frame;
++                metadata.family_frame_valid = true;
++            };
++            refresh_family_frame(native_left_view, native_left_metadata);
++            refresh_family_frame(native_right_view, native_right_metadata);
++        }
+         packet->duoview_projections_valid = native_left_metadata.projection_valid && native_right_metadata.projection_valid;
+         if (packet->duoview) {
+             const auto family_address = reinterpret_cast<uintptr_t>(view_family);
+@@ -27489,7 +27516,7 @@ void FFakeStereoRenderingHook::record_native_duoview_source_view(
+     }
+ 
+     const auto stored = m_native_duoview_source_families.mutate(
+-        source.source_frame, reinterpret_cast<uintptr_t>(source.family),
++        source.settings_frame, reinterpret_cast<uintptr_t>(source.family),
+         [&](NativeDuoViewSourceFamily& slot, bool inserted) {
+         if (inserted || slot.family == nullptr || slot.settings_frame != source.settings_frame) {
+             slot = source;
+@@ -27533,8 +27560,8 @@ void FFakeStereoRenderingHook::record_native_duoview_source_view(
+     });
+     if (!stored) {
+         SPDLOG_WARNING_EVERY_N_SEC(2,
+-            "[DuoView] Source family ring is full; refusing frame={} family={:x} without replacing a retained owner",
+-            source.source_frame, reinterpret_cast<uintptr_t>(source.family));
++            "[DuoView] Source family ring is full; refusing constructor_frame={} settings_frame={} family={:x} without replacing a retained owner",
++            source.constructor_frame, source.settings_frame, reinterpret_cast<uintptr_t>(source.family));
+     }
+ }
+ 
+@@ -27553,26 +27580,121 @@ void FFakeStereoRenderingHook::mark_native_duoview_main_family(
+         return;
+     }
+ 
++    const uevr::duoview::MainFamilyIdentity authoritative_family{
++        .frame = source_frame,
++        .scene = reinterpret_cast<uintptr_t>(family.get_scene_interface()),
++        .target = reinterpret_cast<uintptr_t>(expected_target),
++        .views = {reinterpret_cast<uintptr_t>(views->data[0]), reinterpret_cast<uintptr_t>(views->data[1])},
++    };
++    const auto source_identity = [](const NativeDuoViewSourceFamily& candidate) {
++        uevr::duoview::SourceFamilyIdentity identity{};
++        identity.source_frame = candidate.source_frame;
++        identity.scene = reinterpret_cast<uintptr_t>(candidate.scene);
++        identity.target = reinterpret_cast<uintptr_t>(candidate.target);
++        identity.views[0] = reinterpret_cast<uintptr_t>(candidate.views[0]);
++        identity.views[1] = reinterpret_cast<uintptr_t>(candidate.views[1]);
++        identity.view_mask = candidate.view_mask;
++        identity.selected = candidate.selected;
++        identity.source_frame_valid = candidate.source_frame_valid;
++        identity.main_family_validated = candidate.main_family_validated;
++        identity.conflicted = candidate.conflicted;
++        return identity;
++    };
+     bool ambiguous{};
+     const auto source = m_native_duoview_source_families.mutate_unique(
+-        [&](uint32_t frame, uintptr_t, const NativeDuoViewSourceFamily& candidate) {
+-            return frame == source_frame && candidate.source_frame == source_frame && candidate.selected &&
+-                candidate.view_mask == 0x3 && !candidate.conflicted &&
+-                candidate.scene == family.get_scene_interface() && candidate.target == expected_target &&
+-                candidate.views[0] != nullptr && candidate.views[1] != nullptr &&
+-                candidate.views[0] != candidate.views[1];
++        [&](uint32_t, uintptr_t, const NativeDuoViewSourceFamily& candidate) {
++            return uevr::duoview::matches_authoritative_main_family(
++                source_identity(candidate), authoritative_family);
++        },
++        [&](NativeDuoViewSourceFamily& candidate) {
++            auto identity = source_identity(candidate);
++            if (!uevr::duoview::bind_authoritative_source_frame(identity, authoritative_family)) {
++                return;
++            }
++            candidate.source_frame = identity.source_frame;
++            candidate.source_frame_valid = identity.source_frame_valid;
++            candidate.main_family_validated = identity.main_family_validated;
+         },
+-        [](NativeDuoViewSourceFamily& candidate) { candidate.main_family_validated = true; },
+         ambiguous);
+ 
+     if (!source.has_value()) {
++        size_t retained{};
++        size_t selected{};
++        size_t complete{};
++        size_t conflicted{};
++        size_t same_scene_target{};
++        uint32_t nearest_source_frame{};
++        uint32_t nearest_constructor_frame{};
++        uint32_t nearest_settings_frame{};
++        uint8_t nearest_view_mask{};
++        bool nearest_source_frame_valid{};
++        bool nearest_constructor_frame_valid{};
++        bool nearest_conflicted{};
++        uintptr_t nearest_scene{};
++        uintptr_t nearest_target{};
++        uintptr_t nearest_owner{};
++        int64_t nearest_delta{};
++        int64_t nearest_distance = std::numeric_limits<int64_t>::max();
++        m_native_duoview_source_families.visit(
++            [&](uint32_t, uintptr_t owner, const NativeDuoViewSourceFamily& candidate) {
++                ++retained;
++                selected += candidate.selected ? 1u : 0u;
++                complete += candidate.view_mask == 0x3 ? 1u : 0u;
++                conflicted += candidate.conflicted ? 1u : 0u;
++                same_scene_target += candidate.scene == family.get_scene_interface() &&
++                    candidate.target == expected_target ? 1u : 0u;
++                const auto signed_delta = static_cast<int64_t>(candidate.constructor_frame) -
++                    static_cast<int64_t>(source_frame);
++                const auto distance = signed_delta < 0
++                    ? -signed_delta
++                    : signed_delta;
++                if (distance < nearest_distance) {
++                    nearest_distance = distance;
++                    nearest_delta = signed_delta;
++                    nearest_source_frame = candidate.source_frame;
++                    nearest_constructor_frame = candidate.constructor_frame;
++                    nearest_settings_frame = candidate.settings_frame;
++                    nearest_view_mask = candidate.view_mask;
++                    nearest_source_frame_valid = candidate.source_frame_valid;
++                    nearest_constructor_frame_valid = candidate.constructor_frame_valid;
++                    nearest_conflicted = candidate.conflicted;
++                    nearest_scene = reinterpret_cast<uintptr_t>(candidate.scene);
++                    nearest_target = reinterpret_cast<uintptr_t>(candidate.target);
++                    nearest_owner = owner;
++                }
++            });
+         SPDLOG_INFO_EVERY_N_SEC(2,
+-            "[DuoView] Main-family source did not validate uniquely for frame={} scene={:x} target={:x} ambiguous={}",
++            "[DuoView] Main-family source did not validate uniquely for frame={} scene={:x} target={:x} ambiguous={} retained/selected/complete/conflicted/same_scene_target={}/{}/{}/{}/{} nearest_source/valid/ctor/ctor_valid/settings/delta={}/{}/{}/{}/{}/{} mask={} conflict={} scene={:x} target={:x} owner={:x}",
+             source_frame, reinterpret_cast<uintptr_t>(family.get_scene_interface()),
+-            reinterpret_cast<uintptr_t>(family.get_render_target()), ambiguous);
++            reinterpret_cast<uintptr_t>(family.get_render_target()), ambiguous,
++            retained, selected, complete, conflicted, same_scene_target,
++            nearest_source_frame, nearest_source_frame_valid,
++            nearest_constructor_frame, nearest_constructor_frame_valid, nearest_settings_frame,
++            nearest_distance == std::numeric_limits<int64_t>::max() ? int64_t{-1} : nearest_delta,
++            nearest_view_mask, nearest_conflicted, nearest_scene, nearest_target, nearest_owner);
+         return;
+     }
+-    try_publish_native_duoview_transaction(source->frame, source->owner);
++
++    {
++        std::scoped_lock lock{m_sceneview_data.mtx};
++        for (auto* const source_view : source->payload.views) {
++            const auto metadata = m_sceneview_data.native_stereo_views.find(source_view);
++            if (metadata == m_sceneview_data.native_stereo_views.end() ||
++                metadata->second.scene != source->payload.scene ||
++                metadata->second.frame != source->payload.settings_frame) {
++                continue;
++            }
++            metadata->second.family_frame = source_frame;
++            metadata->second.family_frame_valid = true;
++        }
++    }
++    SPDLOG_INFO_EVERY_N_SEC(2,
++        "[DuoView] Bound authoritative family frame={} from constructor_frame={} settings_frame={} owner={:x} views={:x}/{:x} target={:x}",
++        source_frame, source->payload.constructor_frame, source->payload.settings_frame, source->owner,
++        reinterpret_cast<uintptr_t>(source->payload.views[0]),
++        reinterpret_cast<uintptr_t>(source->payload.views[1]),
++        reinterpret_cast<uintptr_t>(source->payload.target));
++    try_publish_native_duoview_transaction(source->payload.source_frame, source->owner);
+ }
+ 
+ bool FFakeStereoRenderingHook::retain_native_duoview_source_packet(
+@@ -27596,8 +27718,9 @@ bool FFakeStereoRenderingHook::retain_native_duoview_source_packet(
+     };
+     bool ambiguous{};
+     const auto source = m_native_duoview_source_families.mutate_unique(
+-        [&](uint32_t frame, uintptr_t, const NativeDuoViewSourceFamily& candidate) {
+-            return frame == packet->source_frame && candidate.source_frame == packet->source_frame &&
++        [&](uint32_t, uintptr_t, const NativeDuoViewSourceFamily& candidate) {
++            return candidate.source_frame_valid &&
++                candidate.source_frame == packet->source_frame &&
+                 candidate.selected && candidate.view_mask == 0x3 && !candidate.conflicted &&
+                 candidate.settings_frame == packet->engine_frame && candidate.scene == packet->scene &&
+                 candidate.target == packet->main_target && candidate.views[0] == packet->left_view &&
+@@ -27619,7 +27742,7 @@ bool FFakeStereoRenderingHook::retain_native_duoview_source_packet(
+         return false;
+     }
+ 
+-    try_publish_native_duoview_transaction(source->frame, source->owner);
++    try_publish_native_duoview_transaction(source->payload.source_frame, source->owner);
+     return true;
+ }
+ 
+@@ -27634,8 +27757,8 @@ FFakeStereoRenderingHook::get_native_duoview_source_family(
+         return std::nullopt;
+     }
+     const auto match = m_native_duoview_source_families.read_unique(
+-        [&](uint32_t frame, uintptr_t, const NativeDuoViewSourceFamily& source) {
+-            return frame == source_frame && source.source_frame == source_frame && source.selected &&
++        [&](uint32_t, uintptr_t, const NativeDuoViewSourceFamily& source) {
++            return source.source_frame_valid && source.source_frame == source_frame && source.selected &&
+                 source.main_family_validated && source.scene == scene && source.target == target &&
+                 source.view_mask == 0x3 && source.views[0] != nullptr && source.views[1] != nullptr &&
+                 source.views[0] != source.views[1] && !source.conflicted &&
+@@ -27649,15 +27772,19 @@ void FFakeStereoRenderingHook::bind_native_duoview_rhi_transaction(
+     uint32_t source_frame, uintptr_t family_owner, uint32_t submit_frame, uint64_t output_generation)
+ {
+     bool bound{};
+-    const auto found = m_native_duoview_source_families.mutate_if_present(
+-        source_frame, family_owner, [&](NativeDuoViewSourceFamily& source) {
+-            if (!source.selected || !source.main_family_validated || source.conflicted ||
++    bool ambiguous{};
++    const auto source_match = m_native_duoview_source_families.mutate_unique(
++        [&](uint32_t, uintptr_t owner, const NativeDuoViewSourceFamily& source) {
++            return owner == family_owner && source.source_frame_valid && source.source_frame == source_frame;
++        },
++        [&](NativeDuoViewSourceFamily& source) {
++            if (!source.selected || !source.source_frame_valid || !source.main_family_validated || source.conflicted ||
+                 source.source_frame != source_frame) {
+                 return;
+             }
+             bound = source.join.bind_rhi_token(submit_frame, output_generation);
+-        });
+-    if (!found || !bound) {
++        }, ambiguous);
++    if (!source_match || !bound || ambiguous) {
+         SPDLOG_INFO_EVERY_N_SEC(2,
+             "[DuoView] RHI token did not bind to its retained source owner frame={} owner={:x} generation={}",
+             source_frame, family_owner, output_generation);
+@@ -27671,9 +27798,13 @@ void FFakeStereoRenderingHook::try_publish_native_duoview_transaction(
+ {
+     std::optional<NativeDuoViewTransaction> transaction{};
+     uint64_t output_generation{};
+-    const auto found = m_native_duoview_source_families.mutate_if_present(
+-        source_frame, family_owner, [&](NativeDuoViewSourceFamily& source) {
+-            if (!source.selected || !source.main_family_validated || source.conflicted ||
++    bool ambiguous{};
++    const auto source_match = m_native_duoview_source_families.mutate_unique(
++        [&](uint32_t, uintptr_t owner, const NativeDuoViewSourceFamily& source) {
++            return owner == family_owner && source.source_frame_valid && source.source_frame == source_frame;
++        },
++        [&](NativeDuoViewSourceFamily& source) {
++            if (!source.selected || !source.source_frame_valid || !source.main_family_validated || source.conflicted ||
+                 source.source_frame != source_frame || source.view_mask != 0x3 ||
+                 source.views[0] == nullptr || source.views[1] == nullptr ||
+                 !source.projection_valid[0] || !source.projection_valid[1]) {
+@@ -27696,9 +27827,9 @@ void FFakeStereoRenderingHook::try_publish_native_duoview_transaction(
+             ready.native_stereo_fix = source.native_stereo_fix;
+             output_generation = token->output_generation;
+             transaction = std::move(ready);
+-        });
++        }, ambiguous);
+ 
+-    if (found && transaction.has_value()) {
++    if (source_match && !ambiguous && transaction.has_value()) {
+         publish_native_duoview_transaction(std::move(*transaction), output_generation);
+     }
+ }
+diff --git a/src/mods/vr/FFakeStereoRenderingHook.hpp b/src/mods/vr/FFakeStereoRenderingHook.hpp
+index a2468053..4dc3e2aa 100644
+--- a/src/mods/vr/FFakeStereoRenderingHook.hpp
++++ b/src/mods/vr/FFakeStereoRenderingHook.hpp
+@@ -1394,6 +1394,7 @@ private:
+         sdk::FSceneInterface* scene{};
+         sdk::FRenderTarget* target{};
+         uint32_t source_frame{};
++        uint32_t constructor_frame{};
+         uint32_t settings_frame{};
+         FIntRect rects[2]{};
+         uevr::duoview::Parameters parameters{};
+@@ -1402,6 +1403,8 @@ private:
+         uint8_t view_mask{};
+         bool selected{};
+         bool native_stereo_fix{};
++        bool constructor_frame_valid{};
++        bool source_frame_valid{};
+         bool main_family_validated{};
+         bool projection_valid[2]{};
+         bool conflicted{};
+diff --git a/tests/MonoD3D12Tests.cpp b/tests/MonoD3D12Tests.cpp
+index 12ddbfe3..880bb86f 100644
+--- a/tests/MonoD3D12Tests.cpp
++++ b/tests/MonoD3D12Tests.cpp
+@@ -350,6 +350,90 @@ static void test_duoview_frame_transactions() {
+     expect(!ambiguous_lookup && ambiguous,
+         "two main-family candidates with the same stable identity fail closed as ambiguous");
+ 
++    struct LifecycleSource {
++        uint32_t settings_frame{};
++        uint64_t packet_serial{};
++        duo::SourceFamilyIdentity identity{};
++        duo::NativeFrameJoin join{};
++    };
++    duo::OwnerFrameRing<LifecycleSource, 8> lifecycle_sources;
++    const auto retain_constructor_eye = [&](uint8_t eye, uintptr_t view) {
++        return lifecycle_sources.mutate(700, 0x321, [=](LifecycleSource& value, bool inserted) {
++            if (inserted) {
++                value.settings_frame = 700;
++                value.identity.source_frame = std::numeric_limits<uint32_t>::max();
++                value.identity.scene = 0x55;
++                value.identity.target = 0x66;
++                value.identity.selected = true;
++            }
++            value.identity.views[eye] = view;
++            value.identity.view_mask |= static_cast<uint8_t>(1u << eye);
++        });
++    };
++    expect(retain_constructor_eye(0, 0x111) && retain_constructor_eye(1, 0x222),
++        "both constructor eyes remain retained under stable producer settings ownership");
++    const duo::MainFamilyIdentity authoritative_family{
++        .frame = 5048,
++        .scene = 0x55,
++        .target = 0x66,
++        .views = {0x222, 0x111},
++    };
++    const auto authoritative_bind = lifecycle_sources.mutate_unique(
++        [&](uint32_t, uintptr_t, const LifecycleSource& value) {
++            return duo::matches_authoritative_main_family(value.identity, authoritative_family);
++        },
++        [&](LifecycleSource& value) {
++            expect(duo::bind_authoritative_source_frame(value.identity, authoritative_family),
++                "production authoritative-frame helper accepts the exact copied GT view pair");
++        }, ambiguous);
++    const auto authoritative_source = lifecycle_sources.read(700, 0x321);
++    expect(authoritative_bind && !ambiguous && authoritative_bind->frame == 700 &&
++        authoritative_source && authoritative_source->identity.source_frame_valid &&
++        authoritative_source->identity.source_frame == 5048,
++        "GT render-family FrameNumber replaces stale constructor identity while preserving the settings-frame retention stamp");
++
++    const uintptr_t copied_gt_family = 0x888;
++    uint32_t packet_family_frame{};
++    bool packet_family_frame_valid{};
++    if (authoritative_source && authoritative_source->identity.source_frame_valid) {
++        packet_family_frame = authoritative_source->identity.source_frame;
++        packet_family_frame_valid = true;
++    }
++    const uintptr_t copied_packet_family = 0x999;
++    bool packet_attached_after_metadata_refresh{};
++    const auto packet_owner = lifecycle_sources.mutate_unique(
++        [&](uint32_t, uintptr_t, const LifecycleSource& value) {
++            return packet_family_frame_valid && value.settings_frame == 700 &&
++                value.identity.source_frame_valid && value.identity.source_frame == packet_family_frame &&
++                duo::matches_authoritative_main_family(value.identity, authoritative_family);
++        },
++        [&](LifecycleSource& value) {
++            value.packet_serial = 93;
++            value.join.mark_packet_available();
++            packet_attached_after_metadata_refresh = true;
++        }, ambiguous);
++    expect(copied_gt_family != 0x321 && copied_packet_family != 0x321 &&
++        packet_attached_after_metadata_refresh && packet_owner && packet_owner->owner == 0x321,
++        "packet copy refreshes to the GT-authoritative frame and joins the retained producer owner");
++
++    const uintptr_t copied_rt_family = 0x777;
++    const auto rt_source = lifecycle_sources.read_unique(
++        [&](uint32_t, uintptr_t, const LifecycleSource& value) {
++            return value.identity.source_frame_valid && value.identity.source_frame == 5048 &&
++                value.identity.scene == 0x55 && value.identity.target == 0x66 &&
++                duo::matches_authoritative_main_family(value.identity, authoritative_family);
++        }, ambiguous);
++    if (rt_source) {
++        lifecycle_sources.mutate_if_present(700, 0x321, [](LifecycleSource& value) {
++            value.join.bind_rhi_token(5050, 9);
++        });
++    }
++    auto lifecycle_join = lifecycle_sources.read(700, 0x321);
++    const auto exact_present = lifecycle_join ? lifecycle_join->join.take_ready(true) : std::nullopt;
++    expect(copied_rt_family != 0x321 && rt_source && rt_source->owner == 0x321 && exact_present &&
++        exact_present->submit_frame == 5050 && exact_present->output_generation == 9,
++        "copied RT family binds the exact authoritative source to its compensated Present token");
++
+     duo::NativeFrameJoin packet_first{};
+     packet_first.mark_packet_available();
+     expect(packet_first.bind_rhi_token(302, 10), "packet-first path records the RHI handoff");
