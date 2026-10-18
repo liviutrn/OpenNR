@@ -86,6 +86,10 @@ struct Counters {
 };
 class Reader {
 public:
+    void set_recovery_controls(uint32_t hold_ms, uint32_t reacquire_samples) {
+        std::scoped_lock lock{mutex_};
+        recovery_.controls(hold_ms, reacquire_samples);
+    }
     bool active() const { return active_.load(std::memory_order_acquire); }
     Counters counters() const {
         return {fresh_.load(std::memory_order_relaxed),reused_.load(std::memory_order_relaxed),
@@ -104,24 +108,21 @@ public:
         }
         Status candidate{};
         const bool fresh=read_(&candidate,0);
-        if(fresh) {
-            if(auto ray=calibrated_ray(candidate)) {
-                cached_=*ray; fresh_time_=now; fresh_.fetch_add(1,std::memory_order_relaxed);
-            } else {
-                cached_.reset(); // blink/invalid sample immediately invalidates old gaze
-                invalid_.fetch_add(1,std::memory_order_relaxed);
-            }
-        }
-        if(!cached_||now<fresh_time_||now-fresh_time_>50) {
-            cached_.reset();
+        const auto sample = fresh ? calibrated_ray(candidate) : std::optional<Ray>{};
+        const bool invalid = fresh && !sample.has_value();
+        if (invalid) invalid_.fetch_add(1,std::memory_order_relaxed);
+        const auto held = recovery_.update(now, sample, invalid);
+        if (sample && !invalid)
+            fresh_.fetch_add(1,std::memory_order_relaxed);
+        if (!held) {
             age_ms_.store(UINT32_MAX,std::memory_order_relaxed);
             expired_.fetch_add(1,std::memory_order_relaxed);
             active_.store(false,std::memory_order_release);
             return {};
         }
-        age_ms_.store(static_cast<uint32_t>(now-fresh_time_),std::memory_order_relaxed);
-        if(!fresh) reused_.fetch_add(1,std::memory_order_relaxed);
-        const auto ray=optical_ray(*cached_,optical_rotation);
+        age_ms_.store(recovery_.age_ms(now),std::memory_order_relaxed);
+        if (!fresh || invalid) reused_.fetch_add(1,std::memory_order_relaxed);
+        const auto ray=optical_ray(*held,optical_rotation);
         const auto uv=ray ? projection_uv(*ray,projection) : std::optional<UV>{};
         active_.store(uv.has_value(),std::memory_order_release);
         return uv;
@@ -164,7 +165,7 @@ private:
     std::atomic<uint32_t> age_ms_{UINT32_MAX};
     HMODULE module_{};
     ReadFn read_{};
-    uint64_t next_attempt_{},fresh_time_{};
-    std::optional<Ray> cached_{};
+    uint64_t next_attempt_{};
+    RayRecovery recovery_{};
 };
 } // namespace uevr::duoview::psvr2
