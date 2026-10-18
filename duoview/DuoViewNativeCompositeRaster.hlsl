@@ -13,7 +13,7 @@ float2 NativeSampleUV(float2 local, uint2 active, uint2 resourceSize) {
 }
 
 float4 PSNativeMain(VertexOut i) : SV_TARGET0 {
-    const float2 fullUv = i.pos.xy / float2(OutputSize);
+    const float2 fullUv = (i.pos.xy - float2(OutputOffset)) / float2(OutputSize);
     const float2 peripherySample = NativeSampleUV(
         fullUv, PeripheralRect.zw, NativePeripheryDimensions);
     const float4 periphery = PeripheralNativeSource.SampleLevel(
