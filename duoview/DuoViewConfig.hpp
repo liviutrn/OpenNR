@@ -24,6 +24,13 @@ struct Settings {
     bool stabilize_crop{};
     float guard_fraction{.05f};
     bool independent_shading{};
+    // Keep DuoView's proven Native two-target capture in both modes.
+    // OFF retains the stock UE SECONDARY shading pass instead of relabeling PRIMARY.
+    bool native_fix_same_pass{true};
+    uint32_t gaze_quant_pixels{2}; // 0 disables snapping; other values step in fovea pixels.
+    int32_t gaze_hold_ms{350};
+    int32_t gaze_reacquire_samples{2};
+    float gaze_offset_u{}, gaze_offset_v{};
 };
 struct FrameConfig {
     FrameKey key{};
@@ -39,7 +46,12 @@ public:
         if (!std::isfinite(proposed.feather_fraction) ||
             proposed.feather_fraction < 0.f || proposed.feather_fraction > .45f ||
             proposed.fovea_view > 1 || proposed.diagnostic_view > 2 ||
-            !std::isfinite(proposed.guard_fraction) || proposed.guard_fraction<0.f || proposed.guard_fraction>.05f)
+            !std::isfinite(proposed.guard_fraction) || proposed.guard_fraction<0.f || proposed.guard_fraction>.05f ||
+            proposed.gaze_quant_pixels>16 || proposed.gaze_hold_ms<50 || proposed.gaze_hold_ms>2000 ||
+            proposed.gaze_reacquire_samples<1 || proposed.gaze_reacquire_samples>4 ||
+            !std::isfinite(proposed.gaze_offset_u) || !std::isfinite(proposed.gaze_offset_v) ||
+            proposed.gaze_offset_u<-.25f || proposed.gaze_offset_u>.25f ||
+            proposed.gaze_offset_v<-.25f || proposed.gaze_offset_v>.25f)
             return false;
         // Validate without trusting in-game UI, config files or Lua requests.
         if (!make_layout(1024,1024,proposed.crop_width,proposed.crop_height,
