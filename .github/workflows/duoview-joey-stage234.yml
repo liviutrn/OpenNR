@@ -1,8 +1,8 @@
-name: DuoView Joey v22 Native Stereo Fix - Activation Recovery
-run-name: DuoView Joey Native Stereo Fix Activation with exact SDK (${{ github.run_number }})
+name: DuoView Joey v22 Native Fix / Stock Shading / Gaze Recovery
+run-name: DuoView Joey Native Shading Toggle and Gaze Recovery exact SDK (${{ github.run_number }})
 on:
   push:
-    branches: [experiments/duoview-temporal-shading-v22, experiments/joey-duoview-native-stereo-fix-v22-20261018, fix/joey-v22-nativefix-duoview-activation-20261018]
+    branches: [experiments/duoview-temporal-shading-v22, experiments/joey-duoview-native-stereo-fix-v22-20261018, fix/joey-v22-nativefix-duoview-activation-20261018, experiments/joey-v22-nativefix-gaze-hold-controls-20261018]
     paths:
       - '.github/workflows/duoview-joey-stage234.yml'
       - 'duoview/joey_stage1/**'
