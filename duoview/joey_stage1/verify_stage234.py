@@ -97,6 +97,16 @@ def main():
                "m_duo_reacquire->draw(", "m_duo_offset_x->draw(", "m_duo_offset_y->draw(",
                "m_duoview_gaze.set_recovery_controls("):
   if token not in vr_cpp: raise RuntimeError("Gaze recovery controls not wired "+token)
+ for token in ("Invalid requested atlas sizes; retaining last valid quality while applying other controls",
+               "candidate.crop_width=current.crop_width",
+               "candidate.peripheral_scale=current.peripheral_scale",
+               "candidate.gaze_still_radius=(std::min)(current.gaze_still_radius"):
+  if token not in vr_cpp: raise RuntimeError("UI settings isolation regression: "+token)
+ crop_path=(a.backend/"src/mods/vr/DuoViewCropStability.hpp")
+ crop_code=crop_path.read_text(encoding="utf-8")
+ for token in ("std::clamp(.5f+s.gaze_offset_u", "std::clamp(.5f+s.gaze_offset_v",
+               "if (!s.eye_tracked)"):
+  if token not in crop_code: raise RuntimeError("Fixed fovea manual positioning missing "+token)
  for token in ("m_duo_micro_gain->draw(", "m_duo_breakout->draw(",
                "m_duo_stillness->draw(", "m_duo_relock->draw(",
                ".gaze_micro_gain=m_duo_micro_gain->value()",
