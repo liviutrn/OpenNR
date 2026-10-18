@@ -105,6 +105,7 @@ int main() try {
     if (compositor.record(device.Get(),cmd.Get(),atlas.Get(),bad.Get(),D3D12_RESOURCE_STATE_RENDER_TARGET,frame)) throw std::runtime_error("Invalid destination accepted");
     if (compositor.recorded_commands()) throw std::runtime_error("Rejected input recorded GPU commands");
     if (!compositor.record(device.Get(),cmd.Get(),atlas.Get(),stereo.Get(),D3D12_RESOURCE_STATE_RENDER_TARGET,frame,frequency)) throw std::runtime_error(compositor.error());
+    const auto stable_mono_srv_refreshes=compositor.srv_descriptor_refresh_count();
     transition(cmd.Get(),stereo.Get(),D3D12_RESOURCE_STATE_RENDER_TARGET,D3D12_RESOURCE_STATE_COPY_SOURCE);
     from={stereo.Get(),D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX};to={readback.Get(),D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT};to.PlacedFootprint=foot;
     cmd->CopyTextureRegion(&to,0,0,0,&from,nullptr);check(cmd->Close());
@@ -122,6 +123,8 @@ int main() try {
     transition(cmd.Get(),stereo.Get(),D3D12_RESOURCE_STATE_COPY_SOURCE,D3D12_RESOURCE_STATE_RENDER_TARGET);
     frame.key.frame=2;frame.gaze={.75f,.5f};frame.layout=*uevr::duoview::make_layout(32,32,.5f,.5f,.25f,1.f,.75f,.5f);
     if (!compositor.record(device.Get(),cmd.Get(),atlas.Get(),stereo.Get(),D3D12_RESOURCE_STATE_RENDER_TARGET,frame,frequency)) throw std::runtime_error(compositor.error());
+    if (compositor.srv_descriptor_refresh_count()!=stable_mono_srv_refreshes)
+        throw std::runtime_error("Stable compatibility atlas SRVs were rewritten");
     if (compositor.gpu_milliseconds()<0.f) throw std::runtime_error("Completed GPU timestamps missing");
     transition(cmd.Get(),stereo.Get(),D3D12_RESOURCE_STATE_RENDER_TARGET,D3D12_RESOURCE_STATE_COPY_SOURCE);
     cmd->CopyTextureRegion(&to,0,0,0,&from,nullptr);check(cmd->Close());queue->ExecuteCommandLists(1,lists);check(queue->Signal(fence.Get(),2));
@@ -261,6 +264,55 @@ int main() try {
                     throw std::runtime_error("Direct-XR output differed from compatibility copy pixels");
             }
             readback->Unmap(0,nullptr);
+
+            // The same fenced-slot resources and descriptors should be
+            // reusable without rewriting SRVs/RTVs on the next frames.
+            const auto stable_srv_refreshes=compositor.srv_descriptor_refresh_count();
+            const auto stable_rtv_refreshes=compositor.xr_rtv_refresh_count();
+            for (int repeat=0;repeat<2;++repeat) {
+                check(allocator->Reset());check(cmd->Reset(allocator.Get(),nullptr));
+                transition(cmd.Get(),stereo.Get(),D3D12_RESOURCE_STATE_COPY_SOURCE,
+                    D3D12_RESOURCE_STATE_RENDER_TARGET);
+                if(!compositor.record_native(device.Get(),cmd.Get(),primary.texture.Get(),
+                        secondary.texture.Get(),stereo.Get(),D3D12_RESOURCE_STATE_RENDER_TARGET,
+                        D3D12_RESOURCE_STATE_RENDER_TARGET,native_frame,
+                        std::make_shared<const int>(10+repeat),0))
+                    throw std::runtime_error("Cached Native descriptor reuse failed: "+compositor.error());
+                if(compositor.srv_descriptor_refresh_count()!=stable_srv_refreshes ||
+                   compositor.xr_rtv_refresh_count()!=stable_rtv_refreshes)
+                    throw std::runtime_error("Stable Native source/XR descriptors were rewritten");
+                transition(cmd.Get(),stereo.Get(),D3D12_RESOURCE_STATE_RENDER_TARGET,
+                    D3D12_RESOURCE_STATE_COPY_SOURCE);
+                check(cmd->Close());queue->ExecuteCommandLists(1,native_lists);
+                const UINT64 stable_signal=++native_signal;
+                check(queue->Signal(fence.Get(),stable_signal));event=CreateEventW(nullptr,FALSE,FALSE,nullptr);
+                check(fence->SetEventOnCompletion(stable_signal,event));
+                if(WaitForSingleObject(event,30000)!=WAIT_OBJECT_0)
+                    throw std::runtime_error("Cached Native descriptor reuse fence timeout");
+                CloseHandle(event);
+            }
+
+            // A new XR texture changes only the slot RTV descriptor. Source
+            // SRVs remain valid for the same Native pair and sampling format.
+            check(allocator->Reset());check(cmd->Reset(allocator.Get(),nullptr));
+            auto alternate_xr=resource(device.Get(),
+                texture(64,32,D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET),
+                D3D12_HEAP_TYPE_DEFAULT,D3D12_RESOURCE_STATE_RENDER_TARGET);
+            if(!compositor.record_native(device.Get(),cmd.Get(),primary.texture.Get(),
+                    secondary.texture.Get(),alternate_xr.Get(),D3D12_RESOURCE_STATE_RENDER_TARGET,
+                    D3D12_RESOURCE_STATE_RENDER_TARGET,native_frame,
+                    std::make_shared<const int>(12),0))
+                throw std::runtime_error("Changed XR target descriptor refresh failed: "+compositor.error());
+            if(compositor.srv_descriptor_refresh_count()!=stable_srv_refreshes ||
+               compositor.xr_rtv_refresh_count()!=stable_rtv_refreshes+1)
+                throw std::runtime_error("Changed XR target refreshed the wrong descriptor set");
+            check(cmd->Close());queue->ExecuteCommandLists(1,native_lists);
+            const UINT64 changed_target_signal=++native_signal;
+            check(queue->Signal(fence.Get(),changed_target_signal));event=CreateEventW(nullptr,FALSE,FALSE,nullptr);
+            check(fence->SetEventOnCompletion(changed_target_signal,event));
+            if(WaitForSingleObject(event,30000)!=WAIT_OBJECT_0)
+                throw std::runtime_error("Changed XR target descriptor fence timeout");
+            CloseHandle(event);
         }
     }
     // A layout can request a fovea larger than Joey's single-eye capture. The

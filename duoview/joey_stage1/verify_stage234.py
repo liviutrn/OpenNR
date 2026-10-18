@@ -167,6 +167,13 @@ def main():
   raise RuntimeError("Direct-XR double-wide coordinate mapping is missing")
  if compositor.count("DrawInstanced(3,1,0,0)") != 2:
   raise RuntimeError("The direct-XR route must use one draw and the compatibility route one draw")
+ for token in ("srv_descriptors_valid_", "srv_first_reference_", "srv_second_reference_",
+               "xr_rtv_reference_", "srv_descriptor_refresh_count_", "xr_rtv_refresh_count_"):
+  if token not in compositor: raise RuntimeError("Per-slot compositor descriptor reuse missing "+token)
+ for token in ("Stable compatibility atlas SRVs were rewritten",
+               "Stable Native source/XR descriptors were rewritten",
+               "Changed XR target refreshed the wrong descriptor set"):
+  if token not in native_warp: raise RuntimeError("Native descriptor cache WARP coverage missing "+token)
  inputs = sorted(EDITED_BACKEND | ADDED_BACKEND)
  hashes = {"backend":{k:sha(a.backend/k) for k in inputs},
            "frontend":{k:sha(a.frontend/k) for k in sorted(EDITED_FRONTEND)}}

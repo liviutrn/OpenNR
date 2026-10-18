@@ -68,16 +68,7 @@ public:
             {l.periphery.x, l.periphery.y, l.periphery.width, l.periphery.height},
             {l.u0, l.v0, l.u1, l.v1}, frame.settings.feather_fraction,
             frame.settings.debug_border ? 1u : 0u, frame.settings.diagnostic_view, 0.f};
-        D3D12_SHADER_RESOURCE_VIEW_DESC view{};
-        view.Format = format;
-        view.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
-        view.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
-        view.Texture2D.MipLevels = 1;
-        const auto srv_start=srv_->GetCPUDescriptorHandleForHeapStart();
-        device->CreateShaderResourceView(atlas, &view, srv_start);
-        auto secondary=srv_start;
-        secondary.ptr+=device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
-        device->CreateShaderResourceView(atlas, &view, secondary);
+        ensure_srvs(device,atlas,atlas,format);
         source_ = atlas;
         transition(cmd, atlas, atlas_state, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
         recorded_commands_ = true;
@@ -192,7 +183,8 @@ public:
 
         auto* fovea=frame.config.settings.fovea_view==0 ? primary : secondary;
         auto* periphery=frame.config.settings.fovea_view==0 ? secondary : primary;
-        const auto fd=fovea->GetDesc(), vd=periphery->GetDesc();
+        const auto& fd=frame.config.settings.fovea_view==0 ? p : s;
+        const auto& vd=frame.config.settings.fovea_view==0 ? s : p;
         const auto fovea_state=frame.config.settings.fovea_view==0 ? primary_state : secondary_state;
         const auto peripheral_state=frame.config.settings.fovea_view==0 ? secondary_state : primary_state;
 
@@ -208,17 +200,7 @@ public:
             {static_cast<uint32_t>(fd.Width),fd.Height},
             {static_cast<uint32_t>(vd.Width),vd.Height}
         };
-        D3D12_SHADER_RESOURCE_VIEW_DESC view{};
-        view.Format=sampling_format;
-        view.ViewDimension=D3D12_SRV_DIMENSION_TEXTURE2D;
-        view.Shader4ComponentMapping=D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
-        view.Texture2D.MipLevels=1;
-        const auto desc_step=device->GetDescriptorHandleIncrementSize(
-            D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
-        auto cpu=srv_->GetCPUDescriptorHandleForHeapStart();
-        device->CreateShaderResourceView(fovea,&view,cpu);
-        cpu.ptr+=desc_step;
-        device->CreateShaderResourceView(periphery,&view,cpu);
+        ensure_srvs(device,fovea,periphery,sampling_format);
         // GPU lifetime remains bound to the exact retired OpenXR command slot,
         // never to whichever engine packet happens to arrive next.
         primary_reference_=primary; secondary_reference_=secondary;
@@ -240,9 +222,14 @@ public:
             // Each Compositor is owned by one fenced XR command slot, so its
             // second RTV descriptor cannot be overwritten while GPU-active.
             handle.ptr+=device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
-            D3D12_RENDER_TARGET_VIEW_DESC xr_view{};
-            xr_view.Format=xr_format; xr_view.ViewDimension=D3D12_RTV_DIMENSION_TEXTURE2D;
-            device->CreateRenderTargetView(destination,&xr_view,handle);
+            if (xr_rtv_reference_.Get()!=destination || xr_rtv_format_!=xr_format) {
+                D3D12_RENDER_TARGET_VIEW_DESC xr_view{};
+                xr_view.Format=xr_format; xr_view.ViewDimension=D3D12_RTV_DIMENSION_TEXTURE2D;
+                device->CreateRenderTargetView(destination,&xr_view,handle);
+                xr_rtv_reference_=destination;
+                xr_rtv_format_=xr_format;
+                ++xr_rtv_refresh_count_;
+            }
             const D3D12_VIEWPORT viewport{
                 0,0,static_cast<float>(width_*2),static_cast<float>(height_),0,1};
             const D3D12_RECT rect{
@@ -357,8 +344,27 @@ public:
     float gpu_milliseconds() const { return gpu_ms_; }
     bool last_native_direct_xr() const { return last_native_direct_xr_; }
     uint64_t last_native_source_extents() const { return last_native_source_extents_; }
+    uint64_t srv_descriptor_refresh_count() const { return srv_descriptor_refresh_count_; }
+    uint64_t xr_rtv_refresh_count() const { return xr_rtv_refresh_count_; }
     UINT64 timing_frequency() const { return frequency_; }
 private:
+    void ensure_srvs(ID3D12Device* device, ID3D12Resource* first,
+                     ID3D12Resource* second, DXGI_FORMAT format) {
+        if (srv_descriptors_valid_ && srv_first_reference_.Get()==first &&
+            srv_second_reference_.Get()==second && srv_cached_format_==format) return;
+        D3D12_SHADER_RESOURCE_VIEW_DESC view{};
+        view.Format=format;
+        view.ViewDimension=D3D12_SRV_DIMENSION_TEXTURE2D;
+        view.Shader4ComponentMapping=D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+        view.Texture2D.MipLevels=1;
+        auto cpu=srv_->GetCPUDescriptorHandleForHeapStart();
+        device->CreateShaderResourceView(first,&view,cpu);
+        cpu.ptr+=device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+        device->CreateShaderResourceView(second,&view,cpu);
+        srv_first_reference_=first; srv_second_reference_=second;
+        srv_cached_format_=format; srv_descriptors_valid_=true;
+        ++srv_descriptor_refresh_count_;
+    }
     void read_timing() {
         if (!timing_pending_ || !timestamps_ || !frequency_) return;
         D3D12_RANGE range{0, sizeof(UINT64) * 2};
@@ -420,6 +426,9 @@ private:
     bool prepare(ID3D12Device* device, UINT width, UINT height, bool srgb) {
         if (device_.Get() == device && output_ && pipeline_ && root_ && srv_ && rtv_ && width == width_ && height == height_ && srgb == srgb_) return true;
         output_.Reset(); atlas_.Reset(); pipeline_.Reset(); native_pipeline_.Reset(); root_.Reset(); srv_.Reset(); rtv_.Reset();
+        srv_first_reference_.Reset(); srv_second_reference_.Reset(); xr_rtv_reference_.Reset();
+        srv_descriptors_valid_=false; srv_cached_format_=DXGI_FORMAT_UNKNOWN;
+        xr_rtv_format_=DXGI_FORMAT_UNKNOWN;
         queries_.Reset(); timestamps_.Reset(); timing_pending_ = false; gpu_ms_ = -1.f;
         device_ = device; width_ = width; height_ = height; srgb_ = srgb;
         D3D12_DESCRIPTOR_RANGE range{};
@@ -494,6 +503,7 @@ private:
     }
     ComPtr<ID3D12Device> device_;
     ComPtr<ID3D12Resource> output_, source_, atlas_, primary_reference_, secondary_reference_;
+    ComPtr<ID3D12Resource> srv_first_reference_, srv_second_reference_, xr_rtv_reference_;
     std::shared_ptr<const void> packet_lifetime_{};
     ComPtr<ID3D12RootSignature> root_;
     ComPtr<ID3D12PipelineState> pipeline_, native_pipeline_;
@@ -504,6 +514,9 @@ private:
     float gpu_ms_{-1.f};
     bool timing_pending_{}, recorded_commands_{}, last_native_direct_xr_{};
     uint64_t last_native_source_extents_{};
+    uint64_t srv_descriptor_refresh_count_{}, xr_rtv_refresh_count_{};
+    DXGI_FORMAT srv_cached_format_{DXGI_FORMAT_UNKNOWN}, xr_rtv_format_{DXGI_FORMAT_UNKNOWN};
+    bool srv_descriptors_valid_{};
     UINT width_{}, height_{};
     bool srgb_{};
     std::string error_;

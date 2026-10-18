@@ -2,7 +2,7 @@ name: DuoView Direct Native Source Compositor
 run-name: DuoView Direct Native Source Compositor exact SDK (${{ github.run_number }})
 on:
   push:
-    branches: [experiments/duoview-temporal-shading-v22, experiments/joey-duoview-native-stereo-fix-v22-20261018, fix/joey-v22-nativefix-duoview-activation-20261018, experiments/joey-v22-nativefix-gaze-hold-controls-20261018, experiments/joey-duoview-adaptive-saccade-20261018, fix/duoview-v154-controls-offcenter-20261018, fix/duoview-v154-general-controls-20261018, opt/duoview-v158-direct-sources-20261019, opt/duoview-stage2-direct-xr-output-20261019, opt/duoview-stage3-runtime-profile-20261019]
+    branches: [experiments/duoview-temporal-shading-v22, experiments/joey-duoview-native-stereo-fix-v22-20261018, fix/joey-v22-nativefix-duoview-activation-20261018, experiments/joey-v22-nativefix-gaze-hold-controls-20261018, experiments/joey-duoview-adaptive-saccade-20261018, fix/duoview-v154-controls-offcenter-20261018, fix/duoview-v154-general-controls-20261018, opt/duoview-v158-direct-sources-20261019, opt/duoview-stage2-direct-xr-output-20261019, opt/duoview-stage3-runtime-profile-20261019, opt/duoview-stage4-slot-descriptor-cache-20261019]
     paths:
       - '.github/workflows/duoview-joey-stage234.yml'
       - 'duoview/joey_stage1/**'
@@ -185,6 +185,7 @@ jobs:
           If CAPI is unavailable/invalid or blinked, ID6 stays at fixed center; no OpenXR gaze layer required.
           Menu shows whether PSVR2 gaze is fresh, center fallback, or Mono quarantine.
           The output remains monoscopic: DuoView writes the same full-FOV image to both OpenXR eye regions. The direct-XR route uses a single raster draw when the swapchain target format matches the validated compositor format; incompatible formats use the existing composite-and-copy path. The DuoView UI reports the route used by the last completed frame and the physical primary/secondary source extents.
+          The compositor's SRVs and direct XR RTV are cached per fenced command slot and rewritten only when the resource pair, sampling format, or destination changes. This reduces CPU/driver descriptor work only; it does not claim a GPU-time improvement.
           Until a valid Native pair is available, warmup keeps the XR transition loop live and waits for the next pair. A compositor fault after validation returns ID6 to original Joey Mono on the following frame.
           An incomplete or cropped Native source is never presented as a full-FOV Mono image.
           DXBC shaders are precompiled during CI; per-XR-image PSOs/textures are prewarmed on swapchain setup.
