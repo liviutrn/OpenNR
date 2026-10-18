@@ -38,6 +38,54 @@ struct Settings {
     float gaze_still_radius{.008f};    // per-sample motion treated as stationary
     uint32_t gaze_relock_samples{3};  // quiet samples before leaving fast tracking
 };
+// Unlike the immutable GPU source dimensions, menu sliders may request
+// incompatible combinations while the user drags them. Prefer the explicitly
+// chosen fovea WIDTH/HEIGHT and reduce density to fit each Native capture
+// target. This policy is intentionally separate from ConfigLatch validation:
+// external code cannot bypass layout validation by submitting bad settings.
+struct NativeQualityAdjustment {
+    bool changed{};
+    bool density_capped{};
+    bool invalid_input{};
+};
+inline NativeQualityAdjustment reconcile_native_quality(Settings& desired,
+                                                         const Settings& previous) {
+    NativeQualityAdjustment out{};
+    const auto within=[](float x, float lo, float hi) {
+        return std::isfinite(x) && x >= lo && x <= hi;
+    };
+    if (!within(desired.crop_width,.05f,1.f)) {
+        desired.crop_width=previous.crop_width; out.changed=out.invalid_input=true;
+    }
+    if (!within(desired.crop_height,.05f,1.f)) {
+        desired.crop_height=previous.crop_height; out.changed=out.invalid_input=true;
+    }
+    if (!within(desired.peripheral_scale,.05f,.5f)) {
+        desired.peripheral_scale=previous.peripheral_scale; out.changed=out.invalid_input=true;
+    }
+    if (!within(desired.foveal_density,.25f,4.f)) {
+        desired.foveal_density=previous.foveal_density; out.changed=out.invalid_input=true;
+    }
+    // Floating-point edge cases must not accidentally select a source rectangle
+    // one pixel wider than the actual underlying Native render target.
+    const float max_extent=(std::max)(desired.crop_width,desired.crop_height);
+    const float capacity=std::nextafter(1.f/max_extent,0.f);
+    if (desired.foveal_density > capacity) {
+        desired.foveal_density=capacity;
+        out.changed=out.density_capped=true;
+    }
+    if (!make_layout(1024,1024,desired.crop_width,desired.crop_height,
+                     desired.peripheral_scale,desired.foveal_density)) {
+        // Never commit unusable geometry. Do not roll back other settings.
+        desired.crop_width=previous.crop_width;
+        desired.crop_height=previous.crop_height;
+        desired.peripheral_scale=previous.peripheral_scale;
+        desired.foveal_density=previous.foveal_density;
+        out.changed=out.invalid_input=true;
+    }
+    return out;
+}
+
 struct FrameConfig {
     FrameKey key{};
     Layout layout{};
