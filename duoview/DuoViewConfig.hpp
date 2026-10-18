@@ -31,6 +31,12 @@ struct Settings {
     int32_t gaze_hold_ms{350};
     int32_t gaze_reacquire_samples{2};
     float gaze_offset_u{}, gaze_offset_v{};
+    // Nonlinear gaze response: hold or slowly follow small motion, but follow
+    // genuine saccades 1:1. All distances are fractions of the full view.
+    float gaze_micro_gain{0.f};        // 0=locked, 1=full follow below breakout
+    float gaze_breakout_radius{.035f}; // when farther from locked crop, go 1:1
+    float gaze_still_radius{.008f};    // per-sample motion treated as stationary
+    uint32_t gaze_relock_samples{3};  // quiet samples before leaving fast tracking
 };
 struct FrameConfig {
     FrameKey key{};
@@ -51,7 +57,15 @@ public:
             proposed.gaze_reacquire_samples<1 || proposed.gaze_reacquire_samples>4 ||
             !std::isfinite(proposed.gaze_offset_u) || !std::isfinite(proposed.gaze_offset_v) ||
             proposed.gaze_offset_u<-.25f || proposed.gaze_offset_u>.25f ||
-            proposed.gaze_offset_v<-.25f || proposed.gaze_offset_v>.25f)
+            proposed.gaze_offset_v<-.25f || proposed.gaze_offset_v>.25f ||
+            !std::isfinite(proposed.gaze_micro_gain) || proposed.gaze_micro_gain<0.f ||
+            proposed.gaze_micro_gain>1.f ||
+            !std::isfinite(proposed.gaze_breakout_radius) || proposed.gaze_breakout_radius<.005f ||
+            proposed.gaze_breakout_radius>.25f ||
+            !std::isfinite(proposed.gaze_still_radius) || proposed.gaze_still_radius<0.f ||
+            proposed.gaze_still_radius>.05f ||
+            proposed.gaze_still_radius>=proposed.gaze_breakout_radius ||
+            proposed.gaze_relock_samples<1 || proposed.gaze_relock_samples>10)
             return false;
         // Validate without trusting in-game UI, config files or Lua requests.
         if (!make_layout(1024,1024,proposed.crop_width,proposed.crop_height,
