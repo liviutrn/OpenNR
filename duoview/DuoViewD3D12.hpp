@@ -108,9 +108,13 @@ public:
                 D3D12_RESOURCE_STATES secondary_state, const ViewFrame& frame,
                 std::shared_ptr<const void> packet_lifetime, UINT64 frequency = 0) {
         recorded_commands_ = false;
+        error_.clear();
+        const auto reject = [this](const char* reason) { error_ = reason; return false; };
         if (!device || !cmd || !primary || !secondary || !destination || primary == secondary ||
             primary == destination || secondary == destination || cmd->GetType() != D3D12_COMMAND_LIST_TYPE_DIRECT ||
-            FAILED(device->GetDeviceRemovedReason()) || !layout_valid(frame.config.layout) || !atlas_) return false;
+            FAILED(device->GetDeviceRemovedReason()) || !layout_valid(frame.config.layout))
+            return reject("Invalid Native resources, D3D12 device, or DuoView layout");
+        if (!atlas_) return reject("Missing prewarmed Native gather atlas (ID6 activation setup)");
         const auto p = primary->GetDesc(), s = secondary->GetDesc(), a = atlas_->GetDesc();
         const auto& l = frame.config.layout;
         const auto& primary_rect = frame.config.settings.fovea_view == 0 ? l.fovea : l.periphery;
@@ -125,13 +129,15 @@ public:
             a.Height != l.atlas_height || a.DepthOrArraySize != 1 || a.MipLevels != 1 ||
             a.SampleDesc.Count != 1 || a.SampleDesc.Quality != 0 ||
             (a.Flags & D3D12_RESOURCE_FLAG_DENY_SHADER_RESOURCE) ||
-            primary == atlas_.Get() || secondary == atlas_.Get() || destination == atlas_.Get()) return false;
+            primary == atlas_.Get() || secondary == atlas_.Get() || destination == atlas_.Get())
+            return reject("Native capture extent/format incompatible with frozen atlas rectangles");
         ComPtr<ID3D12Device> pd, sd, dd, cd;
         if (FAILED(primary->GetDevice(IID_PPV_ARGS(&pd))) ||
             FAILED(secondary->GetDevice(IID_PPV_ARGS(&sd))) ||
             FAILED(destination->GetDevice(IID_PPV_ARGS(&dd))) ||
             FAILED(cmd->GetDevice(IID_PPV_ARGS(&cd))) ||
-            pd.Get() != device || sd.Get() != device || dd.Get() != device || cd.Get() != device) return false;
+            pd.Get() != device || sd.Get() != device || dd.Get() != device || cd.Get() != device)
+            return reject("Native source / XR destination command-list device mismatch");
         const auto is_bgra_family = [](DXGI_FORMAT f) {
             return f == DXGI_FORMAT_B8G8R8A8_TYPELESS ||
                    f == DXGI_FORMAT_B8G8R8A8_UNORM ||
@@ -139,16 +145,18 @@ public:
         };
         if (!is_bgra_family(p.Format) || !is_bgra_family(s.Format) ||
             !bgra8(a.Format) ||
-            a.Format != (srgb_ ? DXGI_FORMAT_B8G8R8A8_UNORM_SRGB : DXGI_FORMAT_B8G8R8A8_UNORM)) return false;
+            a.Format != (srgb_ ? DXGI_FORMAT_B8G8R8A8_UNORM_SRGB : DXGI_FORMAT_B8G8R8A8_UNORM))
+            return reject("Native BGRA8 format/sRGB mismatch with prewarmed atlas");
         // record_native must use the exact prewarmed objects. Rebuilding here
         // would release atlas_ after CopyTextureRegion has already been queued.
         if (device_.Get() != device || width_ != l.atlas_width / 2 ||
-            height_ != l.atlas_height || !output_ || !pipeline_ || !root_ || !srv_ || !rtv_) return false;
+            height_ != l.atlas_height || !output_ || !pipeline_ || !root_ || !srv_ || !rtv_)
+            return reject("Native mode dimensions or shader state differ from prewarmed command slot");
         if (!copy_source_to_atlas(cmd, primary, atlas_.Get(), primary_state,
                                   primary_rect.x, primary_rect.y, primary_rect.width, primary_rect.height) ||
             !copy_source_to_atlas(cmd, secondary, atlas_.Get(), secondary_state,
                                   secondary_rect.x, secondary_rect.y, secondary_rect.width, secondary_rect.height)) {
-            return false;
+            return reject("Failed recording Native primary/secondary source atlas copy");
         }
         recorded_commands_ = true;
         // These references live in the OpenXR command slot's compositor object.
@@ -162,6 +170,7 @@ public:
         // commands even if it rejects the later composite pass.
         const bool gather_recorded = true;
         recorded_commands_ = recorded_commands_ || gather_recorded;
+        if (!composed && error_.empty()) error_ = "Native gather succeeded but Mono raster/copy validation failed";
         return composed;
     }
     const std::string& error() const { return error_; }
