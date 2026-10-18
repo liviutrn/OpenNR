@@ -204,14 +204,14 @@ int main() try {
     // production path must reject it before recording any GPU commands.
     check(allocator->Reset());check(cmd->Reset(allocator.Get(),nullptr));
     transition(cmd.Get(),stereo.Get(),D3D12_RESOURCE_STATE_COPY_SOURCE,D3D12_RESOURCE_STATE_RENDER_TARGET);
-    auto small=native_source(device.Get(),cmd.Get(),8,8,{0,0,255,255});
-    auto full=native_source(device.Get(),cmd.Get(),32,32,{255,0,0,255});
+    auto undersized_source=native_source(device.Get(),cmd.Get(),8,8,{0,0,255,255});
+    auto complete_source=native_source(device.Get(),cmd.Get(),32,32,{255,0,0,255});
     auto oversized_layout=uevr::duoview::make_layout(32,32,.75f,.25f,.25f,2.f,.5f,.5f);
     if(!oversized_layout) throw std::runtime_error("Invalid oversized Native test layout");
     uevr::duoview::ViewFrame oversized{};
     oversized.config={{1,30},*oversized_layout,{.5f,.5f},{},1};
     oversized.config.settings.fovea_view=0;
-    if(compositor.record_native(device.Get(),cmd.Get(),small.texture.Get(),full.texture.Get(),
+    if(compositor.record_native(device.Get(),cmd.Get(),undersized_source.texture.Get(),complete_source.texture.Get(),
             stereo.Get(),D3D12_RESOURCE_STATE_RENDER_TARGET,D3D12_RESOURCE_STATE_RENDER_TARGET,
             oversized,std::make_shared<const int>(8),frequency) || compositor.recorded_commands())
         throw std::runtime_error("Native source smaller than selected rectangle was accepted/recorded");

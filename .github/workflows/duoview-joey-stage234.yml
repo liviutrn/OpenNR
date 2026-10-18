@@ -175,7 +175,7 @@ jobs:
           The separate independent-shading option is ignored while DuoView is active; Joey Native Stereo Fix owns its normal source-rendering behavior.
           The original Native Stereo Fix secondary scene-capture target supplies the second DuoView image. Packet identity, capture generation, source geometry, and Mono pose/projection are checked before composition.
           Actual shading parity and temporal stability require headset testing.
-          Optional GPU timing is OFF by default. Compositor resources prewarm at swapchain creation and remain owned by each OpenXR command slot until its fence retires. No new CPU/GPU waits or render-callback allocation are added.
+          Optional GPU timing is OFF by default. Compositor resources prewarm at swapchain creation and remain owned by each OpenXR command slot until its fence retires. No waits, shader compilation, or GPU resource creation occur in the XR copy callback; immutable packet lifetimes are retained through command-slot fence retirement.
           Debug source 0=blended output, 1=periphery only, 2=fovea only (dark outside ROI).
           Source view0 is the first UE pass (old prototype default), view1 is the second (Build19 default).
           Both source passes share exactly the same Mono camera.
