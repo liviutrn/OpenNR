@@ -43,5 +43,27 @@ int main() {
     assert(near(a.u,.62f));
     a=gaze.update(500,{});
     assert(near(a.u,.5f)); // reset on counter reset
+    // A single blink must retain the last good gaze and never snap to center.
+    d::RayRecovery recovery;
+    recovery.controls(350,2);
+    auto tracked=recovery.update(1000,d::Ray{.2f,0.f,1.f});
+    assert(tracked && near(tracked->right,.2f));
+    tracked=recovery.update(1011,{},true); // blink or invalid Toolkit packet
+    assert(tracked && near(tracked->right,.2f));
+    tracked=recovery.update(1190,{});
+    assert(tracked && near(tracked->right,.2f)); // held 190ms
+    tracked=recovery.update(1200,d::Ray{-.4f,0.f,1.f}); // first post-blink outlier
+    assert(tracked && near(tracked->right,.2f)); // does not jump
+    tracked=recovery.update(1211,d::Ray{-.401f,0.f,1.f});
+    assert(tracked && near(tracked->right,-.401f)); // confirmed in second valid sample
+    tracked=recovery.update(1222,d::Ray{.1f,0.f,1.f});
+    assert(tracked && near(tracked->right,.1f)); // continuous eye movement immediate
+    tracked=recovery.update(1600,{},true);
+    assert(!tracked); // sensor ray expires after specified hold; crop keeps position
+    recovery.controls(1000,1);
+    tracked=recovery.update(1611,d::Ray{.3f,0.f,1.f});
+    assert(tracked && near(tracked->right,.3f)); // instant mode
+    recovery.reset();
+    assert(!recovery.update(100,{}));
     std::cout<<"DuoView gaze geometry/stale-frame policy tests passed\n";
 }
