@@ -130,6 +130,11 @@ def main():
     const ModInt32::Ptr m_duo_reacquire{ModSliderInt32::create(generate_name("DuoViewGazeReacquireSamples"), 1, 4, 2)};
     const ModSlider::Ptr m_duo_offset_x{ModSlider::create(generate_name("DuoViewGazeOffsetX"), -.25f, .25f, 0.f)};
     const ModSlider::Ptr m_duo_offset_y{ModSlider::create(generate_name("DuoViewGazeOffsetY"), -.25f, .25f, 0.f)};
+    // Nonlinear response: stillness lock / instantaneous full-speed saccade.
+    const ModSlider::Ptr m_duo_micro_gain{ModSlider::create(generate_name("DuoViewGazeMicroGain"), 0.f, 1.f, 0.f)};
+    const ModSlider::Ptr m_duo_breakout{ModSlider::create(generate_name("DuoViewGazeBreakout"), .005f, .25f, .035f)};
+    const ModSlider::Ptr m_duo_stillness{ModSlider::create(generate_name("DuoViewGazeStillness"), 0.f, .05f, .008f)};
+    const ModInt32::Ptr m_duo_relock{ModSliderInt32::create(generate_name("DuoViewGazeRelockSamples"), 1, 10, 3)};
     const ModToggle::Ptr m_duo_timing{ModToggle::create(generate_name("DuoViewGpuTiming"), false)};
     std::atomic<float> m_duo_gpu_ms{-1.f};
     uevr::duoview::State m_duoview;
@@ -147,7 +152,8 @@ def main():
             *m_duo_feather, *m_duo_gaze, *m_duo_border, *m_duo_debug_source,
             *m_duo_fovea_view, *m_duo_timing, *m_duo_stabilize, *m_duo_guard,
             *m_duo_native_fix, *m_duo_quant, *m_duo_hold, *m_duo_reacquire,
-            *m_duo_offset_x, *m_duo_offset_y,''')
+            *m_duo_offset_x, *m_duo_offset_y,
+            *m_duo_micro_gain, *m_duo_breakout, *m_duo_stillness, *m_duo_relock,''')
     cpp="src/mods/VR.cpp"
     edit(cpp,'''bool VR::should_force_native_stereo_fix_same_pass() const {
     if (is_using_mono()) { return false; }
@@ -185,6 +191,8 @@ def main():
                     m_duo_native_fix->value()=true; m_duo_quant->value()=2;
                     m_duo_hold->value()=350; m_duo_reacquire->value()=2;
                     m_duo_offset_x->value()=0.f; m_duo_offset_y->value()=0.f;
+                    m_duo_micro_gain->value()=0.f; m_duo_breakout->value()=.035f;
+                    m_duo_stillness->value()=.008f; m_duo_relock->value()=3;
                 }
                 m_duo_width->draw("Fovea width / full FOV");
                 m_duo_height->draw("Fovea height / full FOV");
@@ -204,6 +212,13 @@ def main():
                 m_duo_reacquire->draw("Consistent samples after large post-blink jump (1=instant)");
                 m_duo_offset_x->draw("Gaze horizontal calibration offset");
                 m_duo_offset_y->draw("Gaze vertical calibration offset");
+                ImGui::TextWrapped("Adaptive response: small gaze movement holds or follows slowly; large movement jumps 1:1 and follows at full speed; then automatically locks when steady. No heavy temporal smoothing.");
+                m_duo_micro_gain->draw("Small gaze movement gain (0=locked; 1=full)");
+                m_duo_breakout->draw("Fast 1:1 breakout (fraction of full view)");
+                m_duo_stillness->draw("Stillness threshold per gaze sample (fraction of view)");
+                m_duo_relock->draw("Quiet samples before fovea relocks");
+                if (m_duo_stillness->value() >= m_duo_breakout->value())
+                    ImGui::TextWrapped("Stillness must be less than breakout; previous valid settings remain in effect.");
                 m_duo_timing->draw("GPU timing: composite + both eye copies");
                 if (m_duo_timing->value()) {
                     const float ms=m_duo_gpu_ms.load(std::memory_order_relaxed);
@@ -271,7 +286,11 @@ void VR::configure_duoview() {
         .native_fix_same_pass=m_duo_native_fix->value(),
         .gaze_quant_pixels=static_cast<uint32_t>(m_duo_quant->value()),
         .gaze_hold_ms=m_duo_hold->value(), .gaze_reacquire_samples=m_duo_reacquire->value(),
-        .gaze_offset_u=m_duo_offset_x->value(), .gaze_offset_v=m_duo_offset_y->value()};
+        .gaze_offset_u=m_duo_offset_x->value(), .gaze_offset_v=m_duo_offset_y->value(),
+        .gaze_micro_gain=m_duo_micro_gain->value(),
+        .gaze_breakout_radius=m_duo_breakout->value(),
+        .gaze_still_radius=m_duo_stillness->value(),
+        .gaze_relock_samples=static_cast<uint32_t>(m_duo_relock->value())};
     const auto current=m_duoview.settings();
     if (current.crop_width==candidate.crop_width && current.crop_height==candidate.crop_height &&
         current.peripheral_scale==candidate.peripheral_scale && current.foveal_density==candidate.foveal_density &&
@@ -285,7 +304,11 @@ void VR::configure_duoview() {
         current.gaze_hold_ms==candidate.gaze_hold_ms &&
         current.gaze_reacquire_samples==candidate.gaze_reacquire_samples &&
         current.gaze_offset_u==candidate.gaze_offset_u &&
-        current.gaze_offset_v==candidate.gaze_offset_v) return;
+        current.gaze_offset_v==candidate.gaze_offset_v &&
+        current.gaze_micro_gain==candidate.gaze_micro_gain &&
+        current.gaze_breakout_radius==candidate.gaze_breakout_radius &&
+        current.gaze_still_radius==candidate.gaze_still_radius &&
+        current.gaze_relock_samples==candidate.gaze_relock_samples) return;
     if (!m_duoview.configure(candidate))
         SPDLOG_WARNING_EVERY_N_SEC(2, "[DuoView] Requested quality settings exceed atlas geometry; preserving previous valid settings");
 }
