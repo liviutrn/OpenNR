@@ -99,6 +99,16 @@ def main():
   if token not in d3d: raise RuntimeError("Native packet / Mono submit binding missing "+token)
  if "duoview_state().consume(" in d3d:
   raise RuntimeError("Native packet submission must reuse its immutable validated snapshot across Presents")
+ # Regression: ID6 may be selected AFTER OpenXR created its swapchains.
+ # The command slots must be prepared during the later mode-switch setup.
+ for token in ("Prepared {}/{} OpenXR command slots on ID6 entry",
+               "if (vr->is_duoview_renderer_active() && vr->get_runtime()->is_openxr())",
+               "comp->prewarm(device, vr->get_hmd_width(), vr->get_hmd_height()",
+               "Missing prewarmed compositor for XR command slot",
+               "Native compositing rejected: {}"):
+  if token not in d3d: raise RuntimeError("Late-activation / failure diagnostic regression: "+token)
+ if "Missing prewarmed Native gather atlas" not in compositor:
+  raise RuntimeError("Missing Native prewarm failure cannot be diagnosed")
  native_warp=(Path(__file__).parent/"ProductionWarpPinned.cpp").read_text(encoding="utf-8")
  for token in ("record_native(", "for (bool srgb : {false,true})", "for (uint32_t fovea_view : {0u,1u})",
                "ID3D12InfoQueue", "oversized_layout"):
