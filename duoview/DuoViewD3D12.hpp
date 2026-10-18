@@ -15,8 +15,9 @@ struct ShaderConstants {
     uint32_t diagnostic;
     float reserved;
     uint32_t fovea_source_size[2], peripheral_source_size[2];
+    uint32_t output_offset[2];
 };
-static_assert(sizeof(ShaderConstants) == 96);
+static_assert(sizeof(ShaderConstants) == 104);
 
 class Compositor {
 public:
