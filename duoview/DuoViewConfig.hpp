@@ -23,7 +23,7 @@ struct Settings {
     bool gpu_timing{};
     bool stabilize_crop{true};
     float guard_fraction{.08f}; // continuous, wide spatial deadzone
-    float smoothing_ms{85.f};   // exponential temporal follow in milliseconds
+    float smoothing_ms{50.f};    // exponential temporal follow in milliseconds
     bool independent_shading{};
 };
 struct FrameConfig {

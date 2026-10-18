@@ -64,6 +64,13 @@ inline std::optional<Ray> calibrated_ray(const Status& s) {
     return Ray{-d.x/norm,d.y/norm,d.z/norm};
 }
 
+// Blink report survives in packets whose ray is unusable: both eyes carry
+// blink_valid/blink flags precisely so a blink reads as "eyes closed", not
+// "tracking lost".
+inline bool is_blink(const Status& s) {
+    return (s.raw.left.blink_valid==Bool::yes && s.raw.left.blink==Bool::yes) ||
+           (s.raw.right.blink_valid==Bool::yes && s.raw.right.blink==Bool::yes);
+}
 // Projection from Joey's actual shared Mono perspective, not a generic OpenXR matrix.
 // Joey OpenXR::update_matrices creates a +Z-forward Unreal projection (p[11] == +1).
 // A direction has no translation component; source gaze is already +forward.
@@ -109,9 +116,24 @@ public:
             const auto ray=calibrated_ray(candidate);
             const auto uv=ray ? projection_uv(*ray,projection) : std::optional<UV>{};
             if(uv) {
-                cached_uv_=*uv; fresh_time_=now; fresh_.fetch_add(1,std::memory_order_relaxed);
+                cached_uv_=*uv; fresh_time_=now; blink_holding_=false;
+                fresh_.fetch_add(1,std::memory_order_relaxed);
+            } else if (cached_uv_ && is_blink(candidate)) {
+                // Blink: eyes closed, gaze returns to ~the same place on reopen.
+                // Hold instead of invalidating: immediate invalidation drifted the
+                // ROI toward center and slewed back on every blink (~15-20/min),
+                // a visible jump that also kept the foveal projection moving so
+                // the interior never settled.
+                if (!blink_holding_) { blink_holding_=true; blink_start_=now; }
+                if (now-blink_start_ <= 2000) {
+                    fresh_time_=now;
+                    reused_.fetch_add(1,std::memory_order_relaxed);
+                } else {
+                    cached_uv_.reset(); blink_holding_=false;
+                    expired_.fetch_add(1,std::memory_order_relaxed);
+                }
             } else {
-                cached_uv_.reset(); // blink/bad frame invalidates immediately
+                cached_uv_.reset(); blink_holding_=false; // bad frame invalidates immediately
                 invalid_.fetch_add(1,std::memory_order_relaxed);
             }
         }
@@ -165,7 +187,8 @@ private:
     std::atomic<uint32_t> age_ms_{UINT32_MAX};
     HMODULE module_{};
     ReadFn read_{};
-    uint64_t next_attempt_{},fresh_time_{};
+    uint64_t next_attempt_{},fresh_time_{},blink_start_{};
+    bool blink_holding_{};
     std::optional<UV> cached_uv_{};
 };
 } // namespace uevr::duoview::psvr2

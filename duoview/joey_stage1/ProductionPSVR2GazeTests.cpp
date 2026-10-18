@@ -19,8 +19,11 @@ int main() try {
     auto oblique=psvr2::calibrated_ray(s);
     require(oblique && oblique->right>0 && oblique->up>0,"native-to-Mono gaze coordinate mapping");
     s.raw.left.blink_valid=psvr2::Bool::yes;s.raw.left.blink=psvr2::Bool::yes;
-    require(!psvr2::calibrated_ray(s),"blink invalidates");
-    s.raw.left.blink=psvr2::Bool::no;s.raw.combined_direction={0,0,-1};
+    require(!psvr2::calibrated_ray(s),"blink invalidates ray");
+    require(psvr2::is_blink(s),"blink packet reads as eyes-closed, not tracking lost");
+    s.raw.left.blink=psvr2::Bool::no;
+    require(!psvr2::is_blink(s),"open-eyes packet is not a blink");
+    s.raw.combined_direction={0,0,-1};
     require(!psvr2::calibrated_ray(s),"backward ray invalidates");
     s.raw.combined_direction={0,0,1};s.size=0;
     require(!psvr2::calibrated_ray(s),"invalid CAPI packet size");

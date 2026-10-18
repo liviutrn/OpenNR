@@ -73,3 +73,25 @@ and temporal history converges.
 - No `frame_counter`-based freshness check: the CAPI already returns false on
   no-new-frame, and a wrong assumption about the counter could break gaze
   entirely. Left as is.
+
+## v24b follow-up (same day, after Andrey's headset test of run 143)
+
+Headset report: fovea stabler (frame fix confirmed working) but slower, still
+jumps, image inside fovea not stable.
+
+Re-examination found the jumps: every blink (100-150ms) invalidated the gaze
+immediately, held 100ms, then DRIFTED toward center and slewed back on reopen
+(~15-20/min). While drifting/slewing the projection moves every frame, so TAA
+never settles -> interior shimmer. The "slower" feel was the 85ms smoothing +
+1.4 UV/s cap.
+
+Changes:
+- `DuoViewPSVR2Gaze.hpp`: blink-aware hold. A fresh packet whose ray is
+  unusable *due to blink flags* now holds the last UV (refreshing the 50ms
+  freshness window, counted as held) instead of invalidating; backstop expires
+  after 2s of continuous blink. Genuinely bad frames still invalidate
+  immediately. New `is_blink()` helper + regression tests.
+- `DuoViewCropStability.hpp`: missing-gaze hold 100ms -> 250ms; follow speed
+  cap 1.4 -> 3.0 UV/s (saccade transit, was visibly laggy).
+- `DuoViewConfig.hpp` + UI slider default: smoothing 85ms -> 50ms.
+- Tests updated for the new dynamics (contract/state bounds, 250ms hold timing).

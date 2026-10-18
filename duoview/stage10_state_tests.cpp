@@ -45,10 +45,10 @@ int main() {
     assert(centre.u==noisy.u && centre.v==noisy.v);
     auto moved=stable.update({1,3},3000,3000,controls,UV{.75f,.6f},1022);
     assert(moved.u>.5f && moved.u<.75f && moved.v>.5f && moved.v<.6f); // deliberately gradual
-    assert(moved.u-.5f<.02f && moved.v-.5f<.02f); // no frame-scale teleport
+    assert(moved.u-.5f<.04f && moved.v-.5f<.04f); // no frame-scale teleport
     auto held=stable.update({1,4},3000,3000,controls,{},1100);
     assert(held.u==moved.u && held.v==moved.v);
-    auto expired=stable.update({1,5},3000,3000,controls,{},1123);
+    auto expired=stable.update({1,5},3000,3000,controls,{},1300);
     assert(expired.u<moved.u && expired.u>.5f); // missing gaze eases home instead of jumping
     controls.stabilize_crop=false;
     auto raw=stable.update({1,6},3000,3000,controls,UV{.61123f,.42123f},1133);

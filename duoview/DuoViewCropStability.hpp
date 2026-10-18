@@ -38,7 +38,7 @@ public:
                          sample->v>=0.f && sample->v<=1.f;
         if (valid) last_valid_=now;
         else if (!have_) return {};
-        else if (now>=last_valid_ && now-last_valid_<=100) return center_;
+        else if (now>=last_valid_ && now-last_valid_<=250) return center_;
 
         // First valid lock-on is the only immediate acquisition. Afterward
         // deliberately large saccades and loss-of-tracking return gradually.
@@ -63,7 +63,7 @@ public:
             const float smoothing=(std::max)(0.f,s.smoothing_ms);
             const float alpha=smoothing>0.f ? 1.f-std::exp(-dt_ms/smoothing) : 1.f;
             // Hard velocity limit also bounds changes when smoothing is zero.
-            const float max_step=1.4f*dt_ms/1000.f;
+            const float max_step=3.0f*dt_ms/1000.f;
             const float travel=(std::min)(excess*alpha,max_step);
             const float candidate=old+std::copysign(travel,diff);
             return align(std::clamp(candidate,0.f,maximum));
