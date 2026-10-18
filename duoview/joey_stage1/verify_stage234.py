@@ -155,7 +155,8 @@ def main():
  for token in ("record_native(", "for (bool srgb : {false,true})", "for (uint32_t fovea_view : {0u,1u})",
                "ID3D12InfoQueue", "oversized_layout"):
   if token not in native_warp: raise RuntimeError("Native compositor WARP coverage missing "+token)
- if "vertex_shader_bytecode[]" not in shaders or "pixel_shader_bytecode[]" not in shaders:
+ if ("vertex_shader_bytecode[]" not in shaders or "pixel_shader_bytecode[]" not in shaders or
+     "native_pixel_shader_bytecode[]" not in shaders):
   raise RuntimeError("Precompiled DXBC shader arrays missing")
  inputs = sorted(EDITED_BACKEND | ADDED_BACKEND)
  hashes = {"backend":{k:sha(a.backend/k) for k in inputs},
