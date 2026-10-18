@@ -80,4 +80,57 @@ private:
     uint64_t max_age_ms_{50};
 };
 
+
+// Reacquisition gate for PSVR2 blink / transient invalid tracking.
+// Retains the optical ray, so every frame can reproject it through its own
+// frozen shared Mono matrix. A large first sample after lost tracking must
+// be confirmed before committing; ordinary continuous saccades are immediate.
+class RayRecovery {
+public:
+    void controls(uint32_t hold_ms, uint32_t reacquire_samples) {
+        hold_ms_ = std::clamp(hold_ms, 50u, 2000u);
+        confirm_ = std::clamp(reacquire_samples, 1u, 4u);
+    }
+    void reset() { last_.reset(); pending_.reset(); confirmed_=0; recovering_=false; tick_=valid_at_=0; }
+    std::optional<Ray> update(uint64_t now, std::optional<Ray> fresh, bool explicitly_invalid=false) {
+        if (now < tick_) reset();
+        tick_ = now;
+        if (explicitly_invalid) { recovering_=true; pending_.reset(); confirmed_=0; }
+        if (!fresh && last_ && now>=valid_at_ && now-valid_at_>50)
+            recovering_=true;
+        if (fresh) {
+            const auto differs=[](const Ray& a,const Ray& b,float threshold) {
+                const float dx=a.right-b.right, dy=a.up-b.up, dz=a.forward-b.forward;
+                return dx*dx+dy*dy+dz*dz>threshold*threshold;
+            };
+            if (recovering_ && last_ && confirm_>1 && differs(*fresh,*last_,.10f)) {
+                if (!pending_ || differs(*fresh,*pending_,.045f)) {
+                    pending_=*fresh;
+                    confirmed_=1;
+                } else {
+                    ++confirmed_;
+                }
+                if (confirmed_ >= confirm_) {
+                    last_=*fresh; valid_at_=now; recovering_=false;
+                    pending_.reset(); confirmed_=0;
+                }
+            } else {
+                last_=*fresh; valid_at_=now; recovering_=false;
+                pending_.reset(); confirmed_=0;
+            }
+        }
+        if (last_ && now>=valid_at_ && now-valid_at_<=hold_ms_) return last_;
+        return {};
+    }
+    uint32_t age_ms(uint64_t now) const {
+        return last_ && now>=valid_at_ ? static_cast<uint32_t>(
+            (std::min)(uint64_t(UINT32_MAX), now-valid_at_)) : UINT32_MAX;
+    }
+private:
+    std::optional<Ray> last_{},pending_{};
+    uint64_t tick_{},valid_at_{};
+    uint32_t hold_ms_{350},confirm_{2},confirmed_{};
+    bool recovering_{};
+};
+
 } // namespace uevr::duoview
