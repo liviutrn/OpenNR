@@ -14,8 +14,9 @@ struct ShaderConstants {
     uint32_t border;
     uint32_t diagnostic;
     float reserved;
+    uint32_t fovea_source_size[2], peripheral_source_size[2];
 };
-static_assert(sizeof(ShaderConstants) == 80);
+static_assert(sizeof(ShaderConstants) == 96);
 
 class Compositor {
 public:
@@ -71,7 +72,11 @@ public:
         view.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
         view.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
         view.Texture2D.MipLevels = 1;
-        device->CreateShaderResourceView(atlas, &view, srv_->GetCPUDescriptorHandleForHeapStart());
+        const auto srv_start=srv_->GetCPUDescriptorHandleForHeapStart();
+        device->CreateShaderResourceView(atlas, &view, srv_start);
+        auto secondary=srv_start;
+        secondary.ptr+=device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+        device->CreateShaderResourceView(atlas, &view, secondary);
         source_ = atlas;
         transition(cmd, atlas, atlas_state, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
         recorded_commands_ = true;
@@ -238,12 +243,12 @@ private:
     }
     bool prepare(ID3D12Device* device, UINT width, UINT height, bool srgb) {
         if (device_.Get() == device && output_ && pipeline_ && root_ && srv_ && rtv_ && width == width_ && height == height_ && srgb == srgb_) return true;
-        output_.Reset(); atlas_.Reset(); pipeline_.Reset(); root_.Reset(); srv_.Reset(); rtv_.Reset();
+        output_.Reset(); pipeline_.Reset(); native_pipeline_.Reset(); root_.Reset(); srv_.Reset(); rtv_.Reset();
         queries_.Reset(); timestamps_.Reset(); timing_pending_ = false; gpu_ms_ = -1.f;
         device_ = device; width_ = width; height_ = height; srgb_ = srgb;
         D3D12_DESCRIPTOR_RANGE range{};
         range.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
-        range.NumDescriptors = 1;
+        range.NumDescriptors = 2;
         D3D12_ROOT_PARAMETER params[2]{};
         params[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
         params[0].DescriptorTable = {1, &range};
@@ -284,6 +289,8 @@ private:
         graphics.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
         graphics.NumRenderTargets = 1; graphics.RTVFormats[0] = output_format; graphics.SampleDesc.Count = 1;
         if (!check(device->CreateGraphicsPipelineState(&graphics, IID_PPV_ARGS(&pipeline_)), "Create raster PSO")) return false;
+        graphics.PS = {native_pixel_shader_bytecode, sizeof(native_pixel_shader_bytecode)};
+        if (!check(device->CreateGraphicsPipelineState(&graphics, IID_PPV_ARGS(&native_pipeline_)), "Create direct Native raster PSO")) return false;
         D3D12_HEAP_PROPERTIES heap{}; heap.Type = D3D12_HEAP_TYPE_DEFAULT; heap.CreationNodeMask = heap.VisibleNodeMask = 1;
         D3D12_RESOURCE_DESC texture{};
         texture.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
@@ -293,27 +300,19 @@ private:
         if (!check(device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &texture,
             D3D12_RESOURCE_STATE_RENDER_TARGET, nullptr, IID_PPV_ARGS(&output_)), "Create output")) return false;
         output_->SetName(L"DuoView::MonoComposite");
-        D3D12_RESOURCE_DESC atlas_desc=texture;
-        atlas_desc.Width=static_cast<uint64_t>(width)*2;
-        atlas_desc.Height=height;
-        atlas_desc.Format=srgb ? DXGI_FORMAT_B8G8R8A8_UNORM_SRGB : DXGI_FORMAT_B8G8R8A8_UNORM;
-        atlas_desc.Flags=D3D12_RESOURCE_FLAG_NONE;
-        if (!check(device->CreateCommittedResource(&heap,D3D12_HEAP_FLAG_NONE,&atlas_desc,
-            D3D12_RESOURCE_STATE_COPY_DEST,nullptr,IID_PPV_ARGS(&atlas_)),"Create Native gather atlas")) return false;
-        atlas_->SetName(L"DuoView::NativeGatherAtlas");
         D3D12_DESCRIPTOR_HEAP_DESC hd{}; hd.NumDescriptors = 1; hd.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
         if (!check(device->CreateDescriptorHeap(&hd, IID_PPV_ARGS(&rtv_)), "Create RTV heap")) return false;
-        hd.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV; hd.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
+        hd.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV; hd.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE; hd.NumDescriptors = 2;
         if (!check(device->CreateDescriptorHeap(&hd, IID_PPV_ARGS(&srv_)), "Create SRV heap")) return false;
         D3D12_RENDER_TARGET_VIEW_DESC view{}; view.Format = output_format; view.ViewDimension = D3D12_RTV_DIMENSION_TEXTURE2D;
         device->CreateRenderTargetView(output_.Get(), &view, rtv_->GetCPUDescriptorHandleForHeapStart());
         return true;
     }
     ComPtr<ID3D12Device> device_;
-    ComPtr<ID3D12Resource> output_, source_, atlas_, primary_reference_, secondary_reference_;
+    ComPtr<ID3D12Resource> output_, source_, primary_reference_, secondary_reference_;
     std::shared_ptr<const void> packet_lifetime_{};
     ComPtr<ID3D12RootSignature> root_;
-    ComPtr<ID3D12PipelineState> pipeline_;
+    ComPtr<ID3D12PipelineState> pipeline_, native_pipeline_;
     ComPtr<ID3D12DescriptorHeap> srv_, rtv_;
     ComPtr<ID3D12QueryHeap> queries_;
     ComPtr<ID3D12Resource> timestamps_;
