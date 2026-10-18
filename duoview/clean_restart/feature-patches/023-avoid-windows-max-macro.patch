@@ -1,0 +1,40 @@
+--- a/src/mods/vr/FFakeStereoRenderingHook.cpp
++++ b/src/mods/vr/FFakeStereoRenderingHook.cpp
+@@ -23911,7 +23911,7 @@
+             if (vr->is_native_duoview_selected_for_frame(g_frame_count)) {
+                 const auto family_address = reinterpret_cast<uintptr_t>(init_options_view_family);
+                 const auto frame_offset = SceneViewExtensionAnalyzer::frame_count_offset;
+-                uint32_t family_frame = std::numeric_limits<uint32_t>::max();
++                uint32_t family_frame = (std::numeric_limits<uint32_t>::max)();
+                 const bool constructor_frame_valid = frame_offset != 0 && frame_offset < 0x4000 &&
+                     is_readable_process_range(family_address + frame_offset, sizeof(uint32_t));
+                 if (constructor_frame_valid) {
+@@ -27634,7 +27634,7 @@
+         uintptr_t nearest_target{};
+         uintptr_t nearest_owner{};
+         int64_t nearest_delta{};
+-        int64_t nearest_distance = std::numeric_limits<int64_t>::max();
++        int64_t nearest_distance = (std::numeric_limits<int64_t>::max)();
+         m_native_duoview_source_families.visit(
+             [&](uint32_t, uintptr_t owner, const NativeDuoViewSourceFamily& candidate) {
+                 ++retained;
+@@ -27670,7 +27670,7 @@
+             retained, selected, complete, conflicted, same_scene_target,
+             nearest_source_frame, nearest_source_frame_valid,
+             nearest_constructor_frame, nearest_constructor_frame_valid, nearest_settings_frame,
+-            nearest_distance == std::numeric_limits<int64_t>::max() ? int64_t{-1} : nearest_delta,
++            nearest_distance == (std::numeric_limits<int64_t>::max)() ? int64_t{-1} : nearest_delta,
+             nearest_view_mask, nearest_conflicted, nearest_scene, nearest_target, nearest_owner);
+         return;
+     }
+--- a/tests/MonoD3D12Tests.cpp
++++ b/tests/MonoD3D12Tests.cpp
+@@ -362,7 +362,7 @@
+         return lifecycle_sources.mutate(700, 0x321, [=](DuoViewLifecycleSource& value, bool inserted) {
+             if (inserted) {
+                 value.settings_frame = 700;
+-                value.identity.source_frame = std::numeric_limits<uint32_t>::max();
++                value.identity.source_frame = (std::numeric_limits<uint32_t>::max)();
+                 value.identity.scene = 0x55;
+                 value.identity.target = 0x66;
+                 value.identity.selected = true;
