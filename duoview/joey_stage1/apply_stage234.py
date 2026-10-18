@@ -526,6 +526,40 @@ void OpenXR::note_mono_main_family(uint32_t frame, bool main_family) {''')
         '''        std::unordered_map<uint32_t, SwapchainContext> contexts{};
         std::unordered_map<d3d12::CommandContext*, std::unique_ptr<uevr::duoview::dx12::Compositor>> duoview_compositors;''')
     dx="src/mods/vr/D3D12Component.cpp"
+
+    # Session XR swapchains are created before the user selects ID6. Warm on
+    # mode setup, not only during the XR swapchain creation (and never in copy).
+    edit(dx,'''    spdlog::info("[VR] d3d12 textures have been setup");
+    m_force_reset = false;''',
+    '''    // DuoView may be activated long after OpenXR swapchains were created.
+    // Build GPU objects for the EXISTING XR command slots on the mode transition.
+    if (vr->is_duoview_renderer_active() && vr->get_runtime()->is_openxr()) {
+        auto it = m_openxr.contexts.find(
+            (uint32_t)runtimes::OpenXR::SwapchainIndex::DOUBLE_WIDE);
+        if (it == m_openxr.contexts.end() || it->second.texture_contexts.empty()) {
+            SPDLOG_WARNING("[DuoView][Activation] Double-wide OpenXR command contexts not ready");
+        } else {
+            UINT64 frequency{};
+            if (auto queue = g_framework->get_d3d12_hook()->get_command_queue(); queue)
+                queue->GetTimestampFrequency(&frequency);
+            const bool srgb = false; // Existing Joey BGRA8 UNORM render source.
+            uint32_t prepared = 0;
+            for (auto& tc : it->second.texture_contexts) {
+                if (!tc) continue;
+                auto& comp = m_openxr.duoview_compositors[&tc->commands];
+                if (!comp) comp = std::make_unique<uevr::duoview::dx12::Compositor>();
+                if (comp->prewarm(device, vr->get_hmd_width(), vr->get_hmd_height(), srgb, frequency))
+                    ++prepared;
+                else
+                    SPDLOG_WARNING("[DuoView][Activation] DX12 command-slot prewarm failed: {}", comp->error());
+            }
+            SPDLOG_INFO("[DuoView][Activation] Prepared {}/{} OpenXR command slots on ID6 entry",
+                prepared, it->second.texture_contexts.size());
+        }
+    }
+    spdlog::info("[VR] d3d12 textures have been setup");
+    m_force_reset = false;''')
+
     edit(dx,'''    if (vr->mono_frame_gate_required()) {
         if (!vr->m_openxr->has_mono_frame(static_cast<uint32_t>(vr->m_frame_count))) {
             vr->set_mono_status("Waiting for a current main-view pose and validated common projection");
@@ -634,6 +668,8 @@ void OpenXR::note_mono_main_family(uint32_t frame, bool main_family) {''')
                                     }
                                     const auto found = m_openxr.duoview_compositors.find(&commands);
                                     if (found == m_openxr.duoview_compositors.end() || !found->second) {
+                                        SPDLOG_WARNING_EVERY_N_SEC(2,
+                                            "[DuoView][Activation] Missing prewarmed compositor for XR command slot");
                                         compositor_fault = true;
                                         return;
                                     }
@@ -647,7 +683,11 @@ void OpenXR::note_mono_main_family(uint32_t frame, bool main_family) {''')
                                     if (compositor.recorded_commands()) commands.has_commands = true;
                                     if (packet_frame->config.settings.gpu_timing)
                                         vr->note_duoview_gpu_ms(compositor.gpu_milliseconds());
-                                    if (!recorded) compositor_fault = true;
+                                    if (!recorded) {
+                                        SPDLOG_WARNING_EVERY_N_SEC(2,
+                                            "[DuoView][Activation] Native compositing rejected: {}", compositor.error());
+                                        compositor_fault = true;
+                                    }
                                 }, std::nullopt, D3D12_RESOURCE_STATE_RENDER_TARGET, nullptr,
                                 std::nullopt, m_game_tex.texture.Get());
                             vr->m_openxr->note_mono_copy(*packet_source, submitted && recorded);
