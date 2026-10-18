@@ -112,6 +112,7 @@ def main():
     void duoview_abort(const char* reason);''')
     edit(header,'    std::atomic<const char*> m_mono_status{"Not selected"};',
         '''    // Legacy-style persistent options; never sampled by the XR compositor.
+    std::atomic<uint32_t> m_duo_ui_rejected_mask{0};
     const ModSlider::Ptr m_duo_width{ModSlider::create(generate_name("DuoViewCropWidth"), .10f, 1.f, .50f)};
     const ModSlider::Ptr m_duo_height{ModSlider::create(generate_name("DuoViewCropHeight"), .10f, 1.f, .50f)};
     const ModSlider::Ptr m_duo_periphery{ModSlider::create(generate_name("DuoViewPeripheralScale"), .05f, .50f, .20f)};
@@ -218,7 +219,7 @@ def main():
                 m_duo_stillness->draw("Stillness threshold per gaze sample (fraction of view)");
                 m_duo_relock->draw("Quiet samples before fovea relocks");
                 if (m_duo_stillness->value() >= m_duo_breakout->value())
-                    ImGui::TextWrapped("Stillness is too high; it is clamped independently so other controls continue to work.");
+                    ImGui::TextWrapped("Stillness must be below breakout; the conflicting setting is rejected, all other controls keep working.");
                 m_duo_timing->draw("GPU timing: composite + both eye copies");
                 if (m_duo_timing->value()) {
                     const float ms=m_duo_gpu_ms.load(std::memory_order_relaxed);
@@ -235,6 +236,39 @@ def main():
                 if (counts.age_ms == UINT32_MAX) ImGui::TextUnformatted("Last gaze sample: unavailable");
                 else ImGui::Text("Last gaze sample: %u ms", counts.age_ms);
                 configure_duoview();
+                const auto rejected=m_duo_ui_rejected_mask.load(std::memory_order_acquire);
+                if (rejected) {
+                    ImGui::TextWrapped("Control warning: one or more requested sliders are invalid; "
+                        "only those individual settings are rejected. All valid changes remain active.");
+                    const struct { uint32_t mask; const char* label; } conflicts[]={
+                        {uevr::duoview::reject_width,"Fovea width"},
+                        {uevr::duoview::reject_height,"Fovea height"},
+                        {uevr::duoview::reject_periphery,"Peripheral scale"},
+                        {uevr::duoview::reject_density,"Foveal density"},
+                        {uevr::duoview::reject_feather,"Feather"},
+                        {uevr::duoview::reject_fovea_view,"Fovea source view"},
+                        {uevr::duoview::reject_diagnostic,"Source diagnostic"},
+                        {uevr::duoview::reject_guard,"Crop guard"},
+                        {uevr::duoview::reject_quant,"Quantization"},
+                        {uevr::duoview::reject_hold,"Blink hold"},
+                        {uevr::duoview::reject_reacquire,"Reacquisition"},
+                        {uevr::duoview::reject_offset_u,"Horizontal offset"},
+                        {uevr::duoview::reject_offset_v,"Vertical offset"},
+                        {uevr::duoview::reject_micro,"Small movement gain"},
+                        {uevr::duoview::reject_breakout,"Fast breakout"},
+                        {uevr::duoview::reject_still,"Stillness threshold"},
+                        {uevr::duoview::reject_relock,"Relock samples"}};
+                    for (const auto& bad:conflicts) {
+                        if (rejected & bad.mask) ImGui::BulletText("Not applied: %s",bad.label);
+                    }
+                } else ImGui::TextUnformatted("DuoView controls: validated and accepted for next render frame");
+                const auto applied=m_duoview.settings();
+                ImGui::Text("Active Fovea W/H: %.3f / %.3f, density %.3f, periphery %.3f",
+                    applied.crop_width,applied.crop_height,applied.foveal_density,applied.peripheral_scale);
+                ImGui::Text("Active Eye Tracking: %s, Native shading: %s, fixed offsets X/Y: %.3f / %.3f",
+                    applied.eye_tracked ? "ON" : "OFF",
+                    applied.native_fix_same_pass ? "ON" : "OFF",
+                    applied.gaze_offset_u,applied.gaze_offset_v);
                 if (const auto snap=m_duoview.snapshot(duoview_producer_key())) {
                     const auto& layout=snap->config.layout;
                     ImGui::Text("Fovea %ux%u; peripheral %ux%u; output %ux%u",
@@ -253,10 +287,8 @@ def main():
                         snap->config.gaze.u,snap->config.gaze.v,
                         uevr::duoview::rendered_pixels(layout)/1000000.);
                 }
-                const auto active=m_duoview.settings();
-                if (active.crop_width!=m_duo_width->value() || active.crop_height!=m_duo_height->value() ||
-                    active.foveal_density!=m_duo_density->value() || active.peripheral_scale!=m_duo_periphery->value())
-                    ImGui::TextWrapped("Requested view sizes invalid: keeping previous quality, but eye tracking, shading and offset controls remain active.");
+                // Active/applied values and precise per-field rejections appear
+                // directly above; never claim the entire settings set is frozen.
                 ImGui::TextWrapped("Diagnostic 1 isolates the full-FOV peripheral pass. Diagnostic 2 isolates the foveal pass (dark outside crop). Compare shadows/lighting in the same scene.");
                 ImGui::TextWrapped("View 0 = FIRST Unreal pass (old prototype default), view 1 = SECOND pass (Build19 default). Identical frozen Mono camera. Switching may reset temporal history.");
                 ImGui::TreePop();
@@ -270,9 +302,9 @@ def main():
     changed[cpp]+='''
 // Update the immutable state from persisted controls only on changes.
 void VR::configure_duoview() {
-    // Never let an invalid SIZE or gaze response slider lock the eye tracking,
-    // shading, diagnostic, or fixed-position controls. A config transaction
-    // still commits atomically per UE producer frame.
+    // Validate ALL independent settings separately. Do not let one invalid
+    // option veto any other valid controls. Latch the reconciled immutable
+    // Settings atomically on the next UE frame; never alter native source size.
     const auto current = m_duoview.settings();
     uevr::duoview::Settings candidate{
         .crop_width=m_duo_width->value(), .crop_height=m_duo_height->value(),
@@ -290,24 +322,15 @@ void VR::configure_duoview() {
         .gaze_breakout_radius=m_duo_breakout->value(),
         .gaze_still_radius=m_duo_stillness->value(),
         .gaze_relock_samples=static_cast<uint32_t>(m_duo_relock->value())};
-    const bool invalid_capture =
-        candidate.crop_width*candidate.foveal_density>1.f ||
-        candidate.crop_height*candidate.foveal_density>1.f ||
-        !uevr::duoview::make_layout(1024,1024,candidate.crop_width,
-            candidate.crop_height,candidate.peripheral_scale,candidate.foveal_density);
-    if (invalid_capture) {
-        // Preserve only the last valid QUALITY tuple; other controls must
-        // continue responding even if the user requests an impossible atlas.
-        candidate.crop_width=current.crop_width;
-        candidate.crop_height=current.crop_height;
-        candidate.peripheral_scale=current.peripheral_scale;
-        candidate.foveal_density=current.foveal_density;
+    const auto checked=uevr::duoview::reconcile_ui_settings(candidate,current);
+    candidate=checked.settings;
+    m_duo_ui_rejected_mask.store(checked.rejected,std::memory_order_release);
+    if (checked.rejected) {
         SPDLOG_WARNING_EVERY_N_SEC(5,
-            "[DuoView][Controls] Invalid requested atlas sizes; retaining last valid quality while applying other controls");
-    }
-    if (candidate.gaze_still_radius>=candidate.gaze_breakout_radius) {
-        candidate.gaze_still_radius=(std::min)(current.gaze_still_radius,
-            candidate.gaze_breakout_radius*.5f);
+            "[DuoView][Controls] Rejected invalid UI fields mask=0x{:X}; "
+            "other valid controls continue; active quality width={:.3f} height={:.3f} periphery={:.3f} density={:.3f}",
+            checked.rejected,candidate.crop_width,candidate.crop_height,
+            candidate.peripheral_scale,candidate.foveal_density);
     }
     if (current.crop_width==candidate.crop_width && current.crop_height==candidate.crop_height &&
         current.peripheral_scale==candidate.peripheral_scale && current.foveal_density==candidate.foveal_density &&
@@ -327,7 +350,7 @@ void VR::configure_duoview() {
         current.gaze_still_radius==candidate.gaze_still_radius &&
         current.gaze_relock_samples==candidate.gaze_relock_samples) return;
     if (!m_duoview.configure(candidate))
-        SPDLOG_WARNING_EVERY_N_SEC(2, "[DuoView] Requested quality settings exceed atlas geometry; preserving previous valid settings");
+        SPDLOG_WARNING_EVERY_N_SEC(2, "[DuoView][Controls] Internal validated settings rejected; retaining prior frame and reporting for diagnosis");
 }
 
 // Stage 5: sample native PSVR2 gaze ONCE per immutable source frame.
