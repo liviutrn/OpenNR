@@ -1,0 +1,58 @@
+diff --git a/src/mods/vr/FFakeStereoRenderingHook.cpp b/src/mods/vr/FFakeStereoRenderingHook.cpp
+index 9fdd0912..89f40ae4 100644
+--- a/src/mods/vr/FFakeStereoRenderingHook.cpp
++++ b/src/mods/vr/FFakeStereoRenderingHook.cpp
+@@ -27560,9 +27560,7 @@ void FFakeStereoRenderingHook::mark_native_duoview_main_family(
+                 candidate.view_mask == 0x3 && !candidate.conflicted &&
+                 candidate.scene == family.get_scene_interface() && candidate.target == expected_target &&
+                 candidate.views[0] != nullptr && candidate.views[1] != nullptr &&
+-                candidate.views[0] != candidate.views[1] &&
+-                ((views->data[0] == candidate.views[0] && views->data[1] == candidate.views[1]) ||
+-                    (views->data[0] == candidate.views[1] && views->data[1] == candidate.views[0]));
++                candidate.views[0] != candidate.views[1];
+         },
+         [](NativeDuoViewSourceFamily& candidate) { candidate.main_family_validated = true; },
+         ambiguous);
+diff --git a/tests/MonoD3D12Tests.cpp b/tests/MonoD3D12Tests.cpp
+index ae7db166..12ddbfe3 100644
+--- a/tests/MonoD3D12Tests.cpp
++++ b/tests/MonoD3D12Tests.cpp
+@@ -231,7 +231,7 @@ static void test_duoview_frame_transactions() {
+                 value.frame = frame;
+                 value.family = family;
+                 value.scene = 0x55;
+-                value.target = 0x66;
++                value.target = family == 0xabc ? 0x66 : 0x77;
+                 value.views[0] = family == 0xabc ? 0x111 : 0x333;
+                 value.views[1] = family == 0xabc ? 0x222 : 0x444;
+                 value.packet_serial = packet;
+@@ -246,14 +246,17 @@ static void test_duoview_frame_transactions() {
+     expect(retain_family(102, 0xabc, 102), "producer publishes source and packet for frame 102");
+     bool ambiguous{};
+     const auto main_family_copy = uintptr_t{0x999};
++    const uintptr_t copied_view_array[2]{0x911, 0x922};
+     const auto marked_main = source_families.mutate_unique(
+         [](uint32_t frame, uintptr_t, const OwnedSource& value) {
+             return frame == 100 && value.scene == 0x55 && value.target == 0x66 &&
+-                value.view_mask == 0x3 && value.views[0] == 0x111 && value.views[1] == 0x222;
++                value.view_mask == 0x3 && value.views[0] != 0 && value.views[1] != 0 &&
++                value.views[0] != value.views[1];
+         },
+         [](OwnedSource& value) { value.main_family = true; }, ambiguous);
+-    expect(marked_main && marked_main->owner == 0xabc && !ambiguous && main_family_copy != marked_main->owner,
+-        "GT family copy marks its source by frame/scene/target/view identity, without pointer equality");
++    expect(marked_main && marked_main->owner == 0xabc && !ambiguous && main_family_copy != marked_main->owner &&
++        copied_view_array[0] != 0x111 && copied_view_array[1] != 0x222,
++        "GT family and view-array copies mark the unique source by frame/scene/target, without pointer equality");
+ 
+     const auto packet_family_copy = uintptr_t{0x998};
+     const auto packet_source = source_families.mutate_unique(
+@@ -295,7 +298,7 @@ static void test_duoview_frame_transactions() {
+     bool capture_target_ambiguous{};
+     const auto capture_target_lookup = source_families.read_unique(
+         [](uint32_t frame, uintptr_t, const OwnedSource& value) {
+-            return frame == 100 && value.scene == 0x55 && value.target == 0x77 && value.main_family;
++            return frame == 100 && value.scene == 0x55 && value.target == 0x88 && value.main_family;
+         }, capture_target_ambiguous);
+     expect(!capture_target_lookup && !capture_target_ambiguous,
+         "Native Fix secondary capture-target callback cannot replace the main viewport binding");
