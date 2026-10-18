@@ -105,78 +105,130 @@ public:
         }
         return copied;
     }
-    // Gather Joey's actual Native Stereo Fix primary and secondary render
-    // targets into this command slot's atlas, then run the same Mono compositor.
+    // Direct Native Fix composition: keep Joey's exact UE rendering and
+    // captures, but sample the existing view rectangles as two SRVs instead
+    // of copying them to a third (doublewide) render texture first.
+    // No new GPU resources or PSO are created in this XR command callback.
     bool record_native(ID3D12Device* device, ID3D12GraphicsCommandList* cmd,
                 ID3D12Resource* primary, ID3D12Resource* secondary,
                 ID3D12Resource* destination, D3D12_RESOURCE_STATES primary_state,
                 D3D12_RESOURCE_STATES secondary_state, const ViewFrame& frame,
                 std::shared_ptr<const void> packet_lifetime, UINT64 frequency = 0) {
-        recorded_commands_ = false;
+        recorded_commands_=false;
         error_.clear();
-        const auto reject = [this](const char* reason) { error_ = reason; return false; };
-        if (!device || !cmd || !primary || !secondary || !destination || primary == secondary ||
-            primary == destination || secondary == destination || cmd->GetType() != D3D12_COMMAND_LIST_TYPE_DIRECT ||
+        const auto reject=[this](const char* reason) { error_=reason; return false; };
+        if (!device || !cmd || !primary || !secondary || !destination ||
+            primary==secondary || primary==destination || secondary==destination ||
+            cmd->GetType()!=D3D12_COMMAND_LIST_TYPE_DIRECT ||
             FAILED(device->GetDeviceRemovedReason()) || !layout_valid(frame.config.layout))
-            return reject("Invalid Native resources, D3D12 device, or DuoView layout");
-        if (!atlas_) return reject("Missing prewarmed Native gather atlas (ID6 activation setup)");
-        const auto p = primary->GetDesc(), s = secondary->GetDesc(), a = atlas_->GetDesc();
-        const auto& l = frame.config.layout;
-        const auto& primary_rect = frame.config.settings.fovea_view == 0 ? l.fovea : l.periphery;
-        const auto& secondary_rect = frame.config.settings.fovea_view == 1 ? l.fovea : l.periphery;
-        const auto valid_source = [&](const D3D12_RESOURCE_DESC& d, const Rect& r) {
-            return d.Dimension == D3D12_RESOURCE_DIMENSION_TEXTURE2D && bgra8(d.Format) &&
-                d.Width >= r.width && d.Height >= r.height && d.DepthOrArraySize == 1 &&
-                d.MipLevels == 1 && d.SampleDesc.Count == 1 && d.SampleDesc.Quality == 0;
+            return reject("Invalid direct Native source resources or DuoView layout");
+        const auto& layout=frame.config.layout;
+        if (frame.config.settings.fovea_view>1)
+            return reject("Invalid frozen Native fovea source index");
+        if (device_.Get()!=device || width_!=layout.atlas_width/2 ||
+            height_!=layout.atlas_height || !output_ || !native_pipeline_ ||
+            !root_ || !srv_ || !rtv_)
+            return reject("Direct Native compositor not prewarmed for frozen source extent");
+        const auto p=primary->GetDesc(), s=secondary->GetDesc();
+        const auto& pr=frame.config.settings.fovea_view==0 ? layout.fovea : layout.periphery;
+        const auto& sr=frame.config.settings.fovea_view==1 ? layout.fovea : layout.periphery;
+        const auto is_bgra_family=[](DXGI_FORMAT f) {
+            return f==DXGI_FORMAT_B8G8R8A8_TYPELESS ||
+                   f==DXGI_FORMAT_B8G8R8A8_UNORM ||
+                   f==DXGI_FORMAT_B8G8R8A8_UNORM_SRGB;
         };
-        if (!valid_source(p, primary_rect) || !valid_source(s, secondary_rect) ||
-            a.Dimension != D3D12_RESOURCE_DIMENSION_TEXTURE2D || a.Width != l.atlas_width ||
-            a.Height != l.atlas_height || a.DepthOrArraySize != 1 || a.MipLevels != 1 ||
-            a.SampleDesc.Count != 1 || a.SampleDesc.Quality != 0 ||
-            (a.Flags & D3D12_RESOURCE_FLAG_DENY_SHADER_RESOURCE) ||
-            primary == atlas_.Get() || secondary == atlas_.Get() || destination == atlas_.Get())
-            return reject("Native capture extent/format incompatible with frozen atlas rectangles");
-        ComPtr<ID3D12Device> pd, sd, dd, cd;
+        const auto valid_source=[&](const D3D12_RESOURCE_DESC& d,const Rect& rect) {
+            return d.Dimension==D3D12_RESOURCE_DIMENSION_TEXTURE2D &&
+                is_bgra_family(d.Format) && d.Width>=rect.width && d.Height>=rect.height &&
+                d.DepthOrArraySize==1 && d.MipLevels==1 &&
+                d.SampleDesc.Count==1 && d.SampleDesc.Quality==0 &&
+                !(d.Flags&D3D12_RESOURCE_FLAG_DENY_SHADER_RESOURCE);
+        };
+        if (!valid_source(p,pr) || !valid_source(s,sr) ||
+            p.Width>UINT32_MAX || s.Width>UINT32_MAX ||
+            p.Height>UINT32_MAX || s.Height>UINT32_MAX)
+            return reject("Direct Native source format / rect incompatible with frozen view");
+        const auto sampling_format=srgb_
+            ? DXGI_FORMAT_B8G8R8A8_UNORM_SRGB
+            : DXGI_FORMAT_B8G8R8A8_UNORM;
+        // A typed resource cannot legally be reinterpreted as a different
+        // sRGB class. This deliberately fails closed rather than silently
+        // changing shading, unlike a typeless Native Fix capture.
+        if ((p.Format!=DXGI_FORMAT_B8G8R8A8_TYPELESS && p.Format!=sampling_format) ||
+            (s.Format!=DXGI_FORMAT_B8G8R8A8_TYPELESS && s.Format!=sampling_format))
+            return reject("Native capture SRV format incompatible with validated color contract");
+        ComPtr<ID3D12Device> pd,sd,dd,cd;
         if (FAILED(primary->GetDevice(IID_PPV_ARGS(&pd))) ||
             FAILED(secondary->GetDevice(IID_PPV_ARGS(&sd))) ||
             FAILED(destination->GetDevice(IID_PPV_ARGS(&dd))) ||
             FAILED(cmd->GetDevice(IID_PPV_ARGS(&cd))) ||
-            pd.Get() != device || sd.Get() != device || dd.Get() != device || cd.Get() != device)
-            return reject("Native source / XR destination command-list device mismatch");
-        const auto is_bgra_family = [](DXGI_FORMAT f) {
-            return f == DXGI_FORMAT_B8G8R8A8_TYPELESS ||
-                   f == DXGI_FORMAT_B8G8R8A8_UNORM ||
-                   f == DXGI_FORMAT_B8G8R8A8_UNORM_SRGB;
+            pd.Get()!=device || sd.Get()!=device || dd.Get()!=device || cd.Get()!=device)
+            return reject("Native primary/secondary/XR resource device mismatch");
+
+        auto* fovea=frame.config.settings.fovea_view==0 ? primary : secondary;
+        auto* periphery=frame.config.settings.fovea_view==0 ? secondary : primary;
+        const auto fd=fovea->GetDesc(), vd=periphery->GetDesc();
+        const auto fovea_state=frame.config.settings.fovea_view==0 ? primary_state : secondary_state;
+        const auto peripheral_state=frame.config.settings.fovea_view==0 ? secondary_state : primary_state;
+
+        ShaderConstants constants{
+            {layout.atlas_width/2,layout.atlas_height},
+            {layout.atlas_width,layout.atlas_height},
+            {layout.fovea.x,layout.fovea.y,layout.fovea.width,layout.fovea.height},
+            {layout.periphery.x,layout.periphery.y,layout.periphery.width,layout.periphery.height},
+            {layout.u0,layout.v0,layout.u1,layout.v1},
+            frame.config.settings.feather_fraction,
+            frame.config.settings.debug_border ? 1u : 0u,
+            frame.config.settings.diagnostic_view, 0.f,
+            {static_cast<uint32_t>(fd.Width),fd.Height},
+            {static_cast<uint32_t>(vd.Width),vd.Height}
         };
-        if (!is_bgra_family(p.Format) || !is_bgra_family(s.Format) ||
-            !bgra8(a.Format) ||
-            a.Format != (srgb_ ? DXGI_FORMAT_B8G8R8A8_UNORM_SRGB : DXGI_FORMAT_B8G8R8A8_UNORM))
-            return reject("Native BGRA8 format/sRGB mismatch with prewarmed atlas");
-        // record_native must use the exact prewarmed objects. Rebuilding here
-        // would release atlas_ after CopyTextureRegion has already been queued.
-        if (device_.Get() != device || width_ != l.atlas_width / 2 ||
-            height_ != l.atlas_height || !output_ || !pipeline_ || !root_ || !srv_ || !rtv_)
-            return reject("Native mode dimensions or shader state differ from prewarmed command slot");
-        if (!copy_source_to_atlas(cmd, primary, atlas_.Get(), primary_state,
-                                  primary_rect.x, primary_rect.y, primary_rect.width, primary_rect.height) ||
-            !copy_source_to_atlas(cmd, secondary, atlas_.Get(), secondary_state,
-                                  secondary_rect.x, secondary_rect.y, secondary_rect.width, secondary_rect.height)) {
-            return reject("Failed recording Native primary/secondary source atlas copy");
+        D3D12_SHADER_RESOURCE_VIEW_DESC view{};
+        view.Format=sampling_format;
+        view.ViewDimension=D3D12_SRV_DIMENSION_TEXTURE2D;
+        view.Shader4ComponentMapping=D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+        view.Texture2D.MipLevels=1;
+        const auto desc_step=device->GetDescriptorHandleIncrementSize(
+            D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+        auto cpu=srv_->GetCPUDescriptorHandleForHeapStart();
+        device->CreateShaderResourceView(fovea,&view,cpu);
+        cpu.ptr+=desc_step;
+        device->CreateShaderResourceView(periphery,&view,cpu);
+        // GPU lifetime remains bound to the exact retired OpenXR command slot,
+        // never to whichever engine packet happens to arrive next.
+        primary_reference_=primary; secondary_reference_=secondary;
+        packet_lifetime_=std::move(packet_lifetime);
+        const bool timed=frequency && frequency==frequency_ && queries_ && timestamps_;
+        if (timed) read_timing();
+        transition(cmd,fovea,fovea_state,D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+        transition(cmd,periphery,peripheral_state,D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+        recorded_commands_=true;
+        if (timed) cmd->EndQuery(queries_.Get(),D3D12_QUERY_TYPE_TIMESTAMP,0);
+        ID3D12DescriptorHeap* heaps[]{srv_.Get()};
+        cmd->SetDescriptorHeaps(1,heaps);
+        cmd->SetGraphicsRootSignature(root_.Get());
+        cmd->SetPipelineState(native_pipeline_.Get());
+        cmd->SetGraphicsRootDescriptorTable(0,srv_->GetGPUDescriptorHandleForHeapStart());
+        cmd->SetGraphicsRoot32BitConstants(1,sizeof(constants)/4,&constants,0);
+        const D3D12_VIEWPORT viewport{0,0,static_cast<float>(width_),static_cast<float>(height_),0,1};
+        const D3D12_RECT rect{0,0,static_cast<LONG>(width_),static_cast<LONG>(height_)};
+        cmd->RSSetViewports(1,&viewport);
+        cmd->RSSetScissorRects(1,&rect);
+        const auto handle=rtv_->GetCPUDescriptorHandleForHeapStart();
+        cmd->OMSetRenderTargets(1,&handle,FALSE,nullptr);
+        cmd->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+        cmd->DrawInstanced(3,1,0,0);
+        transition(cmd,fovea,D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,fovea_state);
+        transition(cmd,periphery,D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,peripheral_state);
+        const bool copied=copy_composite_to_stereo(cmd,device,output_.Get(),destination,
+            D3D12_RESOURCE_STATE_RENDER_TARGET,D3D12_RESOURCE_STATE_RENDER_TARGET);
+        if (timed) {
+            cmd->EndQuery(queries_.Get(),D3D12_QUERY_TYPE_TIMESTAMP,1);
+            cmd->ResolveQueryData(queries_.Get(),D3D12_QUERY_TYPE_TIMESTAMP,0,2,timestamps_.Get(),0);
+            timing_pending_=true;
         }
-        recorded_commands_ = true;
-        // These references live in the OpenXR command slot's compositor object.
-        // Its slot is replaced only after the prior command fence has retired.
-        primary_reference_ = primary;
-        secondary_reference_ = secondary;
-        packet_lifetime_ = std::move(packet_lifetime);
-        const bool composed = record(device, cmd, atlas_.Get(), destination,
-            D3D12_RESOURCE_STATE_COPY_DEST, frame.config, frequency);
-        // record() clears its own command marker at entry. Preserve the gather
-        // commands even if it rejects the later composite pass.
-        const bool gather_recorded = true;
-        recorded_commands_ = recorded_commands_ || gather_recorded;
-        if (!composed && error_.empty()) error_ = "Native gather succeeded but Mono raster/copy validation failed";
-        return composed;
+        if (!copied) return reject("Direct Native blend succeeded but Mono XR output validation failed");
+        return true;
     }
     const std::string& error() const { return error_; }
     bool recorded_commands() const { return recorded_commands_; }
