@@ -12,7 +12,7 @@ if(WIN32)
   find_package(Python3 REQUIRED COMPONENTS Interpreter)
   add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/DuoViewShaderSource.hpp"
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/embed_shader.py" "${CMAKE_CURRENT_BINARY_DIR}/DuoViewShaderSource.hpp"
-    DEPENDS embed_shader.py DuoViewComposite.hlsl DuoViewCompositeRaster.hlsl)
+    DEPENDS embed_shader.py DuoViewComposite.hlsl DuoViewCompositeRaster.hlsl DuoViewNativeCompositeRaster.hlsl)
   add_executable(DuoViewProductionWarpTests production_warp_test.cpp "${CMAKE_CURRENT_BINARY_DIR}/DuoViewShaderSource.hpp")
   target_include_directories(DuoViewProductionWarpTests PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
   target_link_libraries(DuoViewProductionWarpTests PRIVATE d3d12 dxgi d3dcompiler)
