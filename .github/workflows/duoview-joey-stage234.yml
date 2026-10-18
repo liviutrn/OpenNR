@@ -1,8 +1,8 @@
-name: DuoView Joey Adaptive Gaze + Native Fix Shading
-run-name: DuoView Joey Adaptive Gaze Breakout exact SDK (${{ github.run_number }})
+name: DuoView v154 Independent Controls and Fixed Fovea
+run-name: DuoView v154 Controls / Manual Fixed Fovea exact SDK (${{ github.run_number }})
 on:
   push:
-    branches: [experiments/duoview-temporal-shading-v22, experiments/joey-duoview-native-stereo-fix-v22-20261018, fix/joey-v22-nativefix-duoview-activation-20261018, experiments/joey-v22-nativefix-gaze-hold-controls-20261018, experiments/joey-duoview-adaptive-saccade-20261018]
+    branches: [experiments/duoview-temporal-shading-v22, experiments/joey-duoview-native-stereo-fix-v22-20261018, fix/joey-v22-nativefix-duoview-activation-20261018, experiments/joey-v22-nativefix-gaze-hold-controls-20261018, experiments/joey-duoview-adaptive-saccade-20261018, fix/duoview-v154-controls-offcenter-20261018]
     paths:
       - '.github/workflows/duoview-joey-stage234.yml'
       - 'duoview/joey_stage1/**'
