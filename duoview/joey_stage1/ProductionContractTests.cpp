@@ -129,8 +129,9 @@ int main() try {
     require(temporal.snapshot({7,2})->config.settings.independent_shading,"Mid-frame toggle split the source pair");
     require(temporal.begin({7,3},3000,3000,p,[]()->std::optional<UV>{return UV{.6f,.5f};},1022).has_value(),"Next-frame toggle packet missing");
     require(!temporal.can_independent_shading({7,3},200),"Shading off must apply to the next producer frame");
-    // Time-domain stability contract: continuous deadzone, no gaze teleport,
-    // and bounded frame-to-frame movement even across an eye saccade.
+    // Time-domain stability contract (v24c saccadic): the ROI holds static
+    // for crop_hold_ms after each move so temporal systems converge, then
+    // snaps (single-frame jump) to the new gaze. No perpetual glide.
     CropStability smoother;
     Settings follow{};
     follow.stabilize_crop=true;
@@ -140,16 +141,41 @@ int main() try {
     auto centre=smoother.update({31,1},3400,3172,follow,UV{.5f,.5f},1000);
     auto noise=smoother.update({31,2},3400,3172,follow,UV{.51f,.49f},1011);
     require(centre.u==noise.u && centre.v==noise.v,"Fixation noise moved stable crop");
-    auto slow=smoother.update({31,3},3400,3172,follow,UV{.9f,.8f},1022);
-    require(slow.u>centre.u && slow.u<.55f && slow.v>centre.v && slow.v<.55f,
-            "Large gaze saccade must move gradually, not jump");
-    auto last=slow;
-    for (uint64_t f=4;f<30;++f) {
-        auto next=smoother.update({31,f},3400,3172,follow,UV{.9f,.8f},1000+(f-1)*11);
-        require(next.u>=last.u && next.v>=last.v,"Smoothing must be monotonic toward a fixed target");
-        require(next.u-last.u<=.035f && next.v-last.v<=.035f,
-                "Frame-to-frame crop jump exceeds bounded tracking speed");
+    // Large saccade inside the hold window must NOT move the ROI.
+    auto held_saccade=smoother.update({31,3},3400,3172,follow,UV{.9f,.8f},1022);
+    require(held_saccade.u==centre.u && held_saccade.v==centre.v,
+            "Saccade inside hold window moved the crop; projection must stay static");
+    // After the hold expires the ROI snaps directly to the gaze.
+    auto snapped=smoother.update({31,4},3400,3172,follow,UV{.9f,.8f},1090);
+    require(snapped.u>centre.u && snapped.v>centre.v,
+            "Expired hold must snap the crop to the gaze");
+    // While the hold is active the ROI is frozen even under continuous gaze motion.
+    auto last=snapped;
+    for (uint64_t f=5;f<11;++f) {
+        auto next=smoother.update({31,f},3400,3172,follow,UV{.9f,.8f},1090+(f-4)*11);
+        require(next.u==last.u && next.v==last.v,"Crop moved inside the hold window");
         last=next;
+    }
+    // Glide fallback (crop_snap=false, no hold) still moves gradually.
+    CropStability glider;
+    Settings glide{};
+    glide.stabilize_crop=true;
+    glide.crop_width=glide.crop_height=.5f;
+    glide.guard_fraction=.10f;
+    glide.smoothing_ms=85.f;
+    glide.crop_hold_ms=0;
+    glide.crop_snap=false;
+    auto gcentre=glider.update({32,1},3400,3172,glide,UV{.5f,.5f},2000);
+    auto gslow=glider.update({32,2},3400,3172,glide,UV{.9f,.8f},2011);
+    require(gslow.u>gcentre.u && gslow.u<.55f && gslow.v>gcentre.v && gslow.v<.55f,
+            "Glide fallback must move gradually, not jump");
+    auto glast=gslow;
+    for (uint64_t f=3;f<12;++f) {
+        auto gnext=glider.update({32,f},3400,3172,glide,UV{.9f,.8f},2000+(f-1)*11);
+        require(gnext.u>=glast.u && gnext.v>=glast.v,"Glide must be monotonic toward a fixed target");
+        require(gnext.u-glast.u<=.035f && gnext.v-glast.v<=.035f,
+                "Glide frame-to-frame jump exceeds bounded tracking speed");
+        glast=gnext;
     }
     auto held=smoother.update({31,30},3400,3172,follow,{},1360);
     require(held.u==last.u && held.v==last.v,"Short CAPI gap changed crop");
@@ -159,6 +185,9 @@ int main() try {
     State bad_controls; require(!bad_controls.configure(follow),"Invalid smoothing must be rejected");
     follow.smoothing_ms=85.f; follow.guard_fraction=.251f;
     require(!bad_controls.configure(follow),"Invalid wide guard must be rejected");
+    follow.guard_fraction=.10f; follow.crop_hold_ms=501;
+    require(!bad_controls.configure(follow),"Invalid crop hold must be rejected");
+    follow.crop_hold_ms=80;
     std::cout<<"Pinned Joey DuoView geometry, view pairing, gradual gaze, primary fallback contract PASS\n";
     return 0;
 } catch(const std::exception& e) {
