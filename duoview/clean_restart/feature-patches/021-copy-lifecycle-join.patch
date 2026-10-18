@@ -1,0 +1,15 @@
+--- a/tests/MonoD3D12Tests.cpp
++++ b/tests/MonoD3D12Tests.cpp
+@@ -430,8 +430,10 @@
+             value.join.bind_rhi_token(5050, 9);
+         });
+     }
+-    auto lifecycle_join = lifecycle_sources.read(700, 0x321);
+-    const auto exact_present = lifecycle_join ? lifecycle_join->join.take_ready(true) : std::nullopt;
++    LifecycleSource lifecycle_join{};
++    const bool lifecycle_join_found = lifecycle_sources.mutate_if_present(
++        700, 0x321, [&](LifecycleSource& value) { lifecycle_join = value; });
++    const auto exact_present = lifecycle_join_found ? lifecycle_join.join.take_ready(true) : std::nullopt;
+     expect(copied_rt_family != 0x321 && rt_source && rt_source->owner == 0x321 && exact_present &&
+         exact_present->submit_frame == 5050 && exact_present->output_generation == 9,
+         "copied RT family binds the exact authoritative source to its compensated Present token");
