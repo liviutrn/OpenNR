@@ -22,6 +22,7 @@ cbuffer DuoViewCompositeConfig : register(b0)
     float _reserved;
     uint2 NativeFoveaDimensions;
     uint2 NativePeripheryDimensions;
+    uint2 OutputOffset; // offset of current OpenXR eye within doublewide RTV
 };
 
 float2 AtlasSampleUV(uint4 rect, float2 localUv)
