@@ -184,6 +184,10 @@ int main() try {
                 stereo.Get(),D3D12_RESOURCE_STATE_RENDER_TARGET,D3D12_RESOURCE_STATE_RENDER_TARGET,
                 native_frame,std::make_shared<const int>(7),frequency))
             throw std::runtime_error("Native primary/secondary gather or composite failed: "+compositor.error());
+        // Typed UNORM XR should use direct doublewide raster. An incompatible
+        // sRGB RTV must preserve the original composite+copy pathway instead.
+        if (compositor.last_native_direct_xr() == srgb)
+            throw std::runtime_error("Incorrect direct-XR route selection for output format");
         transition(cmd.Get(),stereo.Get(),D3D12_RESOURCE_STATE_RENDER_TARGET,D3D12_RESOURCE_STATE_COPY_SOURCE);
         cmd->CopyTextureRegion(&to,0,0,0,&from,nullptr);check(cmd->Close());
         ID3D12CommandList* native_lists[]{cmd.Get()};queue->ExecuteCommandLists(1,native_lists);
