@@ -97,6 +97,19 @@ def main():
                "m_duo_reacquire->draw(", "m_duo_offset_x->draw(", "m_duo_offset_y->draw(",
                "m_duoview_gaze.set_recovery_controls("):
   if token not in vr_cpp: raise RuntimeError("Gaze recovery controls not wired "+token)
+ for token in ("m_duo_micro_gain->draw(", "m_duo_breakout->draw(",
+               "m_duo_stillness->draw(", "m_duo_relock->draw(",
+               ".gaze_micro_gain=m_duo_micro_gain->value()",
+               ".gaze_breakout_radius=m_duo_breakout->value()",
+               ".gaze_still_radius=m_duo_stillness->value()",
+               ".gaze_relock_samples=static_cast<uint32_t>(m_duo_relock->value())"):
+  if token not in vr_cpp: raise RuntimeError("Adaptive gaze response missing from producer "+token)
+ for token in ("DuoViewGazeMicroGain", "DuoViewGazeBreakout",
+               "DuoViewGazeStillness", "DuoViewGazeRelockSamples"):
+  if token not in vr_header: raise RuntimeError("Adaptive gaze option not persisted "+token)
+ crop=(a.backend/"src/mods/vr/DuoViewCropStability.hpp").read_text(encoding="utf-8")
+ for token in ("fast_tracking_", "gaze_breakout_radius", "gaze_micro_gain", "gaze_relock_samples", "gaze_still_radius"):
+  if token not in crop: raise RuntimeError("Nonlinear gaze breakout/relock contract missing "+token)
  if "bool VR::is_stalker2_native_fix_experiment_enabled() const {\n    if (is_duoview_renderer_active()) { return false; }" not in vr_cpp:
   raise RuntimeError("Unrelated experimental pair submission must stay out of DuoView")
  if "duo_main_target = rtm ? rtm->get_view_family_render_target()" not in hook or "duo_views_readable" not in hook:
