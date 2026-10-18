@@ -76,7 +76,6 @@ public:
         transition(cmd, atlas, atlas_state, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
         recorded_commands_ = true;
         if (timed) cmd->EndQuery(queries_.Get(), D3D12_QUERY_TYPE_TIMESTAMP, 0);
-        cmd->BeginEvent(0, "DuoView::Composite", 18);
         ID3D12DescriptorHeap* heaps[]{srv_.Get()};
         cmd->SetDescriptorHeaps(1, heaps);
         cmd->SetGraphicsRootSignature(root_.Get());
@@ -91,7 +90,6 @@ public:
         cmd->OMSetRenderTargets(1, &handle, FALSE, nullptr);
         cmd->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
         cmd->DrawInstanced(3, 1, 0, 0);
-        cmd->EndEvent();
         transition(cmd, atlas, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, atlas_state);
         const auto copied = copy_composite_to_stereo(cmd, device, output_.Get(), destination,
             D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_RENDER_TARGET);
