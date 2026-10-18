@@ -39,9 +39,9 @@ struct NativeSource {
 static NativeSource native_source(ID3D12Device* device, ID3D12GraphicsCommandList* cmd,
                                   UINT width, UINT height, std::array<uint8_t,4> bgra,
                                   bool gradient = false, UINT gradient_offset = 0,
-                                  D3D12_RESOURCE_FLAGS flags = D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET) {
-    auto desc=texture(width,height,flags);
-    desc.Format=DXGI_FORMAT_B8G8R8A8_TYPELESS;
+                                  DXGI_FORMAT resource_format = DXGI_FORMAT_B8G8R8A8_TYPELESS) {
+    auto desc=texture(width,height,D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET);
+    desc.Format=resource_format;
     NativeSource result;
     result.texture=resource(device,desc,D3D12_HEAP_TYPE_DEFAULT,D3D12_RESOURCE_STATE_COPY_DEST);
     D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint{};UINT64 bytes{};
@@ -316,25 +316,25 @@ int main() try {
             CloseHandle(event);
         }
     }
-    // A Native Fix source that disallows SRVs must continue through the
-    // prewarmed gather/copy fallback. Repeated use should reuse its atlas SRVs.
+    // A typed Native source that cannot use the prewarmed sampling format must
+    // continue through the gather/copy fallback, with cached atlas SRVs.
     check(allocator->Reset());check(cmd->Reset(allocator.Get(),nullptr));
     transition(cmd.Get(),stereo.Get(),D3D12_RESOURCE_STATE_COPY_SOURCE,
         D3D12_RESOURCE_STATE_RENDER_TARGET);
     const auto fallback_layout=uevr::duoview::make_layout(32,32,.5f,.5f,.25f,1.f,.5f,.5f);
     if(!fallback_layout) throw std::runtime_error("Invalid gather fallback layout");
-    auto denied_primary=native_source(device.Get(),cmd.Get(),32,32,{0,0,255,255},false,0,
-        D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET|D3D12_RESOURCE_FLAG_DENY_SHADER_RESOURCE);
+    auto incompatible_primary=native_source(device.Get(),cmd.Get(),32,32,{0,0,255,255},false,0,
+        DXGI_FORMAT_B8G8R8A8_UNORM);
     auto fallback_secondary=native_source(device.Get(),cmd.Get(),32,32,{255,0,0,255});
     ID3D12CommandList* gather_lists[]{cmd.Get()};
     uevr::duoview::ViewFrame fallback_frame{};
     fallback_frame.config={{1,29},*fallback_layout,{.5f,.5f},{},1};
     fallback_frame.config.settings.fovea_view=0;
-    if(!compositor.record_native(device.Get(),cmd.Get(),denied_primary.texture.Get(),
+    if(!compositor.record_native(device.Get(),cmd.Get(),incompatible_primary.texture.Get(),
             fallback_secondary.texture.Get(),stereo.Get(),D3D12_RESOURCE_STATE_RENDER_TARGET,
             D3D12_RESOURCE_STATE_RENDER_TARGET,fallback_frame,
             std::make_shared<const int>(29),0) || compositor.last_native_direct_xr())
-        throw std::runtime_error("Non-SRV Native source did not use the gather fallback: "+compositor.error());
+        throw std::runtime_error("Typed Native source mismatch did not use the gather fallback: "+compositor.error());
     const auto gathered_srv_refreshes=compositor.srv_descriptor_refresh_count();
     transition(cmd.Get(),stereo.Get(),D3D12_RESOURCE_STATE_RENDER_TARGET,D3D12_RESOURCE_STATE_COPY_SOURCE);
     D3D12_TEXTURE_COPY_LOCATION gathered_from{stereo.Get(),D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX,{0}};
@@ -359,7 +359,7 @@ int main() try {
     check(allocator->Reset());check(cmd->Reset(allocator.Get(),nullptr));
     transition(cmd.Get(),stereo.Get(),D3D12_RESOURCE_STATE_COPY_SOURCE,
         D3D12_RESOURCE_STATE_RENDER_TARGET);
-    if(!compositor.record_native(device.Get(),cmd.Get(),denied_primary.texture.Get(),
+    if(!compositor.record_native(device.Get(),cmd.Get(),incompatible_primary.texture.Get(),
             fallback_secondary.texture.Get(),stereo.Get(),D3D12_RESOURCE_STATE_RENDER_TARGET,
             D3D12_RESOURCE_STATE_RENDER_TARGET,fallback_frame,
             std::make_shared<const int>(30),0) ||

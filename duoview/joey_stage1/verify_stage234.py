@@ -174,7 +174,7 @@ def main():
  for token in ("Stable compatibility atlas SRVs were rewritten",
                "Stable Native source/XR descriptors were rewritten",
                "Changed XR target refreshed the wrong descriptor set",
-               "Non-SRV Native source did not use the gather fallback",
+               "Typed Native source mismatch did not use the gather fallback",
                "Repeated Native gather rewrote its cached atlas descriptors"):
   if token not in native_warp: raise RuntimeError("Native descriptor cache WARP coverage missing "+token)
  inputs = sorted(EDITED_BACKEND | ADDED_BACKEND)
