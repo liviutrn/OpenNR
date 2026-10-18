@@ -144,3 +144,15 @@
  
      const uintptr_t copied_gt_family = 0x888;
      uint32_t packet_family_frame{};
+--- a/src/mods/vr/D3D12Component.cpp
++++ b/src/mods/vr/D3D12Component.cpp
+@@ -5714,7 +5714,7 @@
+                             0, 1, 0, m_scene_capture_tex.texture.Get(), right_context.texture.Get());
+                     }
+                     native_stereo_hook->note_native_stereo_frame_packet_consumed(native_stereo_packet->serial);
+-                } else if (duoview_transaction.has_value() && native_stereo_hook != nullptr) {
++                } else if (!duoview_openvr_ready && duoview_transaction.has_value() && native_stereo_hook != nullptr) {
+                     native_stereo_hook->reject_native_duoview_transaction(
+                         duoview_submit_frame, duoview_output_generation(), duoview_transaction->serial,
+                         "OpenVR source rectangle, projection, or D3D12 composition validation failed");
+
