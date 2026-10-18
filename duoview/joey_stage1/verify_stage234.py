@@ -61,7 +61,7 @@ def main():
  vr_cpp=(a.backend/"src/mods/VR.cpp").read_text(encoding="utf-8")
  vr_header=(a.backend/"src/mods/VR.hpp").read_text(encoding="utf-8")
  if (".eye_tracked=m_duo_gaze->value()" not in vr_cpp or
-     "m_duoview_gaze.read_uv(frozen,optical)" not in vr_cpp or
+     "m_duoview_gaze.read_uv(frozen)" not in vr_cpp or
      ".smoothing_ms=m_duo_smoothing->value()" not in vr_cpp):
   raise RuntimeError("Stage5 gaze control is not connected to frame source")
  for token in ('m_duo_stabilize->draw(', 'm_duo_smoothing->draw(', 'm_duo_shading->draw(', 'm_duo_width->draw(', 'm_duo_height->draw(', 'm_duo_periphery->draw(',

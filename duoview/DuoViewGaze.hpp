@@ -1,7 +1,10 @@
 #pragma once
 // Stage 4: gaze-to-Mono-frustum mapping and asynchronous validity policy.
-// The caller must first convert the PSVR2 Toolkit combined calibrated ray
-// from device/OpenXR coordinates into Joey's shared left-optical Mono basis.
+// The PSVR2 Toolkit combined calibrated ray is HMD-local. Joey's Mono render
+// camera is rotation-locked to the HMD (any stage-to-world rotation cancels),
+// so the HMD-local ray is already in the camera basis: no head/eye inverse
+// rotation may be applied. Re-adding one makes the foveal crop swim at twice
+// the head rate during head motion (v23 Build29/32 headset trembling).
 // This module is a renderer-independent testable component, NOT a PSVR2 reader.
 #include "DuoViewGeometry.hpp"
 #include <algorithm>
@@ -17,16 +20,6 @@ struct Ray {
 struct UV {
     float u{.5f}, v{.5f};
 };
-
-inline std::optional<Ray> optical_ray(Ray ray, const std::array<float, 9>& rotation) {
-    for (float x : rotation) if (!std::isfinite(x)) return {};
-    // Transpose the orthonormal eye rotation in OpenXR's -Z basis, then return to Mono +Z.
-    const float x = rotation[0]*ray.right + rotation[1]*ray.up - rotation[2]*ray.forward;
-    const float y = rotation[3]*ray.right + rotation[4]*ray.up - rotation[5]*ray.forward;
-    const float z = rotation[6]*ray.right + rotation[7]*ray.up - rotation[8]*ray.forward;
-    if (!std::isfinite(x) || !std::isfinite(y) || !std::isfinite(z) || z >= -.1f) return {};
-    return Ray{x, y, -z};
-}
 
 // Input: eye ray in the *shared calibrated Mono optical basis*.
 // Output: normalized full-frustum tangent-plane coordinates (not angles).

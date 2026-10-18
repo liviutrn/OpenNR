@@ -29,12 +29,16 @@ int main() try {
     require(c && std::abs(c->u-.5f)<1e-5f && std::abs(c->v-.5f)<1e-5f,"forward mapped to center");
     auto r=psvr2::projection_uv({.5f,.5f,1},p);
     require(r && std::abs(r->u-.75f)<1e-5f && std::abs(r->v-.25f)<1e-5f,"right/up projection");
-    const float angle=.2f, cosine=std::cos(angle), sine=std::sin(angle);
-    const auto optical=optical_ray({0,0,1},{cosine,0,-sine,0,1,0,sine,0,cosine});
-    require(optical.has_value(),"left optical yaw produces a forward ray");
-    const auto corrected=psvr2::projection_uv(*optical,p);
-    require(corrected && std::abs(corrected->u-(.5f+.5f*std::tan(angle)))<1e-5f,
-            "native calibrated gaze is projected after inverse optical yaw");
+    // Regression (v23 Build29/32 headset trembling): the HMD-local calibrated ray
+    // projects directly with no inverse head/eye rotation. Joey's Mono camera
+    // is rotation-locked to the HMD, so the old inverse eye-in-stage rotation
+    // made the foveal crop swim at twice the head rate during head motion.
+    s.raw.left.blink=psvr2::Bool::no;s.size=sizeof(s);s.raw.combined_direction={-.25f,.25f,1};
+    const auto oblique_ray=psvr2::calibrated_ray(s);
+    require(oblique_ray,"oblique CAPI ray for direct projection");
+    const auto direct=psvr2::projection_uv(*oblique_ray,p);
+    require(direct && std::abs(direct->u-.625f)<1e-5f && std::abs(direct->v-.375f)<1e-5f,
+            "HMD-local gaze ray projects with no head/eye rotation applied");
     // Joey uses GLM column-major [column][row] storage and +Z-forward Mono.
     // x_clip=p[0]*right+p[8]*forward, w_clip=p[11]*forward:
     // +0.2 shifts the optical center to U=0.6; -0.2 shifts it to U=0.4.

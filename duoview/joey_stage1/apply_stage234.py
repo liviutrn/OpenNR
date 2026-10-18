@@ -222,14 +222,11 @@ std::optional<uevr::duoview::ViewFrame> VR::duoview_begin_frame() {
     projection[3][2]=near_plane;
     std::array<float, 16> frozen{};
     std::memcpy(frozen.data(), &projection[0][0], sizeof(frozen));
-    const auto eye=get_eye_transform(0);
-    const std::array<float,9> optical{
-        eye[0][0],eye[0][1],eye[0][2],
-        eye[1][0],eye[1][1],eye[1][2],
-        eye[2][0],eye[2][1],eye[2][2]};
+    // The PSVR2 calibrated gaze ray is HMD-local and Joey's Mono camera is
+    // rotation-locked to the HMD, so no eye/head inverse rotation is applied.
     return m_duoview.begin(key, get_hmd_width(), get_hmd_height(), frozen,
-        [this, frozen, optical]() -> std::optional<uevr::duoview::UV> {
-            return m_duoview_gaze.read_uv(frozen,optical);
+        [this, frozen]() -> std::optional<uevr::duoview::UV> {
+            return m_duoview_gaze.read_uv(frozen);
         }, GetTickCount64());
 }
 

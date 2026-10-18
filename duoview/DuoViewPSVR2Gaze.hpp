@@ -93,8 +93,9 @@ public:
             unavailable_.load(std::memory_order_relaxed),age_ms_.load(std::memory_order_relaxed)};
     }
     // Called ONLY for a new DuoView source-frame snapshot, not per eye or compositor.
-    std::optional<UV> read_uv(const std::array<float,16>& projection,
-                              const std::array<float,9>& optical_rotation) {
+    // The calibrated ray is HMD-local and Joey's Mono camera is rotation-locked
+    // to the HMD, so it projects directly: no inverse eye/head rotation.
+    std::optional<UV> read_uv(const std::array<float,16>& projection) {
         std::scoped_lock lock{mutex_};
         const uint64_t now=GetTickCount64();
         if(!read_ && now>=next_attempt_) { initialize(); next_attempt_=now+1000; }
@@ -105,12 +106,8 @@ public:
         Status candidate{};
         const bool fresh=read_(&candidate,0);
         if(fresh) {
-            // Keep the calibrated sample and optical transform from the SAME
-            // producer frame. Reprojecting a held ray with newer eye transforms
-            // can inject apparent gaze motion during head movement.
             const auto ray=calibrated_ray(candidate);
-            const auto optical=ray ? optical_ray(*ray,optical_rotation) : std::optional<Ray>{};
-            const auto uv=optical ? projection_uv(*optical,projection) : std::optional<UV>{};
+            const auto uv=ray ? projection_uv(*ray,projection) : std::optional<UV>{};
             if(uv) {
                 cached_uv_=*uv; fresh_time_=now; fresh_.fetch_add(1,std::memory_order_relaxed);
             } else {
