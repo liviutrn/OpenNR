@@ -24,6 +24,12 @@ struct Settings {
     bool stabilize_crop{true};
     float guard_fraction{.08f}; // continuous, wide spatial deadzone
     float smoothing_ms{50.f};    // exponential temporal follow in milliseconds
+    uint32_t crop_hold_ms{80};   // v24c: saccadic ROI updates — hold the projection
+                                 // static this long after each move so TAA/DLSS/Lumen
+                                 // converge; 0 disables the hold (every-frame updates)
+    bool crop_snap{true};        // v24c: snap (1-frame jump) instead of gliding when
+                                 // the hold expires; glide keeps the projection in
+                                 // perpetual motion and temporal systems never settle
     bool independent_shading{};
 };
 struct FrameConfig {
@@ -41,7 +47,8 @@ public:
             proposed.feather_fraction < 0.f || proposed.feather_fraction > .45f ||
             proposed.fovea_view > 1 || proposed.diagnostic_view > 2 ||
             !std::isfinite(proposed.guard_fraction) || proposed.guard_fraction<0.f || proposed.guard_fraction>.25f ||
-            !std::isfinite(proposed.smoothing_ms) || proposed.smoothing_ms<0.f || proposed.smoothing_ms>250.f)
+            !std::isfinite(proposed.smoothing_ms) || proposed.smoothing_ms<0.f || proposed.smoothing_ms>250.f ||
+            proposed.crop_hold_ms>500)
             return false;
         // Validate without trusting in-game UI, config files or Lua requests.
         if (!make_layout(1024,1024,proposed.crop_width,proposed.crop_height,

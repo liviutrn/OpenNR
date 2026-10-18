@@ -43,18 +43,23 @@ int main() {
     auto centre=stable.update({1,1},3000,3000,controls,UV{.5f,.5f},1000);
     auto noisy=stable.update({1,2},3000,3000,controls,UV{.501f,.499f},1011);
     assert(centre.u==noisy.u && centre.v==noisy.v);
-    auto moved=stable.update({1,3},3000,3000,controls,UV{.75f,.6f},1022);
-    assert(moved.u>.5f && moved.u<.75f && moved.v>.5f && moved.v<.6f); // deliberately gradual
-    assert(moved.u-.5f<.04f && moved.v-.5f<.04f); // no frame-scale teleport
-    auto held=stable.update({1,4},3000,3000,controls,{},1100);
-    assert(held.u==moved.u && held.v==moved.v);
-    auto expired=stable.update({1,5},3000,3000,controls,{},1300);
-    assert(expired.u<moved.u && expired.u>.5f); // missing gaze eases home instead of jumping
+    // v24c saccadic: a large gaze jump inside crop_hold_ms of the last move
+    // does NOT move the ROI; the projection stays static so temporal systems
+    // converge.
+    auto held_jump=stable.update({1,3},3000,3000,controls,UV{.75f,.6f},1022);
+    assert(held_jump.u==centre.u && held_jump.v==centre.v);
+    // After the hold expires the ROI snaps (single-frame jump, no glide).
+    auto snapped=stable.update({1,4},3000,3000,controls,UV{.75f,.6f},1090);
+    assert(snapped.u>.5f && snapped.u<=.75f && snapped.v>.5f && snapped.v<=.6f);
+    auto held=stable.update({1,5},3000,3000,controls,{},1150);
+    assert(held.u==snapped.u && held.v==snapped.v);
+    auto expired=stable.update({1,6},3000,3000,controls,{},1400);
+    assert(expired.u<snapped.u && expired.u>.5f); // missing gaze eases home instead of jumping
     controls.stabilize_crop=false;
-    auto raw=stable.update({1,6},3000,3000,controls,UV{.61123f,.42123f},1133);
+    auto raw=stable.update({1,7},3000,3000,controls,UV{.61123f,.42123f},1133);
     assert(raw.u==.61123f && raw.v==.42123f);
     controls.stabilize_crop=true; controls.foveal_density=1.8f;
-    auto aligned=stable.update({1,7},3400,3172,controls,UV{.71943f,.61327f},1144);
+    auto aligned=stable.update({1,8},3400,3172,controls,UV{.71943f,.61327f},1144);
     const auto aligned_layout=make_layout(3400,3172,controls.crop_width,controls.crop_height,
         controls.peripheral_scale,controls.foveal_density,aligned.u,aligned.v);
     assert(aligned_layout);
