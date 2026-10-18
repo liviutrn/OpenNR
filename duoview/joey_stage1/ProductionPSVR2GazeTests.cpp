@@ -35,7 +35,7 @@ int main() try {
     // made the foveal crop swim at twice the head rate during head motion.
     s.raw.left.blink=psvr2::Bool::no;s.size=sizeof(s);s.raw.combined_direction={-.25f,.25f,1};
     const auto oblique_ray=psvr2::calibrated_ray(s);
-    require(oblique_ray,"oblique CAPI ray for direct projection");
+    require(oblique_ray.has_value(),"oblique CAPI ray for direct projection");
     const auto direct=psvr2::projection_uv(*oblique_ray,p);
     require(direct && std::abs(direct->u-.625f)<1e-5f && std::abs(direct->v-.375f)<1e-5f,
             "HMD-local gaze ray projects with no head/eye rotation applied");
