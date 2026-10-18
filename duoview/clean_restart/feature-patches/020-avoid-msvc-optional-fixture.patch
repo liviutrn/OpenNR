@@ -1,0 +1,27 @@
+--- a/tests/MonoD3D12Tests.cpp
++++ b/tests/MonoD3D12Tests.cpp
+@@ -386,17 +386,19 @@
+             expect(duo::bind_authoritative_source_frame(value.identity, authoritative_family),
+                 "production authoritative-frame helper accepts the exact copied GT view pair");
+         }, ambiguous);
+-    std::optional<LifecycleSource> bound_source = lifecycle_sources.read(700, 0x321);
++    LifecycleSource bound_source{};
++    const bool bound_source_found = lifecycle_sources.mutate_if_present(
++        700, 0x321, [&](LifecycleSource& value) { bound_source = value; });
+     expect(authoritative_bind && !ambiguous && authoritative_bind->frame == 700 &&
+-        bound_source.has_value() && bound_source->identity.source_frame_valid &&
+-        bound_source->identity.source_frame == 5048,
++        bound_source_found && bound_source.identity.source_frame_valid &&
++        bound_source.identity.source_frame == 5048,
+         "GT render-family FrameNumber replaces stale constructor identity while preserving the settings-frame retention stamp");
+ 
+     const uintptr_t copied_gt_family = 0x888;
+     uint32_t packet_family_frame{};
+     bool packet_family_frame_valid{};
+-    if (bound_source.has_value() && bound_source->identity.source_frame_valid) {
+-        packet_family_frame = bound_source->identity.source_frame;
++    if (bound_source_found && bound_source.identity.source_frame_valid) {
++        packet_family_frame = bound_source.identity.source_frame;
+         packet_family_frame_valid = true;
+     }
+     const uintptr_t copied_packet_family = 0x999;
