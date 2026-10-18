@@ -105,7 +105,7 @@ def main():
         const auto frame = m_duoview.snapshot(duoview_producer_key());
         return frame ? frame->mono_source_frame : std::optional<uint32_t>{};
     }
-    bool duoview_gaze_active() const { return m_duoview_gaze.active(); }
+    bool duoview_gaze_active() const { return m_duoview.settings().eye_tracked && m_duoview_gaze.active(); }
     void configure_duoview();
     void note_duoview_gpu_ms(float ms) { m_duo_gpu_ms.store(ms, std::memory_order_relaxed); }
     std::optional<uevr::duoview::ViewFrame> duoview_begin_frame();
