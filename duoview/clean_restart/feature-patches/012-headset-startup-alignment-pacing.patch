@@ -1,0 +1,521 @@
+diff --git a/src/mods/VR.hpp b/src/mods/VR.hpp
+index 70608c8e215dfa8ea662b37d6ffaab3933b7f53d..8f9d292708da159e94e52fede3df30e0ec2b88e4 100644
+--- a/src/mods/VR.hpp
++++ b/src/mods/VR.hpp
+@@ -2488,6 +2488,12 @@ private:
+ 
+         // Publish one immutable parameter set for the entire native frame.
+         // The view hooks and the compositor consume this same snapshot.
++        uevr::duoview::Center optical_center{};
++        if (m_runtime != nullptr) {
++            std::shared_lock eye_lock{m_runtime->eyes_mtx};
++            uevr::duoview::projection_center(
++                m_runtime->projections[static_cast<uint32_t>(VRRuntime::Eye::LEFT)], optical_center);
++        }
+         m_native_duoview_snapshot_active = is_native_duoview_active();
+         m_native_duoview_snapshot_native_stereo_fix = is_native_stereo_fix_enabled();
+         m_native_duoview_snapshot = {
+@@ -2497,6 +2503,8 @@ private:
+             .periphery_scale = m_duoview_periphery_scale->value() / 100.0f,
+             .vertical_center = m_duoview_vertical_center->value() / 100.0f,
+             .feather_pixels = m_duoview_feather_pixels->value(),
++            .optical_center_x = optical_center.x,
++            .optical_center_y = optical_center.y,
+         };
+         m_native_duoview_snapshot_frame = engine_frame;
+     }
+diff --git a/src/mods/vr/D3D12Component.cpp b/src/mods/vr/D3D12Component.cpp
+index 4809ed0582c8831d65f5cc52d2b75bb6b7ce42b7..40197dfc668047aca7c10c6f0363cae8bf7a1dac 100644
+--- a/src/mods/vr/D3D12Component.cpp
++++ b/src/mods/vr/D3D12Component.cpp
+@@ -3574,23 +3574,33 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
+     }
+ 
+     bool scene_capture_packet_ready = false;
+-    const auto retire_native_scene_capture = [&]() {
++    const auto retire_native_scene_capture = [&](const char* reason) {
+         if (stalker_requested) { m_stalker2_pair_cache.invalidate(); m_stalker2_established_epoch = 0; }
+         if (m_scene_capture_tex.texture.Get() != nullptr) {
++            static std::atomic<uint64_t> retirement_count{};
++            static std::atomic<uint64_t> wait_call_count{};
+             // The Native Fix source is borrowed by the runtime copy command
+             // lists. Retire those GPU users only when the source generation
+             // changes; never add a wait to the steady-state frame path.
+             if (runtime->is_openxr()) {
+                 m_openxr.wait_for_all_copies();
++                wait_call_count.fetch_add(1, std::memory_order_relaxed);
+             } else if (runtime->is_openvr()) {
+                 for (auto& texture_ctx : m_openvr.left_eye_tex) {
+                     texture_ctx.commands.wait(INFINITE);
++                    wait_call_count.fetch_add(1, std::memory_order_relaxed);
+                 }
+                 for (auto& texture_ctx : m_openvr.right_eye_tex) {
+                     texture_ctx.commands.wait(INFINITE);
++                    wait_call_count.fetch_add(1, std::memory_order_relaxed);
+                 }
+             }
+             m_duoview_compositor.reset();
++            const auto retirements = retirement_count.fetch_add(1, std::memory_order_relaxed) + 1;
++            const auto waits = wait_call_count.load(std::memory_order_relaxed);
++            SPDLOG_INFO_EVERY_N_SEC(2,
++                "[NativeStereoFix][D3D12] Retired cached capture reason={} generation={} resource={:x} cumulative_wait_calls={} retirements={}",
++                reason, m_scene_capture_generation, reinterpret_cast<uintptr_t>(m_scene_capture_tex.texture.Get()), waits, retirements);
+         }
+ 
+         m_scene_capture_tex.reset();
+@@ -3646,7 +3656,7 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
+             if (m_scene_capture_generation != capture->generation ||
+                 m_scene_capture_tex.texture.Get() != scene_capture_rt.Get())
+             {
+-                retire_native_scene_capture();
++                retire_native_scene_capture("validated packet generation/resource changed");
+ 
+                 if (m_scene_capture_tex.setup(device, scene_capture_rt.Get(), view_format, view_format, L"Native Stereo Scene Capture Texture")) {
+                     m_scene_capture_generation = capture->generation;
+@@ -3751,35 +3761,95 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
+         }
+     }
+ 
++    if (native_duoview_frame) {
++        const auto log_duoview_state = [&](const char* level) {
++            if (duoview_inputs_valid) {
++                SPDLOG_INFO_EVERY_N_SEC(2,
++                    "[DuoView][D3D12] {} frame={} path={} packet={} generation={} optical_center=({:.4f},{:.4f}) crop=[{:.4f},{:.4f}->{:.4f},{:.4f}] fovea_rect=[{},{}->{},{}] periphery_rect=[{},{}->{},{}]",
++                    level, duoview_engine_frame, native_duoview_native_fix_path ? "NativeFix" : "ordinary-native",
++                    native_stereo_packet != nullptr ? native_stereo_packet->serial : 0,
++                    native_stereo_packet != nullptr ? native_stereo_packet->capture_generation : 0,
++                    native_duoview_native_fix_path && native_stereo_packet != nullptr
++                        ? native_stereo_packet->duoview_parameters.optical_center_x
++                        : vr->native_duoview_parameters_for_frame(duoview_engine_frame).optical_center_x,
++                    native_duoview_native_fix_path && native_stereo_packet != nullptr
++                        ? native_stereo_packet->duoview_parameters.optical_center_y
++                        : vr->native_duoview_parameters_for_frame(duoview_engine_frame).optical_center_y,
++                    duoview_geometry.u0, duoview_geometry.v0, duoview_geometry.u1, duoview_geometry.v1,
++                    duoview_fovea_rect.left, duoview_fovea_rect.top, duoview_fovea_rect.right, duoview_fovea_rect.bottom,
++                    duoview_periphery_rect.left, duoview_periphery_rect.top,
++                    duoview_periphery_rect.right, duoview_periphery_rect.bottom);
++            } else {
++                SPDLOG_WARNING_EVERY_N_SEC(2,
++                    "[DuoView][D3D12] {} frame={} path={} selected={} packet={} capture_ready={} projections={} backbuffer={}x{}",
++                    level, duoview_engine_frame, native_duoview_native_fix_path ? "NativeFix" : "ordinary-native",
++                    native_duoview_source_selected,
++                    native_stereo_packet != nullptr ? native_stereo_packet->serial : 0,
++                    scene_capture_packet_ready,
++                    native_stereo_packet != nullptr && native_stereo_packet->duoview_projections_valid,
++                    backbuffer.Get() != nullptr ? backbuffer->GetDesc().Width : 0,
++                    backbuffer.Get() != nullptr ? backbuffer->GetDesc().Height : 0);
++            }
++        };
++        log_duoview_state("source inputs");
++    }
++
+     if (!scene_capture_packet_ready) {
+-        bool cached_capture_is_current = false;
+-
+-        // A duplicate Present can occur between engine draws. Preserve the
+-        // descriptor context across that packet-less call when the target
+-        // manager still publishes the exact same generation and resource.
+-        // Submission paths below remain packet-gated, so this only avoids a
+-        // needless GPU wait and descriptor rebuild on the next valid frame.
+-        if (native_stereo_packet == nullptr &&
+-            vr->is_native_stereo_fix_enabled() &&
+-            m_scene_capture_generation != 0 &&
+-            m_scene_capture_tex.texture.Get() != nullptr)
++        bool capture_change_proven = false;
++        const char* retirement_reason = nullptr;
++        if (m_scene_capture_tex.texture.Get() != nullptr) {
++            ComPtr<ID3D12Device> cached_device{};
++            if (FAILED(m_scene_capture_tex.texture->GetDevice(IID_PPV_ARGS(&cached_device))) ||
++                cached_device.Get() != device)
++            {
++                capture_change_proven = true;
++                retirement_reason = "D3D12 device changed";
++            }
++        }
++        if (!capture_change_proven && !vr->is_native_stereo_fix_enabled() && m_scene_capture_tex.texture.Get() != nullptr) {
++            capture_change_proven = true;
++            retirement_reason = "Native Fix disabled";
++        } else if (!capture_change_proven && m_scene_capture_tex.texture.Get() != nullptr && native_stereo_packet != nullptr &&
++            native_stereo_packet->capture != nullptr)
+         {
+-            const auto current_capture = ffsr != nullptr
+-                ? ffsr->get_render_target_manager()->get_scene_capture_target_snapshot()
++            const auto incoming = native_stereo_packet->capture;
++            capture_change_proven = incoming->generation != m_scene_capture_generation;
++            ComPtr<ID3D12Resource> incoming_resource{};
++            if (!capture_change_proven && SUCCEEDED(incoming->native_resource.As(&incoming_resource)) && incoming_resource != nullptr) {
++                capture_change_proven = incoming_resource.Get() != m_scene_capture_tex.texture.Get();
++            }
++            if (capture_change_proven) { retirement_reason = "packet proves new capture generation/resource"; }
++        } else if (!capture_change_proven && native_stereo_packet == nullptr &&
++            m_scene_capture_tex.texture.Get() != nullptr && ffsr != nullptr)
++        {
++            auto* const render_target_manager = ffsr->get_render_target_manager();
++            const auto current_capture = render_target_manager != nullptr
++                ? render_target_manager->get_scene_capture_target_snapshot()
+                 : nullptr;
+-            ComPtr<ID3D12Resource> current_resource{};
+-
+-            cached_capture_is_current =
+-                current_capture != nullptr &&
+-                current_capture->generation == m_scene_capture_generation &&
+-                SUCCEEDED(current_capture->native_resource.As(&current_resource)) &&
+-                current_resource.Get() == m_scene_capture_tex.texture.Get();
++            if (current_capture != nullptr) {
++                ComPtr<ID3D12Resource> current_resource{};
++                const bool resource_verified =
++                    SUCCEEDED(current_capture->native_resource.As(&current_resource)) && current_resource != nullptr;
++                const bool generation_matches = current_capture->generation == m_scene_capture_generation;
++                const bool resource_matches = resource_verified && current_resource.Get() == m_scene_capture_tex.texture.Get();
++                capture_change_proven = uevr::duoview::should_retire_packetless_capture(
++                    resource_verified, generation_matches, resource_matches);
++                if (capture_change_proven) { retirement_reason = "verified current snapshot generation/resource changed"; }
++            }
+         }
+ 
+-        if (!cached_capture_is_current) {
+-            retire_native_scene_capture();
++        if (capture_change_proven) {
++            retire_native_scene_capture(retirement_reason);
++        } else if (m_scene_capture_tex.texture.Get() != nullptr) {
++            static std::atomic<uint64_t> retained_packetless_count{};
++            const auto retained = retained_packetless_count.fetch_add(1, std::memory_order_relaxed) + 1;
++            SPDLOG_INFO_EVERY_N_SEC(2,
++                "[NativeStereoFix][D3D12] Retaining capture on packetless/rejected frame frame={} cached_generation={} incoming_packet={} retained_frames={}",
++                duoview_engine_frame, m_scene_capture_generation, native_stereo_packet != nullptr, retained);
+         }
+ 
++        // Keep the current frame closed. Retaining the descriptor context only
++        // protects GPU lifetime; it does not authorize submission of old pixels.
+         native_stereo_packet.reset();
+     }
+ 
+diff --git a/src/mods/vr/DuoViewGeometry.hpp b/src/mods/vr/DuoViewGeometry.hpp
+index 269564c81108d13d9384b6857d9644571bb9a3f3..a4b8e868af71f153c45aa358eea7aa44933f40b5 100644
+--- a/src/mods/vr/DuoViewGeometry.hpp
++++ b/src/mods/vr/DuoViewGeometry.hpp
+@@ -14,6 +14,10 @@ struct Parameters {
+     float periphery_scale{0.30f};
+     float vertical_center{0.50f};
+     float feather_pixels{8.0f};
++    // Captured from the frame's shared source projection. These are runtime
++    // geometry, not persisted user controls.
++    float optical_center_x{0.50f};
++    float optical_center_y{0.50f};
+ };
+ 
+ struct Extent {
+@@ -40,15 +44,49 @@ struct Geometry {
+     float feather_pixels{};
+ };
+ 
++struct Center {
++    float x{0.50f};
++    float y{0.50f};
++};
++
++constexpr bool should_clear_metadata(bool native_stereo_fix, bool duoview_selected) {
++    return !native_stereo_fix && !duoview_selected;
++}
++
++constexpr bool should_retire_packetless_capture(
++    bool current_snapshot_verified, bool generation_matches, bool resource_matches) {
++    return current_snapshot_verified && (!generation_matches || !resource_matches);
++}
++
+ inline bool valid(const Parameters& p) {
+     return std::isfinite(p.fovea_width) && p.fovea_width >= 0.20f && p.fovea_width <= 1.0f &&
+         std::isfinite(p.fovea_height) && p.fovea_height >= 0.20f && p.fovea_height <= 1.0f &&
+         std::isfinite(p.fovea_scale) && p.fovea_scale >= 0.20f && p.fovea_scale <= 1.0f &&
+         std::isfinite(p.periphery_scale) && p.periphery_scale >= 0.20f && p.periphery_scale <= 1.0f &&
+         std::isfinite(p.vertical_center) && p.vertical_center >= 0.0f && p.vertical_center <= 1.0f &&
++        std::isfinite(p.optical_center_x) && p.optical_center_x >= 0.0f && p.optical_center_x <= 1.0f &&
++        std::isfinite(p.optical_center_y) && p.optical_center_y >= 0.0f && p.optical_center_y <= 1.0f &&
+         std::isfinite(p.feather_pixels) && p.feather_pixels >= 0.0f && p.feather_pixels <= 4096.0f;
+ }
+ 
++// The runtime projection is column-major. Project view-forward (+Z) through
++// the actual source matrix so an asymmetric frustum centers the crop on its
++// forward ray rather than assuming that ray is at texture UV (0.5, 0.5).
++template <class Matrix>
++inline bool projection_center(const Matrix& matrix, Center& out) {
++    const auto clip_w = static_cast<double>(matrix[2][3]) + static_cast<double>(matrix[3][3]);
++    if (!std::isfinite(clip_w) || std::abs(clip_w) <= 1.0e-12) { return false; }
++    const auto ndc_x = (static_cast<double>(matrix[2][0]) + static_cast<double>(matrix[3][0])) / clip_w;
++    const auto ndc_y = (static_cast<double>(matrix[2][1]) + static_cast<double>(matrix[3][1])) / clip_w;
++    const auto x = 0.5 * (ndc_x + 1.0);
++    const auto y = 0.5 * (1.0 - ndc_y);
++    if (!std::isfinite(x) || !std::isfinite(y) || x < 0.0 || x > 1.0 || y < 0.0 || y > 1.0) {
++        return false;
++    }
++    out = {static_cast<float>(x), static_cast<float>(y)};
++    return true;
++}
++
+ inline uint32_t rounded_extent(uint32_t reference, float fraction, float scale, uint32_t allocation) {
+     if (reference == 0 || allocation == 0 || !std::isfinite(fraction) || !std::isfinite(scale)) { return 0; }
+     const auto value = static_cast<double>(reference) * fraction * scale;
+@@ -63,10 +101,12 @@ inline bool calculate(uint32_t width, uint32_t height, Extent fovea_allocation,
+         fovea_allocation.width == 0 || fovea_allocation.height == 0 ||
+         periphery_allocation.width == 0 || periphery_allocation.height == 0) { return false; }
+ 
+-    const auto center_y = (std::clamp)(requested.vertical_center,
++    const auto center_x = (std::clamp)(requested.optical_center_x,
++        requested.fovea_width * 0.5f, 1.0f - requested.fovea_width * 0.5f);
++    const auto center_y = (std::clamp)(requested.optical_center_y + requested.vertical_center - 0.5f,
+         requested.fovea_height * 0.5f, 1.0f - requested.fovea_height * 0.5f);
+-    const auto left = static_cast<uint32_t>(std::llround(width * (0.5 - requested.fovea_width * 0.5)));
+-    const auto right = static_cast<uint32_t>(std::llround(width * (0.5 + requested.fovea_width * 0.5)));
++    const auto left = static_cast<uint32_t>(std::llround(width * (center_x - requested.fovea_width * 0.5f)));
++    const auto right = static_cast<uint32_t>(std::llround(width * (center_x + requested.fovea_width * 0.5f)));
+     const auto top = static_cast<uint32_t>(std::llround(height * (center_y - requested.fovea_height * 0.5)));
+     const auto bottom = static_cast<uint32_t>(std::llround(height * (center_y + requested.fovea_height * 0.5)));
+     if (right <= left || bottom <= top) { return false; }
+diff --git a/src/mods/vr/FFakeStereoRenderingHook.cpp b/src/mods/vr/FFakeStereoRenderingHook.cpp
+index 5a82e6a199e41a51cb7b73eebc1837f465a80853..e2b23c735e496b08c0b6703a568faf16dd79fbe1 100644
+--- a/src/mods/vr/FFakeStereoRenderingHook.cpp
++++ b/src/mods/vr/FFakeStereoRenderingHook.cpp
+@@ -24634,6 +24634,8 @@ void FFakeStereoRenderingHook::begin_render_viewfamily_real(void* render_module,
+             dibr_single_view_requested,
+             vr->is_dibr_preview_active());
+     const auto native_stereo_fix_enabled = vr->is_native_stereo_fix_enabled();
++    const auto native_duoview_selected = vr->is_hmd_active() &&
++        vr->is_native_duoview_selected_for_frame(g_frame_count);
+     const bool split_screen_enabled = vr->is_splitscreen_compatibility_enabled();
+ 
+     const auto reset_dibr_single_view_state = [&]() {
+@@ -24659,7 +24661,7 @@ void FFakeStereoRenderingHook::begin_render_viewfamily_real(void* render_module,
+     if (!vr->is_hmd_active() ||
+         (!native_stereo_fix_enabled && !dibr_single_view_eligible && !split_screen_enabled)) {
+         avowed_native_fix_gate_reset("hmd inactive or native stereo fix disabled");
+-        if (!native_stereo_fix_enabled) {
++        if (uevr::duoview::should_clear_metadata(native_stereo_fix_enabled, native_duoview_selected)) {
+             g_hook->invalidate_native_stereo_frame_packet(NativeStereoFixState::Off, nullptr);
+             g_hook->m_native_stereo_ue57_capability_failure_generation.store(0, std::memory_order_release);
+             std::scoped_lock lock{g_hook->m_sceneview_data.mtx};
+@@ -27352,13 +27354,21 @@ std::optional<std::array<FIntRect, 2>> FFakeStereoRenderingHook::get_native_duov
+ {
+     std::scoped_lock lock{m_sceneview_data.mtx};
+     if (m_sceneview_data.native_stereo_metadata_frame != engine_frame) {
++        SPDLOG_WARNING_EVERY_N_SEC(2,
++            "[DuoView] Missing source-frame metadata requested_frame={} metadata_frame={} views={}",
++            engine_frame, m_sceneview_data.native_stereo_metadata_frame, m_sceneview_data.native_stereo_views.size());
+         return std::nullopt;
+     }
+     auto* const render_target_manager = get_render_target_manager();
+     auto* const expected_viewport = render_target_manager != nullptr
+         ? render_target_manager->get_view_family_render_target()
+         : nullptr;
+-    if (expected_viewport == nullptr) { return std::nullopt; }
++    if (expected_viewport == nullptr) {
++        SPDLOG_WARNING_EVERY_N_SEC(2,
++            "[DuoView] Cannot validate source rects frame={} because the active family render target is unavailable",
++            engine_frame);
++        return std::nullopt;
++    }
+ 
+     const auto rect_is_sane = [](const FIntRect& rect) {
+         const auto width = static_cast<int64_t>(rect.bounds[2]) - rect.bounds[0];
+@@ -27368,6 +27378,8 @@ std::optional<std::array<FIntRect, 2>> FFakeStereoRenderingHook::get_native_duov
+     };
+ 
+     std::optional<std::array<FIntRect, 2>> result{};
++    size_t primary_candidates{};
++    size_t matching_pairs{};
+     const auto& views = m_sceneview_data.native_stereo_views;
+     for (const auto& [primary_view, primary] : views) {
+         if (primary_view == nullptr || primary.frame != engine_frame ||
+@@ -27376,6 +27388,7 @@ std::optional<std::array<FIntRect, 2>> FFakeStereoRenderingHook::get_native_duov
+             primary.scene == nullptr || !primary.projection_valid || !rect_is_sane(primary.view_rect)) {
+             continue;
+         }
++        ++primary_candidates;
+ 
+         for (const auto& [secondary_view, secondary] : views) {
+             if (secondary_view == nullptr || secondary_view == primary_view ||
+@@ -27388,12 +27401,22 @@ std::optional<std::array<FIntRect, 2>> FFakeStereoRenderingHook::get_native_duov
+                 continue;
+             }
+ 
++            ++matching_pairs;
+             if (result.has_value()) {
++                SPDLOG_WARNING_EVERY_N_SEC(2,
++                    "[DuoView] Ambiguous source-frame view pair frame={} metadata_views={} primary_candidates={} matching_pairs={} target={:x}",
++                    engine_frame, views.size(), primary_candidates, matching_pairs,
++                    reinterpret_cast<uintptr_t>(expected_viewport));
+                 return std::nullopt;
+             }
+             result = std::array<FIntRect, 2>{primary.view_rect, secondary.view_rect};
+         }
+     }
++    if (!result.has_value()) {
++        SPDLOG_WARNING_EVERY_N_SEC(2,
++            "[DuoView] No valid source-frame view pair frame={} metadata_views={} primary_candidates={} target={:x}",
++            engine_frame, views.size(), primary_candidates, reinterpret_cast<uintptr_t>(expected_viewport));
++    }
+     return result;
+ }
+ 
+diff --git a/src/mods/vr/runtimes/OpenXR.cpp b/src/mods/vr/runtimes/OpenXR.cpp
+index 2c9b50af06a9d71eb77ab85a6778dc3f18cd551e..b88568794277b23849efd0657fcebe9347eca650 100644
+--- a/src/mods/vr/runtimes/OpenXR.cpp
++++ b/src/mods/vr/runtimes/OpenXR.cpp
+@@ -3955,36 +3955,28 @@ XrResult OpenXR::end_frame(const std::vector<XrCompositionLayerBaseHeader*>& qua
+     const auto mono_projection = mono ? mono_geometry(pipelined_stage_views) : std::nullopt;
+     XrPosef duoview_pose{};
+     XrFovf duoview_fov{};
+-    const bool duoview_views_valid = !duoview || pipelined_stage_views.size() == 2;
++    const auto& source_view_location = submit_state.view_space_location;
++    constexpr auto valid_source_pose_flags =
++        XR_SPACE_LOCATION_POSITION_VALID_BIT | XR_SPACE_LOCATION_ORIENTATION_VALID_BIT;
++    const auto& source_pose = source_view_location.pose;
++    const bool source_pose_valid =
++        (source_view_location.locationFlags & valid_source_pose_flags) == valid_source_pose_flags &&
++        std::isfinite(source_pose.position.x) && std::isfinite(source_pose.position.y) &&
++        std::isfinite(source_pose.position.z) && std::isfinite(source_pose.orientation.x) &&
++        std::isfinite(source_pose.orientation.y) && std::isfinite(source_pose.orientation.z) &&
++        std::isfinite(source_pose.orientation.w);
++    const bool duoview_views_valid = !duoview ||
++        (pipelined_stage_views.size() == 2 && source_pose_valid);
+     if (duoview && duoview_views_valid) {
+-        const auto& left_pose = pipelined_stage_views[0].pose;
+-        const auto& right_pose = pipelined_stage_views[1].pose;
+-        duoview_pose = left_pose;
+-        duoview_pose.position = {
+-            (left_pose.position.x + right_pose.position.x) * 0.5f,
+-            (left_pose.position.y + right_pose.position.y) * 0.5f,
+-            (left_pose.position.z + right_pose.position.z) * 0.5f,
+-        };
+-        auto right_orientation = right_pose.orientation;
+-        const auto orientation_dot = left_pose.orientation.x * right_orientation.x +
+-            left_pose.orientation.y * right_orientation.y +
+-            left_pose.orientation.z * right_orientation.z +
+-            left_pose.orientation.w * right_orientation.w;
+-        if (orientation_dot < 0.0f) {
+-            right_orientation.x = -right_orientation.x;
+-            right_orientation.y = -right_orientation.y;
+-            right_orientation.z = -right_orientation.z;
+-            right_orientation.w = -right_orientation.w;
+-        }
+-        const auto qx = left_pose.orientation.x + right_orientation.x;
+-        const auto qy = left_pose.orientation.y + right_orientation.y;
+-        const auto qz = left_pose.orientation.z + right_orientation.z;
+-        const auto qw = left_pose.orientation.w + right_orientation.w;
+-        const auto q_length = std::sqrt(qx * qx + qy * qy + qz * qz + qw * qw);
+-        if (std::isfinite(q_length) && q_length > 1.0e-6f) {
+-            duoview_pose.orientation = {qx / q_length, qy / q_length, qz / q_length, qw / q_length};
+-        }
++        // The engine renders one view from the pipelined view-space pose. An
++        // average of eye poses changes the pose attached to that exact image,
++        // shifting its forward ray for canted/asymmetric headsets.
++        duoview_pose = source_pose;
+         duoview_fov = pipelined_stage_views[0].fov;
++    } else if (duoview) {
++        SPDLOG_WARNING_EVERY_N_SEC(2,
++            "[DuoView][OpenXR] Closing scene submission without a matching source pose/views frame={} views={} pose_flags=0x{:x}",
++            submit_state.frame_count, pipelined_stage_views.size(), source_view_location.locationFlags);
+     }
+     std::array<std::optional<uevr::mono::ProjectionCrop>, 2> mono_crops{};
+     if (mono_projection) {
+diff --git a/tests/MonoD3D12Tests.cpp b/tests/MonoD3D12Tests.cpp
+index 7ddf0065178736e19aea6dae484518c00d09c798..1a4c3bb8115ed9c0d70e2910ded7b9e2a1dac445 100644
+--- a/tests/MonoD3D12Tests.cpp
++++ b/tests/MonoD3D12Tests.cpp
+@@ -67,6 +67,97 @@ static void test_duoview_geometry() {
+     invalid.fovea_width = std::numeric_limits<float>::quiet_NaN();
+     expect(!duo::calculate(3000, 3000, allocation, allocation, invalid, geometry), "nonfinite geometry input is rejected");
+ 
++    expect(!duo::should_clear_metadata(false, true) && duo::should_clear_metadata(false, false) &&
++        !duo::should_clear_metadata(true, false),
++        "DuoView-only view-family frames retain their stereo rect metadata through the Native Fix early return");
++    expect(!duo::should_retire_packetless_capture(false, false, false) &&
++        !duo::should_retire_packetless_capture(true, true, true) &&
++        duo::should_retire_packetless_capture(true, false, true) &&
++        duo::should_retire_packetless_capture(true, true, false),
++        "packetless capture is retired only after a verified generation or resource change");
++
++    constexpr double raw_left = -1.2;
++    constexpr double raw_right = 0.8;
++    constexpr double raw_top = 1.1;
++    constexpr double raw_bottom = -0.9;
++    const auto make_projection = [](auto left, auto right, auto top_angle, auto bottom_angle) {
++        using Value = decltype(left);
++        std::array<std::array<Value, 4>, 4> matrix{};
++        matrix[0][0] = Value{2} / (right - left);
++        matrix[1][1] = Value{2} / (top_angle - bottom_angle);
++        matrix[2][0] = -(right + left) / (right - left);
++        matrix[2][1] = -(top_angle + bottom_angle) / (top_angle - bottom_angle);
++        matrix[2][3] = Value{1};
++        return matrix;
++    };
++    const auto ray_uv = [](const auto& matrix) {
++        // Independent homogeneous projection of view-forward [0,0,+1,1].
++        const auto clip_x = matrix[2][0] + matrix[3][0];
++        const auto clip_y = matrix[2][1] + matrix[3][1];
++        const auto clip_w = matrix[2][3] + matrix[3][3];
++        return duo::Center{
++            static_cast<float>(0.5 * (static_cast<double>(clip_x) / clip_w + 1.0)),
++            static_cast<float>(0.5 * (1.0 - static_cast<double>(clip_y) / clip_w)),
++        };
++    };
++    auto float_projection = make_projection(static_cast<float>(raw_left), static_cast<float>(raw_right),
++        static_cast<float>(raw_top), static_cast<float>(raw_bottom));
++    auto double_projection = make_projection(raw_left, raw_right, raw_top, raw_bottom);
++    duo::Center double_center{};
++    expect(duo::projection_center(double_projection, double_center), "double asymmetric projection has a finite forward ray");
++    const auto double_ray = ray_uv(double_projection);
++    expect(std::abs(double_center.x - double_ray.x) < 1e-6 && std::abs(double_center.y - double_ray.y) < 1e-6,
++        "double projection optical center matches an independent homogeneous ray projection");
++    expect(std::abs(double_center.x - static_cast<float>(-raw_left / (raw_right - raw_left))) < 1e-6 &&
++        std::abs(double_center.y - static_cast<float>(raw_top / (raw_top - raw_bottom))) < 1e-6,
++        "asymmetric runtime FOV maps the forward ray away from texture midpoint in both axes");
++    auto double_optical = defaults;
++    double_optical.optical_center_x = double_center.x;
++    double_optical.optical_center_y = double_center.y;
++    expect(duo::calculate(1000, 1000, {1000, 1000}, {1000, 1000}, double_optical, geometry) &&
++        duo::crop_projection(double_projection, geometry), "double projection crops around the optical center");
++    const auto cropped_double_ray = ray_uv(double_projection);
++    expect(std::abs(cropped_double_ray.x - 0.5f) < 1e-5 && std::abs(cropped_double_ray.y - 0.5f) < 1e-5,
++        "double cropped source forward ray lands at the center of its view rect");
++    duo::Center float_center{};
++    expect(duo::projection_center(float_projection, float_center), "float asymmetric projection has a finite forward ray");
++    const auto float_ray = ray_uv(float_projection);
++    expect(std::abs(float_center.x - float_ray.x) < 1e-6 && std::abs(float_center.y - float_ray.y) < 1e-6,
++        "float projection optical center matches an independent homogeneous ray projection");
++
++    auto optical = defaults;
++    optical.fovea_width = 0.5f;
++    optical.fovea_height = 0.5f;
++    optical.optical_center_x = float_center.x;
++    optical.optical_center_y = float_center.y;
++    expect(duo::calculate(1000, 1000, {1000, 1000}, {1000, 1000}, optical, geometry) &&
++        std::abs((geometry.u0 + geometry.u1) * 0.5f - float_center.x) < 0.001f &&
++        std::abs((geometry.v0 + geometry.v1) * 0.5f - float_center.y) < 0.001f,
++        "default fovea center follows the source projection's optical forward ray");
++    expect(duo::crop_projection(float_projection, geometry), "float projection crops around the optical center");
++    const auto cropped_float_ray = ray_uv(float_projection);
++    expect(std::abs(cropped_float_ray.x - 0.5f) < 1e-5 && std::abs(cropped_float_ray.y - 0.5f) < 1e-5,
++        "cropped source forward ray lands at the center of the source view rect");
++
++    // A symmetric source projection uses a non-full imageRect to map its
++    // center back into this deliberately asymmetric runtime FOV. The source
++    // center remains 0.5 after subImage mapping; applying the bounds again to
++    // the crop center would move it off the forward ray.
++    const auto symmetric_projection = make_projection(-1.2, 1.2, 1.2, -1.2);
++    duo::Center symmetric_center{};
++    expect(duo::projection_center(symmetric_projection, symmetric_center) &&
++        std::abs(symmetric_center.x - 0.5f) < 1e-6 && std::abs(symmetric_center.y - 0.5f) < 1e-6,
++        "symmetric override projection keeps its forward ray at source UV midpoint");
++    const auto bounds_left = 0.5 - 0.5 * raw_left / -1.2;
++    const auto bounds_right = 0.5 + 0.5 * raw_right / 1.2;
++    const auto bounds_top = 0.5 - 0.5 * raw_top / 1.2;
++    const auto bounds_bottom = 0.5 + 0.5 * raw_bottom / -1.2;
++    const auto mapped_u = (symmetric_center.x - bounds_left) / (bounds_right - bounds_left);
++    const auto mapped_v = (symmetric_center.y - bounds_top) / (bounds_bottom - bounds_top);
++    expect(std::abs(raw_left + mapped_u * (raw_right - raw_left)) < 1e-6 &&
++        std::abs(raw_top - mapped_v * (raw_top - raw_bottom)) < 1e-6,
++        "non-full OpenXR viewBounds map the already-centered source ray to forward without a second offset");
++
+     std::array<std::array<double, 4>, 4> projection{};
+     projection[0][0] = 2.0;
+     projection[1][1] = 4.0;
