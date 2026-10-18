@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Apply bounded fixed-center two-view integration after verified Stage 1.
+"""Apply DuoView through the original Native Stereo Fix producer pipeline.
 Original Joey modes 0/5 are protected. STALKER 2 DX12 OpenXR mode 6 only.
-An incomplete pair quarantines the renderer inside mode 6; a single fault
-frame may contain incomplete atlas pixels, then later frames use Joey Mono.
-All original-source anchors must match exactly or the build fails.
+Native Stereo Fix is forced on for ID6. Validated primary and secondary sources
+are gathered into a per-command-slot atlas and submitted as one Mono image.
+Missing warmup packets leave the OpenXR transition loop live; actual compositor
+faults return to original Joey Mono on the next frame. All source anchors match.
 """
 from pathlib import Path
 import argparse
@@ -44,17 +45,53 @@ def main():
     header="src/mods/VR.hpp"
     edit(header,'#include "vr/RenderingMethodSetting.hpp"',
         '#include "vr/RenderingMethodSetting.hpp"\n#include "vr/DuoViewState.hpp"\n#include "vr/DuoViewPSVR2Gaze.hpp"')
+    edit(header,'''        if (should_ignore_native_stereo_fix_for_avowed_sync()) {
+            return false;
+        }
+
+        return m_native_stereo_fix->value() &&''',
+    '''        if (should_ignore_native_stereo_fix_for_avowed_sync()) {
+            return false;
+        }
+        if (is_duoview_renderer_active()) { return true; }
+
+        return m_native_stereo_fix->value() &&''')
     edit(header,'    bool is_using_duoview_mono() const { return m_rendering_method->value() == RenderingMethod::DUOVIEW_MONO; }',
         '''    bool is_using_duoview_mono() const { return m_rendering_method->value() == RenderingMethod::DUOVIEW_MONO; }
     bool is_duoview_renderer_active() const;
     uevr::duoview::State& duoview_state() { return m_duoview; }
+    void duoview_start_draw() {
+        m_duoview_candidate_key.store(nullptr, std::memory_order_release);
+        m_duoview_frozen_key.store(nullptr, std::memory_order_release);
+    }
     uevr::duoview::FrameKey duoview_key(uint32_t frame) const {
         return {mono_generation(), static_cast<uint64_t>(frame) + 1u};
     }
     uevr::duoview::FrameKey duoview_producer_key() const {
-        // Draw prepares the NEXT UE engine frame; BeginRenderViewFamily
-        // subsequently publishes that frame number as internal_frame_count.
-        return duoview_key(get_runtime()->internal_frame_count + 1u);
+        if (m_fake_stereo_hook && m_fake_stereo_hook->is_in_viewport_client_draw()) {
+            const auto candidate = m_duoview_candidate_key.load(std::memory_order_acquire);
+            if (candidate && candidate->generation == mono_generation()) return *candidate;
+        }
+        const auto frozen = m_duoview_frozen_key.load(std::memory_order_acquire);
+        if (frozen && frozen->generation == mono_generation()) return *frozen;
+        const auto candidate = m_duoview_candidate_key.load(std::memory_order_acquire);
+        if (candidate && candidate->generation == mono_generation()) return *candidate;
+        const auto runtime = get_runtime();
+        return duoview_key(runtime->internal_frame_count + 1u);
+    }
+    bool duoview_note_main_family(uint32_t, bool main, uint32_t count) {
+        const auto candidate = m_duoview_candidate_key.load(std::memory_order_acquire);
+        if (!candidate || candidate->generation != mono_generation() ||
+            !m_duoview.family(*candidate, main, count)) return false;
+        const auto frame = m_duoview.snapshot(*candidate);
+        if (!frame || !frame->mono_source_frame || !get_openxr_runtime() ||
+            !get_openxr_runtime()->has_mono_pose(*frame->mono_source_frame)) return false;
+        m_duoview_frozen_key.store(candidate, std::memory_order_release);
+        return true;
+    }
+    std::optional<uint32_t> duoview_mono_source_frame() const {
+        const auto frame = m_duoview.snapshot(duoview_producer_key());
+        return frame ? frame->mono_source_frame : std::optional<uint32_t>{};
     }
     bool duoview_gaze_active() const { return m_duoview_gaze.active(); }
     void configure_duoview();
@@ -78,6 +115,8 @@ def main():
     const ModToggle::Ptr m_duo_timing{ModToggle::create(generate_name("DuoViewGpuTiming"), false)};
     std::atomic<float> m_duo_gpu_ms{-1.f};
     uevr::duoview::State m_duoview;
+    std::atomic<std::shared_ptr<const uevr::duoview::FrameKey>> m_duoview_candidate_key{};
+    std::atomic<std::shared_ptr<const uevr::duoview::FrameKey>> m_duoview_frozen_key{};
     uevr::duoview::psvr2::Reader m_duoview_gaze;
     std::atomic<bool> m_duoview_quarantined{false};
     std::once_flag m_duoview_settings_once;
@@ -90,10 +129,28 @@ def main():
             *m_duo_feather, *m_duo_gaze, *m_duo_border, *m_duo_debug_source,
             *m_duo_fovea_view, *m_duo_timing, *m_duo_stabilize, *m_duo_guard,''')
     cpp="src/mods/VR.cpp"
+    edit(cpp,'''bool VR::should_force_native_stereo_fix_same_pass() const {
+    if (is_using_mono()) { return false; }
+    if (!m_native_stereo_fix->value() || is_using_afr() || !stalker2_native_fix_requires_same_pass_cached()) {''',
+    '''bool VR::should_force_native_stereo_fix_same_pass() const {
+    if (is_duoview_renderer_active()) {
+        if (is_using_afr() || !stalker2_native_fix_requires_same_pass_cached()) { return false; }
+        SPDLOG_INFO_ONCE("[DuoView][NativeStereoFix] Preserving the validated same-pass STALKER 2 layout");
+        return true;
+    }
+    if (is_using_mono()) { return false; }
+    if (!m_native_stereo_fix->value() || is_using_afr() || !stalker2_native_fix_requires_same_pass_cached()) {''')
+    edit(cpp,'''bool VR::is_stalker2_native_fix_experiment_enabled() const {
+    if (!m_stalker2_native_pair_experiment->value() || !is_native_stereo_fix_enabled() ||''',
+    '''bool VR::is_stalker2_native_fix_experiment_enabled() const {
+    if (is_duoview_renderer_active()) { return false; }
+    if (!m_stalker2_native_pair_experiment->value() || !is_native_stereo_fix_enabled() ||''')
     edit(cpp,
         'ImGui::TextWrapped("DuoView Stage 1: rendering uses original Joey Mono unchanged. Two-view foveation and gaze are NOT active.");',
         'ImGui::TextWrapped(is_duoview_renderer_active() ? (duoview_gaze_active() ? "DuoView ID6: eye-tracked two-view Mono (PSVR2 Toolkit active)" : "DuoView ID6: held crop / center fallback (gaze unavailable)") : "DuoView ID6: original Joey Mono fallback / DuoView inactive");')
     edit(cpp, '#include "VR.hpp"', '#include "VR.hpp"\n#include <cstring>')
+    edit(cpp,'            ImGui::TextWrapped("Mono (Experimental): one centered, head-tracked scene for both eyes; no binocular scene depth. DX11/DX12 with OpenXR. Native Fix, Ghost Fix/bootstrap and depth submission are inactive in Mono; saved preferences are retained.");',
+        '            if (!is_using_duoview_mono()) ImGui::TextWrapped("Mono (Experimental): one centered, head-tracked scene for both eyes; no binocular scene depth. DX11/DX12 with OpenXR. Native Fix, Ghost Fix/bootstrap and depth submission are inactive in Mono; saved preferences are retained.");')
     edit(cpp,'        if (rendering_method_changed && !is_mono_transition_pending() && get_runtime() != nullptr) {',
     '''        if (is_using_duoview_mono() || requested_rendering_method() == RenderingMethod::DUOVIEW_MONO) {
             if (ImGui::TreeNode("DuoView Mono — quality and diagnostics")) {
@@ -116,8 +173,7 @@ def main():
                 m_duo_fovea_view->draw("Fovea UE source view (0 or 1)");
                 m_duo_stabilize->draw("Stable gaze crop (OpenNR r10 policy)");
                 if (m_duo_stabilize->value()) m_duo_guard->draw("Crop centre guard (fraction of crop)");
-                m_duo_shading->draw("Independent primary shading (experimental, runtime only)");
-                ImGui::TextWrapped("Shading starts OFF on each injection or rendering-mode transition. Enable after DuoView settles; changes apply to the next complete source frame. No separate capture or Native Fix submission is enabled.");
+                ImGui::TextWrapped("Joey Native Stereo Fix is forced ON in ID6. Its original secondary pass supplies the second DuoView image; independent shading is ignored while DuoView is active.");
                 m_duo_timing->draw("GPU timing: composite + both eye copies");
                 if (m_duo_timing->value()) {
                     const float ms=m_duo_gpu_ms.load(std::memory_order_relaxed);
@@ -134,7 +190,7 @@ def main():
                 if (counts.age_ms == UINT32_MAX) ImGui::TextUnformatted("Last gaze sample: unavailable");
                 else ImGui::Text("Last gaze sample: %u ms", counts.age_ms);
                 configure_duoview();
-                if (const auto snap=m_duoview.snapshot(duoview_key(get_runtime()->internal_frame_count))) {
+                if (const auto snap=m_duoview.snapshot(duoview_producer_key())) {
                     const auto& layout=snap->config.layout;
                     ImGui::Text("Fovea %ux%u; peripheral %ux%u; output %ux%u",
                         layout.fovea.width,layout.fovea.height,
@@ -165,10 +221,15 @@ def main():
     edit(cpp,'    // Load camera offsets\n    load_cameras();',
         '    // Load camera offsets\n    load_cameras();\n    configure_duoview();')
     edit(cpp,'    m_mono_main_view_token = 0;\n    m_mono_attachment_token = 0;',
-        '    m_duoview.retire();\n    m_duo_shading->value()=false;\n    configure_duoview();\n    if (selection.active() == RenderingMethod::DUOVIEW_MONO) m_duoview_quarantined.store(false, std::memory_order_release);\n    m_mono_main_view_token = 0;\n    m_mono_attachment_token = 0;')
+        '    m_duoview.retire();\n    m_duoview_candidate_key.store(nullptr, std::memory_order_release);\n    m_duoview_frozen_key.store(nullptr, std::memory_order_release);\n    m_duo_shading->value()=false;\n    configure_duoview();\n    if (selection.active() == RenderingMethod::DUOVIEW_MONO) m_duoview_quarantined.store(false, std::memory_order_release);\n    m_mono_main_view_token = 0;\n    m_mono_attachment_token = 0;')
     changed[cpp]+='''
 // Update the immutable state from persisted controls only on changes.
 void VR::configure_duoview() {
+    if (m_duo_width->value()*m_duo_density->value()>1.f ||
+        m_duo_height->value()*m_duo_density->value()>1.f) {
+        SPDLOG_WARNING_EVERY_N_SEC(2, "[DuoView] Fovea exceeds Native single-view capture size; preserving previous valid quality");
+        return;
+    }
     const uevr::duoview::Settings candidate{
         .crop_width=m_duo_width->value(), .crop_height=m_duo_height->value(),
         .peripheral_scale=m_duo_periphery->value(), .foveal_density=m_duo_density->value(),
@@ -176,7 +237,7 @@ void VR::configure_duoview() {
         .eye_tracked=m_duo_gaze->value(), .fovea_view=static_cast<uint32_t>(m_duo_fovea_view->value()),
         .diagnostic_view=static_cast<uint32_t>(m_duo_debug_source->value()),
         .gpu_timing=m_duo_timing->value(), .stabilize_crop=m_duo_stabilize->value(),
-        .guard_fraction=m_duo_guard->value(), .independent_shading=m_duo_shading->value()};
+        .guard_fraction=m_duo_guard->value(), .independent_shading=false};
     const auto current=m_duoview.settings();
     if (current.crop_width==candidate.crop_width && current.crop_height==candidate.crop_height &&
         current.peripheral_scale==candidate.peripheral_scale && current.foveal_density==candidate.foveal_density &&
@@ -206,8 +267,18 @@ std::optional<uevr::duoview::ViewFrame> VR::duoview_begin_frame() {
     if (!is_duoview_renderer_active() || !m_fake_stereo_hook ||
         !m_fake_stereo_hook->is_in_viewport_client_draw()) return {};
     std::call_once(m_duoview_settings_once, [this] { configure_duoview(); });
-    const auto key = duoview_producer_key();
-    if (auto found = m_duoview.snapshot(key)) return found;
+    const auto runtime = get_runtime();
+    if (const auto candidate=m_duoview_candidate_key.load(std::memory_order_acquire)) {
+        if (candidate->generation==mono_generation()) {
+            if (const auto found=m_duoview.snapshot(*candidate)) return found;
+        }
+    }
+    const auto source_frame = runtime->internal_frame_count;
+    if (!get_openxr_runtime() || !get_openxr_runtime()->has_mono_pose(source_frame)) {
+        set_mono_status("Waiting: DuoView has no exact OpenXR Mono pose token yet");
+        return {};
+    }
+    const auto key = duoview_key(source_frame + 1u);
     auto projection = get_projection_matrix(VRRuntime::Eye::LEFT);
     const float near_plane=sdk::globals::get_near_clipping_plane();
     if (!std::isfinite(near_plane) || near_plane<=0.f) return {};
@@ -219,10 +290,13 @@ std::optional<uevr::duoview::ViewFrame> VR::duoview_begin_frame() {
         eye[0][0],eye[0][1],eye[0][2],
         eye[1][0],eye[1][1],eye[1][2],
         eye[2][0],eye[2][1],eye[2][2]};
-    return m_duoview.begin(key, get_hmd_width(), get_hmd_height(), frozen,
+    auto frame=m_duoview.begin(key, get_hmd_width(), get_hmd_height(), frozen,
         [this, frozen, optical]() -> std::optional<uevr::duoview::UV> {
             return m_duoview_gaze.read_uv(frozen,optical);
-        }, GetTickCount64());
+        }, GetTickCount64(), source_frame);
+    if (frame) m_duoview_candidate_key.store(
+        std::make_shared<const uevr::duoview::FrameKey>(key), std::memory_order_release);
+    return frame;
 }
 
 void VR::duoview_abort(const char* reason) {
@@ -230,14 +304,92 @@ void VR::duoview_abort(const char* reason) {
     SPDLOG_WARNING_EVERY_N_SEC(2, "[DuoView] Quarantining two-view path; continuing original Mono inside ID6: {}", reason);
     m_duoview_quarantined.store(true, std::memory_order_release);
     m_duoview.retire();
+    m_duoview_candidate_key.store(nullptr, std::memory_order_release);
+    m_duoview_frozen_key.store(nullptr, std::memory_order_release);
     set_mono_status("DuoView fault: rendering original Mono inside ID6; reselect ID6 to retry");
 }
 '''
     hook="src/mods/vr/FFakeStereoRenderingHook.cpp"
     edit(hook,'#include "FFakeStereoRenderingHook.hpp"',
         '#include "FFakeStereoRenderingHook.hpp"\n#include "DuoViewGeometry.hpp"')
+    edit(hook,'''        packet->render_frame = vr->m_render_frame_count;
+        packet->player_index = native_left_metadata.player_index;''',
+    '''        packet->render_frame = vr->m_render_frame_count;
+        if (vr->is_duoview_renderer_active()) {
+            const auto duo_key = vr->duoview_producer_key();
+            if (const auto duo_frame = vr->duoview_state().snapshot(duo_key)) {
+                if (const auto binding = uevr::duoview::native_frame_binding(*duo_frame)) {
+                    packet->duoview_frame = std::make_shared<const uevr::duoview::ViewFrame>(*duo_frame);
+                    packet->duoview_mono_source_frame = binding->mono_source_frame;
+                    packet->duoview_mono_source_valid = true;
+                }
+            }
+        }
+        packet->player_index = native_left_metadata.player_index;''')
+    edit("src/mods/vr/runtimes/OpenXR.hpp", "    void note_mono_projection();",
+        "    void note_mono_projection();\n    void note_mono_projection(uint32_t source_frame);")
+    edit("src/mods/vr/runtimes/OpenXR.cpp", '''    frame.generation = vr->mono_generation();
+}
+
+void OpenXR::note_mono_main_family(uint32_t frame, bool main_family) {''',
+    '''    frame.generation = vr->mono_generation();
+}
+
+// DuoView passes the immutable source pose token observed before Joey's
+// Native Fix split invokes its second renderer callback.
+void OpenXR::note_mono_projection(uint32_t source_frame) {
+    std::scoped_lock lock{this->sync_assignment_mtx, this->pose_mtx};
+    const auto vr = VR::get();
+    auto& frame = mono_frames[source_frame % QUEUE_SIZE];
+    if (frame.pose_frame != source_frame || !frame.pose_valid) { return; }
+    frame.projection_frame = source_frame;
+    frame.generation = vr->mono_generation();
+}
+
+void OpenXR::note_mono_main_family(uint32_t frame, bool main_family) {''')
+    edit("src/mods/vr/FFakeStereoRenderingHook.hpp", '#include "Stalker2NativePolicy.hpp"',
+        '#include "Stalker2NativePolicy.hpp"\n#include "DuoViewState.hpp"')
+    edit("src/mods/vr/FFakeStereoRenderingHook.hpp", '''    struct NativeStereoFramePacket {
+        std::shared_ptr<const VRRenderTargetManager_Base::SceneCaptureTargetSnapshot> capture{};''',
+    '''    struct NativeStereoFramePacket {
+        std::shared_ptr<const VRRenderTargetManager_Base::SceneCaptureTargetSnapshot> capture{};
+        std::shared_ptr<const uevr::duoview::ViewFrame> duoview_frame{};
+        uint32_t duoview_mono_source_frame{};
+        bool duoview_mono_source_valid{};''')
+    edit(hook,'''    g_hook->m_in_viewport_client_draw = true;
+    g_hook->m_was_in_viewport_client_draw = false;''',
+    '''    g_hook->m_in_viewport_client_draw = true;
+    g_hook->m_was_in_viewport_client_draw = false;
+    VR::get()->duoview_start_draw();''')
+    edit(hook,'''    const bool wants_localplayer_bootstrap = !vr->is_using_mono() && (''',
+        '''    const bool wants_localplayer_bootstrap = (!vr->is_using_mono() || vr->is_duoview_renderer_active()) && (''')
     edit(hook,'    if (vr->is_using_mono()) { return 1; }',
         '    if (vr->is_duoview_renderer_active()) { return 2; }\n    if (vr->is_using_mono()) { return 1; }')
+    edit(hook,'''    auto& views = *views_ptr;
+    const auto prev_count = views.count;
+
+    if (auto view_family_target = view_family->get_render_target(); view_family_target != nullptr) {''',
+    '''    auto& views = *views_ptr;
+    const auto prev_count = views.count;
+
+    // Observe Native Fix's original two-view main family before the fix
+    // splits it into one-view primary and secondary render callbacks.
+    const auto duo_target = view_family->get_render_target();
+    const auto duo_main_target = rtm ? rtm->get_view_family_render_target() : nullptr;
+    const bool duo_views_readable = vr->is_duoview_renderer_active() && prev_count == 2 &&
+        views.capacity >= 2 && views.data != nullptr &&
+        is_readable_process_range(reinterpret_cast<uintptr_t>(views.data), sizeof(void*) * 2);
+    const bool duo_original_main_pair = duo_views_readable &&
+        duo_target != nullptr && duo_target == duo_main_target &&
+        view_family->get_scene_interface() != nullptr && views.data[0] != nullptr &&
+        views.data[1] != nullptr && views.data[0] != views.data[1];
+    if (duo_original_main_pair && vr->duoview_note_main_family(0, true, prev_count)) {
+        const auto source_frame = vr->duoview_mono_source_frame();
+        if (source_frame && vr->get_openxr_runtime())
+            vr->get_openxr_runtime()->note_mono_main_family(*source_frame, true);
+    }
+
+    if (auto view_family_target = view_family->get_render_target(); view_family_target != nullptr) {''')
     edit(hook,'''    if (VR::get()->is_using_mono()) {
         *x = 0;
         *y = 0;
@@ -251,8 +403,10 @@ void VR::duoview_abort(const char* reason) {
             if (rect.width && rect.height &&
                 uint64_t(rect.x) + rect.width <= frame->config.layout.atlas_width &&
                 uint64_t(rect.y) + rect.height <= frame->config.layout.atlas_height) {
-                *x = static_cast<int>(rect.x);
-                *y = static_cast<int>(rect.y);
+                // Native Fix renders each source into a separate single-eye target.
+                // Atlas placement is applied only after both sources are validated.
+                *x = 0;
+                *y = 0;
                 *w = rect.width;
                 *h = rect.height;
                 vr->duoview_state().rectangle(frame->config.key, static_cast<unsigned>(index));
@@ -319,15 +473,26 @@ void VR::duoview_abort(const char* reason) {
                 SPDLOG_WARNING_EVERY_N_SEC(2, "[DuoView] Missing projection snapshot");
             }
         }
-        if (vr->mono_frame_gate_required() && vr->get_runtime()->is_openxr()) {
+        if (duo_frame && duo_frame->mono_source_frame && vr->mono_frame_gate_required() &&
+            vr->get_runtime()->is_openxr()) {
+            vr->get_openxr_runtime()->note_mono_projection(*duo_frame->mono_source_frame);
+        } else if (!duo_frame && vr->mono_frame_gate_required() && vr->get_runtime()->is_openxr()) {
             vr->get_openxr_runtime()->note_mono_projection();
         }''')
-    edit(hook,'''            (!vr->is_using_mono() || views_ptr->count == 1));''',
-    '''            (!vr->is_using_mono() ||
-              (vr->is_duoview_renderer_active() ? (views_ptr->count == 1 || views_ptr->count == 2) : views_ptr->count == 1)));
-        if (vr->is_duoview_renderer_active() && views_ptr) {
-            vr->duoview_state().family(vr->duoview_key(frame_count), main_family, views_ptr->count);
-        }''')
+    edit(hook,'''    if (vr->mono_frame_gate_required() && runtime->is_openxr()) {
+        const bool main_family = view_family.get_render_target() != nullptr && view_family.get_render_target() ==
+            reinterpret_cast<sdk::FRenderTarget*>(g_hook->get_render_target_manager()->get_viewport());
+        vr->get_openxr_runtime()->note_mono_main_family(frame_count,
+            main_family && views_ptr != nullptr && views_ptr->count > 0 &&
+            (!vr->is_using_mono() || views_ptr->count == 1));
+    }''',
+    '''    if (!vr->is_duoview_renderer_active() && vr->mono_frame_gate_required() && runtime->is_openxr()) {
+        const bool main_family = view_family.get_render_target() != nullptr && view_family.get_render_target() ==
+            reinterpret_cast<sdk::FRenderTarget*>(g_hook->get_render_target_manager()->get_viewport());
+        vr->get_openxr_runtime()->note_mono_main_family(frame_count,
+            main_family && views_ptr != nullptr && views_ptr->count > 0 &&
+            (!vr->is_using_mono() || views_ptr->count == 1));
+    }''')
     edit(hook, '    std::optional<uint32_t> views_original_count{};',
     '''    if (vr->is_duoview_renderer_active() && g_hook->is_in_viewport_client_draw()) {
         const auto family=init_options_view_family;
@@ -361,6 +526,40 @@ void VR::duoview_abort(const char* reason) {
         '''        std::unordered_map<uint32_t, SwapchainContext> contexts{};
         std::unordered_map<d3d12::CommandContext*, std::unique_ptr<uevr::duoview::dx12::Compositor>> duoview_compositors;''')
     dx="src/mods/vr/D3D12Component.cpp"
+    edit(dx,'''    if (vr->mono_frame_gate_required()) {
+        if (!vr->m_openxr->has_mono_frame(static_cast<uint32_t>(vr->m_frame_count))) {
+            vr->set_mono_status("Waiting for a current main-view pose and validated common projection");
+            vr->m_openxr->end_mono_transition_frame();
+            return vr::VRCompositorError_None;
+        }
+        vr->note_mono_frame_ready(m_mono_generation);
+    }''',
+    '''    if (vr->mono_frame_gate_required() && !vr->is_duoview_renderer_active()) {
+        if (!vr->m_openxr->has_mono_frame(static_cast<uint32_t>(vr->m_frame_count))) {
+            vr->set_mono_status("Waiting for a current main-view pose and validated common projection");
+            vr->m_openxr->end_mono_transition_frame();
+            return vr::VRCompositorError_None;
+        }
+        vr->note_mono_frame_ready(m_mono_generation);
+    }''')
+    edit(dx,'    const auto frame_count = vr->is_using_mono() ? vr->m_frame_count : vr->m_render_frame_count;',
+        '''    const auto frame_count = vr->is_using_mono() ? vr->m_frame_count : vr->m_render_frame_count;
+    const bool duo_native_active = vr->is_duoview_renderer_active();
+    const auto native_packet_frame_count = duo_native_active ? vr->m_render_frame_count : frame_count;''')
+    edit(dx,'    const bool stalker_requested = vr->is_stalker2_native_fix_experiment_enabled();',
+        '    const bool stalker_requested = vr->is_stalker2_native_fix_experiment_enabled();')
+    edit(dx,'''    auto native_stereo_packet = ffsr != nullptr && !vr->is_using_mono()
+        ? stalker_exact ? ffsr->get_stalker2_native_packet(stalker_frame, &native_frame_ticket)
+            : ffsr->get_native_stereo_frame_packet_for_submit(frame_count, frame_diag::Backend::d3d12, &native_frame_ticket)
+        : nullptr;''',
+    '''    auto native_stereo_packet = ffsr != nullptr && (!vr->is_using_mono() || duo_native_active)
+        ? stalker_exact && !duo_native_active ? ffsr->get_stalker2_native_packet(stalker_frame, &native_frame_ticket)
+            : ffsr->get_native_stereo_frame_packet_for_submit(native_packet_frame_count, frame_diag::Backend::d3d12, &native_frame_ticket)
+        : nullptr;''')
+    edit(dx,'''        native_stereo_packet = ffsr->get_native_stereo_frame_packet_for_submit(
+            frame_count, frame_diag::Backend::d3d12, &native_frame_ticket);''',
+    '''        native_stereo_packet = ffsr->get_native_stereo_frame_packet_for_submit(
+            native_packet_frame_count, frame_diag::Backend::d3d12, &native_frame_ticket);''')
     edit(dx,'    this->contexts.clear();\n    vr->m_openxr->swapchains.clear();',
         '    this->duoview_compositors.clear();\n    this->contexts.clear();\n    vr->m_openxr->swapchains.clear();')
     edit(dx,'    this->contexts.clear();\n\n    auto create_swapchain',
@@ -390,49 +589,81 @@ void VR::duoview_abort(const char* reason) {
 
         if (vr->is_native_stereo_fix_texture_array_submit_enabled()) {
             auto native_array_create_info = standard_swapchain_create_info;''')
-    edit(dx,'                    if (vr->is_using_mono()) {\n                        bool recorded = false;',
+    edit(dx,'''                    if (vr->is_using_mono()) {
+                        bool recorded = false;''',
     '''                    if (vr->is_duoview_renderer_active()) {
-                        bool recorded = false;
-                        bool duo_recorded = false;
-                        bool duo_failed = false;
-                        const auto frame = vr->duoview_state().consume(
-                            vr->duoview_key(static_cast<uint32_t>(frame_count)));
-                        vr->m_openxr->note_mono_copy(static_cast<uint32_t>(frame_count), false);
-                        // Do not skip the OpenXR copy if pair evidence fails.
-                        // Emergency copy may be an incomplete atlas; quarantine ID6
-                        // after this callback, then original Joey Mono on the next frame.
-                        const bool submitted = m_openxr.copy(
-                            (uint32_t)runtimes::OpenXR::SwapchainIndex::DOUBLE_WIDE, nullptr,
-                            [this, source=backbuffer, scene_source_state, device, frame,
-                             &recorded, &duo_recorded, &duo_failed](
-                                d3d12::CommandContext& commands, ID3D12Resource* destination) {
-                                if (!commands.ready()) return;
-                                if (frame) {
-                                    auto& item = m_openxr.duoview_compositors[&commands];
-                                    if (!item) item = std::make_unique<uevr::duoview::dx12::Compositor>();
-                                    duo_recorded = item->record(device, commands.cmd_list.Get(),
-                                        source.Get(), destination, scene_source_state, frame->config,
-                                        frame->config.settings.gpu_timing ? item->timing_frequency() : 0);
-                                    if (frame->config.settings.gpu_timing)
-                                        VR::get()->note_duoview_gpu_ms(item->gpu_milliseconds());
-                                    if (item->recorded_commands()) commands.has_commands = true;
-                                }
-                                if (!duo_recorded) {
-                                    recorded = uevr::mono::dx12::copy_scene(
-                                        commands.cmd_list.Get(), device, source.Get(), destination,
-                                        scene_source_state, D3D12_RESOURCE_STATE_RENDER_TARGET);
-                                    if (recorded) commands.has_commands = true;
-                                    duo_failed = true; // handle after OpenXR copy returns
-                                } else {
-                                    recorded = true;
-                                }
-                            }, std::nullopt, scene_source_state, nullptr,
-                            std::nullopt, backbuffer.Get());
-                        vr->m_openxr->note_mono_copy(static_cast<uint32_t>(frame_count), submitted && recorded);
-                        if (duo_failed || !submitted || !recorded)
-                            vr->duoview_abort("XR copy/composite fault; safe original Mono requested");
+                        const auto packet = native_stereo_packet;
+                        const auto packet_source = packet && packet->duoview_mono_source_valid
+                            ? std::optional<uint32_t>{packet->duoview_mono_source_frame}
+                            : std::optional<uint32_t>{};
+                        const auto packet_frame = packet ? packet->duoview_frame : nullptr;
+                        const auto packet_binding = packet_frame
+                            ? uevr::duoview::native_frame_binding(*packet_frame)
+                            : std::optional<uevr::duoview::NativeFrameBinding>{};
+                        const bool packet_pair_valid = packet && packet_frame && packet_source &&
+                            packet_frame->mono_source_frame &&
+                            *packet_frame->mono_source_frame == *packet_source && packet_binding &&
+                            packet_binding->key == packet_frame->config.key &&
+                            packet_frame->config.key.generation == vr->mono_generation() &&
+                            packet_binding->mono_source_frame == *packet_source &&
+                            scene_capture_packet_ready && m_game_tex.texture.Get() != nullptr &&
+                            m_scene_capture_tex.texture.Get() != nullptr &&
+                            vr->get_openxr_runtime()->has_mono_frame(*packet_source);
+                        if (!packet_pair_valid) {
+                            if (packet_source) vr->m_openxr->note_mono_copy(*packet_source, false);
+                            vr->set_mono_status("Waiting for a complete Native Stereo Fix DuoView source pair");
+                        } else {
+                            bool recorded = false;
+                            bool callback_attempted = false;
+                            bool compositor_fault = false;
+                            const bool submitted = m_openxr.copy(
+                                (uint32_t)runtimes::OpenXR::SwapchainIndex::DOUBLE_WIDE, nullptr,
+                                [this, packet, packet_frame, source=m_game_tex.texture,
+                                 secondary=m_scene_capture_tex.texture, device,
+                                 &recorded, &callback_attempted, &compositor_fault](
+                                    d3d12::CommandContext& commands, ID3D12Resource* destination) {
+                                    if (!commands.ready()) return;
+                                    callback_attempted = true;
+                                    const auto vr = VR::get();
+                                    if (packet_frame->config.key.generation != vr->mono_generation() ||
+                                        packet_frame->mono_source_frame !=
+                                            std::optional<uint32_t>{packet->duoview_mono_source_frame} ||
+                                        !uevr::duoview::native_frame_binding(*packet_frame)) {
+                                        compositor_fault = true;
+                                        return;
+                                    }
+                                    const auto found = m_openxr.duoview_compositors.find(&commands);
+                                    if (found == m_openxr.duoview_compositors.end() || !found->second) {
+                                        compositor_fault = true;
+                                        return;
+                                    }
+                                    auto& compositor = *found->second;
+                                    recorded = compositor.record_native(device, commands.cmd_list.Get(),
+                                        source.Get(), secondary.Get(), destination,
+                                        D3D12_RESOURCE_STATE_RENDER_TARGET,
+                                        D3D12_RESOURCE_STATE_RENDER_TARGET, *packet_frame,
+                                        std::static_pointer_cast<const void>(packet),
+                                        packet_frame->config.settings.gpu_timing ? compositor.timing_frequency() : 0);
+                                    if (compositor.recorded_commands()) commands.has_commands = true;
+                                    if (packet_frame->config.settings.gpu_timing)
+                                        vr->note_duoview_gpu_ms(compositor.gpu_milliseconds());
+                                    if (!recorded) compositor_fault = true;
+                                }, std::nullopt, D3D12_RESOURCE_STATE_RENDER_TARGET, nullptr,
+                                std::nullopt, m_game_tex.texture.Get());
+                            vr->m_openxr->note_mono_copy(*packet_source, submitted && recorded);
+                            if (submitted && recorded && callback_attempted)
+                                vr->note_mono_frame_ready(m_mono_generation);
+                            if (compositor_fault) {
+                                vr->duoview_abort("Validated Native Stereo Fix pair failed DuoView composition");
+                            } else if (!submitted || !recorded || !callback_attempted) {
+                                vr->set_mono_status("Waiting for a retired OpenXR command slot for DuoView composition");
+                            }
+                        }
                     } else if (vr->is_using_mono()) {
                         bool recorded = false;''')
+    edit(dx,'''    if (native_stereo_packet != nullptr && !scene_capture_packet_ready && native_stereo_hook != nullptr) {''',
+        '''    if (!vr->is_duoview_renderer_active() && native_stereo_packet != nullptr &&
+        !scene_capture_packet_ready && native_stereo_hook != nullptr) {''')
     # Copy reference modules into exact checked-out Joey tree. No private SDK
     # declarations or altered SDK files.
     for name in ("DuoViewGeometry.hpp","DuoViewGaze.hpp","DuoViewPSVR2Gaze.hpp","DuoViewCropStability.hpp","DuoViewFrame.hpp",
@@ -460,3 +691,4 @@ void VR::duoview_abort(const char* reason) {
 
 if __name__=="__main__":
     main()
+

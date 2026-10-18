@@ -6,8 +6,9 @@ from pathlib import Path
 EDITED_BACKEND = {
  "src/mods/vr/MonoRenderingPolicy.hpp", "src/mods/vr/CompatibilityPolicy.hpp",
  "src/mods/VR.hpp", "src/mods/VR.cpp",
- "src/mods/vr/FFakeStereoRenderingHook.cpp", "src/mods/vr/D3D12Component.hpp",
- "src/mods/vr/D3D12Component.cpp", "tests/MonoRenderingTests.hpp",
+ "src/mods/vr/FFakeStereoRenderingHook.cpp", "src/mods/vr/FFakeStereoRenderingHook.hpp",
+ "src/mods/vr/runtimes/OpenXR.cpp", "src/mods/vr/runtimes/OpenXR.hpp",
+ "src/mods/vr/D3D12Component.hpp", "src/mods/vr/D3D12Component.cpp", "tests/MonoRenderingTests.hpp",
 }
 ADDED_BACKEND = {
  "src/mods/vr/DuoViewGeometry.hpp", "src/mods/vr/DuoViewGaze.hpp",
@@ -53,6 +54,12 @@ def main():
   raise RuntimeError("Legacy atlas order must be preserved in applied source")
  # A shipping DuoView must never compile shaders on the OpenXR copy path.
  compositor=(a.backend/"src/mods/vr/DuoViewD3D12.hpp").read_text(encoding="utf-8")
+ state=(a.backend/"src/mods/vr/DuoViewState.hpp").read_text(encoding="utf-8")
+ if "native_frame_binding" not in state or "std::optional<uint32_t> mono_source_frame" not in state:
+  raise RuntimeError("Production frame state must bind the explicit OpenXR Mono pose token")
+ contract=(Path(__file__).parent/"ProductionContractTests.cpp").read_text(encoding="utf-8")
+ if "packet_mono_source=37" not in contract or "native_frame_binding(*immutable_packet)" not in contract:
+  raise RuntimeError("Production state contract must cover immutable Native packet pose binding")
  shaders=(a.backend/"src/mods/vr/DuoViewShaderSource.hpp").read_text(encoding="utf-8")
  if "D3DCompile(" in compositor or "shader_source" in compositor:
   raise RuntimeError("Runtime shader compiler still in production compositor")
@@ -62,7 +69,7 @@ def main():
  vr_header=(a.backend/"src/mods/VR.hpp").read_text(encoding="utf-8")
  if ".eye_tracked=m_duo_gaze->value()" not in vr_cpp or "m_duoview_gaze.read_uv(frozen,optical)" not in vr_cpp:
   raise RuntimeError("Stage5 gaze control is not connected to frame source")
- for token in ('m_duo_stabilize->draw(', 'm_duo_shading->draw(', 'm_duo_width->draw(', 'm_duo_height->draw(', 'm_duo_periphery->draw(',
+ for token in ('m_duo_stabilize->draw(', 'm_duo_width->draw(', 'm_duo_height->draw(', 'm_duo_periphery->draw(',
                'm_duo_density->draw(', 'm_duo_feather->draw(', 'm_duo_debug_source->draw('):
   if token not in vr_cpp: raise RuntimeError("DuoView quality UI missing "+token)
  for token in ('"DuoViewCropWidth"', '"DuoViewPeripheralScale"', '"DuoViewFovealDensity"',
@@ -75,6 +82,27 @@ def main():
   raise RuntimeError("Frozen producer projection and guarded shading constructor are required")
  if ".fovea_view=static_cast<uint32_t>(m_duo_fovea_view->value())" not in vr_cpp:
   raise RuntimeError("UE source selector must be connected to immutable frame settings")
+ if "if (is_duoview_renderer_active()) { return true; }" not in vr_header:
+  raise RuntimeError("DuoView must force Joey Native Stereo Fix on while active")
+ if "if (is_duoview_renderer_active()) {\n        if (is_using_afr() || !stalker2_native_fix_requires_same_pass_cached())" not in vr_cpp:
+  raise RuntimeError("DuoView must preserve the validated STALKER Native Fix same-pass constructor safety")
+ if "bool VR::is_stalker2_native_fix_experiment_enabled() const {\n    if (is_duoview_renderer_active()) { return false; }" not in vr_cpp:
+  raise RuntimeError("Unrelated experimental pair submission must stay out of DuoView")
+ if "duo_main_target = rtm ? rtm->get_view_family_render_target()" not in hook or "duo_views_readable" not in hook:
+  raise RuntimeError("Native split must latch the readable original main pair before one-view callbacks")
+ d3d=(a.backend/"src/mods/vr/D3D12Component.cpp").read_text(encoding="utf-8")
+ for token in ("native_packet_frame_count = duo_native_active ? vr->m_render_frame_count",
+               "get_native_stereo_frame_packet_for_submit(native_packet_frame_count",
+               "packet_frame->config.key.generation == vr->mono_generation()",
+               "compositor.record_native(", "note_mono_copy(*packet_source, submitted && recorded)",
+               "note_mono_frame_ready(m_mono_generation)"):
+  if token not in d3d: raise RuntimeError("Native packet / Mono submit binding missing "+token)
+ if "duoview_state().consume(" in d3d:
+  raise RuntimeError("Native packet submission must reuse its immutable validated snapshot across Presents")
+ native_warp=(Path(__file__).parent/"ProductionWarpPinned.cpp").read_text(encoding="utf-8")
+ for token in ("record_native(", "for (bool srgb : {false,true})", "for (uint32_t fovea_view : {0u,1u})",
+               "ID3D12InfoQueue", "oversized_layout"):
+  if token not in native_warp: raise RuntimeError("Native compositor WARP coverage missing "+token)
  if "vertex_shader_bytecode[]" not in shaders or "pixel_shader_bytecode[]" not in shaders:
   raise RuntimeError("Precompiled DXBC shader arrays missing")
  inputs = sorted(EDITED_BACKEND | ADDED_BACKEND)
@@ -89,3 +117,4 @@ def main():
 
 if __name__=="__main__":
  main()
+

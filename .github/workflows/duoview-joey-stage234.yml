@@ -1,8 +1,8 @@
-name: DuoView Joey Temporal Stability v22 - Source Isolation and Settings
-run-name: DuoView Joey Temporal Stability v22 with exact SDK (${{ github.run_number }})
+name: DuoView Joey Native Stereo Fix v22 - Mono Output Integration
+run-name: DuoView Joey Native Stereo Fix v22 with exact SDK (${{ github.run_number }})
 on:
   push:
-    branches: [experiments/duoview-temporal-shading-v22]
+    branches: [experiments/duoview-temporal-shading-v22, experiments/joey-duoview-native-stereo-fix-v22-20261018]
     paths:
       - '.github/workflows/duoview-joey-stage234.yml'
       - 'duoview/joey_stage1/**'
@@ -26,7 +26,7 @@ concurrency:
 env:
   PYTHONDONTWRITEBYTECODE: '1'
 jobs:
-  duoview-fixed-center-two-view:
+  duoview-native-fix-mono-output:
     runs-on: windows-2022
     timeout-minutes: 120
     steps:
@@ -79,7 +79,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Failed to apply guarded DuoView Stage 1 edits' }
           python workspace/duoview/joey_stage1/verify_stage1.py backend frontend evidence
           if ($LASTEXITCODE -ne 0) { throw 'Unexpected source changes in DuoView Stage 1' }
-      - name: Apply isolated two-view source changes
+      - name: Apply Native Stereo Fix backed DuoView source changes
         shell: pwsh
         run: |
           python workspace/duoview/joey_stage1/apply_stage234.py backend frontend workspace/duoview
@@ -160,31 +160,31 @@ jobs:
           Copy-Item evidence/duoview-stage1-source-hashes.json package/
           Copy-Item evidence/duoview-stage234-hashes.json package/
           @'
-          DUOVIEW TEMPORAL v22 — STABLE CROP, FROZEN PROJECTION AND OPTIONAL PRIMARY SHADING. HEADSET UNVERIFIED.
+          DUOVIEW NATIVE STEREO FIX v22 — ORIGINAL PRIMARY + SECONDARY SOURCES, MONO OUTPUT. HEADSET UNVERIFIED.
           Backend: exact Joey 5ac7edc207866569334175e4ed8a7517971547f6 + guarded DuoView modifications.
           Restricted SDK unchanged: joeyhodge/UESDK 3cffbc82429b6165ceec2714f0f0d9ae48f55596.
           Matching frontend source: 60be4b0f9a646109fd9fdf448bacd41477234091, plus ID 6.
           Modes 0 and 5 are routed to ORIGINAL JOEY. Experimental mode ID6 is active ONLY in STALKER 2 DX12 OpenXR.
-          ID6 restores persistent per-profile crop width/height, fovea density, peripheral scale, blend feather and gaze controls.
+          ID6 forces Joey Native Stereo Fix on and uses its original primary and secondary render sources. Native Stereo Fix settings for ordinary Native ID0 are unchanged. Both validated sources are gathered into one DuoView atlas and submitted as a combined Mono image.
           Old source defaults: 0.50x0.50 crop at 1.0x density, 0.20x periphery, gaze ON, fovea UE0/periphery UE1.
           Press Restore old DuoView settings once if an existing profile retains newer settings. Increase density to match your old preferred tuning; exact historical tuning is unknown.
           Foveal atlas rectangle starts at x=0, matching Injector-5. Gaze uses the inverse left optical rotation, matching the old coordinate path.
           Stable gaze crop is ON by default, optional OFF. OpenNR r10 crop guard (adjustable 0-5% of crop), 4 foveal-source-pixel alignment; large eye movements recenter immediately without temporal smoothing.
           Missing/invalid gaze holds crop position for at most 100ms while remaining labelled unavailable. No old image is reused.
-          Both UE views use the exact frozen producer projection; native engine histories/motion vectors remain engine-owned.
-          Independent primary shading starts OFF on EACH injection/mode transition; toggle it in-game after DuoView settles.
-          The shading toggle temporarily constructs the SECONDARY source as PRIMARY only with proven distinct source ViewStates and matching main family. It does not enable the full Native Fix capture/submission path.
-          Toggle OFF to return to the existing shading path on the next producer frame. Actual shading parity and temporal stability require headset testing.
-          Optional GPU timing is OFF by default. Query resources prewarm at swapchain creation; no GPU waits or render-callback allocation for timing.
+          Both UE views use the exact frozen producer projection and explicitly bound OpenXR Mono pose token. Native engine histories and motion vectors remain engine-owned. The validated STALKER 2 same-pass constructor policy remains active for renderer safety.
+          The separate independent-shading option is ignored while DuoView is active; Joey Native Stereo Fix owns its normal source-rendering behavior.
+          The original Native Stereo Fix secondary scene-capture target supplies the second DuoView image. Packet identity, capture generation, source geometry, and Mono pose/projection are checked before composition.
+          Actual shading parity and temporal stability require headset testing.
+          Optional GPU timing is OFF by default. Compositor resources prewarm at swapchain creation and remain owned by each OpenXR command slot until its fence retires. No new CPU/GPU waits or render-callback allocation are added.
           Debug source 0=blended output, 1=periphery only, 2=fovea only (dark outside ROI).
           Source view0 is the first UE pass (old prototype default), view1 is the second (Build19 default).
           Both source passes share exactly the same Mono camera.
           Stage5 reads combined calibrated PSVR2 Toolkit CAPI gaze ONCE per frame. No DLL bundled.
           If CAPI is unavailable/invalid or blinked, ID6 stays at fixed center; no OpenXR gaze layer required.
           Menu shows whether PSVR2 gaze is fresh, center fallback, or Mono quarantine.
-          Uses same Mono camera, off-axis foveal projection, DX12 raster composition and original XR submission.
-          On failure, DuoView is QUARANTINED internally inside ID6; the next frame uses Joey original Mono.
-          The fault frame attempts a current-frame original Mono copy but may show incomplete atlas contents.
+          The output remains monoscopic: DuoView composes to one full-FOV image and copies that image to both OpenXR eye regions.
+          Until a valid Native pair is available, warmup keeps the XR transition loop live and waits for the next pair. A compositor fault after validation returns ID6 to original Joey Mono on the following frame.
+          An incomplete or cropped Native source is never presented as a full-FOV Mono image.
           DXBC shaders are precompiled during CI; per-XR-image PSOs/textures are prewarmed on swapchain setup.
           Changing source formats or unexpected swapchain lifecycle may still cause reconstruction. Monitor frame pacing.
           Experimental: Source/test/CI passing cannot prove exact game GPU producer completion or headset stability.
@@ -197,18 +197,18 @@ jobs:
           $needed=@('UEVRBackend.dll','UEVRPluginNullifier.dll','LuaVR.dll','READ_FIRST.txt','duoview-stage234-hashes.json','exact-baseline-source.json')
           foreach ($name in $needed) { if (!(Test-Path ("package/" + $name))) { throw "Missing critical package file: $name" } }
           if (@(Get-ChildItem package -File -Filter *.exe).Count -lt 1) { throw "Missing Joey frontend executable" }
-          if ((Get-Content package/READ_FIRST.txt -Raw) -notmatch 'QUARANTINED internally') { throw 'Stale fallback instructions' }
+          if ((Get-Content package/READ_FIRST.txt -Raw) -notmatch 'warmup keeps the XR transition loop live') { throw 'Stale Native Fix warmup instructions' }
           Get-ChildItem package -Recurse -File | Get-FileHash -Algorithm SHA256 | ConvertTo-Json | Set-Content evidence/package-sha256.json
-          $zip="Joey-DuoView-Temporal-v22-${{ github.run_number }}.zip"
+          $zip="Joey-DuoView-v22-NativeFix-${{ github.run_number }}.zip"
           Compress-Archive -Path package/* -DestinationPath $zip -Force
           (Get-FileHash $zip -Algorithm SHA256).Hash | Set-Content "$zip.sha256"
       - uses: actions/upload-artifact@v4
         if: success()
         with:
-          name: Joey-DuoView-Temporal-v22-${{ github.run_number }}
+          name: Joey-DuoView-v22-NativeFix-${{ github.run_number }}
           path: |
-            Joey-DuoView-Temporal-v22-*.zip
-            Joey-DuoView-Temporal-v22-*.zip.sha256
+            Joey-DuoView-v22-NativeFix-*.zip
+            Joey-DuoView-v22-NativeFix-*.zip.sha256
           if-no-files-found: error
           retention-days: 90
       - name: Record public source and dependency provenance
@@ -223,6 +223,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: Joey-DuoView-FixedCenter-Evidence-${{ github.run_number }}
+          name: Joey-DuoView-NativeFix-Evidence-${{ github.run_number }}
           path: evidence/
           if-no-files-found: error
+

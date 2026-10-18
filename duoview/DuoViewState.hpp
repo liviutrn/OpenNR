@@ -13,11 +13,29 @@ struct ViewFrame {
     FrameConfig config;
     std::array<float, 16> projection{};
     CameraPose camera{};
+    std::optional<uint32_t> mono_source_frame{};
     bool camera_valid{}, main_family{}, consumed{}, gaze_valid{}, invalid{};
     std::array<bool, 2> rectangles{}, projections{}, cameras{};
     std::array<uintptr_t,2> scene_states{};
     bool shading_applied{};
 };
+
+struct NativeFrameBinding {
+    FrameKey key{};
+    uint32_t mono_source_frame{};
+};
+
+// Bind the Native packet to the exact OpenXR pose/projection frame observed at
+// source creation. The Mono token is carried explicitly; it is not derived
+// from the later DuoView producer key.
+inline std::optional<NativeFrameBinding> native_frame_binding(const ViewFrame& frame) {
+    if (!frame.config.key.generation || !frame.config.key.frame || !frame.mono_source_frame ||
+        frame.invalid || frame.consumed || !frame.main_family || !frame.camera_valid) return {};
+    for (size_t i = 0; i != 2; ++i) {
+        if (!frame.rectangles[i] || !frame.projections[i] || !frame.cameras[i]) return {};
+    }
+    return NativeFrameBinding{frame.config.key, *frame.mono_source_frame};
+}
 
 template<typename Matrix>
 void apply_frame_projection(Matrix& matrix, const ViewFrame& frame, unsigned view) {
@@ -31,7 +49,7 @@ public:
     Settings settings() const { return config_.current_settings(); }
     std::optional<ViewFrame> begin(FrameKey key, uint32_t w, uint32_t h,
         const std::array<float, 16>& projection, const std::function<std::optional<UV>()>& read_gaze,
-        uint64_t now_ms=0) {
+        uint64_t now_ms=0, std::optional<uint32_t> mono_source_frame={}) {
         std::scoped_lock lock{mutex_};
         auto& slot = frames_[key.frame % frames_.size()];
         if (slot && slot->config.key == key) return slot;
@@ -46,6 +64,7 @@ public:
         if (!frozen) return {};
         stability_=stability; last_begin_=key;
         slot = ViewFrame{*frozen, projection};
+        slot->mono_source_frame = mono_source_frame;
         slot->gaze_valid = s.eye_tracked && gaze.has_value();
         return slot;
     }
@@ -125,3 +144,4 @@ private:
     std::array<std::optional<ViewFrame>, 16> frames_{};
 };
 }
+

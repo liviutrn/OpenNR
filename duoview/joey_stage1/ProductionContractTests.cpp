@@ -75,6 +75,32 @@ int main() try {
     require(!state.consume({3,100}),"Wrong renderer generation must not compose");
     require(state.consume(key).has_value(),"Current coherent pair rejected");
     require(!state.consume(key),"Double submission of a frame must be rejected");
+    // The Native packet carries the exact Mono pose token observed when its
+    // immutable DuoView snapshot was published. It is independent of the
+    // engine frame/key arithmetic and remains safe across duplicate Presents.
+    State packet_state;
+    Settings packet_settings{}; packet_settings.eye_tracked=false;
+    require(packet_state.configure(packet_settings),"Native packet settings rejected");
+    const FrameKey packet_key{12,200};
+    constexpr uint32_t packet_mono_source=37;
+    auto packet_source=packet_state.begin(packet_key,3000,3000,m,
+        []()->std::optional<UV>{return UV{.5f,.5f};},0,packet_mono_source);
+    require(packet_source && !native_frame_binding(*packet_source),
+            "Incomplete Native packet must not establish an XR source binding");
+    require(packet_state.family(packet_key,true,2) &&
+            packet_state.rectangle(packet_key,0) && packet_state.rectangle(packet_key,1) &&
+            packet_state.projection(packet_key,0) && packet_state.projection(packet_key,1) &&
+            packet_state.camera(packet_key,0,camera) && packet_state.camera(packet_key,1,camera),
+            "Native source-pair observations rejected");
+    auto immutable_packet=packet_state.snapshot(packet_key);
+    const auto binding=immutable_packet ? native_frame_binding(*immutable_packet) : std::nullopt;
+    require(binding && binding->key==packet_key && binding->mono_source_frame==packet_mono_source &&
+            binding->mono_source_frame!=packet_key.frame-1,
+            "Native packet must carry the explicitly observed Mono pose token");
+    require(packet_state.consume(packet_key).has_value() &&
+            !native_frame_binding(*packet_state.snapshot(packet_key)) &&
+            native_frame_binding(*immutable_packet).has_value(),
+            "Immutable packet binding must survive live-state consumption for duplicate Presents");
     settings.diagnostic_view=1; settings.gpu_timing=true;
     require(state.configure(settings),"Quality settings change rejected");
     require(state.snapshot(key)->config.settings.diagnostic_view==0 &&
@@ -135,3 +161,4 @@ int main() try {
     std::cerr<<"DuoView contract test failure: "<<e.what()<<"\n";
     return 1;
 }
+

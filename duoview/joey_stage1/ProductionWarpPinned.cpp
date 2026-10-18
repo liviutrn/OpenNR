@@ -3,6 +3,9 @@
 #include <dxgi1_6.h>
 #include <d3d12sdklayers.h>
 #include <array>
+#include <cstring>
+#include <memory>
+#include <vector>
 #include <iostream>
 #include <stdexcept>
 using Microsoft::WRL::ComPtr;
@@ -28,6 +31,32 @@ static ComPtr<ID3D12Resource> resource(ID3D12Device* device, D3D12_RESOURCE_DESC
 static void transition(ID3D12GraphicsCommandList* cmd, ID3D12Resource* r, D3D12_RESOURCE_STATES a,D3D12_RESOURCE_STATES b) {
     D3D12_RESOURCE_BARRIER barrier{};barrier.Type=D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
     barrier.Transition={r,D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES,a,b};cmd->ResourceBarrier(1,&barrier);
+}
+struct NativeSource {
+    ComPtr<ID3D12Resource> texture;
+    ComPtr<ID3D12Resource> upload;
+};
+static NativeSource native_source(ID3D12Device* device, ID3D12GraphicsCommandList* cmd,
+                                  UINT width, UINT height, std::array<uint8_t,4> bgra) {
+    auto desc=texture(width,height,D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET);
+    desc.Format=DXGI_FORMAT_B8G8R8A8_TYPELESS;
+    NativeSource result;
+    result.texture=resource(device,desc,D3D12_HEAP_TYPE_DEFAULT,D3D12_RESOURCE_STATE_COPY_DEST);
+    D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint{};UINT64 bytes{};
+    device->GetCopyableFootprints(&desc,0,1,0,&footprint,nullptr,nullptr,&bytes);
+    footprint.Footprint.Format=DXGI_FORMAT_B8G8R8A8_UNORM;
+    result.upload=resource(device,buffer(bytes),D3D12_HEAP_TYPE_UPLOAD,D3D12_RESOURCE_STATE_GENERIC_READ);
+    void* mapped{};D3D12_RANGE zero{0,0};check(result.upload->Map(0,&zero,&mapped));
+    std::memset(mapped,0,bytes);
+    for(UINT y=0;y<height;++y) for(UINT x=0;x<width;++x)
+        std::memcpy(static_cast<uint8_t*>(mapped)+y*footprint.Footprint.RowPitch+x*4,bgra.data(),4);
+    result.upload->Unmap(0,nullptr);
+    D3D12_TEXTURE_COPY_LOCATION from{result.upload.Get(),D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT};
+    from.PlacedFootprint=footprint;
+    D3D12_TEXTURE_COPY_LOCATION to{result.texture.Get(),D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX,{0}};
+    cmd->CopyTextureRegion(&to,0,0,0,&from,nullptr);
+    transition(cmd,result.texture.Get(),D3D12_RESOURCE_STATE_COPY_DEST,D3D12_RESOURCE_STATE_RENDER_TARGET);
+    return result;
 }
 int main() try {
     // Exercise the actual copied Joey compositor with D3D12 validation on WARP.
@@ -131,5 +160,73 @@ int main() try {
                 throw std::runtime_error("Diagnostic eye-copy pixel mismatch");
         readback->Unmap(0,nullptr);
     }
-    std::cout << "Production normal/moved gaze/periphery-only/fovea-only raster, per-slot GPU timestamps: 4096 pixel pairs PASS\n";
+    // Exercise the actual Native Fix gather path, including its frozen source
+    // selection and prewarmed sRGB interpretation. Source textures model Joey's
+    // typeless primary/secondary BGRA targets; the composed Mono image must be
+    // identical when the selected fovea comes from either UE source view.
+    ComPtr<ID3D12InfoQueue> info_queue;
+    if (SUCCEEDED(device.As(&info_queue))) info_queue->ClearStoredMessages();
+    for (bool srgb : {false,true}) for (uint32_t fovea_view : {0u,1u}) {
+        check(allocator->Reset());check(cmd->Reset(allocator.Get(),nullptr));
+        transition(cmd.Get(),stereo.Get(),D3D12_RESOURCE_STATE_COPY_SOURCE,D3D12_RESOURCE_STATE_RENDER_TARGET);
+        const auto native_layout=uevr::duoview::make_layout(32,32,.50f,.50f,.25f,1.f,.5f,.5f);
+        if(!native_layout) throw std::runtime_error("Invalid Native test layout");
+        const auto primary_color=fovea_view==0 ? std::array<uint8_t,4>{0,0,255,255} : std::array<uint8_t,4>{255,0,0,255};
+        const auto secondary_color=fovea_view==1 ? std::array<uint8_t,4>{0,0,255,255} : std::array<uint8_t,4>{255,0,0,255};
+        auto primary=native_source(device.Get(),cmd.Get(),32,32,primary_color);
+        auto secondary=native_source(device.Get(),cmd.Get(),32,32,secondary_color);
+        uevr::duoview::ViewFrame native_frame{};
+        native_frame.config={{1,20+static_cast<uint64_t>(srgb)*2+fovea_view},*native_layout,{.5f,.5f},{},1};
+        native_frame.config.settings.fovea_view=fovea_view;
+        if(!compositor.prewarm(device.Get(),32,32,srgb,frequency))
+            throw std::runtime_error("Native prewarm color interpretation rejected");
+        if(!compositor.record_native(device.Get(),cmd.Get(),primary.texture.Get(),secondary.texture.Get(),
+                stereo.Get(),D3D12_RESOURCE_STATE_RENDER_TARGET,D3D12_RESOURCE_STATE_RENDER_TARGET,
+                native_frame,std::make_shared<const int>(7),frequency))
+            throw std::runtime_error("Native primary/secondary gather or composite failed: "+compositor.error());
+        transition(cmd.Get(),stereo.Get(),D3D12_RESOURCE_STATE_RENDER_TARGET,D3D12_RESOURCE_STATE_COPY_SOURCE);
+        cmd->CopyTextureRegion(&to,0,0,0,&from,nullptr);check(cmd->Close());
+        ID3D12CommandList* native_lists[]{cmd.Get()};queue->ExecuteCommandLists(1,native_lists);
+        const UINT64 signal=10+static_cast<UINT64>(srgb)*2+fovea_view;
+        check(queue->Signal(fence.Get(),signal));event=CreateEventW(nullptr,FALSE,FALSE,nullptr);
+        check(fence->SetEventOnCompletion(signal,event));
+        if(WaitForSingleObject(event,30000)!=WAIT_OBJECT_0)throw std::runtime_error("Native gather GPU timeout");CloseHandle(event);
+        check(readback->Map(0,&read,&mapped));
+        if(sample(16,16)[2]<220 || sample(16,16)[0]>25 ||
+           sample(1,1)[0]<220 || sample(1,1)[2]>25)
+            throw std::runtime_error("Native fovea/periphery source mapping or sRGB pixels wrong");
+        for(UINT y=0;y<32;++y) for(UINT x=0;x<32;++x)
+            if(std::memcmp(sample(x,y),sample(x+32,y),4))
+                throw std::runtime_error("Native combined Mono image differed between eyes");
+        readback->Unmap(0,nullptr);
+    }
+    // A layout can request a fovea larger than Joey's single-eye capture. The
+    // production path must reject it before recording any GPU commands.
+    check(allocator->Reset());check(cmd->Reset(allocator.Get(),nullptr));
+    transition(cmd.Get(),stereo.Get(),D3D12_RESOURCE_STATE_COPY_SOURCE,D3D12_RESOURCE_STATE_RENDER_TARGET);
+    auto small=native_source(device.Get(),cmd.Get(),8,8,{0,0,255,255});
+    auto full=native_source(device.Get(),cmd.Get(),32,32,{255,0,0,255});
+    auto oversized_layout=uevr::duoview::make_layout(32,32,.75f,.25f,.25f,2.f,.5f,.5f);
+    if(!oversized_layout) throw std::runtime_error("Invalid oversized Native test layout");
+    uevr::duoview::ViewFrame oversized{};
+    oversized.config={{1,30},*oversized_layout,{.5f,.5f},{},1};
+    oversized.config.settings.fovea_view=0;
+    if(compositor.record_native(device.Get(),cmd.Get(),small.texture.Get(),full.texture.Get(),
+            stereo.Get(),D3D12_RESOURCE_STATE_RENDER_TARGET,D3D12_RESOURCE_STATE_RENDER_TARGET,
+            oversized,std::make_shared<const int>(8),frequency) || compositor.recorded_commands())
+        throw std::runtime_error("Native source smaller than selected rectangle was accepted/recorded");
+    if(info_queue) {
+        for(UINT64 i=0;i<info_queue->GetNumStoredMessages();++i) {
+            SIZE_T size{};check(info_queue->GetMessage(i,nullptr,&size));
+            std::vector<uint8_t> bytes(size);
+            auto* message=reinterpret_cast<D3D12_MESSAGE*>(bytes.data());
+            check(info_queue->GetMessage(i,message,&size));
+            if(message->Severity==D3D12_MESSAGE_SEVERITY_ERROR ||
+               message->Severity==D3D12_MESSAGE_SEVERITY_CORRUPTION)
+                throw std::runtime_error(std::string("D3D12 WARP validation: ")+message->pDescription);
+        }
+    }
+
+    std::cout << "Production raster and Native gather: swapped source roles, UNORM/sRGB, typeless sources, and source bounds PASS\n";
 } catch(const std::exception& e) { std::cerr<<e.what()<<'\n';return 1; }
+
