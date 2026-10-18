@@ -1,0 +1,815 @@
+diff --git a/src/mods/vr/D3D12Component.cpp b/src/mods/vr/D3D12Component.cpp
+index 40197dfc..fc50b6e7 100644
+--- a/src/mods/vr/D3D12Component.cpp
++++ b/src/mods/vr/D3D12Component.cpp
+@@ -3002,6 +3002,58 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
+     // Mono copies this Present's producer, not the preceding Present counter
+     // used by the historical Native Fix/AFR capture contracts.
+     const auto frame_count = vr->is_using_mono() ? vr->m_frame_count : vr->m_render_frame_count;
++    const auto duoview_submit_frame = static_cast<uint32_t>(vr->m_frame_count);
++    const auto duoview_transaction = ffsr != nullptr
++        ? ffsr->get_native_duoview_transaction(duoview_submit_frame, duoview_output_generation())
++        : std::nullopt;
++    const bool native_duoview_source_selected =
++        (duoview_transaction.has_value() && duoview_transaction->payload.selected) ||
++        (duoview_transaction == std::nullopt && vr->is_native_duoview_active());
++    const auto duoview_engine_frame = duoview_transaction.has_value()
++        ? duoview_transaction->payload.settings_frame
++        : duoview_submit_frame;
++    static std::atomic<uint64_t> duoview_transaction_hits{};
++    static std::atomic<uint64_t> duoview_transaction_misses{};
++    static std::atomic<uint64_t> duoview_packet_misses{};
++    static std::atomic<uint64_t> duoview_transaction_rejections{};
++    static std::atomic<uint64_t> duoview_compose_count{};
++    static std::atomic<uint64_t> duoview_compose_total_ns{};
++    static std::atomic<uint64_t> duoview_compose_max_ns{};
++    if (native_duoview_source_selected) {
++        if (!duoview_transaction.has_value()) {
++            duoview_transaction_misses.fetch_add(1, std::memory_order_relaxed);
++        } else if (duoview_transaction->rejected) {
++            duoview_transaction_rejections.fetch_add(1, std::memory_order_relaxed);
++        } else {
++            duoview_transaction_hits.fetch_add(1, std::memory_order_relaxed);
++            if (duoview_transaction->payload.native_stereo_fix &&
++                duoview_transaction->payload.native_packet == nullptr) {
++                duoview_packet_misses.fetch_add(1, std::memory_order_relaxed);
++            }
++        }
++        SPDLOG_INFO_EVERY_N_SEC(2,
++            "[DuoView][Frame] submit={} exact_token={} generation={} hits/misses/packet_misses/rejected={}/{}/{}/{} compose_avg_cpu_ms={:.3f} compose_max_cpu_ms={:.3f}",
++            duoview_submit_frame, duoview_transaction.has_value(), duoview_output_generation(),
++            duoview_transaction_hits.load(std::memory_order_relaxed),
++            duoview_transaction_misses.load(std::memory_order_relaxed),
++            duoview_packet_misses.load(std::memory_order_relaxed),
++            duoview_transaction_rejections.load(std::memory_order_relaxed),
++            duoview_compose_count.load(std::memory_order_relaxed) != 0
++                ? static_cast<double>(duoview_compose_total_ns.load(std::memory_order_relaxed)) /
++                    static_cast<double>(duoview_compose_count.load(std::memory_order_relaxed)) / 1000000.0
++                : 0.0,
++            static_cast<double>(duoview_compose_max_ns.load(std::memory_order_relaxed)) / 1000000.0);
++    }
++    const auto note_duoview_compose_duration = [&](std::chrono::steady_clock::time_point started) {
++        const auto elapsed = std::chrono::steady_clock::now() - started;
++        const auto nanoseconds = static_cast<uint64_t>(
++            std::chrono::duration_cast<std::chrono::nanoseconds>(elapsed).count());
++        duoview_compose_count.fetch_add(1, std::memory_order_relaxed);
++        duoview_compose_total_ns.fetch_add(nanoseconds, std::memory_order_relaxed);
++        auto maximum = duoview_compose_max_ns.load(std::memory_order_relaxed);
++        while (maximum < nanoseconds && !duoview_compose_max_ns.compare_exchange_weak(
++            maximum, nanoseconds, std::memory_order_relaxed)) {}
++    };
+     namespace frame_diag = uevr::native_frame;
+     frame_diag::Ticket native_frame_ticket{};
+     namespace stalker = uevr::stalker2_native;
+@@ -3040,26 +3092,36 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
+         }
+     }
+     if (!stalker_exact && stalker_requested) { m_stalker2_pair_cache.invalidate(); m_stalker2_established_epoch = 0; }
+-    auto native_stereo_packet = ffsr != nullptr && !vr->is_using_mono()
+-        ? stalker_exact ? ffsr->get_stalker2_native_packet(stalker_frame, &native_frame_ticket)
+-            : ffsr->get_native_stereo_frame_packet_for_submit(frame_count, frame_diag::Backend::d3d12, &native_frame_ticket)
+-        : nullptr;
+-    if (stalker_exact && !native_stereo_packet && m_stalker2_established_epoch != ffsr->stalker2_native_epoch()) {
++    std::shared_ptr<const FFakeStereoRenderingHook::NativeStereoFramePacket> native_stereo_packet{};
++    if (native_duoview_source_selected) {
++        if (duoview_transaction.has_value() && duoview_transaction->payload.selected &&
++            duoview_transaction->payload.native_stereo_fix) {
++            native_stereo_packet = duoview_transaction->payload.native_packet;
++        }
++    } else if (ffsr != nullptr && !vr->is_using_mono()) {
++        native_stereo_packet = stalker_exact
++            ? ffsr->get_stalker2_native_packet(stalker_frame, &native_frame_ticket)
++            : ffsr->get_native_stereo_frame_packet_for_submit(frame_count, frame_diag::Backend::d3d12, &native_frame_ticket);
++    }
++    if (!native_duoview_source_selected && stalker_exact && !native_stereo_packet &&
++        m_stalker2_established_epoch != ffsr->stalker2_native_epoch()) {
+         // Do not activate a new acceptance policy until one exact transaction
+         // has actually submitted. Unsupported/unproven cadence stays unchanged.
+         stalker_exact = false;
+         native_stereo_packet = ffsr->get_native_stereo_frame_packet_for_submit(
+             frame_count, frame_diag::Backend::d3d12, &native_frame_ticket);
+     }
+-    // The source hooks select DuoView before this Present and crop the two
+-    // Native Fix views. Keep that selection separate from packet validity so
+-    // a missing/rejected packet can never fall through as ordinary stereo.
+-    const auto duoview_engine_frame = ffsr->get_native_duoview_engine_frame();
+-    const bool native_duoview_source_selected = vr->is_native_duoview_selected_for_frame(duoview_engine_frame);
++    // A selected source frame remains fail-closed if its exact transaction or
++    // packet is absent/rejected. Never pair current source rectangles with a
++    // later Native Fix packet.
+     const bool native_duoview_packet = native_stereo_packet != nullptr && native_stereo_packet->duoview;
+     const bool native_duoview_frame = native_duoview_source_selected || native_duoview_packet;
+-    const bool native_duoview_native_fix_path = native_duoview_packet ||
+-        (native_duoview_source_selected && vr->native_duoview_uses_native_stereo_fix_for_frame(duoview_engine_frame));
++    const bool native_duoview_native_fix_path = duoview_transaction.has_value() &&
++            duoview_transaction->payload.selected
++        ? duoview_transaction->payload.native_stereo_fix
++        : (native_duoview_source_selected && vr->is_native_stereo_fix_enabled());
++    const bool native_duoview_transaction_valid = duoview_transaction.has_value() &&
++        duoview_transaction->payload.selected && !duoview_transaction->rejected;
+     bool duoview_scene_valid = !native_duoview_frame;
+     auto* const native_stereo_hook = ffsr.get();
+     const auto record_native_submit = [&](frame_diag::Runtime api, frame_diag::Stage stage,
+@@ -3595,7 +3657,7 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
+                     wait_call_count.fetch_add(1, std::memory_order_relaxed);
+                 }
+             }
+-            m_duoview_compositor.reset();
++            m_duoview_compositor.reset_outputs();
+             const auto retirements = retirement_count.fetch_add(1, std::memory_order_relaxed) + 1;
+             const auto waits = wait_call_count.load(std::memory_order_relaxed);
+             SPDLOG_INFO_EVERY_N_SEC(2,
+@@ -3609,7 +3671,8 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
+         m_scene_capture_height = 0;
+     };
+ 
+-    if (vr->is_native_stereo_fix_enabled() && native_stereo_packet != nullptr) {
++    if ((native_duoview_frame ? native_duoview_native_fix_path : vr->is_native_stereo_fix_enabled()) &&
++        native_stereo_packet != nullptr) {
+         ComPtr<ID3D12Resource> scene_capture_rt{};
+         ComPtr<ID3D12Device4> scene_capture_device{};
+         const auto capture = native_stereo_packet->capture;
+@@ -3718,7 +3781,8 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
+         native_stereo_packet->left_pass == static_cast<uint32_t>(EStereoscopicPass::eSSP_PRIMARY) &&
+         native_stereo_packet->right_pass == static_cast<uint32_t>(EStereoscopicPass::eSSP_SECONDARY);
+     if (native_duoview_frame) {
+-        if (native_duoview_native_fix_path && native_duoview_packet_pair_valid && scene_capture_packet_ready &&
++        if (native_duoview_transaction_valid && native_duoview_native_fix_path &&
++            native_duoview_packet_pair_valid && scene_capture_packet_ready &&
+             native_stereo_packet->duoview_projections_valid && m_game_tex.texture != nullptr &&
+             m_scene_capture_tex.texture != nullptr)
+         {
+@@ -3726,8 +3790,8 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
+             duoview_periphery_source = m_scene_capture_tex.texture;
+             const auto fovea_desc = duoview_fovea_source->GetDesc();
+             const auto periphery_desc = duoview_periphery_source->GetDesc();
+-            const auto& fovea_bounds = native_stereo_packet->left_view_rect.bounds;
+-            const auto& periphery_bounds = native_stereo_packet->right_view_rect.bounds;
++            const auto& fovea_bounds = duoview_transaction->payload.source_rects[0].bounds;
++            const auto& periphery_bounds = duoview_transaction->payload.source_rects[1].bounds;
+             duoview_fovea_rect = {fovea_bounds[0], fovea_bounds[1], fovea_bounds[2], fovea_bounds[3]};
+             duoview_periphery_rect = {periphery_bounds[0], periphery_bounds[1], periphery_bounds[2], periphery_bounds[3]};
+             duoview_source_state = D3D12_RESOURCE_STATE_RENDER_TARGET;
+@@ -3735,20 +3799,19 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
+                 vr->get_hmd_width(), vr->get_hmd_height(),
+                 {static_cast<uint32_t>(fovea_desc.Width), fovea_desc.Height},
+                 {static_cast<uint32_t>(periphery_desc.Width), periphery_desc.Height},
+-                native_stereo_packet->duoview_parameters, duoview_geometry);
+-        } else if (!native_duoview_native_fix_path && backbuffer != nullptr && ffsr != nullptr) {
+-            const auto view_rects = ffsr->get_native_duoview_view_rects(duoview_engine_frame);
++                duoview_transaction->payload.parameters, duoview_geometry);
++        } else if (native_duoview_transaction_valid && !native_duoview_native_fix_path && backbuffer != nullptr) {
+             const auto source_desc = backbuffer->GetDesc();
+             const auto expected_width = static_cast<uint64_t>(vr->get_hmd_width()) * 2;
+             const bool source_extent_valid = source_desc.Dimension == D3D12_RESOURCE_DIMENSION_TEXTURE2D &&
+                 source_desc.Width == expected_width && source_desc.Height == vr->get_hmd_height() &&
+                 source_desc.DepthOrArraySize == 1 && source_desc.MipLevels == 1 &&
+                 source_desc.SampleDesc.Count == 1;
+-            if (view_rects.has_value() && source_extent_valid) {
++            if (source_extent_valid) {
+                 duoview_fovea_source = backbuffer;
+                 duoview_periphery_source = backbuffer;
+-                const auto& fovea_bounds = (*view_rects)[0].bounds;
+-                const auto& periphery_bounds = (*view_rects)[1].bounds;
++                const auto& fovea_bounds = duoview_transaction->payload.source_rects[0].bounds;
++                const auto& periphery_bounds = duoview_transaction->payload.source_rects[1].bounds;
+                 duoview_fovea_rect = {fovea_bounds[0], fovea_bounds[1], fovea_bounds[2], fovea_bounds[3]};
+                 duoview_periphery_rect = {periphery_bounds[0], periphery_bounds[1], periphery_bounds[2], periphery_bounds[3]};
+                 duoview_source_state = scene_source_state;
+@@ -3756,7 +3819,7 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
+                     vr->get_hmd_width(), vr->get_hmd_height(),
+                     {vr->get_hmd_width(), vr->get_hmd_height()},
+                     {vr->get_hmd_width(), vr->get_hmd_height()},
+-                    vr->native_duoview_parameters_for_frame(duoview_engine_frame), duoview_geometry);
++                    duoview_transaction->payload.parameters, duoview_geometry);
+             }
+         }
+     }
+@@ -3769,12 +3832,8 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
+                     level, duoview_engine_frame, native_duoview_native_fix_path ? "NativeFix" : "ordinary-native",
+                     native_stereo_packet != nullptr ? native_stereo_packet->serial : 0,
+                     native_stereo_packet != nullptr ? native_stereo_packet->capture_generation : 0,
+-                    native_duoview_native_fix_path && native_stereo_packet != nullptr
+-                        ? native_stereo_packet->duoview_parameters.optical_center_x
+-                        : vr->native_duoview_parameters_for_frame(duoview_engine_frame).optical_center_x,
+-                    native_duoview_native_fix_path && native_stereo_packet != nullptr
+-                        ? native_stereo_packet->duoview_parameters.optical_center_y
+-                        : vr->native_duoview_parameters_for_frame(duoview_engine_frame).optical_center_y,
++                    duoview_transaction.has_value() ? duoview_transaction->payload.parameters.optical_center_x : 0.5f,
++                    duoview_transaction.has_value() ? duoview_transaction->payload.parameters.optical_center_y : 0.5f,
+                     duoview_geometry.u0, duoview_geometry.v0, duoview_geometry.u1, duoview_geometry.v1,
+                     duoview_fovea_rect.left, duoview_fovea_rect.top, duoview_fovea_rect.right, duoview_fovea_rect.bottom,
+                     duoview_periphery_rect.left, duoview_periphery_rect.top,
+@@ -3888,7 +3947,8 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
+         &stalker_composed,
+         native_stereo_packet,
+         native_frame_ticket,
+-        native_stereo_hook](d3d12::CommandContext& commands, ID3D12Resource* render_target) {
++        native_stereo_hook,
++        note_duoview_compose_duration](d3d12::CommandContext& commands, ID3D12Resource* render_target) {
+         if (render_target == nullptr || (!native_duoview_frame &&
+             (left_source == nullptr || right_source == nullptr || native_stereo_packet == nullptr))) {
+             return;
+@@ -3917,10 +3977,12 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
+                 (native_duoview_native_fix_path && native_stereo_packet == nullptr)) { return; }
+             ComPtr<ID3D12Device> output_device{};
+             if (FAILED(render_target->GetDevice(IID_PPV_ARGS(&output_device)))) { return; }
++            const auto compose_started = std::chrono::steady_clock::now();
+             duoview_composed = this->m_duoview_compositor.record_double_wide(
+                 output_device.Get(), commands.cmd_list.Get(), duoview_fovea_source.Get(), duoview_periphery_source.Get(),
+                 duoview_fovea_rect, duoview_periphery_rect, duoview_geometry,
+                 duoview_source_state, render_target, D3D12_RESOURCE_STATE_RENDER_TARGET);
++            note_duoview_compose_duration(compose_started);
+             if (!duoview_composed) { return; }
+             if (stalker_exact) { stalker_composed = true; }
+             commands.has_commands = true;
+@@ -5549,10 +5611,10 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
+                             (uint32_t)runtimes::OpenXR::SwapchainIndex::DOUBLE_WIDE,
+                             nullptr, pre_render, std::nullopt, D3D12_RESOURCE_STATE_RENDER_TARGET, nullptr);
+                         duoview_scene_valid = submitted && duoview_composed;
+-                        if (!duoview_scene_valid && native_stereo_packet != nullptr && native_stereo_hook != nullptr) {
+-                            native_stereo_hook->reject_native_stereo_frame_packet(
+-                                native_stereo_packet->serial,
+-                                "DuoView source rectangle, projection, or D3D12 composition validation failed");
++                        if (!duoview_scene_valid && duoview_transaction.has_value() && native_stereo_hook != nullptr) {
++                            native_stereo_hook->reject_native_duoview_transaction(
++                                duoview_submit_frame, duoview_output_generation(), duoview_transaction->serial,
++                                "source rectangle, projection, or D3D12 composition validation failed");
+                         }
+                     } else if (native_stereo_packet == nullptr ||
+                                m_scene_capture_tex.texture.Get() == nullptr ||
+@@ -5589,6 +5651,7 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
+                     left_context.texture != nullptr && right_context.texture != nullptr &&
+                     left_context.commands.ready() && right_context.commands.ready())
+                 {
++                    const auto compose_started = std::chrono::steady_clock::now();
+                     left_recorded = m_duoview_compositor.record_eye(
+                         device, left_context.commands.cmd_list.Get(), duoview_fovea_source.Get(), duoview_periphery_source.Get(),
+                         duoview_fovea_rect, duoview_periphery_rect, duoview_geometry,
+@@ -5597,6 +5660,7 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
+                         device, right_context.commands.cmd_list.Get(), duoview_fovea_source.Get(), duoview_periphery_source.Get(),
+                         duoview_fovea_rect, duoview_periphery_rect, duoview_geometry,
+                         duoview_source_state, right_context.texture.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
++                    note_duoview_compose_duration(compose_started);
+                 }
+                 if (left_recorded) { left_context.commands.has_commands = true; }
+                 if (right_recorded) { right_context.commands.has_commands = true; }
+@@ -5617,10 +5681,10 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
+                             0, 1, 0, m_scene_capture_tex.texture.Get(), right_context.texture.Get());
+                     }
+                     native_stereo_hook->note_native_stereo_frame_packet_consumed(native_stereo_packet->serial);
+-                } else if (native_stereo_packet != nullptr && native_stereo_hook != nullptr) {
+-                    native_stereo_hook->reject_native_stereo_frame_packet(
+-                        native_stereo_packet->serial,
+-                        "DuoView source rectangle, projection, or D3D12 composition validation failed");
++                } else if (duoview_transaction.has_value() && native_stereo_hook != nullptr) {
++                    native_stereo_hook->reject_native_duoview_transaction(
++                        duoview_submit_frame, duoview_output_generation(), duoview_transaction->serial,
++                        "OpenVR source rectangle, projection, or D3D12 composition validation failed");
+                 }
+             } else if (!is_afr) {
+                 m_openvr.copy_left(backbuffer.Get(), scene_source_state);
+@@ -6707,7 +6771,11 @@ void D3D12Component::on_reset(VR* vr, bool mono_retired) {
+ 
+     // Per-swapchain SRV/RTV descriptors remain alive while their runtime command
+     // contexts execute. The waits above and context resets here retire those users.
+-    m_duoview_compositor.reset();
++    const bool had_duoview_outputs = m_duoview_compositor.has_outputs();
++    m_duoview_compositor.reset_outputs();
++    if (had_duoview_outputs) {
++        m_duoview_output_generation.fetch_add(1, std::memory_order_acq_rel);
++    }
+ 
+     for (auto& commands : m_generic_commands) {
+         commands.reset();
+@@ -6883,6 +6951,9 @@ bool D3D12Component::setup() {
+ 
+     auto device = hook->get_device();
+     auto swapchain = hook->get_swap_chain();
++    if (!m_duoview_compositor.prewarm(device.Get())) {
++        SPDLOG_ERROR_EVERY_N_SEC(2, "[DuoView][D3D12] Pipeline prewarm failed; composition remains fail-closed until the device accepts its pipeline");
++    }
+ 
+     ComPtr<ID3D12Resource> backbuffer{};
+     bool sw_zero_company_validated_scene_target{};
+@@ -7484,7 +7555,8 @@ void D3D12Component::OpenXR::destroy_swapchains() {
+ 
+     this->wait_for_all_copies();
+     if (this->parent != nullptr) {
+-        this->parent->m_duoview_compositor.reset();
++        this->parent->m_duoview_compositor.reset_outputs();
++        this->parent->m_duoview_output_generation.fetch_add(1, std::memory_order_acq_rel);
+     }
+ 
+     for (auto& it : this->contexts) {
+diff --git a/src/mods/vr/D3D12Component.hpp b/src/mods/vr/D3D12Component.hpp
+index 9fbd926a..23812c4c 100644
+--- a/src/mods/vr/D3D12Component.hpp
++++ b/src/mods/vr/D3D12Component.hpp
+@@ -50,6 +50,9 @@ public:
+     bool mono_consumers_retired();
+ 
+     void force_reset() { m_force_reset = true; }
++    uint64_t duoview_output_generation() const {
++        return m_duoview_output_generation.load(std::memory_order_acquire);
++    }
+ 
+     const auto& get_backbuffer_size() const { return m_backbuffer_size; }
+ 
+@@ -272,6 +275,7 @@ private:
+     d3d12::TextureContext m_scene_capture_tex{};
+     uevr::duoview::D3D12Compositor m_duoview_compositor{};
+     uint64_t m_scene_capture_generation{};
++    std::atomic<uint64_t> m_duoview_output_generation{1};
+     uint32_t m_scene_capture_width{};
+     uint32_t m_scene_capture_height{};
+     d3d12::TextureContext m_shf_mono_scene_tex{};
+diff --git a/src/mods/vr/DuoViewCompositor.cpp b/src/mods/vr/DuoViewCompositor.cpp
+index 648d0c32..80c72bd8 100644
+--- a/src/mods/vr/DuoViewCompositor.cpp
++++ b/src/mods/vr/DuoViewCompositor.cpp
+@@ -356,8 +356,20 @@ bool D3D12Compositor::record(
+     return true;
+ }
+ 
+-void D3D12Compositor::reset() {
++bool D3D12Compositor::prewarm(ID3D12Device* device) {
++    if (device == nullptr) { return false; }
++    if (m_device != nullptr && m_device.Get() != device) {
++        reset();
++    }
++    return ensure_pipeline(device);
++}
++
++void D3D12Compositor::reset_outputs() {
+     m_outputs.clear();
++}
++
++void D3D12Compositor::reset() {
++    reset_outputs();
+     m_srgb_pipeline.Reset();
+     m_unorm_pipeline.Reset();
+     m_root_signature.Reset();
+diff --git a/src/mods/vr/DuoViewCompositor.hpp b/src/mods/vr/DuoViewCompositor.hpp
+index a39c2db7..31c250ae 100644
+--- a/src/mods/vr/DuoViewCompositor.hpp
++++ b/src/mods/vr/DuoViewCompositor.hpp
+@@ -48,6 +48,9 @@ public:
+         ID3D12Resource* destination,
+         D3D12_RESOURCE_STATES destination_state);
+ 
++    bool prewarm(ID3D12Device* device);
++    bool has_outputs() const { return !m_outputs.empty(); }
++    void reset_outputs();
+     void reset();
+ 
+ private:
+diff --git a/src/mods/vr/DuoViewFrameTransactions.hpp b/src/mods/vr/DuoViewFrameTransactions.hpp
+new file mode 100644
+index 00000000..40338ae5
+--- /dev/null
++++ b/src/mods/vr/DuoViewFrameTransactions.hpp
+@@ -0,0 +1,68 @@
++#pragma once
++
++#include <array>
++#include <cstddef>
++#include <cstdint>
++#include <mutex>
++#include <optional>
++#include <utility>
++
++namespace uevr::duoview {
++
++// Exact-token storage for producer-owned DuoView source frames. Reads never
++// fall through to a newer token, and repeated Presents can read the same slot.
++template <class Payload, size_t Capacity = 16>
++class FrameTransactionRing {
++    static_assert(Capacity > 1);
++
++public:
++    struct Record {
++        uint32_t frame{};
++        uint64_t generation{};
++        uint64_t serial{};
++        bool rejected{};
++        Payload payload{};
++    };
++
++    bool publish(uint32_t frame, uint64_t generation, uint64_t serial, Payload payload) {
++        std::scoped_lock lock{m_mutex};
++        m_slots[frame % Capacity] = Record{
++            .frame = frame,
++            .generation = generation,
++            .serial = serial,
++            .rejected = false,
++            .payload = std::move(payload),
++        };
++        return true;
++    }
++
++    std::optional<Record> read(uint32_t frame, uint64_t generation) const {
++        std::scoped_lock lock{m_mutex};
++        const auto& slot = m_slots[frame % Capacity];
++        if (!slot || slot->frame != frame || slot->generation != generation) {
++            return std::nullopt;
++        }
++        return slot;
++    }
++
++    bool reject(uint32_t frame, uint64_t generation, uint64_t serial) {
++        std::scoped_lock lock{m_mutex};
++        auto& slot = m_slots[frame % Capacity];
++        if (!slot || slot->frame != frame || slot->generation != generation || slot->serial != serial) {
++            return false;
++        }
++        slot->rejected = true;
++        return true;
++    }
++
++    void clear() {
++        std::scoped_lock lock{m_mutex};
++        for (auto& slot : m_slots) { slot.reset(); }
++    }
++
++private:
++    mutable std::mutex m_mutex{};
++    std::array<std::optional<Record>, Capacity> m_slots{};
++};
++
++} // namespace uevr::duoview
+diff --git a/src/mods/vr/FFakeStereoRenderingHook.cpp b/src/mods/vr/FFakeStereoRenderingHook.cpp
+index e2b23c73..dee48330 100644
+--- a/src/mods/vr/FFakeStereoRenderingHook.cpp
++++ b/src/mods/vr/FFakeStereoRenderingHook.cpp
+@@ -23907,6 +23907,35 @@ sdk::FSceneView* FFakeStereoRenderingHook::sceneview_constructor(sdk::FSceneView
+                 .projection_hash = native_projection_hash,
+                 .projection_valid = native_projection_valid,
+             };
++
++            if (vr->is_native_duoview_selected_for_frame(g_frame_count)) {
++                const auto family_address = reinterpret_cast<uintptr_t>(init_options_view_family);
++                const auto frame_offset = SceneViewExtensionAnalyzer::frame_count_offset;
++                if (frame_offset != 0 && frame_offset < 0x4000 &&
++                    is_readable_process_range(family_address + frame_offset, sizeof(uint32_t))) {
++                    uint32_t family_frame{};
++                    std::memcpy(&family_frame,
++                        reinterpret_cast<const void*>(family_address + frame_offset), sizeof(family_frame));
++                    const auto source_eye = init_options_original_stereo_pass == EStereoscopicPass::eSSP_PRIMARY ? 0u : 1u;
++                    NativeDuoViewSourceFamily source{};
++                    source.family = init_options_view_family;
++                    source.views[source_eye] = result;
++                    source.scene = init_options_scene;
++                    source.target = init_options_view_family->get_render_target();
++                    source.source_frame = family_frame;
++                    source.settings_frame = g_frame_count;
++                    source.rects[source_eye] = native_view_rect;
++                    source.parameters = vr->native_duoview_parameters_for_frame(g_frame_count);
++                    source.selected = true;
++                    source.native_stereo_fix = vr->native_duoview_uses_native_stereo_fix_for_frame(g_frame_count);
++                    source.projection_valid[source_eye] = native_projection_valid;
++                    g_hook->record_native_duoview_source_view(source, source_eye);
++                } else {
++                    SPDLOG_WARNING_EVERY_N_SEC(2,
++                        "[DuoView] Cannot retain source owner because the validated family frame field is unavailable settings_frame={}",
++                        g_frame_count);
++                }
++            }
+         }
+     } else {
+         g_hook->m_sceneview_data.native_stereo_views.clear();
+@@ -27424,6 +27453,110 @@ uint32_t FFakeStereoRenderingHook::get_native_duoview_engine_frame() const {
+     return g_frame_count;
+ }
+ 
++void FFakeStereoRenderingHook::record_native_duoview_source_view(
++    const NativeDuoViewSourceFamily& source, uint32_t eye)
++{
++    if (eye > 1 || source.family == nullptr || source.views[eye] == nullptr) {
++        return;
++    }
++
++    std::scoped_lock lock{m_native_duoview_source_mtx};
++    auto& slot = m_native_duoview_source_families[source.source_frame % m_native_duoview_source_families.size()];
++    if (slot.family != source.family || slot.source_frame != source.source_frame) {
++        slot = source;
++        slot.views[0] = nullptr;
++        slot.views[1] = nullptr;
++        slot.view_mask = 0;
++        slot.conflicted = false;
++    } else {
++        const auto same_parameters = [](const uevr::duoview::Parameters& a, const uevr::duoview::Parameters& b) {
++            return a.fovea_width == b.fovea_width && a.fovea_height == b.fovea_height &&
++                a.fovea_scale == b.fovea_scale && a.periphery_scale == b.periphery_scale &&
++                a.vertical_center == b.vertical_center && a.feather_pixels == b.feather_pixels &&
++                a.optical_center_x == b.optical_center_x && a.optical_center_y == b.optical_center_y;
++        };
++        if (slot.settings_frame != source.settings_frame || slot.scene != source.scene ||
++            slot.target != source.target || slot.selected != source.selected ||
++            slot.native_stereo_fix != source.native_stereo_fix ||
++            !same_parameters(slot.parameters, source.parameters)) {
++            slot.conflicted = true;
++        }
++    }
++
++    const auto bit = static_cast<uint8_t>(1u << eye);
++    if ((slot.view_mask & bit) != 0) {
++        const auto& previous = slot.rects[eye];
++        const auto& next = source.rects[eye];
++        if (slot.views[eye] != source.views[eye] || previous.bounds[0] != next.bounds[0] ||
++            previous.bounds[1] != next.bounds[1] || previous.bounds[2] != next.bounds[2] ||
++            previous.bounds[3] != next.bounds[3] ||
++            slot.projection_valid[eye] != source.projection_valid[eye]) {
++            slot.conflicted = true;
++        }
++    }
++    slot.views[eye] = source.views[eye];
++    slot.rects[eye] = source.rects[eye];
++    slot.projection_valid[eye] = source.projection_valid[eye];
++    slot.view_mask |= bit;
++}
++
++std::optional<FFakeStereoRenderingHook::NativeDuoViewSourceFamily>
++FFakeStereoRenderingHook::get_native_duoview_source_family(
++    sdk::FSceneViewFamily* family, uint32_t source_frame) const
++{
++    if (family == nullptr) { return std::nullopt; }
++    std::scoped_lock lock{m_native_duoview_source_mtx};
++    const auto& source = m_native_duoview_source_families[source_frame % m_native_duoview_source_families.size()];
++    if (source.family != family || source.source_frame != source_frame || source.view_mask != 0x3 ||
++        source.views[0] == nullptr || source.views[1] == nullptr || source.views[0] == source.views[1] ||
++        source.scene == nullptr || source.target == nullptr || source.conflicted ||
++        !source.projection_valid[0] || !source.projection_valid[1]) {
++        return std::nullopt;
++    }
++    return source;
++}
++
++void FFakeStereoRenderingHook::publish_native_duoview_transaction(
++    NativeDuoViewTransaction transaction, uint64_t output_generation)
++{
++    if (transaction.family == 0 || output_generation == 0 || !transaction.selected) {
++        return;
++    }
++
++    transaction.serial = m_native_duoview_transaction_serial.fetch_add(1, std::memory_order_acq_rel) + 1;
++    const auto previous = m_native_duoview_transactions.read(transaction.submit_frame, output_generation);
++    if (previous.has_value()) {
++        if (previous->payload.family != transaction.family || previous->payload.source_frame != transaction.source_frame) {
++            SPDLOG_WARNING_EVERY_N_SEC(2,
++                "[DuoView] Refusing ambiguous source families for exact submit token frame={} generation={} first_family={:x} second_family={:x}",
++                transaction.submit_frame, output_generation, previous->payload.family, transaction.family);
++        }
++        return;
++    }
++
++    m_native_duoview_transactions.publish(
++        transaction.submit_frame, output_generation, transaction.serial, std::move(transaction));
++}
++
++std::optional<FFakeStereoRenderingHook::NativeDuoViewTransactionRecord>
++FFakeStereoRenderingHook::get_native_duoview_transaction(
++    uint32_t submit_frame, uint64_t output_generation) const
++{
++    return m_native_duoview_transactions.read(submit_frame, output_generation);
++}
++
++bool FFakeStereoRenderingHook::reject_native_duoview_transaction(
++    uint32_t submit_frame, uint64_t output_generation, uint64_t serial, const char* detail)
++{
++    if (!m_native_duoview_transactions.reject(submit_frame, output_generation, serial)) {
++        return false;
++    }
++    SPDLOG_WARNING_EVERY_N_SEC(2,
++        "[DuoView] Rejected only submit frame={} generation={} serial={} reason={}",
++        submit_frame, output_generation, serial, detail != nullptr ? detail : "unspecified frame failure");
++    return true;
++}
++
+ std::shared_ptr<const FFakeStereoRenderingHook::NativeStereoFramePacket>
+ FFakeStereoRenderingHook::get_native_stereo_frame_packet_for_submit(int32_t render_frame,
+     uevr::native_frame::Backend backend, uevr::native_frame::Ticket* diagnostic_ticket) const
+@@ -28026,6 +28159,57 @@ void FFakeStereoRenderingHook::pre_render_viewfamily_renderthread(ISceneViewExte
+ 
+     const auto compensation = g_hook->get_frame_delay_compensation();
+ 
++    // Bind the source family and its already-applied view geometry to the
++    // exact RHI frame token sent by the existing pose handoff below. Present
++    // consumes this immutable record by its current m_frame_count value; it
++    // never asks for the newest GAME-thread snapshot.
++    if (const auto source = g_hook->get_native_duoview_source_family(&view_family, frame_count);
++        source.has_value() && source->selected)
++    {
++        auto* const target_manager = g_hook->get_render_target_manager();
++        const auto expected_target = target_manager != nullptr
++            ? target_manager->get_view_family_render_target()
++            : nullptr;
++        if (source->target == nullptr || source->target != expected_target ||
++            source->target != view_family.get_render_target() || source->scene != view_family.get_scene_interface()) {
++            SPDLOG_WARNING_EVERY_N_SEC(2,
++                "[DuoView] Refusing source-family transaction with changed owner frame={} family={:x} target={:x} expected={:x} scene={:x}",
++                frame_count, reinterpret_cast<uintptr_t>(&view_family), reinterpret_cast<uintptr_t>(source->target),
++                reinterpret_cast<uintptr_t>(expected_target), reinterpret_cast<uintptr_t>(source->scene));
++        } else {
++        NativeDuoViewTransaction transaction{};
++        transaction.source_frame = frame_count;
++        transaction.settings_frame = source->settings_frame;
++        transaction.submit_frame = frame_count + compensation;
++        transaction.family = reinterpret_cast<uintptr_t>(source->family);
++        transaction.scene = reinterpret_cast<uintptr_t>(source->scene);
++        transaction.target = reinterpret_cast<uintptr_t>(source->target);
++        transaction.source_rects = {source->rects[0], source->rects[1]};
++        transaction.parameters = source->parameters;
++        transaction.selected = source->selected;
++        transaction.native_stereo_fix = source->native_stereo_fix;
++
++        if (source->native_stereo_fix) {
++            const auto packet = g_hook->m_native_stereo_frame_packet.load(std::memory_order_acquire);
++            if (packet != nullptr && packet->family == source->family && packet->duoview &&
++                packet->engine_frame == source->settings_frame && packet->left_view == source->views[0] &&
++                packet->right_view == source->views[1] && packet->left_view_rect.bounds[0] == source->rects[0].bounds[0] &&
++                packet->left_view_rect.bounds[1] == source->rects[0].bounds[1] &&
++                packet->left_view_rect.bounds[2] == source->rects[0].bounds[2] &&
++                packet->left_view_rect.bounds[3] == source->rects[0].bounds[3] &&
++                packet->right_view_rect.bounds[0] == source->rects[1].bounds[0] &&
++                packet->right_view_rect.bounds[1] == source->rects[1].bounds[1] &&
++                packet->right_view_rect.bounds[2] == source->rects[1].bounds[2] &&
++                packet->right_view_rect.bounds[3] == source->rects[1].bounds[3]) {
++                transaction.native_packet = packet;
++            }
++        }
++
++        g_hook->publish_native_duoview_transaction(
++            std::move(transaction), vr->d3d12().duoview_output_generation());
++        }
++    }
++
+     // Using slate's draw window hook is the safest way to do this without
+     // false positives on the command list in this function
+     // otherwise we can attempt to use the command list here and hook it
+diff --git a/src/mods/vr/FFakeStereoRenderingHook.hpp b/src/mods/vr/FFakeStereoRenderingHook.hpp
+index 1ee33800..da1b0b13 100644
+--- a/src/mods/vr/FFakeStereoRenderingHook.hpp
++++ b/src/mods/vr/FFakeStereoRenderingHook.hpp
+@@ -40,6 +40,7 @@
+ #include "NativeFrameDiagnostics.hpp"
+ #include "Stalker2NativePolicy.hpp"
+ #include "DuoViewGeometry.hpp"
++#include "DuoViewFrameTransactions.hpp"
+ #include "UE57SlateSymbols.hpp"
+ #include "utility/NascarHookCompatibility.hpp"
+ 
+@@ -880,9 +881,30 @@ public:
+         uevr::native_frame::ClockStamp diagnostic_clock{};
+     };
+ 
++    struct NativeDuoViewTransaction {
++        uint32_t source_frame{};
++        uint32_t settings_frame{};
++        uint32_t submit_frame{};
++        uintptr_t family{};
++        uintptr_t scene{};
++        uintptr_t target{};
++        std::array<FIntRect, 2> source_rects{};
++        uevr::duoview::Parameters parameters{};
++        std::shared_ptr<const NativeStereoFramePacket> native_packet{};
++        uint64_t serial{};
++        bool selected{};
++        bool native_stereo_fix{};
++    };
++
++    using NativeDuoViewTransactionRecord = uevr::duoview::FrameTransactionRing<NativeDuoViewTransaction, 16>::Record;
++
+     bool is_nascar_native_ready() const { return m_nascar_native_ready.load(std::memory_order_acquire); }
+ 
+     uint32_t get_native_duoview_engine_frame() const;
++    std::optional<NativeDuoViewTransactionRecord> get_native_duoview_transaction(
++        uint32_t submit_frame, uint64_t output_generation) const;
++    bool reject_native_duoview_transaction(uint32_t submit_frame, uint64_t output_generation,
++        uint64_t serial, const char* detail);
+     std::shared_ptr<const NativeStereoFramePacket> get_native_stereo_frame_packet_for_submit(
+         int32_t render_frame, uevr::native_frame::Backend backend = uevr::native_frame::Backend::unknown,
+         uevr::native_frame::Ticket* diagnostic_ticket = nullptr) const;
+@@ -1362,6 +1384,27 @@ private:
+         bool projection_valid{};
+     };
+ 
++    struct NativeDuoViewSourceFamily {
++        sdk::FSceneViewFamily* family{};
++        sdk::FSceneView* views[2]{};
++        sdk::FSceneInterface* scene{};
++        sdk::FRenderTarget* target{};
++        uint32_t source_frame{};
++        uint32_t settings_frame{};
++        FIntRect rects[2]{};
++        uevr::duoview::Parameters parameters{};
++        uint8_t view_mask{};
++        bool selected{};
++        bool native_stereo_fix{};
++        bool projection_valid[2]{};
++        bool conflicted{};
++    };
++
++    void record_native_duoview_source_view(const NativeDuoViewSourceFamily& source, uint32_t eye);
++    std::optional<NativeDuoViewSourceFamily> get_native_duoview_source_family(
++        sdk::FSceneViewFamily* family, uint32_t source_frame) const;
++    void publish_native_duoview_transaction(NativeDuoViewTransaction transaction, uint64_t output_generation);
++
+     void set_native_stereo_fix_state(NativeStereoFixState state, const char* detail = nullptr);
+     void invalidate_native_stereo_frame_packet(NativeStereoFixState state, const char* detail);
+     void publish_native_stereo_frame_packet(std::shared_ptr<const NativeStereoFramePacket> packet);
+@@ -1517,6 +1560,10 @@ private:
+     std::atomic<uint64_t> m_native_stereo_consumed_serial{};
+     std::atomic<uint64_t> m_native_stereo_rejected_capture_generation{};
+     mutable uevr::native_frame::Recorder<> m_native_frame_diagnostics{};
++    mutable std::mutex m_native_duoview_source_mtx{};
++    std::array<NativeDuoViewSourceFamily, 16> m_native_duoview_source_families{};
++    mutable uevr::duoview::FrameTransactionRing<NativeDuoViewTransaction, 16> m_native_duoview_transactions{};
++    std::atomic<uint64_t> m_native_duoview_transaction_serial{};
+     std::atomic<uint64_t> m_native_stereo_ue57_capability_failure_generation{};
+     std::atomic_bool m_native_stereo_localplayer_bootstrap_failed{};
+     std::atomic_bool m_ktjl_view_states_ready{};
+diff --git a/tests/MonoD3D12Tests.cpp b/tests/MonoD3D12Tests.cpp
+index 1a4c3bb8..63252e6c 100644
+--- a/tests/MonoD3D12Tests.cpp
++++ b/tests/MonoD3D12Tests.cpp
+@@ -1,5 +1,6 @@
+ #include "mods/vr/MonoD3D12.hpp"
+ #include "mods/vr/DuoViewGeometry.hpp"
++#include "mods/vr/DuoViewFrameTransactions.hpp"
+ #include "mods/vr/DuoViewCompositor.hpp"
+ 
+ #include <d3d12sdklayers.h>
+@@ -169,6 +170,50 @@ static void test_duoview_geometry() {
+         "projection scales match the effective crop bounds");
+ }
+ 
++static void test_duoview_frame_transactions() {
++    namespace duo = uevr::duoview;
++    struct Source {
++        uint32_t family_frame{};
++        uintptr_t family{};
++        uintptr_t resource{};
++    };
++    duo::FrameTransactionRing<Source, 8> transactions;
++
++    expect(transactions.publish(100, 4, 1, {100, 0xabc, 0xdef}), "source frame 100 publishes");
++    expect(transactions.publish(101, 4, 2, {101, 0xabd, 0xdef}), "producer can run one frame ahead");
++    expect(transactions.publish(102, 4, 3, {102, 0xabe, 0xdef}), "producer can run two frames ahead");
++    const auto first_present = transactions.read(100, 4);
++    expect(first_present && first_present->payload.family_frame == 100 && first_present->payload.family == 0xabc,
++        "exact Present token selects its own family while newer producer slots exist");
++    const auto duplicate_present = transactions.read(100, 4);
++    expect(duplicate_present && duplicate_present->serial == first_present->serial,
++        "duplicate Present reuses the same source transaction");
++    const auto second_present = transactions.read(101, 4);
++    expect(second_present && second_present->payload.family_frame == 101,
++        "post-present counter advancement does not change the exact source token");
++    expect(!transactions.read(103, 4), "missing source token does not fall back to the newest frame");
++
++    expect(transactions.publish(103, 4, 4, {103, 0xabf, 0xdef}),
++        "same source resource can publish under a distinct frame token");
++    const auto same_resource_first = transactions.read(102, 4);
++    const auto same_resource_second = transactions.read(103, 4);
++    expect(same_resource_first && same_resource_second &&
++        same_resource_first->payload.resource == same_resource_second->payload.resource &&
++        same_resource_first->payload.family_frame != same_resource_second->payload.family_frame,
++        "resource identity reuse does not collapse distinct source-frame ownership");
++
++    expect(transactions.reject(100, 4, 1), "transient failure marks only its exact frame slot");
++    const auto rejected = transactions.read(100, 4);
++    const auto next_valid = transactions.read(101, 4);
++    expect(rejected && rejected->rejected && next_valid && !next_valid->rejected && next_valid->generation == 4,
++        "a transient frame rejection does not poison the capture generation or later frames");
++
++    transactions.clear();
++    expect(!transactions.read(101, 4), "output-generation reset clears old source ownership");
++    expect(transactions.publish(101, 5, 5, {101, 0xacd, 0xdef}) && transactions.read(101, 5),
++        "new output generation accepts only a newly published source transaction");
++}
++
+ static void test_duoview_compositor(ID3D12Device* device, ID3D12CommandQueue* queue) {
+     namespace duo = uevr::duoview;
+     constexpr UINT source_width = 64;
+@@ -279,6 +324,7 @@ static void test_duoview_compositor(ID3D12Device* device, ID3D12CommandQueue* qu
+     expect(duo::calculate(source_width, source_height, {source_width, source_height},
+         {source_width, source_height}, duo::Parameters{}, geometry), "DuoView WARP geometry validates");
+     duo::D3D12Compositor compositor;
++    expect(compositor.prewarm(device), "DuoView shader and PSOs prewarm before the first compose");
+     const bool recorded = compositor.record_double_wide(device, commands.Get(), fovea.Get(), periphery.Get(),
+         {0, 0, static_cast<int32_t>(source_width), static_cast<int32_t>(source_height)},
+         {0, 0, static_cast<int32_t>(source_width), static_cast<int32_t>(source_height)},
+@@ -371,10 +417,13 @@ static void test_duoview_compositor(ID3D12Device* device, ID3D12CommandQueue* qu
+     expect(alias_center_left == 0xff0000ffu && alias_center_right == alias_center_left,
+         "aliased fovea region is composed identically into both eye regions");
+     aliased_readback->Unmap(0, nullptr);
++    compositor.reset_outputs();
++    expect(compositor.prewarm(device), "output retirement keeps the same-device prewarmed pipeline available");
+ }
+ 
+ int main() try {
+     test_duoview_geometry();
++    test_duoview_frame_transactions();
+     ComPtr<ID3D12Debug> debug;
+     if (SUCCEEDED(D3D12GetDebugInterface(IID_PPV_ARGS(&debug)))) { debug->EnableDebugLayer(); }
+     ComPtr<IDXGIFactory4> factory;
