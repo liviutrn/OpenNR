@@ -1,0 +1,661 @@
+diff --git a/src/mods/vr/DuoViewFrameTransactions.hpp b/src/mods/vr/DuoViewFrameTransactions.hpp
+index ac82f748..2fb00599 100644
+--- a/src/mods/vr/DuoViewFrameTransactions.hpp
++++ b/src/mods/vr/DuoViewFrameTransactions.hpp
+@@ -9,6 +9,44 @@
+ 
+ namespace uevr::duoview {
+ 
++// Joins the game-thread Native Fix packet to the exact RHI frame token. The
++// callbacks may arrive in either order; callers publish only when take_ready
++// returns a token, and repeated Presents/callbacks cannot complete it twice.
++class NativeFrameJoin {
++public:
++    struct Token {
++        uint32_t submit_frame{};
++        uint64_t output_generation{};
++    };
++
++    void mark_packet_available() { m_packet_available = true; }
++
++    bool bind_rhi_token(uint32_t submit_frame, uint64_t output_generation) {
++        if (output_generation == 0) { return false; }
++        if (!m_rhi_available || m_token.submit_frame != submit_frame ||
++            m_token.output_generation != output_generation) {
++            m_token = Token{submit_frame, output_generation};
++            m_rhi_available = true;
++            m_published = false;
++        }
++        return true;
++    }
++
++    std::optional<Token> take_ready(bool packet_required) {
++        if (!m_rhi_available || (packet_required && !m_packet_available) || m_published) {
++            return std::nullopt;
++        }
++        m_published = true;
++        return m_token;
++    }
++
++private:
++    Token m_token{};
++    bool m_packet_available{};
++    bool m_rhi_available{};
++    bool m_published{};
++};
++
+ // Exact-token storage for producer-owned DuoView source frames. Reads never
+ // fall through to a newer token, and repeated Presents can read the same slot.
+ template <class Payload, size_t Capacity = 16>
+@@ -73,6 +111,12 @@ class OwnerFrameRing {
+     static_assert(Capacity > 1);
+ 
+ public:
++    struct Match {
++        uint32_t frame{};
++        uintptr_t owner{};
++        Payload payload{};
++    };
++
+     template <class Fn>
+     bool mutate(uint32_t frame, uintptr_t owner, Fn&& fn) {
+         if (owner == 0) { return false; }
+@@ -129,6 +173,46 @@ public:
+         return std::nullopt;
+     }
+ 
++    template <class Predicate>
++    std::optional<Match> read_unique(Predicate&& predicate, bool& ambiguous) const {
++        ambiguous = false;
++        std::scoped_lock lock{m_mutex};
++        std::optional<Match> result{};
++        for (const auto& slot : m_slots) {
++            if (slot.owner == 0 || !predicate(slot.frame, slot.owner, slot.payload)) {
++                continue;
++            }
++            if (result.has_value()) {
++                ambiguous = true;
++                return std::nullopt;
++            }
++            result = Match{slot.frame, slot.owner, slot.payload};
++        }
++        return result;
++    }
++
++    template <class Predicate, class Fn>
++    std::optional<Match> mutate_unique(Predicate&& predicate, Fn&& fn, bool& ambiguous) {
++        ambiguous = false;
++        std::scoped_lock lock{m_mutex};
++        Slot* selected{};
++        for (auto& slot : m_slots) {
++            if (slot.owner == 0 || !predicate(slot.frame, slot.owner, slot.payload)) {
++                continue;
++            }
++            if (selected != nullptr) {
++                ambiguous = true;
++                return std::nullopt;
++            }
++            selected = &slot;
++        }
++        if (selected == nullptr) {
++            return std::nullopt;
++        }
++        std::forward<Fn>(fn)(selected->payload);
++        return Match{selected->frame, selected->owner, selected->payload};
++    }
++
+     void clear() {
+         std::scoped_lock lock{m_mutex};
+         for (auto& slot : m_slots) { slot = {}; }
+diff --git a/src/mods/vr/FFakeStereoRenderingHook.cpp b/src/mods/vr/FFakeStereoRenderingHook.cpp
+index acc68153..9fdd0912 100644
+--- a/src/mods/vr/FFakeStereoRenderingHook.cpp
++++ b/src/mods/vr/FFakeStereoRenderingHook.cpp
+@@ -23916,6 +23916,8 @@ sdk::FSceneView* FFakeStereoRenderingHook::sceneview_constructor(sdk::FSceneView
+                     uint32_t family_frame{};
+                     std::memcpy(&family_frame,
+                         reinterpret_cast<const void*>(family_address + frame_offset), sizeof(family_frame));
++                    native_views[result].family_frame = family_frame;
++                    native_views[result].family_frame_valid = true;
+                     const auto source_eye = init_options_original_stereo_pass == EStereoscopicPass::eSSP_PRIMARY ? 0u : 1u;
+                     NativeDuoViewSourceFamily source{};
+                     source.family = init_options_view_family;
+@@ -26007,12 +26009,13 @@ void FFakeStereoRenderingHook::begin_render_viewfamily_real(void* render_module,
+         packet->duoview_projections_valid = native_left_metadata.projection_valid && native_right_metadata.projection_valid;
+         if (packet->duoview) {
+             const auto family_address = reinterpret_cast<uintptr_t>(view_family);
+-            const auto frame_offset = SceneViewExtensionAnalyzer::frame_count_offset;
+-            if (frame_offset != 0 && frame_offset < 0x4000 &&
+-                is_readable_process_range(family_address + frame_offset, sizeof(uint32_t))) {
+-                std::memcpy(&packet->source_frame,
+-                    reinterpret_cast<const void*>(family_address + frame_offset), sizeof(packet->source_frame));
+-                packet->source_frame_valid = true;
++            packet->source_frame_valid = native_left_metadata.family_frame_valid &&
++                native_right_metadata.family_frame_valid &&
++                native_left_metadata.family_frame == native_right_metadata.family_frame &&
++                native_left_metadata.scene == view_family_scene &&
++                native_right_metadata.scene == view_family_scene;
++            if (packet->source_frame_valid) {
++                packet->source_frame = native_left_metadata.family_frame;
+                 if (!g_hook->retain_native_duoview_source_packet(packet)) {
+                     SPDLOG_WARNING_EVERY_N_SEC(2,
+                         "[DuoView] Native Fix packet could not bind to its exact source owner frame={} settings_frame={} family={:x}",
+@@ -26020,8 +26023,10 @@ void FFakeStereoRenderingHook::begin_render_viewfamily_real(void* render_module,
+                 }
+             } else {
+                 SPDLOG_WARNING_EVERY_N_SEC(2,
+-                    "[DuoView] Native Fix packet has no validated family-frame key settings_frame={} family={:x}",
+-                    packet->engine_frame, family_address);
++                    "[DuoView] Native Fix packet has inconsistent constructor family/frame snapshots settings_frame={} family={:x} left_frame={} right_frame={} left_valid={} right_valid={}",
++                    packet->engine_frame, family_address, native_left_metadata.family_frame,
++                    native_right_metadata.family_frame, native_left_metadata.family_frame_valid,
++                    native_right_metadata.family_frame_valid);
+             }
+         }
+         if (stalker_primary_frame && stalker_secondary_frame) {
+@@ -26860,6 +26865,10 @@ void FFakeStereoRenderingHook::begin_render_viewfamily(ISceneViewExtension* exte
+     runtime->internal_frame_count = frame_count;
+     runtime->on_pre_render_game_thread(frame_count);
+ 
++    if (vr->is_native_duoview_selected_for_frame(g_frame_count)) {
++        g_hook->mark_native_duoview_main_family(view_family, frame_count);
++    }
++
+     if (vr->mono_frame_gate_required() && runtime->is_openxr()) {
+         const bool main_family = view_family.get_render_target() != nullptr && view_family.get_render_target() ==
+             reinterpret_cast<sdk::FRenderTarget*>(g_hook->get_render_target_manager()->get_viewport());
+@@ -27482,13 +27491,15 @@ void FFakeStereoRenderingHook::record_native_duoview_source_view(
+     const auto stored = m_native_duoview_source_families.mutate(
+         source.source_frame, reinterpret_cast<uintptr_t>(source.family),
+         [&](NativeDuoViewSourceFamily& slot, bool inserted) {
+-        if (inserted || slot.family == nullptr) {
++        if (inserted || slot.family == nullptr || slot.settings_frame != source.settings_frame) {
+             slot = source;
+             slot.views[0] = nullptr;
+             slot.views[1] = nullptr;
+             slot.native_packet.reset();
++            slot.join = {};
+             slot.view_mask = 0;
+             slot.conflicted = false;
++            slot.main_family_validated = false;
+         } else {
+         const auto same_parameters = [](const uevr::duoview::Parameters& a, const uevr::duoview::Parameters& b) {
+             return a.fovea_width == b.fovea_width && a.fovea_height == b.fovea_height &&
+@@ -27527,6 +27538,45 @@ void FFakeStereoRenderingHook::record_native_duoview_source_view(
+     }
+ }
+ 
++void FFakeStereoRenderingHook::mark_native_duoview_main_family(
++    sdk::FSceneViewFamily& family, uint32_t source_frame)
++{
++    auto* const target_manager = get_render_target_manager();
++    auto* const expected_target = target_manager != nullptr
++        ? target_manager->get_view_family_render_target()
++        : nullptr;
++    auto* const views = family.get_views();
++    if (expected_target == nullptr || family.get_render_target() != expected_target ||
++        views == nullptr || views->count != 2 || views->capacity < 2 || views->data == nullptr ||
++        !is_readable_process_range(reinterpret_cast<uintptr_t>(views->data), sizeof(void*) * 2) ||
++        !sdk::FSceneViewFamily::validate_views(&family, views, 2)) {
++        return;
++    }
++
++    bool ambiguous{};
++    const auto source = m_native_duoview_source_families.mutate_unique(
++        [&](uint32_t frame, uintptr_t, const NativeDuoViewSourceFamily& candidate) {
++            return frame == source_frame && candidate.source_frame == source_frame && candidate.selected &&
++                candidate.view_mask == 0x3 && !candidate.conflicted &&
++                candidate.scene == family.get_scene_interface() && candidate.target == expected_target &&
++                candidate.views[0] != nullptr && candidate.views[1] != nullptr &&
++                candidate.views[0] != candidate.views[1] &&
++                ((views->data[0] == candidate.views[0] && views->data[1] == candidate.views[1]) ||
++                    (views->data[0] == candidate.views[1] && views->data[1] == candidate.views[0]));
++        },
++        [](NativeDuoViewSourceFamily& candidate) { candidate.main_family_validated = true; },
++        ambiguous);
++
++    if (!source.has_value()) {
++        SPDLOG_INFO_EVERY_N_SEC(2,
++            "[DuoView] Main-family source did not validate uniquely for frame={} scene={:x} target={:x} ambiguous={}",
++            source_frame, reinterpret_cast<uintptr_t>(family.get_scene_interface()),
++            reinterpret_cast<uintptr_t>(family.get_render_target()), ambiguous);
++        return;
++    }
++    try_publish_native_duoview_transaction(source->frame, source->owner);
++}
++
+ bool FFakeStereoRenderingHook::retain_native_duoview_source_packet(
+     std::shared_ptr<const NativeStereoFramePacket> packet)
+ {
+@@ -27534,56 +27584,125 @@ bool FFakeStereoRenderingHook::retain_native_duoview_source_packet(
+         return false;
+     }
+ 
+-    bool retained{};
+-    const auto found = m_native_duoview_source_families.mutate_if_present(
+-        packet->source_frame, reinterpret_cast<uintptr_t>(packet->family),
+-        [&](NativeDuoViewSourceFamily& source) {
+-            if (source.view_mask != 0x3 || source.family != packet->family ||
+-                source.settings_frame != packet->engine_frame || source.scene != packet->scene ||
+-                source.target != packet->main_target || source.views[0] != packet->left_view ||
+-                source.views[1] != packet->right_view || !source.projection_valid[0] ||
+-                !source.projection_valid[1]) {
+-                source.conflicted = true;
+-                return;
+-            }
+-
+-            const auto rect_matches = [](const FIntRect& a, const FIntRect& b) {
+-                return a.bounds[0] == b.bounds[0] && a.bounds[1] == b.bounds[1] &&
+-                    a.bounds[2] == b.bounds[2] && a.bounds[3] == b.bounds[3];
+-            };
+-            if (!rect_matches(source.rects[0], packet->left_view_rect) ||
+-                !rect_matches(source.rects[1], packet->right_view_rect)) {
+-                source.conflicted = true;
+-                return;
+-            }
+-            source.native_packet = packet;
+-            retained = true;
+-        });
++    const auto rect_matches = [](const FIntRect& a, const FIntRect& b) {
++        return a.bounds[0] == b.bounds[0] && a.bounds[1] == b.bounds[1] &&
++            a.bounds[2] == b.bounds[2] && a.bounds[3] == b.bounds[3];
++    };
++    const auto same_parameters = [](const uevr::duoview::Parameters& a,
++                                    const uevr::duoview::Parameters& b) {
++        return a.fovea_width == b.fovea_width && a.fovea_height == b.fovea_height &&
++            a.fovea_scale == b.fovea_scale && a.periphery_scale == b.periphery_scale &&
++            a.center_x == b.center_x && a.center_y == b.center_y && a.feather == b.feather &&
++            a.vertical_offset == b.vertical_offset && a.optical_center_x == b.optical_center_x &&
++            a.optical_center_y == b.optical_center_y;
++    };
++    bool ambiguous{};
++    const auto source = m_native_duoview_source_families.mutate_unique(
++        [&](uint32_t frame, uintptr_t, const NativeDuoViewSourceFamily& candidate) {
++            return frame == packet->source_frame && candidate.source_frame == packet->source_frame &&
++                candidate.selected && candidate.view_mask == 0x3 && !candidate.conflicted &&
++                candidate.settings_frame == packet->engine_frame && candidate.scene == packet->scene &&
++                candidate.target == packet->main_target && candidate.views[0] == packet->left_view &&
++                candidate.views[1] == packet->right_view && candidate.projection_valid[0] &&
++                candidate.projection_valid[1] && rect_matches(candidate.rects[0], packet->left_view_rect) &&
++                rect_matches(candidate.rects[1], packet->right_view_rect) &&
++                same_parameters(candidate.parameters, packet->duoview_parameters);
++        },
++        [&](NativeDuoViewSourceFamily& candidate) {
++            candidate.native_packet = packet;
++            candidate.join.mark_packet_available();
++        },
++        ambiguous);
+ 
+-    if (!found || !retained) {
++    if (!source.has_value()) {
+         SPDLOG_WARNING_EVERY_N_SEC(2,
+-            "[DuoView] Native Fix packet did not match its retained source owner frame={} family={:x} settings_frame={} found={}",
+-            packet->source_frame, reinterpret_cast<uintptr_t>(packet->family), packet->engine_frame, found);
++            "[DuoView] Native Fix packet did not match a unique retained source identity frame={} family={:x} settings_frame={} ambiguous={}",
++            packet->source_frame, reinterpret_cast<uintptr_t>(packet->family), packet->engine_frame, ambiguous);
++        return false;
+     }
+-    return found && retained;
++
++    try_publish_native_duoview_transaction(source->frame, source->owner);
++    return true;
+ }
+ 
+ std::optional<FFakeStereoRenderingHook::NativeDuoViewSourceFamily>
+ FFakeStereoRenderingHook::get_native_duoview_source_family(
+-    sdk::FSceneViewFamily* family, uint32_t source_frame) const
++    uint32_t source_frame, sdk::FSceneInterface* scene, sdk::FRenderTarget* target,
++    bool* ambiguous) const
+ {
+-    if (family == nullptr) { return std::nullopt; }
+-    const auto retained = m_native_duoview_source_families.read(
+-        source_frame, reinterpret_cast<uintptr_t>(family));
+-    if (!retained.has_value()) { return std::nullopt; }
+-    const auto& source = *retained;
+-    if (source.family != family || source.source_frame != source_frame || source.view_mask != 0x3 ||
+-        source.views[0] == nullptr || source.views[1] == nullptr || source.views[0] == source.views[1] ||
+-        source.scene == nullptr || source.target == nullptr || source.conflicted ||
+-        !source.projection_valid[0] || !source.projection_valid[1]) {
++    bool is_ambiguous{};
++    if (scene == nullptr || target == nullptr) {
++        if (ambiguous != nullptr) { *ambiguous = false; }
+         return std::nullopt;
+     }
+-    return source;
++    const auto match = m_native_duoview_source_families.read_unique(
++        [&](uint32_t frame, uintptr_t, const NativeDuoViewSourceFamily& source) {
++            return frame == source_frame && source.source_frame == source_frame && source.selected &&
++                source.main_family_validated && source.scene == scene && source.target == target &&
++                source.view_mask == 0x3 && source.views[0] != nullptr && source.views[1] != nullptr &&
++                source.views[0] != source.views[1] && !source.conflicted &&
++                source.projection_valid[0] && source.projection_valid[1];
++        }, is_ambiguous);
++    if (ambiguous != nullptr) { *ambiguous = is_ambiguous; }
++    return match.has_value() ? std::optional<NativeDuoViewSourceFamily>{match->payload} : std::nullopt;
++}
++
++void FFakeStereoRenderingHook::bind_native_duoview_rhi_transaction(
++    uint32_t source_frame, uintptr_t family_owner, uint32_t submit_frame, uint64_t output_generation)
++{
++    bool bound{};
++    const auto found = m_native_duoview_source_families.mutate_if_present(
++        source_frame, family_owner, [&](NativeDuoViewSourceFamily& source) {
++            if (!source.selected || !source.main_family_validated || source.conflicted ||
++                source.source_frame != source_frame) {
++                return;
++            }
++            bound = source.join.bind_rhi_token(submit_frame, output_generation);
++        });
++    if (!found || !bound) {
++        SPDLOG_INFO_EVERY_N_SEC(2,
++            "[DuoView] RHI token did not bind to its retained source owner frame={} owner={:x} generation={}",
++            source_frame, family_owner, output_generation);
++        return;
++    }
++    try_publish_native_duoview_transaction(source_frame, family_owner);
++}
++
++void FFakeStereoRenderingHook::try_publish_native_duoview_transaction(
++    uint32_t source_frame, uintptr_t family_owner)
++{
++    std::optional<NativeDuoViewTransaction> transaction{};
++    uint64_t output_generation{};
++    const auto found = m_native_duoview_source_families.mutate_if_present(
++        source_frame, family_owner, [&](NativeDuoViewSourceFamily& source) {
++            if (!source.selected || !source.main_family_validated || source.conflicted ||
++                source.source_frame != source_frame || source.view_mask != 0x3 ||
++                source.views[0] == nullptr || source.views[1] == nullptr ||
++                !source.projection_valid[0] || !source.projection_valid[1]) {
++                return;
++            }
++            const auto token = source.join.take_ready(source.native_stereo_fix);
++            if (!token.has_value()) { return; }
++
++            NativeDuoViewTransaction ready{};
++            ready.source_frame = source.source_frame;
++            ready.settings_frame = source.settings_frame;
++            ready.submit_frame = token->submit_frame;
++            ready.family = reinterpret_cast<uintptr_t>(source.family);
++            ready.scene = reinterpret_cast<uintptr_t>(source.scene);
++            ready.target = reinterpret_cast<uintptr_t>(source.target);
++            ready.source_rects = {source.rects[0], source.rects[1]};
++            ready.parameters = source.parameters;
++            ready.native_packet = source.native_packet;
++            ready.selected = source.selected;
++            ready.native_stereo_fix = source.native_stereo_fix;
++            output_generation = token->output_generation;
++            transaction = std::move(ready);
++        });
++
++    if (found && transaction.has_value()) {
++        publish_native_duoview_transaction(std::move(*transaction), output_generation);
++    }
+ }
+ 
+ void FFakeStereoRenderingHook::publish_native_duoview_transaction(
+@@ -28233,51 +28352,23 @@ void FFakeStereoRenderingHook::pre_render_viewfamily_renderthread(ISceneViewExte
+     // exact RHI frame token sent by the existing pose handoff below. Present
+     // consumes this immutable record by its current m_frame_count value; it
+     // never asks for the newest GAME-thread snapshot.
+-    if (const auto source = g_hook->get_native_duoview_source_family(&view_family, frame_count);
+-        source.has_value() && source->selected)
+-    {
+-        auto* const target_manager = g_hook->get_render_target_manager();
+-        const auto expected_target = target_manager != nullptr
+-            ? target_manager->get_view_family_render_target()
+-            : nullptr;
+-        if (source->target == nullptr || source->target != expected_target ||
+-            source->target != view_family.get_render_target() || source->scene != view_family.get_scene_interface()) {
++    auto* const target_manager = g_hook->get_render_target_manager();
++    const auto expected_target = target_manager != nullptr
++        ? target_manager->get_view_family_render_target()
++        : nullptr;
++    if (expected_target != nullptr && view_family.get_render_target() == expected_target) {
++        bool ambiguous_source{};
++        const auto source = g_hook->get_native_duoview_source_family(
++            frame_count, view_family.get_scene_interface(), expected_target, &ambiguous_source);
++        if (source.has_value() && source->selected) {
++            g_hook->bind_native_duoview_rhi_transaction(
++                frame_count, reinterpret_cast<uintptr_t>(source->family), frame_count + compensation,
++                vr->d3d12().duoview_output_generation());
++        } else if (ambiguous_source) {
+             SPDLOG_WARNING_EVERY_N_SEC(2,
+-                "[DuoView] Refusing source-family transaction with changed owner frame={} family={:x} target={:x} expected={:x} scene={:x}",
+-                frame_count, reinterpret_cast<uintptr_t>(&view_family), reinterpret_cast<uintptr_t>(source->target),
+-                reinterpret_cast<uintptr_t>(expected_target), reinterpret_cast<uintptr_t>(source->scene));
+-        } else {
+-        NativeDuoViewTransaction transaction{};
+-        transaction.source_frame = frame_count;
+-        transaction.settings_frame = source->settings_frame;
+-        transaction.submit_frame = frame_count + compensation;
+-        transaction.family = reinterpret_cast<uintptr_t>(source->family);
+-        transaction.scene = reinterpret_cast<uintptr_t>(source->scene);
+-        transaction.target = reinterpret_cast<uintptr_t>(source->target);
+-        transaction.source_rects = {source->rects[0], source->rects[1]};
+-        transaction.parameters = source->parameters;
+-        transaction.selected = source->selected;
+-        transaction.native_stereo_fix = source->native_stereo_fix;
+-
+-        if (source->native_stereo_fix) {
+-            const auto& packet = source->native_packet;
+-            if (packet != nullptr && packet->source_frame_valid && packet->source_frame == frame_count &&
+-                packet->family == source->family && packet->duoview &&
+-                packet->engine_frame == source->settings_frame && packet->left_view == source->views[0] &&
+-                packet->right_view == source->views[1] && packet->left_view_rect.bounds[0] == source->rects[0].bounds[0] &&
+-                packet->left_view_rect.bounds[1] == source->rects[0].bounds[1] &&
+-                packet->left_view_rect.bounds[2] == source->rects[0].bounds[2] &&
+-                packet->left_view_rect.bounds[3] == source->rects[0].bounds[3] &&
+-                packet->right_view_rect.bounds[0] == source->rects[1].bounds[0] &&
+-                packet->right_view_rect.bounds[1] == source->rects[1].bounds[1] &&
+-                packet->right_view_rect.bounds[2] == source->rects[1].bounds[2] &&
+-                packet->right_view_rect.bounds[3] == source->rects[1].bounds[3]) {
+-                transaction.native_packet = packet;
+-            }
+-        }
+-
+-        g_hook->publish_native_duoview_transaction(
+-            std::move(transaction), vr->d3d12().duoview_output_generation());
++                "[DuoView] Refusing ambiguous copied-family handoff frame={} scene={:x} target={:x}",
++                frame_count, reinterpret_cast<uintptr_t>(view_family.get_scene_interface()),
++                reinterpret_cast<uintptr_t>(expected_target));
+         }
+     }
+ 
+diff --git a/src/mods/vr/FFakeStereoRenderingHook.hpp b/src/mods/vr/FFakeStereoRenderingHook.hpp
+index 1be8fe96..a2468053 100644
+--- a/src/mods/vr/FFakeStereoRenderingHook.hpp
++++ b/src/mods/vr/FFakeStereoRenderingHook.hpp
+@@ -1380,6 +1380,8 @@ private:
+         bool player_index_valid{};
+         uint32_t original_stereo_pass{};
+         uint32_t frame{};
++        uint32_t family_frame{};
++        bool family_frame_valid{};
+         FIntRect view_rect{};
+         FIntRect constrained_view_rect{};
+         uint64_t projection_hash{};
+@@ -1396,17 +1398,24 @@ private:
+         FIntRect rects[2]{};
+         uevr::duoview::Parameters parameters{};
+         std::shared_ptr<const NativeStereoFramePacket> native_packet{};
++        uevr::duoview::NativeFrameJoin join{};
+         uint8_t view_mask{};
+         bool selected{};
+         bool native_stereo_fix{};
++        bool main_family_validated{};
+         bool projection_valid[2]{};
+         bool conflicted{};
+     };
+ 
+     void record_native_duoview_source_view(const NativeDuoViewSourceFamily& source, uint32_t eye);
++    void mark_native_duoview_main_family(sdk::FSceneViewFamily& family, uint32_t source_frame);
+     bool retain_native_duoview_source_packet(std::shared_ptr<const NativeStereoFramePacket> packet);
+     std::optional<NativeDuoViewSourceFamily> get_native_duoview_source_family(
+-        sdk::FSceneViewFamily* family, uint32_t source_frame) const;
++        uint32_t source_frame, sdk::FSceneInterface* scene, sdk::FRenderTarget* target,
++        bool* ambiguous = nullptr) const;
++    void bind_native_duoview_rhi_transaction(
++        uint32_t source_frame, uintptr_t family_owner, uint32_t submit_frame, uint64_t output_generation);
++    void try_publish_native_duoview_transaction(uint32_t source_frame, uintptr_t family_owner);
+     void publish_native_duoview_transaction(NativeDuoViewTransaction transaction, uint64_t output_generation);
+ 
+     void set_native_stereo_fix_state(NativeStereoFixState state, const char* detail = nullptr);
+diff --git a/tests/MonoD3D12Tests.cpp b/tests/MonoD3D12Tests.cpp
+index dfb0e9b5..ae7db166 100644
+--- a/tests/MonoD3D12Tests.cpp
++++ b/tests/MonoD3D12Tests.cpp
+@@ -216,13 +216,27 @@ static void test_duoview_frame_transactions() {
+     struct OwnedSource {
+         uint32_t frame{};
+         uintptr_t family{};
++        uintptr_t scene{};
++        uintptr_t target{};
++        uintptr_t views[2]{};
+         uint64_t packet_serial{};
+         uint8_t view_mask{};
++        bool main_family{};
++        duo::NativeFrameJoin join{};
+     };
+     duo::OwnerFrameRing<OwnedSource, 64> source_families;
+     const auto retain_family = [&](uint32_t frame, uintptr_t family, uint64_t packet) {
+         return source_families.mutate(frame, family, [=](OwnedSource& value, bool inserted) {
+-            if (inserted) { value = {frame, family, packet, 0}; }
++            if (inserted) {
++                value.frame = frame;
++                value.family = family;
++                value.scene = 0x55;
++                value.target = 0x66;
++                value.views[0] = family == 0xabc ? 0x111 : 0x333;
++                value.views[1] = family == 0xabc ? 0x222 : 0x444;
++                value.packet_serial = packet;
++                value.view_mask = 0x3;
++            }
+             else if (packet != 0) { value.packet_serial = packet; }
+         });
+     };
+@@ -230,15 +244,122 @@ static void test_duoview_frame_transactions() {
+     expect(retain_family(100, 0xdef, 0), "interleaved auxiliary family receives a distinct owner slot");
+     expect(retain_family(101, 0xabc, 101), "producer publishes source and packet for frame 101");
+     expect(retain_family(102, 0xabc, 102), "producer publishes source and packet for frame 102");
+-    const auto packet_attached = source_families.mutate_if_present(100, 0xabc, [](OwnedSource& value) {
+-        value.packet_serial = 100;
+-    });
++    bool ambiguous{};
++    const auto main_family_copy = uintptr_t{0x999};
++    const auto marked_main = source_families.mutate_unique(
++        [](uint32_t frame, uintptr_t, const OwnedSource& value) {
++            return frame == 100 && value.scene == 0x55 && value.target == 0x66 &&
++                value.view_mask == 0x3 && value.views[0] == 0x111 && value.views[1] == 0x222;
++        },
++        [](OwnedSource& value) { value.main_family = true; }, ambiguous);
++    expect(marked_main && marked_main->owner == 0xabc && !ambiguous && main_family_copy != marked_main->owner,
++        "GT family copy marks its source by frame/scene/target/view identity, without pointer equality");
++
++    const auto packet_family_copy = uintptr_t{0x998};
++    const auto packet_source = source_families.mutate_unique(
++        [](uint32_t frame, uintptr_t, const OwnedSource& value) {
++            return frame == 100 && value.scene == 0x55 && value.target == 0x66 &&
++                value.views[0] == 0x111 && value.views[1] == 0x222;
++        },
++        [](OwnedSource& value) { value.packet_serial = 100; }, ambiguous);
++    const bool packet_attached = packet_source && packet_source->owner == 0xabc &&
++        packet_family_copy != packet_source->owner;
++    const auto copied_family_lookup = source_families.read_unique(
++        [](uint32_t frame, uintptr_t, const OwnedSource& value) {
++            return frame == 100 && value.scene == 0x55 && value.target == 0x66 && value.main_family &&
++                value.views[0] == 0x111 && value.views[1] == 0x222;
++        }, ambiguous);
+     const auto main_family = source_families.read(100, 0xabc);
+     const auto auxiliary_family = source_families.read(100, 0xdef);
+     expect(packet_attached && main_family && main_family->packet_serial == 100 && main_family->family == 0xabc,
+         "render-thread binding attaches the exact native packet after newer game-thread producers run");
+     expect(auxiliary_family && auxiliary_family->packet_serial == 0 && auxiliary_family->family == 0xdef,
+         "same-frame auxiliary family cannot overwrite or inherit the selected main owner packet");
++    expect(copied_family_lookup && copied_family_lookup->owner == 0xabc && !ambiguous,
++        "copied renderer family resolves through unique frame/scene/target/view main-family identity");
++
++    // Native Fix submits two renderer calls: primary to the viewport and
++    // secondary to a capture target. Only the first may bind the Present token.
++    duo::NativeFrameJoin render_thread_first{};
++    const auto primary_rt_family = source_families.read_unique(
++        [](uint32_t frame, uintptr_t, const OwnedSource& value) {
++            return frame == 100 && value.scene == 0x55 && value.target == 0x66 && value.main_family;
++        }, ambiguous);
++    constexpr uint32_t frame_delay_compensation = 2;
++    if (primary_rt_family) {
++        render_thread_first.bind_rhi_token(100 + frame_delay_compensation, 9);
++    }
++    expect(primary_rt_family && primary_rt_family->owner == 0xabc,
++        "RT copy of the primary family resolves to the unique source transaction");
++    expect(!render_thread_first.take_ready(true), "RHI-before-packet ordering waits for the retained packet");
++    bool capture_target_ambiguous{};
++    const auto capture_target_lookup = source_families.read_unique(
++        [](uint32_t frame, uintptr_t, const OwnedSource& value) {
++            return frame == 100 && value.scene == 0x55 && value.target == 0x77 && value.main_family;
++        }, capture_target_ambiguous);
++    expect(!capture_target_lookup && !capture_target_ambiguous,
++        "Native Fix secondary capture-target callback cannot replace the main viewport binding");
++    const auto retained_packet = source_families.mutate_unique(
++        [](uint32_t frame, uintptr_t, const OwnedSource& value) {
++            return frame == 100 && value.scene == 0x55 && value.target == 0x66 &&
++                value.views[0] == 0x111 && value.views[1] == 0x222;
++        },
++        [&](OwnedSource& value) {
++            value.packet_serial = 100;
++            render_thread_first.mark_packet_available();
++        }, ambiguous);
++    expect(retained_packet && retained_packet->owner == 0xabc,
++        "late Native Fix packet joins the same producer-owned source after copied-family RT work");
++    const auto joined_after_packet = render_thread_first.take_ready(true);
++    expect(joined_after_packet && joined_after_packet->submit_frame == 102 &&
++        joined_after_packet->output_generation == 9,
++        "primary N+compensation token reaches the exact Present transaction after both Native Fix calls");
++    expect(!render_thread_first.take_ready(true), "the joined transaction publishes only once");
++
++    duo::FrameTransactionRing<Source, 8> present_transactions;
++    expect(present_transactions.publish(joined_after_packet->submit_frame,
++        joined_after_packet->output_generation, 44, {100, 0xabc, 0xdef}),
++        "joined source frame N is retained under the exact N+compensation Present token");
++    const uint32_t runtime_internal_render_frame_count = joined_after_packet->submit_frame;
++    const uint32_t vr_frame_count = runtime_internal_render_frame_count;
++    const auto presented_transaction = present_transactions.read(vr_frame_count, 9);
++    const uint32_t completed_render_frame_count = vr_frame_count;
++    const auto duplicate_frame = present_transactions.read(completed_render_frame_count, 9);
++    expect(presented_transaction && presented_transaction->payload.family_frame == 100 &&
++        completed_render_frame_count == vr_frame_count && duplicate_frame && duplicate_frame->serial == 44,
++        "on_present and duplicate Present consume source N by the enqueued N+compensation token");
++
++    source_families.mutate(100, 0x123, [](OwnedSource& value, bool inserted) {
++        if (inserted) {
++            value.frame = 100;
++            value.family = 0x123;
++            value.scene = 0x55;
++            value.target = 0x66;
++            value.views[0] = 0x111;
++            value.views[1] = 0x222;
++            value.main_family = true;
++        }
++    });
++    const auto ambiguous_lookup = source_families.read_unique(
++        [](uint32_t frame, uintptr_t, const OwnedSource& value) {
++            return frame == 100 && value.scene == 0x55 && value.target == 0x66 && value.main_family;
++        }, ambiguous);
++    expect(!ambiguous_lookup && ambiguous,
++        "two main-family candidates with the same stable identity fail closed as ambiguous");
++
++    duo::NativeFrameJoin packet_first{};
++    packet_first.mark_packet_available();
++    expect(packet_first.bind_rhi_token(302, 10), "packet-first path records the RHI handoff");
++    const auto joined_after_rhi = packet_first.take_ready(true);
++    expect(joined_after_rhi && joined_after_rhi->submit_frame == 302 &&
++        joined_after_rhi->output_generation == 10,
++        "packet-before-RHI ordering publishes when the exact RHI token arrives");
++
++    duo::NativeFrameJoin native_fix_off{};
++    expect(native_fix_off.bind_rhi_token(402, 11), "ordinary native path retains its exact RHI token");
++    const auto ordinary_join = native_fix_off.take_ready(false);
++    expect(ordinary_join && ordinary_join->submit_frame == 402,
++        "Native Fix disabled path does not wait for a capture packet");
+ }
+ 
+ static void test_duoview_compositor(ID3D12Device* device, ID3D12CommandQueue* queue) {
