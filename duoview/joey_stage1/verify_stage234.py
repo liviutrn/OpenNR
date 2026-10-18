@@ -97,11 +97,19 @@ def main():
                "m_duo_reacquire->draw(", "m_duo_offset_x->draw(", "m_duo_offset_y->draw(",
                "m_duoview_gaze.set_recovery_controls("):
   if token not in vr_cpp: raise RuntimeError("Gaze recovery controls not wired "+token)
- for token in ("Invalid requested atlas sizes; retaining last valid quality while applying other controls",
-               "candidate.crop_width=current.crop_width",
-               "candidate.peripheral_scale=current.peripheral_scale",
-               "candidate.gaze_still_radius=(std::min)(current.gaze_still_radius"):
-  if token not in vr_cpp: raise RuntimeError("UI settings isolation regression: "+token)
+ for token in ("uevr::duoview::reconcile_ui_settings(candidate,current)",
+               "m_duo_ui_rejected_mask.store(checked.rejected",
+               "m_duo_ui_rejected_mask.load(std::memory_order_acquire)",
+               "Control warning: one or more requested sliders are invalid",
+               "Active Eye Tracking: %s, Native shading: %s"):
+  if token not in vr_cpp: raise RuntimeError("General settings validation/status wiring missing: "+token)
+ for token in ("m_duo_ui_rejected_mask{0}",):
+  if token not in vr_header: raise RuntimeError("General controls audit counter missing: "+token)
+ ui_config=(a.backend/"src/mods/vr/DuoViewConfig.hpp").read_text(encoding="utf-8")
+ for token in ("UiReconciled reconcile_ui_settings", "reject_width", "reject_still",
+               "out.native_fix_same_pass=requested.native_fix_same_pass",
+               "out.eye_tracked=requested.eye_tracked"):
+  if token not in ui_config: raise RuntimeError("Renderer-wide independent UI validation missing: "+token)
  crop_path=(a.backend/"src/mods/vr/DuoViewCropStability.hpp")
  crop_code=crop_path.read_text(encoding="utf-8")
  for token in ("std::clamp(.5f+s.gaze_offset_u", "std::clamp(.5f+s.gaze_offset_v",
