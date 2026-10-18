@@ -84,8 +84,19 @@ def main():
   raise RuntimeError("UE source selector must be connected to immutable frame settings")
  if "if (is_duoview_renderer_active()) { return true; }" not in vr_header:
   raise RuntimeError("DuoView must force Joey Native Stereo Fix on while active")
- if "if (is_duoview_renderer_active()) {\n        if (is_using_afr() || !stalker2_native_fix_requires_same_pass_cached())" not in vr_cpp:
-  raise RuntimeError("DuoView must preserve the validated STALKER Native Fix same-pass constructor safety")
+ if "if (is_duoview_renderer_active()) {\n        if (!m_duoview.settings().native_fix_same_pass ||" not in vr_cpp:
+  raise RuntimeError("DuoView Native Fix relabeling must be opt-in, preserving stock secondary shading when OFF")
+ for token in ("m_duoview.settings().native_fix_same_pass",
+               "is_native_stereo_fix_preserve_secondary_pass_enabled() const",
+               "!m_duoview.settings().native_fix_same_pass) return true"):
+  if token not in vr_header: raise RuntimeError("Native fix / stock SECONDARY shading path missing "+token)
+ for token in ("DuoViewNativeFixSamePass", "DuoViewQuantizationPixels", "DuoViewGazeHoldMs",
+               "DuoViewGazeReacquireSamples", "DuoViewGazeOffsetX", "DuoViewGazeOffsetY"):
+  if token not in vr_header: raise RuntimeError("Persisted runtime control missing "+token)
+ for token in ("m_duo_native_fix->draw(", "m_duo_quant->draw(", "m_duo_hold->draw(",
+               "m_duo_reacquire->draw(", "m_duo_offset_x->draw(", "m_duo_offset_y->draw(",
+               "m_duoview_gaze.set_recovery_controls("):
+  if token not in vr_cpp: raise RuntimeError("Gaze recovery controls not wired "+token)
  if "bool VR::is_stalker2_native_fix_experiment_enabled() const {\n    if (is_duoview_renderer_active()) { return false; }" not in vr_cpp:
   raise RuntimeError("Unrelated experimental pair submission must stay out of DuoView")
  if "duo_main_target = rtm ? rtm->get_view_family_render_target()" not in hook or "duo_views_readable" not in hook:
