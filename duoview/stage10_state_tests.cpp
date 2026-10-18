@@ -81,6 +81,47 @@ int main() {
     auto unsnapped=stable.update({1,11},3400,3172,controls,UV{.514321f,.482134f},5011);
     assert(std::abs(unsnapped.u-(.514321f+.1f))<.0001f);
     controls.gaze_quant_pixels=2; controls.guard_fraction=.05f; controls.gaze_offset_u=0.f; controls.gaze_offset_v=0.f;
+    // Nonlinear adaptive response: lock sub-threshold fixation jitter.
+    CropStability adaptive;
+    Settings response; response.eye_tracked=true; response.stabilize_crop=true;
+    response.crop_width=response.crop_height=.3f;
+    response.guard_fraction=0.f; response.gaze_quant_pixels=0;
+    response.gaze_breakout_radius=.04f; response.gaze_still_radius=.005f;
+    response.gaze_relock_samples=3; response.gaze_micro_gain=0.f;
+    auto fix=adaptive.update({19,1},3000,3000,response,UV{.5f,.5f},1000);
+    assert(std::abs(fix.u-.5f)<1e-5f);
+    auto jitter=adaptive.update({19,2},3000,3000,response,UV{.502f,.498f},1011);
+    assert(jitter.u==fix.u && jitter.v==fix.v);
+    auto near_gaze=adaptive.update({19,3},3000,3000,response,UV{.52f,.5f},1022);
+    assert(near_gaze.u==fix.u && near_gaze.v==fix.v);
+    // Crossing the breakout radius jumps immediately, without a smoothing tail.
+    auto saccade=adaptive.update({19,4},3000,3000,response,UV{.60f,.5f},1033);
+    assert(std::abs(saccade.u-.60f)<1e-5f);
+    auto continued=adaptive.update({19,5},3000,3000,response,UV{.65f,.5f},1044);
+    assert(std::abs(continued.u-.65f)<1e-5f);
+    // Full-speed mode stays live through the subsequent small eye step.
+    auto fast_small=adaptive.update({19,6},3000,3000,response,UV{.653f,.5f},1055);
+    assert(std::abs(fast_small.u-.653f)<1e-5f);
+    adaptive.update({19,7},3000,3000,response,UV{.653f,.5f},1066);
+    adaptive.update({19,8},3000,3000,response,UV{.653f,.5f},1077);
+    auto relocked=adaptive.update({19,9},3000,3000,response,UV{.654f,.5f},1088);
+    assert(std::abs(relocked.u-.653f)<1e-5f);
+    // Yet the next large saccade still moves the crop in a single new frame.
+    auto breakout=adaptive.update({19,10},3000,3000,response,UV{.72f,.5f},1099);
+    assert(std::abs(breakout.u-.72f)<1e-5f);
+    auto blink_held=adaptive.update({19,11},3000,3000,response,{},2000);
+    assert(blink_held.u==breakout.u && blink_held.v==breakout.v);
+    // Optional gain permits slow micro-motion without slowing big saccades.
+    adaptive.reset();
+    response.gaze_micro_gain=.2f;
+    auto start_gain=adaptive.update({20,1},3000,3000,response,UV{.5f,.5f},3000);
+    auto slow_gain=adaptive.update({20,2},3000,3000,response,UV{.52f,.5f},3011);
+    assert(std::abs(slow_gain.u-(start_gain.u+.02f*.2f))<1e-5f);
+    auto fast_gain=adaptive.update({20,3},3000,3000,response,UV{.62f,.5f},3022);
+    assert(std::abs(fast_gain.u-.62f)<1e-5f);
+    response.gaze_still_radius=.06f;
+    assert(!State{}.configure(response)); // stillness must be below breakout
+
     State temporal;
     controls.independent_shading=true;
     assert(temporal.configure(controls));
