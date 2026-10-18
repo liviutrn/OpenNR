@@ -1,0 +1,94 @@
+--- a/tests/MonoD3D12Tests.cpp
++++ b/tests/MonoD3D12Tests.cpp
+@@ -24,6 +24,13 @@
+     if (FAILED(hr)) { throw std::runtime_error(message); }
+ }
+ 
++struct DuoViewLifecycleSource {
++    uint32_t settings_frame{};
++    uint64_t packet_serial{};
++    uevr::duoview::SourceFamilyIdentity identity{};
++    uevr::duoview::NativeFrameJoin join{};
++};
++
+ static void test_duoview_geometry() {
+     namespace duo = uevr::duoview;
+     duo::Geometry geometry{};
+@@ -350,15 +357,9 @@
+     expect(!ambiguous_lookup && ambiguous,
+         "two main-family candidates with the same stable identity fail closed as ambiguous");
+ 
+-    struct LifecycleSource {
+-        uint32_t settings_frame{};
+-        uint64_t packet_serial{};
+-        duo::SourceFamilyIdentity identity{};
+-        duo::NativeFrameJoin join{};
+-    };
+-    duo::OwnerFrameRing<LifecycleSource, 8> lifecycle_sources;
++    duo::OwnerFrameRing<DuoViewLifecycleSource, 8> lifecycle_sources;
+     const auto retain_constructor_eye = [&](uint8_t eye, uintptr_t view) {
+-        return lifecycle_sources.mutate(700, 0x321, [=](LifecycleSource& value, bool inserted) {
++        return lifecycle_sources.mutate(700, 0x321, [=](DuoViewLifecycleSource& value, bool inserted) {
+             if (inserted) {
+                 value.settings_frame = 700;
+                 value.identity.source_frame = std::numeric_limits<uint32_t>::max();
+@@ -379,16 +380,16 @@
+         .views = {0x222, 0x111},
+     };
+     const auto authoritative_bind = lifecycle_sources.mutate_unique(
+-        [&](uint32_t, uintptr_t, const LifecycleSource& value) {
++        [&](uint32_t, uintptr_t, const DuoViewLifecycleSource& value) {
+             return duo::matches_authoritative_main_family(value.identity, authoritative_family);
+         },
+-        [&](LifecycleSource& value) {
++        [&](DuoViewLifecycleSource& value) {
+             expect(duo::bind_authoritative_source_frame(value.identity, authoritative_family),
+                 "production authoritative-frame helper accepts the exact copied GT view pair");
+         }, ambiguous);
+-    LifecycleSource bound_source{};
++    DuoViewLifecycleSource bound_source{};
+     const bool bound_source_found = lifecycle_sources.mutate_if_present(
+-        700, 0x321, [&](LifecycleSource& value) { bound_source = value; });
++        700, 0x321, [&](DuoViewLifecycleSource& value) { bound_source = value; });
+     expect(authoritative_bind && !ambiguous && authoritative_bind->frame == 700 &&
+         bound_source_found && bound_source.identity.source_frame_valid &&
+         bound_source.identity.source_frame == 5048,
+@@ -404,12 +405,12 @@
+     const uintptr_t copied_packet_family = 0x999;
+     bool packet_attached_after_metadata_refresh{};
+     const auto packet_owner = lifecycle_sources.mutate_unique(
+-        [&](uint32_t, uintptr_t, const LifecycleSource& value) {
++        [&](uint32_t, uintptr_t, const DuoViewLifecycleSource& value) {
+             return packet_family_frame_valid && value.settings_frame == 700 &&
+                 value.identity.source_frame_valid && value.identity.source_frame == packet_family_frame &&
+                 duo::matches_authoritative_main_family(value.identity, authoritative_family);
+         },
+-        [&](LifecycleSource& value) {
++        [&](DuoViewLifecycleSource& value) {
+             value.packet_serial = 93;
+             value.join.mark_packet_available();
+             packet_attached_after_metadata_refresh = true;
+@@ -420,19 +421,19 @@
+ 
+     const uintptr_t copied_rt_family = 0x777;
+     const auto rt_source = lifecycle_sources.read_unique(
+-        [&](uint32_t, uintptr_t, const LifecycleSource& value) {
++        [&](uint32_t, uintptr_t, const DuoViewLifecycleSource& value) {
+             return value.identity.source_frame_valid && value.identity.source_frame == 5048 &&
+                 value.identity.scene == 0x55 && value.identity.target == 0x66 &&
+                 duo::matches_authoritative_main_family(value.identity, authoritative_family);
+         }, ambiguous);
+     if (rt_source) {
+-        lifecycle_sources.mutate_if_present(700, 0x321, [](LifecycleSource& value) {
++        lifecycle_sources.mutate_if_present(700, 0x321, [](DuoViewLifecycleSource& value) {
+             value.join.bind_rhi_token(5050, 9);
+         });
+     }
+-    LifecycleSource lifecycle_join{};
++    DuoViewLifecycleSource lifecycle_join{};
+     const bool lifecycle_join_found = lifecycle_sources.mutate_if_present(
+-        700, 0x321, [&](LifecycleSource& value) { lifecycle_join = value; });
++        700, 0x321, [&](DuoViewLifecycleSource& value) { lifecycle_join = value; });
+     const auto exact_present = lifecycle_join_found ? lifecycle_join.join.take_ready(true) : std::nullopt;
+     expect(copied_rt_family != 0x321 && rt_source && rt_source->owner == 0x321 && exact_present &&
+         exact_present->submit_frame == 5050 && exact_present->output_generation == 9,
