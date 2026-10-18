@@ -326,6 +326,7 @@ int main() try {
     auto denied_primary=native_source(device.Get(),cmd.Get(),32,32,{0,0,255,255},false,0,
         D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET|D3D12_RESOURCE_FLAG_DENY_SHADER_RESOURCE);
     auto fallback_secondary=native_source(device.Get(),cmd.Get(),32,32,{255,0,0,255});
+    ID3D12CommandList* gather_lists[]{cmd.Get()};
     uevr::duoview::ViewFrame fallback_frame{};
     fallback_frame.config={{1,29},*fallback_layout,{.5f,.5f},{},1};
     fallback_frame.config.settings.fovea_view=0;
@@ -340,7 +341,7 @@ int main() try {
     D3D12_TEXTURE_COPY_LOCATION gathered_to{readback.Get(),D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT};
     gathered_to.PlacedFootprint=foot;
     cmd->CopyTextureRegion(&gathered_to,0,0,0,&gathered_from,nullptr);check(cmd->Close());
-    queue->ExecuteCommandLists(1,native_lists);
+    queue->ExecuteCommandLists(1,gather_lists);
     const UINT64 gather_signal=++native_signal;
     check(queue->Signal(fence.Get(),gather_signal));event=CreateEventW(nullptr,FALSE,FALSE,nullptr);
     check(fence->SetEventOnCompletion(gather_signal,event));
@@ -365,7 +366,7 @@ int main() try {
        compositor.srv_descriptor_refresh_count()!=gathered_srv_refreshes)
         throw std::runtime_error("Repeated Native gather rewrote its cached atlas descriptors: "+compositor.error());
     transition(cmd.Get(),stereo.Get(),D3D12_RESOURCE_STATE_RENDER_TARGET,D3D12_RESOURCE_STATE_COPY_SOURCE);
-    check(cmd->Close());queue->ExecuteCommandLists(1,native_lists);
+    check(cmd->Close());queue->ExecuteCommandLists(1,gather_lists);
     const UINT64 gather_repeat_signal=++native_signal;
     check(queue->Signal(fence.Get(),gather_repeat_signal));event=CreateEventW(nullptr,FALSE,FALSE,nullptr);
     check(fence->SetEventOnCompletion(gather_repeat_signal,event));
