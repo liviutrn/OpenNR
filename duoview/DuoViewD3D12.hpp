@@ -77,13 +77,13 @@ public:
         cmd->SetDescriptorHeaps(1, heaps);
         cmd->SetGraphicsRootSignature(root_.Get());
         cmd->SetPipelineState(pipeline_.Get());
-        cmd->SetGraphicsRootDescriptorTable(0, srv_->GetGPUDescriptorHandleForHeapStart());
+        cmd->SetGraphicsRootDescriptorTable(0, srv_gpu_start_);
         cmd->SetGraphicsRoot32BitConstants(1, sizeof(constants) / 4, &constants, 0);
         const D3D12_VIEWPORT viewport{0, 0, static_cast<float>(width_), static_cast<float>(height_), 0, 1};
         const D3D12_RECT rect{0, 0, static_cast<LONG>(width_), static_cast<LONG>(height_)};
         cmd->RSSetViewports(1, &viewport);
         cmd->RSSetScissorRects(1, &rect);
-        const auto handle = rtv_->GetCPUDescriptorHandleForHeapStart();
+        const auto handle = rtv_cpu_start_;
         cmd->OMSetRenderTargets(1, &handle, FALSE, nullptr);
         cmd->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
         cmd->DrawInstanced(3, 1, 0, 0);
@@ -215,13 +215,13 @@ public:
         cmd->SetDescriptorHeaps(1,heaps);
         cmd->SetGraphicsRootSignature(root_.Get());
         cmd->SetPipelineState(native_pipeline_.Get());
-        cmd->SetGraphicsRootDescriptorTable(0,srv_->GetGPUDescriptorHandleForHeapStart());
+        cmd->SetGraphicsRootDescriptorTable(0,srv_gpu_start_);
         cmd->SetGraphicsRoot32BitConstants(1,sizeof(constants)/4,&constants,0);
-        auto handle=rtv_->GetCPUDescriptorHandleForHeapStart();
+        auto handle=rtv_cpu_start_;
         if (direct_xr) {
             // Each Compositor is owned by one fenced XR command slot, so its
             // second RTV descriptor cannot be overwritten while GPU-active.
-            handle.ptr+=device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
+            handle=direct_xr_rtv_cpu_;
             if (xr_rtv_reference_.Get()!=destination || xr_rtv_format_!=xr_format) {
                 D3D12_RENDER_TARGET_VIEW_DESC xr_view{};
                 xr_view.Format=xr_format; xr_view.ViewDimension=D3D12_RTV_DIMENSION_TEXTURE2D;
@@ -357,9 +357,9 @@ private:
         view.ViewDimension=D3D12_SRV_DIMENSION_TEXTURE2D;
         view.Shader4ComponentMapping=D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
         view.Texture2D.MipLevels=1;
-        auto cpu=srv_->GetCPUDescriptorHandleForHeapStart();
+        auto cpu=srv_cpu_start_;
         device->CreateShaderResourceView(first,&view,cpu);
-        cpu.ptr+=device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+        cpu.ptr+=srv_descriptor_increment_;
         device->CreateShaderResourceView(second,&view,cpu);
         srv_first_reference_=first; srv_second_reference_=second;
         srv_cached_format_=format; srv_descriptors_valid_=true;
@@ -429,6 +429,8 @@ private:
         srv_first_reference_.Reset(); srv_second_reference_.Reset(); xr_rtv_reference_.Reset();
         srv_descriptors_valid_=false; srv_cached_format_=DXGI_FORMAT_UNKNOWN;
         xr_rtv_format_=DXGI_FORMAT_UNKNOWN;
+        srv_cpu_start_={}; srv_gpu_start_={}; rtv_cpu_start_={}; direct_xr_rtv_cpu_={};
+        srv_descriptor_increment_=0;
         queries_.Reset(); timestamps_.Reset(); timing_pending_ = false; gpu_ms_ = -1.f;
         device_ = device; width_ = width; height_ = height; srgb_ = srgb;
         D3D12_DESCRIPTOR_RANGE range{};
@@ -497,8 +499,14 @@ private:
         if (!check(device->CreateDescriptorHeap(&hd, IID_PPV_ARGS(&rtv_)), "Create RTV heap")) return false;
         hd.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV; hd.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE; hd.NumDescriptors = 2;
         if (!check(device->CreateDescriptorHeap(&hd, IID_PPV_ARGS(&srv_)), "Create SRV heap")) return false;
+        srv_cpu_start_=srv_->GetCPUDescriptorHandleForHeapStart();
+        srv_gpu_start_=srv_->GetGPUDescriptorHandleForHeapStart();
+        rtv_cpu_start_=rtv_->GetCPUDescriptorHandleForHeapStart();
+        srv_descriptor_increment_=device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+        direct_xr_rtv_cpu_=rtv_cpu_start_;
+        direct_xr_rtv_cpu_.ptr+=device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
         D3D12_RENDER_TARGET_VIEW_DESC view{}; view.Format = output_format; view.ViewDimension = D3D12_RTV_DIMENSION_TEXTURE2D;
-        device->CreateRenderTargetView(output_.Get(), &view, rtv_->GetCPUDescriptorHandleForHeapStart());
+        device->CreateRenderTargetView(output_.Get(), &view, rtv_cpu_start_);
         return true;
     }
     ComPtr<ID3D12Device> device_;
@@ -508,6 +516,9 @@ private:
     ComPtr<ID3D12RootSignature> root_;
     ComPtr<ID3D12PipelineState> pipeline_, native_pipeline_;
     ComPtr<ID3D12DescriptorHeap> srv_, rtv_;
+    D3D12_CPU_DESCRIPTOR_HANDLE srv_cpu_start_{}, rtv_cpu_start_{}, direct_xr_rtv_cpu_{};
+    D3D12_GPU_DESCRIPTOR_HANDLE srv_gpu_start_{};
+    UINT srv_descriptor_increment_{};
     ComPtr<ID3D12QueryHeap> queries_;
     ComPtr<ID3D12Resource> timestamps_;
     UINT64 frequency_{};
