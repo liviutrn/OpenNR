@@ -16,8 +16,17 @@ public:
         }
         last_tick_=now;
         if (!s.eye_tracked) {
+            // Manual fovea position is independent of eye tracking and must
+            // never be lost when tracking is disabled or unavailable.
+            // Also clear the old gaze state so re-enabling starts clean.
             have_=false;
-            return UV{};
+            fast_tracking_=false;
+            last_gaze_.reset();
+            quiet_samples_=0;
+            return UV{
+                std::clamp(.5f+s.gaze_offset_u, s.crop_width*.5f, 1.f-s.crop_width*.5f),
+                std::clamp(.5f+s.gaze_offset_v, s.crop_height*.5f, 1.f-s.crop_height*.5f)
+            };
         }
         // A PSVR2 blink or transient invalid sample must never reset the
         // crop to center. Keep the last accepted position until fresh tracking
