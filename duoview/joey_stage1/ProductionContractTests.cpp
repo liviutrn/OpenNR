@@ -155,6 +155,19 @@ int main() try {
     require(temporal.snapshot({7,2})->config.settings.independent_shading,"Mid-frame toggle split the source pair");
     require(temporal.begin({7,3},3000,3000,p,[]()->std::optional<UV>{return UV{.6f,.5f};},1022).has_value(),"Next-frame toggle packet missing");
     require(!temporal.can_independent_shading({7,3},200),"Shading off must apply to the next producer frame");
+    SubmitContinuity continuity;
+    require(!continuity.can_hold(7,123,1000),"Startup must not invent a last-good scene");
+    continuity.submitted(7,123,1000);
+    require(continuity.can_hold(7,123,1025) && continuity.can_hold(7,123,1100),
+            "A short missing-pair gap should retain the last submitted scene");
+    require(!continuity.can_hold(7,123,1101) && !continuity.can_hold(7,123,999),
+            "Held frames must expire without refreshing their original age");
+    require(!continuity.can_hold(8,123,1025) && !continuity.can_hold(7,124,1025) &&
+            !continuity.can_hold(7,0,1025),"Held scenes cannot cross mode or swapchain changes");
+    continuity.reset();
+    require(!continuity.can_hold(7,123,1025),"Acquiring another scene must invalidate the held image");
+    continuity.submitted(7,123,1200);
+    require(continuity.can_hold(7,123,1250),"A fresh successful submit should recover continuity");
     std::cout<<"Pinned Joey DuoView geometry, view pairing, generation, primary fallback contract PASS\n";
     return 0;
 } catch(const std::exception& e) {

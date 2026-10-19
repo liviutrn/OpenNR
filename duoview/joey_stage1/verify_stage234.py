@@ -140,9 +140,25 @@ def main():
  for token in ("native_packet_frame_count = duo_native_active ? vr->m_render_frame_count",
                "get_native_stereo_frame_packet_for_submit(native_packet_frame_count",
                "packet_frame->config.key.generation == vr->mono_generation()",
-               "compositor.record_native(", "note_mono_copy(*packet_source, submitted && recorded)",
+               "compositor.record_native(", "note_duoview_copy(std::move(pose))",
                "note_mono_frame_ready(m_mono_generation)"):
   if token not in d3d: raise RuntimeError("Native packet / Mono submit binding missing "+token)
+ xr=(a.backend/"src/mods/vr/runtimes/OpenXR.cpp").read_text(encoding="utf-8")
+ for token in ("capture_duoview_pose", "duoview_pending_pose", "duoview_continuity.can_hold",
+               "duoview_continuity.submitted", "duoview_holding", "selected.frame_state=this->frame_state"):
+  if token not in xr: raise RuntimeError("DuoView submit continuity missing "+token)
+ capture=hook.index("const auto duo_packet_pose")
+ publish=hook.index("const auto publish_native_packet")
+ split=hook.index("const auto runtime_frame_count = runtime->internal_frame_count",publish)
+ if not capture < publish < split: raise RuntimeError("DuoView pose snapshot must precede renderer split")
+ if "packet->duoview_pose_valid" not in d3d or "has_mono_frame(*packet_source)" in d3d:
+  raise RuntimeError("DuoView consumer must use the immutable producer pose")
+ copy=d3d[d3d.index("bool D3D12Component::OpenXR::copy("):]
+ if not copy.index("invalidate_duoview_scene()") < copy.index("xrAcquireSwapchainImage("):
+  raise RuntimeError("DuoView history must invalidate before acquiring another scene image")
+ pre_acquire=d3d[d3d.index("bool D3D12Component::OpenXR::pre_acquire("):d3d.index("bool D3D12Component::OpenXR::copy(")]
+ if not pre_acquire.index("invalidate_duoview_scene()") < pre_acquire.index("xrAcquireSwapchainImage("):
+  raise RuntimeError("DuoView history must invalidate before pre-acquisition")
  if "duoview_state().consume(" in d3d:
   raise RuntimeError("Native packet submission must reuse its immutable validated snapshot across Presents")
  # Regression: ID6 may be selected AFTER OpenXR created its swapchains.

@@ -1,8 +1,8 @@
 #pragma once
 // Stage 5 — per-frame DuoView coordination. No UE/D3D headers.
-// The pipeline must never submit a previous frame, an incomplete pair of
-// views, a stale gaze/pose snapshot, or a compositor result for the wrong
-// rendering method generation.
+// New compositions require a complete pair with matching gaze/pose and method
+// generation. Submit continuity may briefly reuse an unchanged released image
+// with its original pose; it never recomposes stale source textures.
 //
 // Backend integration contract:
 //  (1) begin() once per game-render frame with the *same* immutable layout,
@@ -12,7 +12,7 @@
 //  (3) queue_composite() only when both views were rendered.
 //  (4) note_gpu_complete() only after the compositing GPU fence has signaled.
 //  (5) consume_for_submit() once before both OpenXR eye copies.
-//  On any evidence gap, submit nothing rather than a previous Mono eye.
+//  Source validation and released-image continuity are separate contracts.
 #include "DuoViewGeometry.hpp"
 #include <array>
 #include <cmath>
@@ -27,6 +27,21 @@ struct FrameKey {
     uint64_t frame{};
     constexpr bool operator==(const FrameKey&) const = default;
 };
+class SubmitContinuity {
+public:
+    void reset() { ready_=false; }
+    void submitted(uint64_t generation, uint64_t swapchain, uint64_t now_ms) {
+        generation_=generation; swapchain_=swapchain; submitted_ms_=now_ms; ready_=true;
+    }
+    bool can_hold(uint64_t generation, uint64_t swapchain, uint64_t now_ms) const {
+        return ready_ && generation==generation_ && swapchain && swapchain==swapchain_ &&
+            now_ms>=submitted_ms_ && now_ms-submitted_ms_<=100;
+    }
+private:
+    uint64_t generation_{}, swapchain_{}, submitted_ms_{};
+    bool ready_{};
+};
+
 struct RenderFrame {
     FrameKey key{};
     Layout layout{};
