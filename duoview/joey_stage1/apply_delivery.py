@@ -212,7 +212,7 @@ def apply(changed, edit):
 
 void FFakeStereoRenderingHook::sync_stalker2_native_experiment(bool enabled) {''')
     edit(header,'        sdk::FRenderTarget* duoview_secondary_target{};',
-        '        sdk::FRenderTarget* duoview_secondary_target{};\n        ComPtr<ID3D12Resource> duoview_primary_resource{};')
+        '        sdk::FRenderTarget* duoview_secondary_target{};\n        Microsoft::WRL::ComPtr<ID3D12Resource> duoview_primary_resource{};')
     edit(hook,'            packet->duoview_secondary_target=rtfrt;',
     '''            packet->duoview_secondary_target=rtfrt;
             if (const auto primary=rtm->get_render_target()) {
@@ -254,8 +254,8 @@ void FFakeStereoRenderingHook::sync_stalker2_native_experiment(bool enabled) {''
     edit(xr,'    if (vr->is_duoview_renderer_active()) {\n        std::scoped_lock lock{this->sync_assignment_mtx};\n        if (result==XR_SUCCESS && !projection_layer_views.empty()) {',
     '''    if (vr->is_duoview_renderer_active()) {
         std::scoped_lock lock{this->sync_assignment_mtx};
-        if (vr->m_fake_stereo_hook && this->frame_state.shouldRender==XR_TRUE) {
-            vr->m_fake_stereo_hook->duoview_delivery.result(uevr::duoview::DeliveryEvent::submit,
+        if (const auto& stereo=vr->get_fake_stereo_hook(); stereo && this->frame_state.shouldRender==XR_TRUE) {
+            stereo->duoview_delivery.result(uevr::duoview::DeliveryEvent::submit,
                 submit_state.duoview_serial, result==XR_SUCCESS && !projection_layer_views.empty(), GetCurrentThreadId());
         }
         if (result==XR_SUCCESS && !projection_layer_views.empty()) {''')
