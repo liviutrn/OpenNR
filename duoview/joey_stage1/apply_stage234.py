@@ -232,6 +232,14 @@ def main():
                 m_duo_relock->draw("Quiet samples before fovea relocks");
                 if (m_duo_stillness->value() >= m_duo_breakout->value())
                     ImGui::TextWrapped("Stillness must be below breakout; the conflicting setting is rejected, all other controls keep working.");
+                ImGui::Text("DuoView delivery: %llu copied / %llu held / %llu empty or failed",
+                    static_cast<unsigned long long>(m_openxr->duoview_copy_submits.load()),
+                    static_cast<unsigned long long>(m_openxr->duoview_hold_submits.load()),
+                    static_cast<unsigned long long>(m_openxr->duoview_empty_submits.load()));
+                if (ImGui::Button("Reset DuoView delivery counters")) {
+                    m_openxr->duoview_copy_submits=0; m_openxr->duoview_hold_submits=0;
+                    m_openxr->duoview_empty_submits=0;
+                }
                 m_duo_direct_xr->draw("Direct XR output (experimental A/B)");
                 ImGui::TextWrapped("OFF composes once and copies to both eyes. ON blends both eye halves directly when formats match. Compare GPU timing in the same scene; either route may be faster.");
                 m_duo_timing->draw("GPU timing: DuoView raster/output (excludes UE and source gather)");
@@ -878,6 +886,7 @@ void OpenXR::note_mono_main_family(uint32_t frame, bool main_family) {''')
                                 vr->m_openxr->note_duoview_copy(std::move(pose));
                             }
                             if (submitted && recorded && callback_attempted) {
+                                native_stereo_hook->note_native_stereo_frame_packet_consumed(packet->serial);
                                 vr->note_duoview_output_path(output_direct);
                                 vr->note_duoview_source_extents(source_extents);
                                 vr->note_mono_frame_ready(m_mono_generation);
@@ -913,7 +922,8 @@ void OpenXR::note_mono_main_family(uint32_t frame, bool main_family) {''')
     void invalidate_duoview_scene();
     std::optional<PipelineState> duoview_pending_pose, duoview_submitted_pose;
     uevr::duoview::SubmitContinuity duoview_continuity;
-    bool duoview_holding{};''')
+    bool duoview_holding{};
+    std::atomic<uint64_t> duoview_copy_submits{}, duoview_hold_submits{}, duoview_empty_submits{};''')
     edit(xr,'    mono_copied_frame.reset();\n    this->should_recalculate_eye_projections = true;',
     '''    mono_copied_frame.reset();
     duoview_pending_pose.reset(); duoview_submitted_pose.reset();
@@ -969,6 +979,8 @@ OpenXR::PipelineState OpenXR::get_submit_state() {
     '''    if (vr->is_duoview_renderer_active()) {
         std::scoped_lock lock{this->sync_assignment_mtx};
         if (result==XR_SUCCESS && !projection_layer_views.empty()) {
+            if (duoview_holding) ++duoview_hold_submits;
+            else ++duoview_copy_submits;
             if (!duoview_holding) {
                 const auto scene=this->swapchains.find((uint32_t)SwapchainIndex::DOUBLE_WIDE);
                 if (scene!=this->swapchains.end()) {
@@ -980,7 +992,10 @@ OpenXR::PipelineState OpenXR::get_submit_state() {
             vr->set_mono_status(duoview_holding
                 ? "DuoView: holding the last submitted scene through a short source interruption"
                 : "DuoView: active two-source scene submitted to both eyes");
-        } else { duoview_continuity.reset(); }
+        } else {
+            if (this->frame_state.shouldRender==XR_TRUE) ++duoview_empty_submits;
+            duoview_continuity.reset();
+        }
     } else if (mono && result == XR_SUCCESS && !projection_layer_views.empty()) {
         vr->set_mono_status("Active: one current centered scene submitted to both eyes");
     }''')
@@ -1004,6 +1019,35 @@ OpenXR::PipelineState OpenXR::get_submit_state() {
     if (runtime->is_openxr() && runtime->loaded) {
         vr->get_openxr_runtime()->invalidate_duoview_scene();
         m_openxr.wait_for_all_copies();''')
+
+    edit(hook,'''    if (native_stereo_fix_enabled) {
+        if (g_hook->m_native_stereo_localplayer_bootstrap_failed.load(std::memory_order_acquire)) {''',
+    '''    if (native_stereo_fix_enabled) {
+        if (vr->is_duoview_renderer_active()) {
+            bool duo_main_target_present=false;
+            const auto expected=rtm->get_view_family_render_target();
+            for (const auto family:view_families) {
+                if (expected && family && family->get_render_target()==expected) {
+                    duo_main_target_present=true;
+                    break;
+                }
+            }
+            if (!duo_main_target_present) {
+                call_original();
+                return;
+            }
+        }
+        if (g_hook->m_native_stereo_localplayer_bootstrap_failed.load(std::memory_order_acquire)) {''')
+
+    edit(hook,'''    const auto rtm = const_cast<FFakeStereoRenderingHook*>(this)->get_render_target_manager();
+    const auto current_capture = rtm != nullptr ? rtm->get_scene_capture_target_snapshot() : nullptr;''',
+    '''    const auto rtm = const_cast<FFakeStereoRenderingHook*>(this)->get_render_target_manager();
+    if (vr->is_duoview_renderer_active() &&
+        (!rtm || packet->main_target!=rtm->get_view_family_render_target())) {
+        record_outcome(frame_diag::Reason::changed_resource);
+        return nullptr;
+    }
+    const auto current_capture = rtm != nullptr ? rtm->get_scene_capture_target_snapshot() : nullptr;''')
 
     # Copy reference modules into exact checked-out Joey tree. No private SDK
     # declarations or altered SDK files.

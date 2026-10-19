@@ -147,6 +147,15 @@ def main():
  for token in ("capture_duoview_pose", "duoview_pending_pose", "duoview_continuity.can_hold",
                "duoview_continuity.submitted", "duoview_holding", "selected.frame_state=this->frame_state"):
   if token not in xr: raise RuntimeError("DuoView submit continuity missing "+token)
+ auxiliary=hook.index("if (!duo_main_target_present)")
+ if not auxiliary < hook.index("capture target is not published",auxiliary) < hook.index("no exact main-family eye pair was proven",auxiliary):
+  raise RuntimeError("Auxiliary renderer calls must bypass main-pair invalidation")
+ if "packet->main_target!=rtm->get_view_family_render_target()" not in hook:
+  raise RuntimeError("Retained DuoView packets must still match the current main target")
+ if "note_native_stereo_frame_packet_consumed(packet->serial)" not in d3d:
+  raise RuntimeError("DuoView must acknowledge successful Native packet consumption")
+ for token in ("duoview_copy_submits", "duoview_hold_submits", "duoview_empty_submits"):
+  if token not in xr or token not in vr_cpp: raise RuntimeError("Missing visible delivery counter "+token)
  capture=hook.index("const auto duo_packet_pose")
  publish=hook.index("const auto publish_native_packet")
  split=hook.index("const auto runtime_frame_count = runtime->internal_frame_count",publish)
