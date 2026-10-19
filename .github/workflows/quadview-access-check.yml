@@ -1,0 +1,27 @@
+name: QuadView pinned source access
+on:
+  push:
+    branches: [quadview/stereo-182-build]
+    paths: ['.github/workflows/quadview-access-check.yml']
+permissions:
+  contents: read
+jobs:
+  source-access:
+    runs-on: windows-2022
+    steps:
+      - name: Check configured source credential
+        shell: pwsh
+        env:
+          SOURCE_ACCESS: ${{ secrets.UEVR_SOURCE_TOKEN || secrets.PAT_TOKEN }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:SOURCE_ACCESS)) { throw 'SDK source credential missing in this repository' }
+      - uses: actions/checkout@v4
+        with:
+          repository: joeyhodge/UESDK
+          ref: 3cffbc82429b6165ceec2714f0f0d9ae48f55596
+          token: ${{ secrets.UEVR_SOURCE_TOKEN || secrets.PAT_TOKEN }}
+          persist-credentials: false
+      - name: Verify exact SDK revision
+        shell: pwsh
+        run: |
+          if ((git rev-parse HEAD) -ne '3cffbc82429b6165ceec2714f0f0d9ae48f55596') { throw 'Unexpected SDK revision' }
