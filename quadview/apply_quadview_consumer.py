@@ -132,6 +132,8 @@ std::optional<OpenXR::PipelineState> OpenXR::capture_duoview_pose(uint32_t frame
          '''        void prepare_quadview_compositors(ID3D12Device* device, DXGI_FORMAT source_format);
         std::unordered_map<d3d12::CommandContext*, std::unique_ptr<uevr::quadview::dx12::Compositor>> quadview_compositors;
         std::unordered_map<d3d12::CommandContext*, std::unique_ptr<uevr::duoview::dx12::Compositor>> duoview_compositors;''')
+    edit(dx, 'void D3D12Component::on_post_present(VR* vr) {\n    if (vr->is_mono_transition_quiescing()) { return; }\n    if (vr->is_mono_transition_waiting() || m_mono_block_post_present) {',
+         'void D3D12Component::on_post_present(VR* vr) {\n    if (vr->is_mono_transition_quiescing()) { return; }\n    // Quad owns separate source proof; retire UI allocations even while its first scene is pending.\n    if ((vr->is_mono_transition_waiting() && !vr->is_quadview_mode_selected()) || m_mono_block_post_present) {')
     edit(dx, 'bool D3D12Component::mono_consumers_retired() {', '''bool D3D12Component::mono_consumers_retired() {
     {
         std::scoped_lock lock{m_openxr.mtx};
