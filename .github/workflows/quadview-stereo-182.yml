@@ -88,6 +88,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'QuadView consumer source overlay failed' }
           python workspace/quadview/embed_shader.py backend/src/mods/vr/QuadViewShaderBytecode.hpp
           if ($LASTEXITCODE -ne 0) { throw 'QuadView offline shader compilation failed' }
+          python workspace/quadview/SourceCheckpointTests.py
+          if ($LASTEXITCODE -ne 0) { throw 'QuadView source checkpoint regression tests failed' }
           python workspace/quadview/source_checkpoint.py capture backend frontend evidence/quadview-source.json
           if ($LASTEXITCODE -ne 0) { throw 'QuadView source checkpoint failed' }
       - name: Test QuadView contracts, asynchronous delivery, and production GPU compositor
@@ -133,6 +135,7 @@ jobs:
           $code=$LASTEXITCODE; Get-Content evidence/configure.log | Select-Object -Last 60
           if ($code -ne 0) { throw "Original Joey configuration failed ($code)" }
       - name: Build original backend and auxiliary DLLs
+        id: build_backend
         shell: pwsh
         run: |
           cmake --build backend/build --config Release --target uevr vr-plugin-nullifier LuaVR --parallel 2 *> evidence/backend-build.log
@@ -154,6 +157,7 @@ jobs:
         with:
           dotnet-version: '6.0.x'
       - name: Test and build matching original frontend
+        id: build_frontend
         shell: pwsh
         run: |
           dotnet run --project frontend/tests/RenderingModes --configuration Release *> evidence/frontend-tests.log
@@ -178,8 +182,9 @@ jobs:
           Copy-Item workspace/quadview/READ_FIRST.txt package/READ_FIRST.txt
           Copy-Item workspace/quadview/README.md package/QUADVIEW_README.md
           Copy-Item evidence/quadview-source.json package/
+          Copy-Item evidence/quadview-source-generated.json package/
           @{ baseline='Build182'; baselineSource='67c6e1ec5b931d2922e0ef5d253b8e9bef7a1a80'; overlay=$env:GITHUB_SHA; run=$env:GITHUB_RUN_ID; mode='ID7 stereo quad views'; headsetVerified=$false } | ConvertTo-Json | Set-Content package/QUADVIEW_BUILD.json
-          $needed=@('UEVRBackend.dll','UEVRPluginNullifier.dll','LuaVR.dll','READ_FIRST.txt','duoview-stage234-hashes.json','exact-baseline-source.json','quadview-source.json','QUADVIEW_BUILD.json')
+          $needed=@('UEVRBackend.dll','UEVRPluginNullifier.dll','LuaVR.dll','READ_FIRST.txt','duoview-stage234-hashes.json','exact-baseline-source.json','quadview-source.json','quadview-source-generated.json','QUADVIEW_BUILD.json')
           foreach ($name in $needed) { if (!(Test-Path ("package/" + $name))) { throw "Missing critical package file: $name" } }
           if (@(Get-ChildItem package -File -Filter *.exe).Count -lt 1) { throw "Missing Joey frontend executable" }
           if ((Get-Content package/READ_FIRST.txt -Raw) -notmatch 'ID7') { throw 'Missing stereo QuadView instructions' }
@@ -196,6 +201,19 @@ jobs:
             UEVR-QuadViews-Stereo-182base-*.zip.sha256
           if-no-files-found: error
           retention-days: 90
+      - name: Preserve compiled outputs if packaging fails
+        if: failure() && steps.build_backend.outcome == 'success' && steps.build_frontend.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: QuadView-Compiled-Debug-${{ github.run_number }}
+          path: |
+            backend/build/bin/uevr/*.dll
+            backend/build/bin/vr-plugin-nullifier/*.dll
+            backend/build/bin/LuaVR/*.dll
+            package/
+            evidence/
+          if-no-files-found: warn
+          retention-days: 7
       - name: Record public source and dependency provenance
         if: always()
         shell: pwsh
