@@ -21,7 +21,7 @@ The independent Luna audit found no automatic Mono/DuoView mode retry loop: comp
 - Permit up to 100 ms of continuity from the last successfully submitted scene image during a source gap. Repeated holds do not renew the deadline. Startup has no history.
 - Invalidate continuity before any double-wide scene-image acquisition, during swapchain teardown, on mode generation or swapchain-handle mismatch, and after a failed scene submission. A failed replacement cannot pair new image contents with the old pose.
 - Record history only after xrEndFrame succeeds with a real scene projection layer. Held submissions preserve the original source pose.
-- Acknowledge successfully copied Native packets, preserving the Native Fix Active state.
+- Acknowledge successfully copied Native packets, preserving the Native Fix Active state. Record the retained packet, diagnostic ticket and actual source/destination identities for the added consume site; extend the diagnostic fixture count from three to four D3D12 paths while retaining all per-site checks.
 - Expose copied, held and empty/failed submission counters with a reset button for steady-state delivery checks. Repeated frames are visible in telemetry and are not counted as proof of fluid rendering.
 - Add distinct DuoView active/holding status and rate-limited producer-pose/pair rejection diagnostics.
 
