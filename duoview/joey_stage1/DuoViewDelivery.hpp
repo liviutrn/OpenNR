@@ -61,7 +61,7 @@ public:
 
     bool family(Source source, uint32_t thread) {
         std::scoped_lock lock{mutex_};
-        if (!source || !source.packet || !advance(source.generation)) return false;
+        if (!source || !source.packet || !advance(source.generation) || source.packet->serial<=blocked_serial_) return false;
         targets_[static_cast<size_t>(source.role)] = source.target;
         largest_registered_serial_ = (std::max)(largest_registered_serial_, source.packet->serial);
         for (auto& entry : families_) {
@@ -92,7 +92,7 @@ public:
 
     void executed(const Source& source, uintptr_t command, uint32_t thread) {
         std::scoped_lock lock{mutex_};
-        if (!source || !advance(source.generation)) return;
+        if (!source || !advance(source.generation) || (source.packet && source.packet->serial<=blocked_serial_)) return;
         const auto& old=sources_[0].packet;
         if (old && old==sources_[1].packet && old!=source.packet && old->serial!=last_submitted_) ++counts_.overwritten;
         const auto index = static_cast<size_t>(source.role);
@@ -123,6 +123,14 @@ public:
         if (a.packet->serial!=last_matched_) { last_matched_=a.packet->serial; ++counts_.matched; }
         trace(DeliveryEvent::select, a, 0, thread);
         return a.packet;
+    }
+
+    void retire(uint64_t generation=0) {
+        std::scoped_lock lock{mutex_};
+        if (generation && generation<generation_) return;
+        if (generation>generation_) advance(generation);
+        blocked_serial_=(std::max)(blocked_serial_,largest_registered_serial_);
+        families_={}; sources_={}; threads_={}; targets_={};
     }
 
     DeliveryCounts counts() const { std::scoped_lock lock{mutex_}; return counts_; }

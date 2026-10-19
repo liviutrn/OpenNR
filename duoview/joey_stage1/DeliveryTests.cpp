@@ -135,7 +135,8 @@ int main() {
     bind(blocked,a,10); execute(blocked,10,Role::primary);execute(blocked,11,Role::secondary);
     blocked.block(source(b,12,Role::primary),123,2);
     assert(!blocked.select(1,3));
-    bind(blocked,b,12);execute(blocked,12,Role::primary);execute(blocked,13,Role::secondary);
+    assert(!blocked.family(source(b,12,Role::primary),1));
+    execute(blocked,12,Role::primary);execute(blocked,13,Role::secondary);
     assert(!blocked.select(1,3));
     bind(blocked,c,14);execute(blocked,14,Role::primary);execute(blocked,15,Role::secondary);
     assert(blocked.select(1,3)==c);
@@ -157,5 +158,28 @@ int main() {
     assert(lifetime.select(1,3)->immutable_pose==500);
     assert(!lifetime.select(2,3));
     assert(weak.expired());
+    auto idle_storage=std::make_unique<Delivery>();
+    auto& idle=*idle_storage;
+    auto retiring=std::make_shared<const Packet>(Packet{1,900});
+    std::weak_ptr<const Packet> retained=retiring;
+    bind(idle,retiring,50);
+    Delivery::Command pending;
+    auto p=idle.render(1,50,100,300,2);
+    auto q=idle.render(1,51,200,300,2);
+    assert(pending.attach(p)==Delivery::Attachment::added);
+    assert(pending.attach(q)==Delivery::Attachment::added);
+    idle.executed(p,4000,3);idle.executed(q,4000,3);
+    p={};q={};retiring.reset();
+    idle.retire();
+    assert(!retained.expired());
+    for(const auto& s:pending.sources) idle.executed(s,4000,3);
+    assert(!idle.select(1,3));
+    pending={};
+    assert(retained.expired());
+    bind(idle,b,52);execute(idle,52,Role::primary);execute(idle,53,Role::secondary);
+    assert(idle.select(1,3)==b);
+    idle.retire(2);
+    assert(!idle.select(2,3));
+
     std::cout << "100000 source/pose transactions, producer 0-8 ahead: no wrong selection or missed completed pair\n";
 }

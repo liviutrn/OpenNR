@@ -211,6 +211,18 @@ def apply(changed, edit):
 }
 
 void FFakeStereoRenderingHook::sync_stalker2_native_experiment(bool enabled) {''')
+    edit(header, '    void on_device_reset() override {\n        if (m_recreate_textures_on_reset->value()) {',
+    '''    void on_device_reset() override {
+        duoview_delivery.retire();
+        if (m_recreate_textures_on_reset->value()) {''')
+    edit('src/mods/VR.cpp', '    if (!selection.commit_at_game_frame_boundary()) { return; }\n    m_duoview.retire();',
+    '''    if (!selection.commit_at_game_frame_boundary()) { return; }
+    m_duoview.retire();
+    if (m_fake_stereo_hook) m_fake_stereo_hook->duoview_delivery.retire(mono_generation());''')
+    edit('src/mods/VR.cpp', '    m_duoview_quarantined.store(true, std::memory_order_release);\n    m_duoview.retire();',
+    '''    m_duoview_quarantined.store(true, std::memory_order_release);
+    m_duoview.retire();
+    if (m_fake_stereo_hook) m_fake_stereo_hook->duoview_delivery.retire(mono_generation());''')
     edit(header,'        sdk::FRenderTarget* duoview_secondary_target{};',
         '        sdk::FRenderTarget* duoview_secondary_target{};\n        Microsoft::WRL::ComPtr<ID3D12Resource> duoview_primary_resource{};')
     edit(hook,'            packet->duoview_secondary_target=rtfrt;',
@@ -262,10 +274,10 @@ void FFakeStereoRenderingHook::sync_stalker2_native_experiment(bool enabled) {''
     edit('src/mods/VR.cpp','                if (ImGui::Button("Reset DuoView delivery counters")) {',
     '''                if (m_fake_stereo_hook) {
                     const auto d=m_fake_stereo_hook->duoview_delivery.counts();
-                    ImGui::Text("Transactions: %llu produced / %llu RHI pairs / %llu matched / %llu enqueued / %llu unique XR",
+                    ImGui::TextWrapped("Transactions: %llu produced / %llu RHI pairs / %llu matched / %llu enqueued / %llu unique XR",
                         (unsigned long long)d.produced, (unsigned long long)d.ready, (unsigned long long)d.matched,
                         (unsigned long long)d.enqueued, (unsigned long long)d.submitted);
-                    ImGui::Text("Duplicate Presents: %llu / overwritten before XR: %llu / failures: %llu / unproven: %llu",
+                    ImGui::TextWrapped("Duplicate Presents: %llu / overwritten before XR: %llu / failures: %llu / unproven: %llu",
                         (unsigned long long)d.duplicate_presents, (unsigned long long)d.overwritten,
                         (unsigned long long)d.failed, (unsigned long long)d.blocked);
                 }

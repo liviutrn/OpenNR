@@ -80,6 +80,9 @@ as a missed fresh submission.
 - New transaction state serializes all shared access; pending RHI maps remain
   under Joey's existing recursive vtable mutex. Immutable metadata travels
   through delayed Slate callbacks by value.
+- Mode changes, quarantine and device reset release cached source/family
+  references. Pending RHI commands and GPU slots retain their own packets;
+  pre-retirement serials cannot repopulate the cache.
 - Old-generation markers cannot advance ownership, relabel pending commands,
   or assign old poses after a mode switch. Capture rejection and compositor
   retirement logic remain unchanged. Shading/render order, crop, gaze, source
