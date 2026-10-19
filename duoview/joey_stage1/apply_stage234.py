@@ -833,14 +833,14 @@ void OpenXR::note_mono_main_family(uint32_t frame, bool main_family) {''')
                             bool compositor_fault = false;
                             bool output_direct = false;
                             uint64_t source_extents = 0;
-                            ID3D12Resource* recorded_source=nullptr;
+                            ID3D12Resource* recorded_secondary=nullptr;
                             ID3D12Resource* recorded_target=nullptr;
                             const bool submitted = m_openxr.copy(
                                 (uint32_t)runtimes::OpenXR::SwapchainIndex::DOUBLE_WIDE, nullptr,
                                 [this, packet, packet_frame, source=m_game_tex.texture,
                                  secondary=m_scene_capture_tex.texture, device,
                                  &recorded, &callback_attempted, &compositor_fault,
-                                 &output_direct, &source_extents, &recorded_source, &recorded_target](
+                                 &output_direct, &source_extents, &recorded_secondary, &recorded_target](
                                     d3d12::CommandContext& commands, ID3D12Resource* destination) {
                                     if (!commands.ready()) return;
                                     callback_attempted = true;
@@ -867,7 +867,7 @@ void OpenXR::note_mono_main_family(uint32_t frame, bool main_family) {''')
                                         std::static_pointer_cast<const void>(packet),
                                         packet_frame->config.settings.gpu_timing ? compositor.timing_frequency() : 0);
                                     if (recorded) {
-                                        recorded_source=source.Get(); recorded_target=destination;
+                                        recorded_secondary=secondary.Get(); recorded_target=destination;
                                         output_direct=compositor.last_native_direct_xr();
                                         source_extents=compositor.last_native_source_extents();
                                     }
@@ -893,7 +893,7 @@ void OpenXR::note_mono_main_family(uint32_t frame, bool main_family) {''')
                                 if (native_frame_ticket) {
                                     native_stereo_hook->record_native_frame_stage(*native_stereo_packet, native_frame_ticket,
                                         frame_diag::Backend::d3d12, frame_diag::Runtime::openxr, frame_diag::Stage::copy_recorded,
-                                        0, 2, 0, recorded_source, recorded_target);
+                                        0, 2, 0, recorded_secondary, recorded_target);
                                 }
                                 native_stereo_hook->note_native_stereo_frame_packet_consumed(packet->serial);
                                 vr->note_duoview_output_path(output_direct);
