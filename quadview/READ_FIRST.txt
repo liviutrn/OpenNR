@@ -1,0 +1,31 @@
+EXPERIMENTAL STEREO QUAD VIEWS — BUILD182 BASE
+
+EXPERIMENTAL ID7: engine/OpenXR adapters are integrated.
+A package containing this file must pass the full Windows build first.
+Headset stability and ten-minute gameplay acceptance remain unverified.
+
+Initial target: STALKER 2 / DX12 / OpenXR.
+Mode ID7 = Quad Views Stereo (Experimental).
+Mode ID6 = the original monoscopic DuoView baseline.
+
+To test this experimental package:
+1. Extract it to a separate folder and run its included UEVR injector.
+2. Use the known-working Build182 game and SteamVR/OpenXR setup.
+3. Turn off Extreme Compatibility, split-screen, SceneView compatibility,
+   2D Screen, and Stereo Emulation.
+4. Select Quad Views Stereo (Experimental), ID7.
+5. Begin with 50% x 50% fixed-center focus and 20% context resolution.
+6. Check stereo depth, focus alignment, head movement, and frame delivery.
+7. Run a ten-minute gameplay test before treating it as stable.
+
+ID7 initially uses fixed-center focus, without gaze tracking. It composites
+four engine views into ordinary stereo output; runtime Quad Views support
+is not required. Native Stereo Fix is bypassed in ID7, so secondary-pass
+shading differences remain a possible limitation.
+
+Diagnostic 0: blend. 1: context only. 2: focus only. 3: synthetic colors.
+Synthetic colors do not establish that the engine rendered four views.
+
+The full scene-target allocation is retained. Pixel-area reductions do
+not establish a proportional performance improvement. CI test success
+does not establish headset stability or shading parity.
