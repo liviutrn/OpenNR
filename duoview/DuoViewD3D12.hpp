@@ -35,6 +35,7 @@ public:
                 ID3D12Resource* atlas, ID3D12Resource* destination,
                 D3D12_RESOURCE_STATES atlas_state, const FrameConfig& frame, UINT64 frequency = 0) {
         recorded_commands_ = false;
+        error_.clear();
         if (!device || !cmd || !atlas || !destination || atlas == destination ||
             cmd->GetType() != D3D12_COMMAND_LIST_TYPE_DIRECT ||
             FAILED(device->GetDeviceRemovedReason()) || !layout_valid(frame.layout)) return false;
@@ -59,7 +60,15 @@ public:
             FAILED(cmd->GetDevice(IID_PPV_ARGS(&cd))) ||
             sd.Get() != device || dd.Get() != device || cd.Get() != device) return false;
         const bool srgb = format == DXGI_FORMAT_B8G8R8A8_UNORM_SRGB || format == DXGI_FORMAT_R8G8B8A8_UNORM_SRGB;
-        if (!prepare(device, l.atlas_width / 2, l.atlas_height, srgb)) return false;
+        // Prewarm is the only place permitted to build or replace GPU resources.
+        // Reconstructing here would stall the XR callback and could invalidate
+        // resources already referenced by commands recorded in this slot.
+        if (device_.Get()!=device || width_!=l.atlas_width/2 ||
+            height_!=l.atlas_height || srgb_!=srgb || !output_ || !atlas_ ||
+            !pipeline_ || !native_pipeline_ || !root_ || !srv_ || !rtv_) {
+            error_="Compatibility compositor not prewarmed for source size / sRGB";
+            return false;
+        }
         const bool timed = frequency && frequency == frequency_ && queries_ && timestamps_;
         update_timing(timed,false);
         ShaderConstants constants{
@@ -109,6 +118,7 @@ public:
         recorded_commands_=false;
         error_.clear();
         last_native_direct_xr_=false;
+        last_native_source_extents_=0;
         const auto reject=[this](const char* reason) { error_=reason; return false; };
         if (!device || !cmd || !primary || !secondary || !destination ||
             primary==secondary || primary==destination || secondary==destination ||
@@ -379,7 +389,10 @@ private:
         if (timed) read_timing();
     }
     void read_timing() {
-        if (!timing_pending_ || !timestamps_ || !frequency_) return;
+        if (!timing_pending_) return;
+        // Never keep displaying the prior frame's value if this read fails.
+        gpu_ms_=-1.f;
+        if (!timestamps_ || !frequency_) { timing_pending_=false; return; }
         D3D12_RANGE range{0, sizeof(UINT64) * 2};
         UINT64* data{};
         if (SUCCEEDED(timestamps_->Map(0, &range, reinterpret_cast<void**>(&data)))) {
@@ -389,7 +402,19 @@ private:
         timing_pending_ = false;
     }
     void setup_timing(ID3D12Device* device, UINT64 frequency) {
-        if (!frequency || queries_) return;
+        // Prewarm may run again after the queue changes without recreating
+        // the device or the command slot. Keep the query/readback allocations,
+        // but use the NEW queue's timestamp tick frequency.
+        if (!frequency) {
+            frequency_=0; timing_pending_=false; gpu_ms_=-1.f;
+            return;
+        }
+        if (queries_ && timestamps_) {
+            if (frequency_!=frequency) {
+                frequency_=frequency; timing_pending_=false; gpu_ms_=-1.f;
+            }
+            return;
+        }
         D3D12_QUERY_HEAP_DESC q{}; q.Type = D3D12_QUERY_HEAP_TYPE_TIMESTAMP; q.Count = 2;
         if (FAILED(device->CreateQueryHeap(&q, IID_PPV_ARGS(&queries_)))) return;
         D3D12_HEAP_PROPERTIES heap{}; heap.Type = D3D12_HEAP_TYPE_READBACK;
