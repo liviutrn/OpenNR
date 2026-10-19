@@ -63,6 +63,8 @@ def apply(changed, edit):
     begin=changed[hook].index('void FFakeStereoRenderingHook::pre_render_viewfamily_renderthread(')
     end=changed[hook].index('\nvoid FFakeStereoRenderingHook::',begin+10)
     region=changed[hook][begin:end]
+    region=region.replace('SceneViewExtensionAnalyzer::hook_old_rhi_command(',
+        'if (duo_source) g_hook->duoview_delivery.block(duo_source, 0, GetCurrentThreadId());\n                    SceneViewExtensionAnalyzer::hook_old_rhi_command(')
     region=region.replace('vr->get_runtime()->enqueue_render_poses(frame_count + compensation);',
         'if (duo_source) g_hook->duoview_delivery.block(duo_source, 0, GetCurrentThreadId());\n                    vr->get_runtime()->enqueue_render_poses(frame_count + compensation);')
     region=region.replace('reinterpret_cast<sdk::FRHICommandBase_New*>(*root), frame_count + compensation);',
@@ -149,6 +151,10 @@ def apply(changed, edit):
             }
         }
         const bool preserve_pending_identity = vr->is_duoview_renderer_active() || uevr::vr_compatibility::should_preserve_mafia_pending_rhi_identity(''')
+    edit(hook, '        if (!is_probable_new_rhi_command(last_command, rejection_reason)) {',
+    '''        if (!is_probable_new_rhi_command(last_command, rejection_reason)) {
+            if (duo_source) g_hook->duoview_delivery.block(duo_source,
+                reinterpret_cast<uintptr_t>(last_command), GetCurrentThreadId());''')
     # Preserve Duo pending identities before any pre-render state assignment, including auxiliary callbacks.
     edit(hook,'''        original_vtables[last_command] = *(void***)last_command;
         *(void***)last_command = (void**)new_vtable.data();''',
