@@ -45,17 +45,34 @@ public:
                 return true;
             }
         }
-        return false;
+        // Startup can outrun RHI-tail discovery or reject every render-family
+        // callback before an owner is attached to a command. Recycle the oldest
+        // such registration so the ledger can recover once hooks become ready;
+        // never evict a hooked or executed command owner.
+        Slot* recoverable{};
+        for (auto& slot : slots_) {
+            if (slot.source && !slot.tail_hooked && !slot.executed && !slot.submitted &&
+                (recoverable == nullptr || slot.source.serial < recoverable->source.serial)) {
+                recoverable = &slot;
+            }
+        }
+        if (recoverable == nullptr) return false;
+        *recoverable = {};
+        recoverable->source = std::move(source);
+        return true;
     }
 
     std::optional<Source> render(uint64_t generation, uint32_t frame,
                                  uintptr_t family, uintptr_t target, uintptr_t scene) {
         std::scoped_lock lock{mutex_};
-        if (!advance(generation)) return {};
+        if (!advance(generation) || !family || !target || !scene) return {};
         Slot* match{};
         for (auto& slot : slots_) {
             if (slot.source && slot.source.generation == generation &&
-                slot.source.engine_frame == frame && slot.source.family == family &&
+                // Unreal may pass a renderer-owned copy of FSceneViewFamily to
+                // the render thread. Resolve that copy by its validated engine
+                // frame, target and scene; keep source.family as provenance.
+                slot.source.engine_frame == frame &&
                 slot.source.target == target && slot.source.scene == scene) {
                 if (match != nullptr) return {}; // Multiple matching owners are ambiguous.
                 match = &slot;

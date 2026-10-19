@@ -77,7 +77,7 @@ int main() {
                 }
                 changed.notify_all();
                 const auto render = delivery.render(source.generation, source.engine_frame,
-                    source.family, source.target, source.scene);
+                    source.family + 0x800, source.target, source.scene); // Renderer owns a distinct family copy.
                 if (!render || !render->same_owner(source)) throw std::runtime_error("Render-ahead replaced an unexecuted owner");
                 const auto command = 0x9000 + static_cast<uintptr_t>(source.serial % 8);
                 if (!delivery.tail_hooked(source, command) || !delivery.executed(source, command, rhi_thread))

@@ -158,7 +158,7 @@ int main() {
     const auto token = std::make_shared<const SourceToken>(SourceToken{21, 0});
     const Delivery<SourceToken>::Source source{token, 8, 21, 95, 0, 0x300, 0x100, 0x200};
     assert(delivery.family(source));
-    const auto rendered = delivery.render(8, 95, 0x300, 0x100, 0x200);
+    const auto rendered = delivery.render(8, 95, 0x3ff, 0x100, 0x200); // Render-thread family may be a copy.
     assert(rendered && rendered->same_owner(source));
     assert(!delivery.select(8, 123)); // A source is ineligible before its RHI command executes.
     assert(delivery.tail_hooked(source, 0x700));
@@ -193,6 +193,33 @@ int main() {
     assert(!delivery.select(8, 123));
     assert(delivery.retire(8, 21));
     assert(delivery.retire(8, 22));
+
+    Delivery<SourceToken> ambiguous_delivery;
+    const auto ambiguous_a = std::make_shared<const SourceToken>(SourceToken{41, 4});
+    const auto ambiguous_b = std::make_shared<const SourceToken>(SourceToken{42, 5});
+    const Delivery<SourceToken>::Source ambiguous_source_a{ambiguous_a, 9, 41, 100, 4, 0x301, 0x100, 0x200};
+    const Delivery<SourceToken>::Source ambiguous_source_b{ambiguous_b, 9, 42, 100, 5, 0x302, 0x100, 0x200};
+    assert(ambiguous_delivery.family(ambiguous_source_a));
+    assert(ambiguous_delivery.family(ambiguous_source_b));
+    assert(!ambiguous_delivery.render(9, 100, 0x3ff, 0x100, 0x200)); // Never guess between identical frame/target/scene owners.
+
+    Delivery<SourceToken, 2> startup_recovery;
+    const auto startup_a = std::make_shared<const SourceToken>(SourceToken{51, 6});
+    const auto startup_b = std::make_shared<const SourceToken>(SourceToken{52, 7});
+    const auto startup_c = std::make_shared<const SourceToken>(SourceToken{53, 8});
+    const Delivery<SourceToken, 2>::Source startup_source_a{startup_a, 10, 51, 201, 6, 0x311, 0x100, 0x200};
+    const Delivery<SourceToken, 2>::Source startup_source_b{startup_b, 10, 52, 202, 7, 0x312, 0x100, 0x200};
+    const Delivery<SourceToken, 2>::Source startup_source_c{startup_c, 10, 53, 203, 8, 0x313, 0x100, 0x200};
+    assert(startup_recovery.family(startup_source_a));
+    assert(startup_recovery.family(startup_source_b));
+    assert(startup_recovery.family(startup_source_c)); // Oldest never-hooked registration is recycled.
+    assert(!startup_recovery.render(10, 201, 0x911, 0x100, 0x200));
+    const auto newest_render = startup_recovery.render(10, 203, 0x913, 0x100, 0x200);
+    assert(newest_render && newest_render->same_owner(startup_source_c));
+    assert(startup_recovery.tail_hooked(startup_source_c, 0x753));
+    assert(startup_recovery.executed(startup_source_c, 0x753, 123));
+    const auto newest_selected = startup_recovery.select(10, 123);
+    assert(newest_selected && newest_selected->same_owner(startup_source_c));
 
     // Render-ahead may queue a newer family before its RHI command executes.
     // Keep the older completed image eligible until actual atlas overwrite.

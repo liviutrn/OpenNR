@@ -29,5 +29,7 @@ if(WIN32)
     COMMAND QuadViewShaderWarpTests "${CMAKE_CURRENT_SOURCE_DIR}/QuadViewComposite.hlsl")
   add_test(NAME quadview-stereo-srgb-warp
     COMMAND QuadViewShaderWarpTests "${CMAKE_CURRENT_SOURCE_DIR}/QuadViewComposite.hlsl" --srgb)
-  set_tests_properties(quadview-stereo-shader-warp quadview-stereo-srgb-warp PROPERTIES TIMEOUT 60)
+  add_test(NAME quadview-stereo-typeless-warp
+    COMMAND QuadViewShaderWarpTests "${CMAKE_CURRENT_SOURCE_DIR}/QuadViewComposite.hlsl" --typeless)
+  set_tests_properties(quadview-stereo-shader-warp quadview-stereo-srgb-warp quadview-stereo-typeless-warp PROPERTIES TIMEOUT 60)
 endif()

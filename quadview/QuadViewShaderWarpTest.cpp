@@ -85,6 +85,7 @@ static Color source_color(unsigned view, unsigned x, unsigned y) {
 int main(int argc, char** argv) try {
     if (argc != 2 && argc != 3) throw std::runtime_error("Pass QuadViewComposite.hlsl path and optional --srgb");
     const bool srgb_output = argc == 3;
+    const bool typeless_output = srgb_output && std::string(argv[2]) == "--typeless";
     constexpr uint32_t W = 32, H = 32, AW = 64;
     const auto layout = uevr::quadview::make_layout(W, H, .5f, .5f, .25f, 1.f, .375f, .5f);
     if (!layout) throw std::runtime_error("Invalid test layout");
@@ -113,7 +114,8 @@ int main(int argc, char** argv) try {
     auto atlas = resource(device.Get(), texture(AW, H, D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET),
         D3D12_HEAP_TYPE_DEFAULT, D3D12_RESOURCE_STATE_COPY_DEST);
     auto output_description = texture(AW, H, D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET);
-    if (srgb_output) output_description.Format = DXGI_FORMAT_R8G8B8A8_UNORM_SRGB;
+    const auto output_view_format = srgb_output ? DXGI_FORMAT_R8G8B8A8_UNORM_SRGB : DXGI_FORMAT_R8G8B8A8_UNORM;
+    output_description.Format = typeless_output ? DXGI_FORMAT_R8G8B8A8_TYPELESS : output_view_format;
     auto output = resource(device.Get(), output_description,
         D3D12_HEAP_TYPE_DEFAULT, D3D12_RESOURCE_STATE_RENDER_TARGET);
     D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint{};
@@ -164,7 +166,10 @@ int main(int argc, char** argv) try {
     ComPtr<ID3D12DescriptorHeap> rtv_heap;
     require(device->CreateDescriptorHeap(&heap_description, IID_PPV_ARGS(&rtv_heap)), "Create RTV heap");
     const auto rtv = rtv_heap->GetCPUDescriptorHandleForHeapStart();
-    device->CreateRenderTargetView(output.Get(), nullptr, rtv);
+    D3D12_RENDER_TARGET_VIEW_DESC output_view{};
+    output_view.Format = output_view_format;
+    output_view.ViewDimension = D3D12_RTV_DIMENSION_TEXTURE2D;
+    device->CreateRenderTargetView(output.Get(), &output_view, rtv);
 
     D3D12_DESCRIPTOR_RANGE range{};
     range.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
@@ -229,12 +234,12 @@ int main(int argc, char** argv) try {
     pipeline_description.SampleMask = UINT_MAX;
     pipeline_description.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
     pipeline_description.NumRenderTargets = 1;
-    pipeline_description.RTVFormats[0] = output_description.Format;
+    pipeline_description.RTVFormats[0] = output_view_format;
     pipeline_description.SampleDesc.Count = 1;
     ComPtr<ID3D12PipelineState> pipeline;
     require(device->CreateGraphicsPipelineState(&pipeline_description, IID_PPV_ARGS(&pipeline)), "CreateGraphicsPipelineState");
     uevr::quadview::dx12::Compositor production;
-    if (!production.prewarm(device.Get(), atlas_description.Format, output_description.Format))
+    if (!production.prewarm(device.Get(), atlas_description.Format, output_view_format))
         throw std::runtime_error(production.error());
     ComPtr<ID3D12Fence> fence;
     require(device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&fence)), "CreateFence");

@@ -154,7 +154,12 @@ std::optional<OpenXR::PipelineState> OpenXR::capture_duoview_pose(uint32_t frame
         auto& comp=quadview_compositors[&tc->commands];
         if (!comp) comp=std::make_unique<uevr::quadview::dx12::Compositor>();
         comp->on_slot_retired();
-        if (!comp->prewarm(device,source_format,context.textures[i].texture->GetDesc().Format))
+        auto output_format=context.textures[i].texture->GetDesc().Format;
+        // The existing DOUBLE_WIDE swapchain is requested as BGRA8 sRGB;
+        // runtimes may expose its resource with a typeless family format.
+        if (output_format==DXGI_FORMAT_B8G8R8A8_TYPELESS) output_format=DXGI_FORMAT_B8G8R8A8_UNORM_SRGB;
+        if (output_format==DXGI_FORMAT_R8G8B8A8_TYPELESS) output_format=DXGI_FORMAT_R8G8B8A8_UNORM_SRGB;
+        if (!comp->prewarm(device,source_format,output_format))
             SPDLOG_WARNING_EVERY_N_SEC(2,"[QuadView][Prewarm] {}",comp->error());
     }
 }
@@ -218,6 +223,9 @@ void D3D12Component::OpenXR::initialize(XrSessionCreateInfo& session_info) {''')
                                 auto pose=packet->pose;
                                 pose.quadview_serial=source->serial;
                                 vr->m_openxr->note_quadview_copy(std::move(pose),source->generation);
+                                SPDLOG_INFO_EVERY_N_SEC(2,"[QuadView][CopyEnqueued] serial={} histories={} source={:x} output={:x}",
+                                    source->serial,static_cast<unsigned>(frozen->constructor_mask),
+                                    reinterpret_cast<uintptr_t>(packet->atlas.Get()),reinterpret_cast<uintptr_t>(output));
                                 vr->quadview_producer().note_compositor_record(frozen->key,
                                     reinterpret_cast<uintptr_t>(packet->atlas.Get()),command_list);
                                 // Packet and snapshot stay owned by the fence-bound compositor.

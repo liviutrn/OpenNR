@@ -4,7 +4,7 @@ EXPERIMENTAL ID7: engine/OpenXR adapters are integrated.
 A package containing this file must pass the full Windows build first.
 Headset stability and ten-minute gameplay acceptance remain unverified.
 
-Initial target: STALKER 2 / DX12 / OpenXR.
+Initial target: STALKER 2 (UE5.5) / DX12 / OpenXR.
 Mode ID7 = Quad Views Stereo (Experimental).
 Mode ID6 = the original monoscopic DuoView baseline.
 

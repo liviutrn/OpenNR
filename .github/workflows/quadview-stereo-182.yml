@@ -2,7 +2,7 @@ name: Experimental Stereo Quad Views from Build182
 run-name: Quad Views Stereo ID7 (${{ github.run_number }})
 on:
   push:
-    branches: [quadview/stereo-182, quadview/stereo-182-build]
+    branches: [quadview/stereo-182, quadview/stereo-182-build, quadview/stereo-182-build-next]
     paths: ['quadview/**', '.github/workflows/quadview-stereo-182.yml']
   workflow_dispatch:
 permissions:

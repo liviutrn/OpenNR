@@ -7,13 +7,13 @@ context at reduced resolution and left/right focus with cropped frusta,
 then compose a distinct full-field image for each eye.
 
 **Status:** portable contracts and the production D3D12 compositor pass
-Windows CI. The engine/OpenXR adapters are integrated and undergoing the
-full Windows build. An installable release requires that build to pass;
-headset acceptance remains outstanding.
+Windows CI. The engine/OpenXR adapters are integrated as experimental ID7.
+Build-specific results are recorded in the matching Actions run and package
+provenance files. Headset acceptance remains outstanding.
 
 ## Initial target
 
-- STALKER 2, DX12, OpenXR.
+- STALKER 2 (UE5.5), DX12, OpenXR.
 - Standard stereo OpenXR submission; runtime quad-view support is not needed.
 - Fixed-center focus. Gaze tracking is not part of the initial ID7 path.
 - Default focus width/height: 50%/50% of each eye's image.

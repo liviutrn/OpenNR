@@ -165,7 +165,7 @@ public:
             input.SampleDesc.Count != 1 || output.SampleDesc.Count != 1 ||
             input.DepthOrArraySize != 1 || output.DepthOrArraySize != 1 ||
             (input.Flags & D3D12_RESOURCE_FLAG_DENY_SHADER_RESOURCE) ||
-            !(output.Flags & D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET) || output.Format != output_format_ ||
+            !(output.Flags & D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET) || !compatible_source(output.Format, output_format_) ||
             !compatible_source(input.Format, source_format_)) return fail("Source or destination texture does not match prepared QuadView layout/formats");
 
         ShaderConstants constants{};

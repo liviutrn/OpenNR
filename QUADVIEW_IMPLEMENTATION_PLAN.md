@@ -8,7 +8,7 @@ passed for all 84 files in `BASELINE_SOURCE_SHA256SUMS`.
 
 Develop on `quadview/stereo-182`. Preserve the tested `v182` release and
 the ID6 DuoView implementation. ID7 is a separate experimental stereo mode.
-The initial supported target is STALKER 2, DX12, OpenXR.
+The initial supported target is STALKER 2 (UE5.5), DX12, OpenXR.
 
 ## Implementation sequence
 
