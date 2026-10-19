@@ -101,8 +101,30 @@ int main() try {
     uevr::duoview::FrameConfig frame{{1,1},*layout,{.5f,.5f},{},1};frame.settings.feather_fraction=.12f;
     uevr::duoview::dx12::Compositor compositor;
     UINT64 frequency{};check(queue->GetTimestampFrequency(&frequency));
+    // A valid scene/XR pair must NOT allocate shaders or fallback textures
+    // from the live command-recording callback when prewarm is missing.
+    uevr::duoview::dx12::Compositor cold;
+    if (cold.record(device.Get(),cmd.Get(),atlas.Get(),stereo.Get(),
+            D3D12_RESOURCE_STATE_RENDER_TARGET,frame,frequency) ||
+        cold.recorded_commands())
+        throw std::runtime_error("Cold compositor reconstructed GPU resources during XR recording");
     if (!compositor.prewarm(device.Get(),32,32,false,frequency))
         throw std::runtime_error("DX12 startup prewarm failed");
+    // A stale sRGB prewarm cannot be rebuilt on the recording path.
+    uevr::duoview::dx12::Compositor incompatible;
+    if (!incompatible.prewarm(device.Get(),32,32,true,frequency))
+        throw std::runtime_error("DX12 mismatched-format prewarm failed");
+    if (incompatible.record(device.Get(),cmd.Get(),atlas.Get(),stereo.Get(),
+            D3D12_RESOURCE_STATE_RENDER_TARGET,frame,frequency) ||
+        incompatible.recorded_commands())
+        throw std::runtime_error("XR callback rebuilt incompatible sRGB resources");
+    // Timestamp tick rates belong to the current queue, not permanently
+    // to the first prewarm on the same GPU device.
+    if (!compositor.prewarm(device.Get(),32,32,false,frequency+123) ||
+        compositor.timing_frequency()!=frequency+123 ||
+        !compositor.prewarm(device.Get(),32,32,false,frequency) ||
+        compositor.timing_frequency()!=frequency)
+        throw std::runtime_error("Re-prewarm retained stale GPU timestamp frequency");
     if (compositor.record(device.Get(),cmd.Get(),atlas.Get(),bad.Get(),D3D12_RESOURCE_STATE_RENDER_TARGET,frame)) throw std::runtime_error("Invalid destination accepted");
     if (compositor.recorded_commands()) throw std::runtime_error("Rejected input recorded GPU commands");
     if (!compositor.record(device.Get(),cmd.Get(),atlas.Get(),stereo.Get(),D3D12_RESOURCE_STATE_RENDER_TARGET,frame,frequency)) throw std::runtime_error(compositor.error());
