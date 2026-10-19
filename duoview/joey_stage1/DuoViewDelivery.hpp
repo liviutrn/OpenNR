@@ -63,7 +63,7 @@ public:
         std::scoped_lock lock{mutex_};
         if (!source || !source.packet || !advance(source.generation)) return false;
         targets_[static_cast<size_t>(source.role)] = source.target;
-        largest_registered_serial_ = std::max(largest_registered_serial_, source.packet->serial);
+        largest_registered_serial_ = (std::max)(largest_registered_serial_, source.packet->serial);
         for (auto& entry : families_) {
             if (entry && entry.generation == source.generation && entry.frame == source.frame &&
                 entry.target == source.target && entry.scene == source.scene) return entry.same_owner(source);
@@ -108,7 +108,7 @@ public:
         std::scoped_lock lock{mutex_};
         if (!source || !advance(source.generation)) return;
         ++counts_.blocked;
-        blocked_serial_ = std::max(blocked_serial_, source.packet ? source.packet->serial : largest_registered_serial_);
+        blocked_serial_ = (std::max)(blocked_serial_, source.packet ? source.packet->serial : largest_registered_serial_);
         trace(DeliveryEvent::conflict, source, command, thread);
     }
 

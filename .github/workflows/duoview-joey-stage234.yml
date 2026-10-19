@@ -118,6 +118,12 @@ jobs:
           cmake -S backend -B backend/build -G 'Visual Studio 17 2022' -A x64 -DCMAKE_BUILD_TYPE=Release -DUEVR_BUILD_COMPATIBILITY_TESTS=ON *> evidence/configure.log
           $code=$LASTEXITCODE; Get-Content evidence/configure.log | Select-Object -Last 60
           if ($code -ne 0) { throw "Original Joey configuration failed ($code)" }
+      - name: Build original backend and auxiliary DLLs
+        shell: pwsh
+        run: |
+          cmake --build backend/build --config Release --target uevr vr-plugin-nullifier LuaVR --parallel 2 *> evidence/backend-build.log
+          $code=$LASTEXITCODE; Get-Content evidence/backend-build.log | Select-Object -Last 100
+          if ($code -ne 0) { throw "Original latest Joey backend failed to compile ($code)" }
       - name: Build every test target used by the official matching build
         shell: pwsh
         run: |
@@ -130,12 +136,6 @@ jobs:
           ctest --test-dir backend/build -C Release --output-on-failure --no-tests=error *> evidence/compatibility-tests.log
           $code=$LASTEXITCODE; Get-Content evidence/compatibility-tests.log
           if ($code -ne 0) { throw "Original compatibility tests failed ($code)" }
-      - name: Build original backend and auxiliary DLLs
-        shell: pwsh
-        run: |
-          cmake --build backend/build --config Release --target uevr vr-plugin-nullifier LuaVR --parallel 2 *> evidence/backend-build.log
-          $code=$LASTEXITCODE; Get-Content evidence/backend-build.log | Select-Object -Last 100
-          if ($code -ne 0) { throw "Original latest Joey backend failed to compile ($code)" }
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '6.0.x'

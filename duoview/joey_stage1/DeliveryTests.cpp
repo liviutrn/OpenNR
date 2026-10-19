@@ -1,3 +1,6 @@
+#ifdef _WIN32
+#include <windows.h>
+#endif
 #include "DuoViewDelivery.hpp"
 #include <cassert>
 #include <atomic>

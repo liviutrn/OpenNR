@@ -99,7 +99,9 @@ as a missed fresh submission.
   transaction test also passes under ThreadSanitizer.
 - Exact-anchor reconstruction is verified locally; Windows shader compilation,
   GPU WARP tests, original compatibility suite and backend/frontend build run
-  in the unchanged pinned GitHub Actions recipe, with the added delivery test.
+  in the pinned GitHub Actions recipe, with the added delivery test. Backend
+  compilation precedes the long compatibility-target build to catch integration
+  errors earlier; every original validation step is retained.
 
 ## Hardware acceptance, still outstanding
 
