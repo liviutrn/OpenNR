@@ -2,7 +2,7 @@ name: DuoView Direct Native Source Compositor
 run-name: DuoView Direct Native Source Compositor exact SDK (${{ github.run_number }})
 on:
   push:
-    branches: [experiments/duoview-temporal-shading-v22, experiments/joey-duoview-native-stereo-fix-v22-20261018, fix/joey-v22-nativefix-duoview-activation-20261018, experiments/joey-v22-nativefix-gaze-hold-controls-20261018, experiments/joey-duoview-adaptive-saccade-20261018, fix/duoview-v154-controls-offcenter-20261018, fix/duoview-v154-general-controls-20261018, opt/duoview-v158-direct-sources-20261019, opt/duoview-stage2-direct-xr-output-20261019, opt/duoview-stage3-runtime-profile-20261019, opt/duoview-stage4-slot-descriptor-cache-20261019, opt/duoview-stage5-handle-cache-20261019]
+    branches: [fix/duoview-render-transaction-20261019, experiments/duoview-temporal-shading-v22, experiments/joey-duoview-native-stereo-fix-v22-20261018, fix/joey-v22-nativefix-duoview-activation-20261018, experiments/joey-v22-nativefix-gaze-hold-controls-20261018, experiments/joey-duoview-adaptive-saccade-20261018, fix/duoview-v154-controls-offcenter-20261018, fix/duoview-v154-general-controls-20261018, opt/duoview-v158-direct-sources-20261019, opt/duoview-stage2-direct-xr-output-20261019, opt/duoview-stage3-runtime-profile-20261019, opt/duoview-stage4-slot-descriptor-cache-20261019, opt/duoview-stage5-handle-cache-20261019]
     paths:
       - '.github/workflows/duoview-joey-stage234.yml'
       - 'duoview/joey_stage1/**'
@@ -176,6 +176,9 @@ jobs:
           Both UE views use the exact frozen producer projection and explicitly bound OpenXR Mono pose token. Native engine histories and motion vectors remain engine-owned. The validated STALKER 2 same-pass constructor policy remains active for renderer safety.
           The separate independent-shading option is ignored while DuoView is active; Joey Native Stereo Fix owns its normal source-rendering behavior.
           The original Native Stereo Fix secondary scene-capture target supplies the second DuoView image. Packet identity, capture generation, source geometry, and Mono pose/projection are checked before composition.
+          Transaction correction: the immutable source packet is prepared before either renderer call, keyed to both exact family IDs/targets, and associated with their current RHI command tails. Present joins the executed source owners; DuoView no longer uses sampled engine/Present clock-distance acceptance. Stock Native ID0 and Mono ID5 retain their selector policies.
+          Source checkpoints precede rendering; GPU ordering is established by source work preceding DXGI Present on its RHI thread and composition using the swapchain owning direct queue. They are not GPU-completion fences. Primary resource identity and secondary capture generations remain checked, and existing compositor command-slot fences retain packet/resources.
+          Delivery trace is bounded in RAM; failures dump the last 24 events at most every five seconds. UI distinguishes unique transaction delivery from duplicate Presents and reports overwritten/unproven transactions. No headset fluidity or 0.001% miss-rate claim is made.
           Actual shading parity and temporal stability require headset testing.
           Optional GPU timing is OFF by default; it measures DuoView raster/output only and excludes Unreal scene rendering and any source gather copies. Compositor resources prewarm at swapchain creation and remain owned by each OpenXR command slot until its fence retires. No waits, shader compilation, or GPU resource creation occur in the XR copy callback; immutable packet lifetimes are retained through command-slot fence retirement.
           Debug source 0=blended output, 1=periphery only, 2=fovea only (dark outside ROI).

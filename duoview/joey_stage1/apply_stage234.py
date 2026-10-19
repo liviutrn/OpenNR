@@ -1072,6 +1072,10 @@ OpenXR::PipelineState OpenXR::get_submit_state() {
         'copies == (std::string(backend) == "D3D11" ? 2 : 3)',
         'copies == (std::string(backend) == "D3D11" ? 2 : 4)')
 
+    from apply_delivery import apply as apply_delivery
+    apply_delivery(changed, edit)
+    shutil.copyfile(Path(__file__).with_name("DuoViewDelivery.hpp"), root/"src/mods/vr/DuoViewDelivery.hpp")
+
     # Copy reference modules into exact checked-out Joey tree. No private SDK
     # declarations or altered SDK files.
     for name in ("DuoViewGeometry.hpp","DuoViewGaze.hpp","DuoViewPSVR2Gaze.hpp","DuoViewCropStability.hpp","DuoViewFrame.hpp",
