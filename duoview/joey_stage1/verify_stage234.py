@@ -140,7 +140,7 @@ def main():
  for token in ("native_packet_frame_count = duo_native_active ? vr->m_render_frame_count",
                "get_native_stereo_frame_packet_for_submit(native_packet_frame_count",
                "packet_frame->config.key.generation == vr->mono_generation()",
-               "compositor.record_native(", "note_duoview_copy(std::move(pose))",
+               "compositor.record_native(", "note_duoview_copy(std::move(pose),packet_frame->config.key.generation)",
                "note_mono_frame_ready(m_mono_generation)"):
   if token not in d3d: raise RuntimeError("Native packet / Mono submit binding missing "+token)
  xr=(a.backend/"src/mods/vr/runtimes/OpenXR.cpp").read_text(encoding="utf-8")
@@ -160,6 +160,9 @@ def main():
   raise RuntimeError("DuoView draw identity must advance independently of XR pose identity")
  if "duoview_key(source_frame" in vr_cpp:
   raise RuntimeError("Repeated XR poses must not alias distinct draw transactions")
+ pose_publish=xr.index("if (vr->is_duoview_renderer_active()) pipeline_state.frame_count=frame_count;")
+ if not pose_publish < xr.index("mono.pose_frame = frame_count",pose_publish):
+  raise RuntimeError("DuoView pipeline token must be published with the located pose")
  capture=hook.index("const auto duo_packet_pose")
  publish=hook.index("const auto publish_native_packet")
  split=hook.index("const auto runtime_frame_count = runtime->internal_frame_count",publish)

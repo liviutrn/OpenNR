@@ -14,6 +14,7 @@ The independent Luna audit found no automatic Mono/DuoView mode retry loop: comp
 
 ## Changes
 
+- Stamp the DuoView PipelineState token when its located views and Mono pose metadata are published. Previously this token was stamped later by renderer callbacks, allowing fresh views to carry an old ring-slot token.
 - Freeze the exact validated source PipelineState before either Native Fix renderer callback, and attach its views and pose metadata to the completed source packet.
 - Consume that immutable pose after a successful scene-image copy instead of requiring the mutable runtime slot to still match.
 - Use the current XR display time while retaining the original rendered scene pose.

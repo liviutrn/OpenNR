@@ -884,7 +884,7 @@ void OpenXR::note_mono_main_family(uint32_t frame, bool main_family) {''')
                                 pose.stage_views.assign(packet->duoview_views.begin(),packet->duoview_views.end());
                                 pose.frame_state=packet->duoview_frame_state;
                                 pose.view_space_location=packet->duoview_view_location;
-                                vr->m_openxr->note_duoview_copy(std::move(pose));
+                                vr->m_openxr->note_duoview_copy(std::move(pose),packet_frame->config.key.generation);
                             }
                             if (submitted && recorded && callback_attempted) {
                                 native_stereo_hook->note_native_stereo_frame_packet_consumed(packet->serial);
@@ -919,7 +919,7 @@ void OpenXR::note_mono_main_family(uint32_t frame, bool main_family) {''')
     edit(xrh,'    PipelineState get_submit_state();',
     '''    PipelineState get_submit_state();
     std::optional<PipelineState> capture_duoview_pose(uint32_t frame);
-    void note_duoview_copy(PipelineState pose);
+    void note_duoview_copy(PipelineState pose, uint64_t generation);
     void invalidate_duoview_scene();
     std::optional<PipelineState> duoview_pending_pose, duoview_submitted_pose;
     uevr::duoview::SubmitContinuity duoview_continuity;
@@ -949,8 +949,10 @@ void OpenXR::invalidate_duoview_scene() {
     duoview_continuity.reset(); duoview_holding=false;
 }
 
-void OpenXR::note_duoview_copy(PipelineState pose) {
+void OpenXR::note_duoview_copy(PipelineState pose, uint64_t generation) {
     std::scoped_lock lock{this->sync_assignment_mtx};
+    const auto vr=VR::get();
+    if (!vr->is_duoview_renderer_active() || generation!=vr->mono_generation()) return;
     duoview_pending_pose=std::move(pose);
 }
 
@@ -1049,6 +1051,14 @@ OpenXR::PipelineState OpenXR::get_submit_state() {
         return nullptr;
     }
     const auto current_capture = rtm != nullptr ? rtm->get_scene_capture_target_snapshot() : nullptr;''')
+
+    edit(xr,'''    if (vr->mono_frame_gate_required()) {
+        auto& mono = mono_frames[frame_count % QUEUE_SIZE];
+        mono.generation = vr->mono_generation();''',
+    '''    if (vr->mono_frame_gate_required()) {
+        if (vr->is_duoview_renderer_active()) pipeline_state.frame_count=frame_count;
+        auto& mono = mono_frames[frame_count % QUEUE_SIZE];
+        mono.generation = vr->mono_generation();''')
 
     # Copy reference modules into exact checked-out Joey tree. No private SDK
     # declarations or altered SDK files.
