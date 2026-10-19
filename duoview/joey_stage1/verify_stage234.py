@@ -156,6 +156,10 @@ def main():
   raise RuntimeError("DuoView must acknowledge successful Native packet consumption")
  for token in ("duoview_copy_submits", "duoview_hold_submits", "duoview_empty_submits"):
   if token not in xr or token not in vr_cpp: raise RuntimeError("Missing visible delivery counter "+token)
+ if "m_duoview_draw_serial.fetch_add(1" not in vr_header or "const auto key = duoview_key();" not in vr_cpp:
+  raise RuntimeError("DuoView draw identity must advance independently of XR pose identity")
+ if "duoview_key(source_frame" in vr_cpp:
+  raise RuntimeError("Repeated XR poses must not alias distinct draw transactions")
  capture=hook.index("const auto duo_packet_pose")
  publish=hook.index("const auto publish_native_packet")
  split=hook.index("const auto runtime_frame_count = runtime->internal_frame_count",publish)

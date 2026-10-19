@@ -75,11 +75,12 @@ def main():
     bool is_duoview_renderer_active() const;
     uevr::duoview::State& duoview_state() { return m_duoview; }
     void duoview_start_draw() {
+        m_duoview_draw_serial.fetch_add(1, std::memory_order_acq_rel);
         m_duoview_candidate_key.store(nullptr, std::memory_order_release);
         m_duoview_frozen_key.store(nullptr, std::memory_order_release);
     }
-    uevr::duoview::FrameKey duoview_key(uint32_t frame) const {
-        return {mono_generation(), static_cast<uint64_t>(frame) + 1u};
+    uevr::duoview::FrameKey duoview_key() const {
+        return {mono_generation(), m_duoview_draw_serial.load(std::memory_order_acquire)};
     }
     uevr::duoview::FrameKey duoview_producer_key() const {
         if (m_fake_stereo_hook && m_fake_stereo_hook->is_in_viewport_client_draw()) {
@@ -90,8 +91,7 @@ def main():
         if (frozen && frozen->generation == mono_generation()) return *frozen;
         const auto candidate = m_duoview_candidate_key.load(std::memory_order_acquire);
         if (candidate && candidate->generation == mono_generation()) return *candidate;
-        const auto runtime = get_runtime();
-        return duoview_key(runtime->internal_frame_count + 1u);
+        return duoview_key();
     }
     bool duoview_note_main_family(uint32_t, bool main, uint32_t count) {
         const auto candidate = m_duoview_candidate_key.load(std::memory_order_acquire);
@@ -150,6 +150,7 @@ def main():
     std::atomic<int32_t> m_duoview_output_path{-1};
     std::atomic<uint64_t> m_duoview_source_extents{0};
     uevr::duoview::State m_duoview;
+    std::atomic<uint64_t> m_duoview_draw_serial{};
     std::atomic<std::shared_ptr<const uevr::duoview::FrameKey>> m_duoview_candidate_key{};
     std::atomic<std::shared_ptr<const uevr::duoview::FrameKey>> m_duoview_frozen_key{};
     uevr::duoview::psvr2::Reader m_duoview_gaze;
@@ -417,7 +418,7 @@ std::optional<uevr::duoview::ViewFrame> VR::duoview_begin_frame() {
         set_mono_status("Waiting: DuoView has no exact OpenXR Mono pose token yet");
         return {};
     }
-    const auto key = duoview_key(source_frame + 1u);
+    const auto key = duoview_key();
     auto projection = get_projection_matrix(VRRuntime::Eye::LEFT);
     const float near_plane=sdk::globals::get_near_clipping_plane();
     if (!std::isfinite(near_plane) || near_plane<=0.f) return {};

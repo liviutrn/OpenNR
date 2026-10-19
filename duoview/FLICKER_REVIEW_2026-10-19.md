@@ -8,6 +8,8 @@ A missing or rejected DuoView pair cleared the Mono copy token, so OpenXR select
 
 A separate renderer invocation containing only auxiliary targets could also run main-pair validation and erase a valid packet with "no exact main-family eye pair was proven". DuoView now forwards these unrelated invocations without changing its main packet. Invocations that contain the viewport target still undergo the original strict validation. Retained packets must match the current main target as well as capture identity. This addresses a source of avoidable pair loss; its frequency in the affected game needs runtime evidence.
 
+Draw identity was also derived from the XR pose token. Distinct viewport draws sharing a pose token reused the same State slot, retaining prior completeness flags and potentially invalidating the next draw when its camera changed. Draws now use an independent 64-bit serial while their explicit Mono pose token remains unchanged. A production contract test completes two transactions with different cameras sharing the same XR pose token.
+
 The independent Luna audit found no automatic Mono/DuoView mode retry loop: compositor faults remain quarantined until explicit mode reselection. Transient waiting/active status messages can therefore resemble mode switching while scene layers are being dropped. This does not dismiss the visible flicker.
 
 ## Changes

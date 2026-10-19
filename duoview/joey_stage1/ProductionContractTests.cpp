@@ -155,6 +155,25 @@ int main() try {
     require(temporal.snapshot({7,2})->config.settings.independent_shading,"Mid-frame toggle split the source pair");
     require(temporal.begin({7,3},3000,3000,p,[]()->std::optional<UV>{return UV{.6f,.5f};},1022).has_value(),"Next-frame toggle packet missing");
     require(!temporal.can_independent_shading({7,3},200),"Shading off must apply to the next producer frame");
+    State repeated_pose_draws;
+    Settings repeat_settings{}; repeat_settings.eye_tracked=false;
+    require(repeated_pose_draws.configure(repeat_settings),"Repeated-pose settings rejected");
+    CameraPose moved_camera=camera; moved_camera.position[0]+=1.;
+    for (uint64_t draw : {1u,2u}) {
+        const FrameKey draw_key{20,draw};
+        require(repeated_pose_draws.begin(draw_key,3000,3000,m,
+            []()->std::optional<UV>{return UV{.5f,.5f};},0,37).has_value(),
+            "Distinct draws sharing one XR pose need independent source transactions");
+        const auto& draw_camera=draw==1 ? camera : moved_camera;
+        require(repeated_pose_draws.family(draw_key,true,2) &&
+            repeated_pose_draws.rectangle(draw_key,0) && repeated_pose_draws.rectangle(draw_key,1) &&
+            repeated_pose_draws.projection(draw_key,0) && repeated_pose_draws.projection(draw_key,1) &&
+            repeated_pose_draws.camera(draw_key,0,draw_camera) && repeated_pose_draws.camera(draw_key,1,draw_camera),
+            "Distinct draw camera should not invalidate a previous draw sharing its pose token");
+        const auto transaction=repeated_pose_draws.snapshot(draw_key);
+        require(transaction && native_frame_binding(*transaction) && transaction->mono_source_frame==37,
+            "Independent draw identity must preserve the exact XR source pose token");
+    }
     SubmitContinuity continuity;
     require(!continuity.can_hold(7,123,1000),"Startup must not invent a last-good scene");
     continuity.submitted(7,123,1000);
