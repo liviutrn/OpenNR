@@ -223,6 +223,8 @@ void D3D12Component::OpenXR::initialize(XrSessionCreateInfo& session_info) {''')
                                 auto pose=packet->pose;
                                 pose.quadview_serial=source->serial;
                                 vr->m_openxr->note_quadview_copy(std::move(pose),source->generation);
+                                // Shared mode-transition readiness also gates post-present GPU memory retirement.
+                                vr->note_mono_frame_ready(source->generation);
                                 SPDLOG_INFO_EVERY_N_SEC(2,"[QuadView][CopyEnqueued] serial={} histories={} source={:x} output={:x}",
                                     source->serial,static_cast<unsigned>(frozen->constructor_mask),
                                     reinterpret_cast<uintptr_t>(packet->atlas.Get()),reinterpret_cast<uintptr_t>(output));
