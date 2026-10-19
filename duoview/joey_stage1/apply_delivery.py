@@ -76,20 +76,23 @@ def apply(changed, edit):
     changed[hook]=changed[hook][:begin]+region+changed[hook][end:]
     edit(hook,'''    static inline std::unordered_map<sdk::FRHICommandBase_New*, uint32_t> cmd_frame_counts{};''',
     '''    static inline std::unordered_map<sdk::FRHICommandBase_New*, uint32_t> cmd_frame_counts{};
-    static inline std::unordered_map<sdk::FRHICommandBase_New*, FFakeStereoRenderingHook::DuoDelivery::Source> duo_command_sources{};''')
+    static inline std::unordered_map<sdk::FRHICommandBase_New*, FFakeStereoRenderingHook::DuoDelivery::Command> duo_command_sources{};''')
     edit(hook,'''        const auto func = (decltype(hooked_command_fn<N>)*)original_func;
         const auto frame_count = cmd_frame_counts[cmd];''',
     '''        const auto func = (decltype(hooked_command_fn<N>)*)original_func;
         const auto frame_count = cmd_frame_counts[cmd];
         const auto source_it = duo_command_sources.find(cmd);
-        const auto duo_source = source_it != duo_command_sources.end()
-            ? source_it->second : FFakeStereoRenderingHook::DuoDelivery::Source{};''')
+        const auto duo_command = source_it != duo_command_sources.end()
+            ? source_it->second : FFakeStereoRenderingHook::DuoDelivery::Command{};
+        const auto duo_source = duo_command.owner();''')
     edit(hook,'''                runtime->enqueue_render_poses(frame_count);
                 if (g_hook != nullptr) { g_hook->note_nascar25_render_pose_handoff(frame_count); }''',
     '''                if (!duo_source || (vr->is_duoview_renderer_active() && duo_source.generation==vr->mono_generation()))
                     runtime->enqueue_render_poses(frame_count);
                 if (duo_source && vr->is_duoview_renderer_active() && g_hook != nullptr) {
-                    g_hook->duoview_delivery.executed(duo_source, reinterpret_cast<uintptr_t>(cmd), GetCurrentThreadId());
+                    for (const auto& source : duo_command.sources) {
+                        if (source) g_hook->duoview_delivery.executed(source, reinterpret_cast<uintptr_t>(cmd), GetCurrentThreadId());
+                    }
                 }
                 if (g_hook != nullptr) { g_hook->note_nascar25_render_pose_handoff(frame_count); }''')
     edit(hook, '        RHIThreadWorker::get().execute();\n\n        if (vr->get_synchronize_stage() == VR::SynchronizeStage::EARLY) {',
@@ -131,13 +134,16 @@ def apply(changed, edit):
             last_command = reinterpret_cast<sdk::FRHICommandBase_New*>(*tail);
             if (original_vtables.contains(last_command)) {
                 const auto owner = duo_command_sources.find(last_command);
-                const bool same = owner != duo_command_sources.end() && owner->second.same_owner(duo_source);
-                g_hook->duoview_delivery.note(same ? uevr::duoview::DeliveryEvent::duplicate :
+                using Attachment=FFakeStereoRenderingHook::DuoDelivery::Attachment;
+                const auto attached=owner!=duo_command_sources.end()
+                    ? owner->second.attach(duo_source) : Attachment::conflict;
+                g_hook->duoview_delivery.note(attached==Attachment::added ? uevr::duoview::DeliveryEvent::hook :
+                    attached==Attachment::duplicate ? uevr::duoview::DeliveryEvent::duplicate :
                     uevr::duoview::DeliveryEvent::conflict, duo_source, *tail, GetCurrentThreadId());
-                if (!same) g_hook->duoview_delivery.block(duo_source, *tail, GetCurrentThreadId());
-                if (!same) SPDLOG_WARNING_EVERY_N_SEC(2,
+                if (attached==Attachment::conflict) g_hook->duoview_delivery.block(duo_source, *tail, GetCurrentThreadId());
+                if (attached==Attachment::conflict) SPDLOG_WARNING_EVERY_N_SEC(2,
                     "[DuoView][Delivery] Pending tail ownership conflict command={:x} owner={} incoming={} frame={}",
-                    *tail, owner != duo_command_sources.end() && owner->second.packet ? owner->second.packet->serial : 0,
+                    *tail, owner != duo_command_sources.end() && owner->second.owner().packet ? owner->second.owner().packet->serial : 0,
                     duo_source.packet ? duo_source.packet->serial : 0, duo_source.frame);
                 return;
             }
@@ -148,7 +154,9 @@ def apply(changed, edit):
         *(void***)last_command = (void**)new_vtable.data();''',
     '''        original_vtables[last_command] = *(void***)last_command;
         if (duo_source) {
-            duo_command_sources.emplace(last_command, duo_source);
+            FFakeStereoRenderingHook::DuoDelivery::Command command{};
+            command.attach(duo_source);
+            duo_command_sources.emplace(last_command, std::move(command));
             g_hook->duoview_delivery.note(uevr::duoview::DeliveryEvent::hook, duo_source,
                 reinterpret_cast<uintptr_t>(last_command), GetCurrentThreadId());
         }

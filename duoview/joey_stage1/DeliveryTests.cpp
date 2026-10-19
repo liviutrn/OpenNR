@@ -58,6 +58,21 @@ int main() {
     assert(!immutable.same_owner(source(b,102,Role::primary)));
     assert(!immutable.same_owner(source(a,101,Role::secondary)));
 
+    Delivery::Command slate;
+    const auto primary=source(a,20,Role::primary);
+    const auto secondary=source(a,21,Role::secondary);
+    assert(slate.attach(primary)==Delivery::Attachment::added);
+    assert(slate.attach(primary)==Delivery::Attachment::duplicate);
+    assert(slate.attach(secondary)==Delivery::Attachment::added);
+    assert(slate.owner().frame==20 && slate.sources[1].frame==21);
+    assert(slate.attach(source(b,22,Role::primary))==Delivery::Attachment::conflict);
+    assert(slate.attach(source(b,23,Role::secondary))==Delivery::Attachment::conflict);
+    assert(slate.sources[0].packet==a && slate.sources[1].packet==a);
+    Delivery::Command reverse_slate;
+    assert(reverse_slate.attach(secondary)==Delivery::Attachment::added);
+    assert(reverse_slate.attach(primary)==Delivery::Attachment::added);
+    assert(reverse_slate.sources[1].frame==21 && reverse_slate.owner().frame==21);
+
     std::unordered_map<uintptr_t,uintptr_t> links{{1,2},{2,3},{3,0}};
     const auto read=[&](uintptr_t p)->std::optional<uintptr_t>{
         const auto found=links.find(p);return found==links.end()?std::nullopt:std::optional{found->second};};
@@ -82,9 +97,18 @@ int main() {
     });
     for(uint32_t i=1;i<=count;++i) {
         while(registered.load(std::memory_order_acquire)<i) std::this_thread::yield();
-        execute(concurrent,i*2,Role::primary);
-        assert(!concurrent.select(1,3));
-        execute(concurrent,i*2+1,Role::secondary);
+        const auto p=concurrent.render(1,i*2,100,300,2);
+        const auto s=concurrent.render(1,i*2+1,200,300,2);
+        Delivery::Command command;
+        assert(command.attach(p)==Delivery::Attachment::added);
+        if (i%2) {
+            assert(command.attach(s)==Delivery::Attachment::added);
+            for (const auto& role : command.sources) concurrent.executed(role,i+1000,3);
+        } else {
+            concurrent.executed(p,i+1000,3);
+            assert(!concurrent.select(1,3));
+            concurrent.executed(s,i+1001,3);
+        }
         const auto packet=concurrent.select(1,3);
         assert(packet && packet->serial==i && packet->immutable_pose==i*2+100);
         concurrent.result(uevr::duoview::DeliveryEvent::copy,i,true,3);

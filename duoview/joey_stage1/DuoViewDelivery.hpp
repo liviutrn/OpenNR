@@ -41,6 +41,24 @@ public:
         }
     };
 
+    enum class Attachment { added, duplicate, conflict };
+    struct Command {
+        std::array<Source,2> sources{};
+        Source original{};
+        Source owner() const { return original; }
+        Attachment attach(const Source& source) {
+            if (!source) return Attachment::conflict;
+            auto& slot=sources[static_cast<size_t>(source.role)];
+            if (slot) return slot.same_owner(source) ? Attachment::duplicate : Attachment::conflict;
+            const auto existing=owner();
+            if (existing && (existing.packet!=source.packet || existing.generation!=source.generation ||
+                existing.scene!=source.scene || existing.target==source.target)) return Attachment::conflict;
+            slot=source;
+            if (!original) original=source;
+            return Attachment::added;
+        }
+    };
+
     bool family(Source source, uint32_t thread) {
         std::scoped_lock lock{mutex_};
         if (!source || !source.packet || !advance(source.generation)) return false;

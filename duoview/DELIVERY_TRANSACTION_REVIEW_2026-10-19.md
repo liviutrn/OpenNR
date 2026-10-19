@@ -36,13 +36,18 @@ adding +2, accepting a draw-distance window, or renewing timestamps.
 4. On the existing recognized new-command path, find the current command
    tail using the SDK Next chain, bounded at 65,536 commands. Pending command
    owners never change. Re-observing the same owner is inert; a conflicting
-   owner is diagnosed and cannot be accepted. The existing original-vtable
+   owner is diagnosed and cannot be accepted. STALKER's observed deferred
+   Slate path drains both source callbacks against the same command tail:
+   it attaches both roles only when they share the identical immutable packet,
+   generation and scene with distinct targets. The original command frame
+   remains unchanged. The existing original-vtable
    restoration and execute-index logic remain in use. Tail traversal caches
    readable memory regions only within the current call; it does not retain
    allocator pointers across calls.
 5. After the original tail command executes, record that source's packet
-   and execution thread. This is a source-order checkpoint BEFORE its render
-   work, not a claim that a GPU image has completed. The two source labels
+   and execution thread. A direct PreRender checkpoint precedes rendering;
+   a deferred Slate checkpoint follows source-command recording. Neither is
+   a claim that a GPU image has completed. The two source labels
    must agree on the same immutable packet at Present. RT/GT work ahead of
    the presented transaction cannot select a newer packet prematurely.
 6. At DXGI Present on that same RHI thread, source commands preceding Present
@@ -84,10 +89,14 @@ as a missed fresh submission.
   mixed/unknown sources, auxiliary callbacks, duplicate Present accounting,
   failed submission accounting, generation changes/delayed callbacks, family
   counter wrap, bounded-registry overflow, command-tail growth/cycles, blocked
-  source recovery and packet lifetime.
+  source recovery and packet lifetime. Half the asynchronous transactions
+  share a deferred Slate command; the other half use separate source commands.
+  Same-command peer attachment, duplicates, cross-transaction conflicts and
+  preservation of the first attached frame are explicitly tested.
 - Host ASan/UBSan passes with leak scanning disabled because this container
   prevents LeakSanitizer enumerating /proc tasks. Existing five independent
-  CPU suites and pinned production contract are also run.
+  CPU suites and pinned production contract are also run. The 100,000-
+  transaction test also passes under ThreadSanitizer.
 - Exact-anchor reconstruction is verified locally; Windows shader compilation,
   GPU WARP tests, original compatibility suite and backend/frontend build run
   in the unchanged pinned GitHub Actions recipe, with the added delivery test.
