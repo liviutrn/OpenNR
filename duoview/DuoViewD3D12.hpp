@@ -61,7 +61,7 @@ public:
         const bool srgb = format == DXGI_FORMAT_B8G8R8A8_UNORM_SRGB || format == DXGI_FORMAT_R8G8B8A8_UNORM_SRGB;
         if (!prepare(device, l.atlas_width / 2, l.atlas_height, srgb)) return false;
         const bool timed = frequency && frequency == frequency_ && queries_ && timestamps_;
-        if (timed) read_timing();
+        update_timing(timed,false);
         ShaderConstants constants{
             {l.atlas_width / 2, l.atlas_height}, {l.atlas_width, l.atlas_height},
             {l.fovea.x, l.fovea.y, l.fovea.width, l.fovea.height},
@@ -93,7 +93,7 @@ public:
         if (timed) {
             cmd->EndQuery(queries_.Get(), D3D12_QUERY_TYPE_TIMESTAMP, 1);
             cmd->ResolveQueryData(queries_.Get(), D3D12_QUERY_TYPE_TIMESTAMP, 0, 2, timestamps_.Get(), 0);
-            timing_pending_ = true;
+            timing_pending_ = true; pending_direct_xr_=false;
         }
         return copied;
     }
@@ -133,7 +133,9 @@ public:
         // Render directly to the doublewide OpenXR texture only when its
         // render-target format matches the precompiled PSO. Keep a bit-for-bit
         // old compositor+copy fallback for incompatible swapchain formats.
-        const bool direct_xr=
+        if (!stereo_destination_valid(xrd,width_,height_))
+            return reject("Invalid Mono XR output dimensions, format, or render-target flags");
+        const bool direct_xr=frame.config.settings.direct_xr_output &&
             xrd.Dimension==D3D12_RESOURCE_DIMENSION_TEXTURE2D &&
             xrd.Width==static_cast<uint64_t>(width_)*2 && xrd.Height==height_ &&
             xrd.DepthOrArraySize==1 && xrd.MipLevels==1 &&
@@ -206,7 +208,7 @@ public:
         primary_reference_=primary; secondary_reference_=secondary;
         packet_lifetime_=std::move(packet_lifetime);
         const bool timed=frequency && frequency==frequency_ && queries_ && timestamps_;
-        if (timed) read_timing();
+        update_timing(timed,direct_xr);
         transition(cmd,fovea,fovea_state,D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
         transition(cmd,periphery,peripheral_state,D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
         recorded_commands_=true;
@@ -259,7 +261,7 @@ public:
         if (timed) {
             cmd->EndQuery(queries_.Get(),D3D12_QUERY_TYPE_TIMESTAMP,1);
             cmd->ResolveQueryData(queries_.Get(),D3D12_QUERY_TYPE_TIMESTAMP,0,2,timestamps_.Get(),0);
-            timing_pending_=true;
+            timing_pending_=true; pending_direct_xr_=direct_xr;
         }
         if (!copied) return reject("Direct Native blend succeeded but Mono XR output validation failed");
         return true;
@@ -280,6 +282,10 @@ public:
             primary == destination || secondary == destination || cmd->GetType() != D3D12_COMMAND_LIST_TYPE_DIRECT ||
             FAILED(device->GetDeviceRemovedReason()) || !layout_valid(frame.config.layout))
             return reject("Invalid Native resources, D3D12 device, or DuoView layout");
+        last_native_direct_xr_=false;
+        if (!stereo_destination_valid(destination->GetDesc(),frame.config.layout.atlas_width/2,
+                                      frame.config.layout.atlas_height))
+            return reject("Invalid gather XR destination before source copy");
         if (!atlas_) return reject("Missing prewarmed Native gather atlas (ID6 activation setup)");
         const auto p = primary->GetDesc(), s = secondary->GetDesc(), a = atlas_->GetDesc();
         const auto& l = frame.config.layout;
@@ -365,6 +371,13 @@ private:
         srv_cached_format_=format; srv_descriptors_valid_=true;
         ++srv_descriptor_refresh_count_;
     }
+    void update_timing(bool timed, bool direct_xr) {
+        if (!timed || (timing_pending_ && pending_direct_xr_!=direct_xr)) {
+            timing_pending_=false;
+            gpu_ms_=-1.f;
+        }
+        if (timed) read_timing();
+    }
     void read_timing() {
         if (!timing_pending_ || !timestamps_ || !frequency_) return;
         D3D12_RANGE range{0, sizeof(UINT64) * 2};
@@ -424,14 +437,14 @@ private:
         return false;
     }
     bool prepare(ID3D12Device* device, UINT width, UINT height, bool srgb) {
-        if (device_.Get() == device && output_ && pipeline_ && root_ && srv_ && rtv_ && width == width_ && height == height_ && srgb == srgb_) return true;
+        if (device_.Get() == device && output_ && atlas_ && pipeline_ && native_pipeline_ && root_ && srv_ && rtv_ && width == width_ && height == height_ && srgb == srgb_) return true;
         output_.Reset(); atlas_.Reset(); pipeline_.Reset(); native_pipeline_.Reset(); root_.Reset(); srv_.Reset(); rtv_.Reset();
         srv_first_reference_.Reset(); srv_second_reference_.Reset(); xr_rtv_reference_.Reset();
         srv_descriptors_valid_=false; srv_cached_format_=DXGI_FORMAT_UNKNOWN;
         xr_rtv_format_=DXGI_FORMAT_UNKNOWN;
         srv_cpu_start_={}; srv_gpu_start_={}; rtv_cpu_start_={}; direct_xr_rtv_cpu_={};
         srv_descriptor_increment_=0;
-        queries_.Reset(); timestamps_.Reset(); timing_pending_ = false; gpu_ms_ = -1.f;
+        queries_.Reset(); timestamps_.Reset(); timing_pending_ = false; gpu_ms_ = -1.f; frequency_ = 0;
         device_ = device; width_ = width; height_ = height; srgb_ = srgb;
         D3D12_DESCRIPTOR_RANGE range{};
         range.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
@@ -523,7 +536,7 @@ private:
     ComPtr<ID3D12Resource> timestamps_;
     UINT64 frequency_{};
     float gpu_ms_{-1.f};
-    bool timing_pending_{}, recorded_commands_{}, last_native_direct_xr_{};
+    bool timing_pending_{}, pending_direct_xr_{}, recorded_commands_{}, last_native_direct_xr_{};
     uint64_t last_native_source_extents_{};
     uint64_t srv_descriptor_refresh_count_{}, xr_rtv_refresh_count_{};
     DXGI_FORMAT srv_cached_format_{DXGI_FORMAT_UNKNOWN}, xr_rtv_format_{DXGI_FORMAT_UNKNOWN};

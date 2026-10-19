@@ -18,6 +18,15 @@ inline bool bgra8(DXGI_FORMAT f) {
            f==DXGI_FORMAT_B8G8R8A8_TYPELESS;
 }
 
+inline bool stereo_destination_valid(const D3D12_RESOURCE_DESC& d, UINT64 eye_width, UINT height) {
+    return eye_width && eye_width<=16384 && height &&
+        d.Dimension==D3D12_RESOURCE_DIMENSION_TEXTURE2D &&
+        d.Width==eye_width*2 && d.Height==height &&
+        d.DepthOrArraySize==1 && d.MipLevels==1 &&
+        d.SampleDesc.Count==1 && d.SampleDesc.Quality==0 &&
+        bgra8(d.Format) && (d.Flags&D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET);
+}
+
 inline bool copy_composite_to_stereo(ID3D12GraphicsCommandList* cmd,
                                     ID3D12Device* device,
                                     ID3D12Resource* mono_composite,
@@ -32,16 +41,10 @@ inline bool copy_composite_to_stereo(ID3D12GraphicsCommandList* cmd,
     const auto s=mono_composite->GetDesc();
     const auto d=openxr_doublewide->GetDesc();
     if(s.Dimension!=D3D12_RESOURCE_DIMENSION_TEXTURE2D ||
-       d.Dimension!=D3D12_RESOURCE_DIMENSION_TEXTURE2D ||
-       s.Width==0 || s.Width>16384 || s.Height==0 ||
-       s.Width*2 != d.Width || s.Height != d.Height ||
-       s.DepthOrArraySize!=1 || d.DepthOrArraySize!=1 ||
-       s.MipLevels!=1 || d.MipLevels!=1 ||
-       s.SampleDesc.Count!=1 || d.SampleDesc.Count!=1 ||
-       s.SampleDesc.Quality!=0 || d.SampleDesc.Quality!=0 ||
-       !bgra8(s.Format) || !bgra8(d.Format) ||
-       !(s.Flags&D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET) ||
-       !(d.Flags&D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET)) return false;
+       s.DepthOrArraySize!=1 || s.MipLevels!=1 ||
+       s.SampleDesc.Count!=1 || s.SampleDesc.Quality!=0 ||
+       !bgra8(s.Format) || !(s.Flags&D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET) ||
+       !stereo_destination_valid(d,s.Width,s.Height)) return false;
 
     Microsoft::WRL::ComPtr<ID3D12Device> sd,dd,cd;
     if(FAILED(mono_composite->GetDevice(IID_PPV_ARGS(&sd))) ||

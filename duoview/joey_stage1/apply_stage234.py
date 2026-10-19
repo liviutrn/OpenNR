@@ -3,8 +3,8 @@
 Original Joey modes 0/5 are protected. STALKER 2 DX12 OpenXR mode 6 only.
 Native Stereo Fix is forced on for ID6. Validated primary and secondary sources
 are sampled directly when compatible; the per-slot atlas remains a format fallback.
-Matching double-wide OpenXR targets use one direct raster draw; other targets keep
-the existing intermediate composition and copy route.
+An opt-in A/B control enables one direct raster draw on matching double-wide XR
+targets; the default retains intermediate composition and copy.
 Missing warmup packets leave the OpenXR transition loop live; actual compositor
 faults return to original Joey Mono on the next frame. All source anchors match.
 """
@@ -144,6 +144,7 @@ def main():
     const ModSlider::Ptr m_duo_breakout{ModSlider::create(generate_name("DuoViewGazeBreakout"), .005f, .25f, .035f)};
     const ModSlider::Ptr m_duo_stillness{ModSlider::create(generate_name("DuoViewGazeStillness"), 0.f, .05f, .008f)};
     const ModInt32::Ptr m_duo_relock{ModSliderInt32::create(generate_name("DuoViewGazeRelockSamples"), 1, 10, 3)};
+    const ModToggle::Ptr m_duo_direct_xr{ModToggle::create(generate_name("DuoViewDirectXROutput"), false)};
     const ModToggle::Ptr m_duo_timing{ModToggle::create(generate_name("DuoViewGpuTiming"), false)};
     std::atomic<float> m_duo_gpu_ms{-1.f};
     std::atomic<int32_t> m_duoview_output_path{-1};
@@ -161,7 +162,7 @@ def main():
         '''        m_options = {
             *m_duo_width, *m_duo_height, *m_duo_periphery, *m_duo_density,
             *m_duo_feather, *m_duo_gaze, *m_duo_border, *m_duo_debug_source,
-            *m_duo_fovea_view, *m_duo_timing, *m_duo_stabilize, *m_duo_guard,
+            *m_duo_fovea_view, *m_duo_timing, *m_duo_direct_xr, *m_duo_stabilize, *m_duo_guard,
             *m_duo_native_fix, *m_duo_quant, *m_duo_hold, *m_duo_reacquire,
             *m_duo_offset_x, *m_duo_offset_y,
             *m_duo_micro_gain, *m_duo_breakout, *m_duo_stillness, *m_duo_relock,''')
@@ -199,6 +200,7 @@ def main():
                     m_duo_feather->value()=.08f; m_duo_gaze->value()=true;
                     m_duo_border->value()=false; m_duo_fovea_view->value()=0;
                     m_duo_debug_source->value()=0;
+                    m_duo_direct_xr->value()=false;
                     m_duo_native_fix->value()=true; m_duo_quant->value()=2;
                     m_duo_hold->value()=350; m_duo_reacquire->value()=2;
                     m_duo_offset_x->value()=0.f; m_duo_offset_y->value()=0.f;
@@ -230,15 +232,17 @@ def main():
                 m_duo_relock->draw("Quiet samples before fovea relocks");
                 if (m_duo_stillness->value() >= m_duo_breakout->value())
                     ImGui::TextWrapped("Stillness must be below breakout; the conflicting setting is rejected, all other controls keep working.");
-                m_duo_timing->draw("GPU timing: DuoView compositor (excludes UE scene render)");
+                m_duo_direct_xr->draw("Direct XR output (experimental A/B)");
+                ImGui::TextWrapped("OFF composes once and copies to both eyes. ON blends both eye halves directly when formats match. Compare GPU timing in the same scene; either route may be faster.");
+                m_duo_timing->draw("GPU timing: DuoView raster/output (excludes UE and source gather)");
                 if (m_duo_timing->value()) {
                     const float ms=m_duo_gpu_ms.load(std::memory_order_relaxed);
-                    if (ms >= 0.f) ImGui::Text("DuoView compositor: %.3f ms GPU (last retired slot; excludes UE scene render)", ms);
+                    if (ms >= 0.f) ImGui::Text("DuoView raster/output: %.3f ms GPU (last retired slot; excludes UE and source gather)", ms);
                     else ImGui::TextUnformatted("GPU timing: waiting for a completed command slot");
                 }
                 const auto output_path=m_duoview_output_path.load(std::memory_order_relaxed);
-                if (output_path < 0) ImGui::TextUnformatted("XR output path: waiting for a completed DuoView frame");
-                else ImGui::Text("XR output path: %s",
+                if (output_path < 0) ImGui::TextUnformatted("XR output path: waiting for a submitted DuoView frame");
+                else ImGui::Text("Last submitted XR output path: %s",
                     output_path ? "direct double-wide raster" : "composite and copy compatibility route");
                 const auto source_extents=m_duoview_source_extents.load(std::memory_order_relaxed);
                 const auto primary_width=static_cast<uint32_t>((source_extents>>48)&0xffffu);
@@ -335,7 +339,7 @@ void VR::configure_duoview() {
         .feather_fraction=m_duo_feather->value(), .debug_border=m_duo_border->value(),
         .eye_tracked=m_duo_gaze->value(), .fovea_view=static_cast<uint32_t>(m_duo_fovea_view->value()),
         .diagnostic_view=static_cast<uint32_t>(m_duo_debug_source->value()),
-        .gpu_timing=m_duo_timing->value(), .stabilize_crop=m_duo_stabilize->value(),
+        .gpu_timing=m_duo_timing->value(), .direct_xr_output=m_duo_direct_xr->value(), .stabilize_crop=m_duo_stabilize->value(),
         .guard_fraction=m_duo_guard->value(), .independent_shading=false,
         .native_fix_same_pass=m_duo_native_fix->value(),
         .gaze_quant_pixels=static_cast<uint32_t>(m_duo_quant->value()),
@@ -360,6 +364,7 @@ void VR::configure_duoview() {
         current.feather_fraction==candidate.feather_fraction && current.debug_border==candidate.debug_border &&
         current.eye_tracked==candidate.eye_tracked && current.fovea_view==candidate.fovea_view &&
         current.diagnostic_view==candidate.diagnostic_view && current.gpu_timing==candidate.gpu_timing &&
+        current.direct_xr_output==candidate.direct_xr_output &&
         current.stabilize_crop==candidate.stabilize_crop && current.guard_fraction==candidate.guard_fraction &&
         current.independent_shading==candidate.independent_shading &&
         current.native_fix_same_pass==candidate.native_fix_same_pass &&
@@ -652,8 +657,8 @@ void OpenXR::note_mono_main_family(uint32_t frame, bool main_family) {''')
     edit(dxh,'#include "d3d12/TextureContext.hpp"',
         '#include "d3d12/TextureContext.hpp"\n#include "DuoViewD3D12.hpp"')
     edit(dxh,'        std::unordered_map<uint32_t, SwapchainContext> contexts{};',
-        '''        std::unordered_map<uint32_t, SwapchainContext> contexts{};
-        std::unordered_map<d3d12::CommandContext*, std::unique_ptr<uevr::duoview::dx12::Compositor>> duoview_compositors;''')
+        '''        std::unordered_map<d3d12::CommandContext*, std::unique_ptr<uevr::duoview::dx12::Compositor>> duoview_compositors;
+        std::unordered_map<uint32_t, SwapchainContext> contexts{};''')
     dx="src/mods/vr/D3D12Component.cpp"
 
     # Session XR swapchains are created before the user selects ID6. Warm on
@@ -723,8 +728,39 @@ void OpenXR::note_mono_main_family(uint32_t frame, bool main_family) {''')
             frame_count, frame_diag::Backend::d3d12, &native_frame_ticket);''',
     '''        native_stereo_packet = ffsr->get_native_stereo_frame_packet_for_submit(
             native_packet_frame_count, frame_diag::Backend::d3d12, &native_frame_ticket);''')
-    edit(dx,'    this->contexts.clear();\n    vr->m_openxr->swapchains.clear();',
-        '    this->duoview_compositors.clear();\n    this->contexts.clear();\n    vr->m_openxr->swapchains.clear();')
+    edit(dx,'''    this->wait_for_all_copies();
+
+    for (auto& it : this->contexts) {''',
+    '''    for (const auto& [commands, compositor] : this->duoview_compositors) {
+        if (compositor && (!commands || commands->poisoned)) {
+            spdlog::error("[DuoView] Retaining swapchains: command-slot retirement is unproven");
+            return;
+        }
+    }
+    this->wait_for_all_copies();
+    for (const auto& [commands, compositor] : this->duoview_compositors) {
+        if (compositor && !commands->references_retired()) {
+            spdlog::error("[DuoView] Retaining swapchains: GPU references have not retired");
+            return;
+        }
+    }
+    this->duoview_compositors.clear();
+
+    for (auto& it : this->contexts) {''')
+    edit(dx,'''std::optional<std::string> D3D12Component::OpenXR::create_swapchains() {
+    std::scoped_lock _{this->mtx};
+
+    spdlog::info("[VR] Creating OpenXR swapchains for D3D12");
+
+    this->destroy_swapchains();''',
+    '''std::optional<std::string> D3D12Component::OpenXR::create_swapchains() {
+    std::scoped_lock _{this->mtx};
+
+    spdlog::info("[VR] Creating OpenXR swapchains for D3D12");
+
+    this->destroy_swapchains();
+    if (!this->duoview_compositors.empty())
+        return "DuoView command-slot retirement pending; swapchains retained";''')
     edit(dx,'    this->contexts.clear();\n\n    auto create_swapchain',
         '    this->duoview_compositors.clear();\n    this->contexts.clear();\n\n    auto create_swapchain')
     # Prime each existing XR image's command slot at swapchain setup time.
@@ -779,11 +815,14 @@ void OpenXR::note_mono_main_family(uint32_t frame, bool main_family) {''')
                             bool recorded = false;
                             bool callback_attempted = false;
                             bool compositor_fault = false;
+                            bool output_direct = false;
+                            uint64_t source_extents = 0;
                             const bool submitted = m_openxr.copy(
                                 (uint32_t)runtimes::OpenXR::SwapchainIndex::DOUBLE_WIDE, nullptr,
                                 [this, packet, packet_frame, source=m_game_tex.texture,
                                  secondary=m_scene_capture_tex.texture, device,
-                                 &recorded, &callback_attempted, &compositor_fault](
+                                 &recorded, &callback_attempted, &compositor_fault,
+                                 &output_direct, &source_extents](
                                     d3d12::CommandContext& commands, ID3D12Resource* destination) {
                                     if (!commands.ready()) return;
                                     callback_attempted = true;
@@ -810,8 +849,8 @@ void OpenXR::note_mono_main_family(uint32_t frame, bool main_family) {''')
                                         std::static_pointer_cast<const void>(packet),
                                         packet_frame->config.settings.gpu_timing ? compositor.timing_frequency() : 0);
                                     if (recorded) {
-                                        vr->note_duoview_output_path(compositor.last_native_direct_xr());
-                                        vr->note_duoview_source_extents(compositor.last_native_source_extents());
+                                        output_direct=compositor.last_native_direct_xr();
+                                        source_extents=compositor.last_native_source_extents();
                                     }
                                     if (compositor.recorded_commands()) commands.has_commands = true;
                                     if (packet_frame->config.settings.gpu_timing)
@@ -824,8 +863,11 @@ void OpenXR::note_mono_main_family(uint32_t frame, bool main_family) {''')
                                 }, std::nullopt, D3D12_RESOURCE_STATE_RENDER_TARGET, nullptr,
                                 std::nullopt, m_game_tex.texture.Get());
                             vr->m_openxr->note_mono_copy(*packet_source, submitted && recorded);
-                            if (submitted && recorded && callback_attempted)
+                            if (submitted && recorded && callback_attempted) {
+                                vr->note_duoview_output_path(output_direct);
+                                vr->note_duoview_source_extents(source_extents);
                                 vr->note_mono_frame_ready(m_mono_generation);
+                            }
                             if (compositor_fault) {
                                 vr->duoview_abort("Validated Native Stereo Fix pair failed DuoView composition");
                             } else if (!submitted || !recorded || !callback_attempted) {

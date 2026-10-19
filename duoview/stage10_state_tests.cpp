@@ -6,6 +6,7 @@ int main() {
     // All menu fields must update independently. One invalid/contradictory
     // quality or gaze control may not freeze every other button or slider.
     Settings live;
+    assert(!live.direct_xr_output);
     Settings simultaneous=live;
     simultaneous.crop_width=.80f;
     simultaneous.crop_height=.75f;
@@ -62,12 +63,14 @@ int main() {
     simultaneous.eye_tracked=false;
     simultaneous.stabilize_crop=true;
     simultaneous.gpu_timing=true;
+    simultaneous.direct_xr_output=true;
     simultaneous.gaze_hold_ms=450;
     simultaneous.gaze_offset_u=.05f;
     auto a4=reconcile_ui_settings(simultaneous,live);
     assert(a4.rejected==reject_feather);
     assert(!a4.settings.eye_tracked && a4.settings.stabilize_crop);
     assert(a4.settings.gpu_timing && a4.settings.gaze_hold_ms==450);
+    assert(a4.settings.direct_xr_output);
     assert(a4.settings.gaze_offset_u==.05f);
     assert(live_state.configure(a4.settings));
     // Direct API remains strict: UI isolation must not weaken renderer guard.

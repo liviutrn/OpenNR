@@ -192,8 +192,17 @@ int main() try {
         uevr::duoview::ViewFrame native_frame{};
         native_frame.config={{1,20+static_cast<uint64_t>(srgb)*2+fovea_view},*native_layout,{.5f,.5f},{},1};
         native_frame.config.settings.fovea_view=fovea_view;
+        native_frame.config.settings.direct_xr_output=true;
         if(!compositor.prewarm(device.Get(),32,32,srgb,frequency))
             throw std::runtime_error("Native prewarm color interpretation rejected");
+        if(compositor.record_native(device.Get(),cmd.Get(),primary.texture.Get(),secondary.texture.Get(),
+                bad.Get(),D3D12_RESOURCE_STATE_RENDER_TARGET,D3D12_RESOURCE_STATE_RENDER_TARGET,
+                native_frame,std::make_shared<const int>(6),0) || compositor.recorded_commands())
+            throw std::runtime_error("Invalid Native destination recorded GPU commands");
+        if(compositor.record_native_gather(device.Get(),cmd.Get(),primary.texture.Get(),secondary.texture.Get(),
+                bad.Get(),D3D12_RESOURCE_STATE_RENDER_TARGET,D3D12_RESOURCE_STATE_RENDER_TARGET,
+                native_frame,std::make_shared<const int>(6),0) || compositor.recorded_commands())
+            throw std::runtime_error("Invalid gather destination recorded GPU commands");
         if(!compositor.record_native(device.Get(),cmd.Get(),primary.texture.Get(),secondary.texture.Get(),
                 stereo.Get(),D3D12_RESOURCE_STATE_RENDER_TARGET,D3D12_RESOURCE_STATE_RENDER_TARGET,
                 native_frame,std::make_shared<const int>(7),frequency))
@@ -227,21 +236,22 @@ int main() try {
         }
         readback->Unmap(0,nullptr);
         if (gradient) {
-            // Compare the one-draw direct-XR result against the preserved
-            // compositor-plus-copy path on a typed sRGB destination. Copying
-            // between these compatible BGRA8 formats must preserve bytes.
+            // Hold target format and sources fixed for direct/copy route equality.
             check(allocator->Reset());check(cmd->Reset(allocator.Get(),nullptr));
             auto fallback_desc=texture(64,32,D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET);
-            fallback_desc.Format=DXGI_FORMAT_B8G8R8A8_UNORM_SRGB;
+            fallback_desc.Format=DXGI_FORMAT_B8G8R8A8_UNORM;
+            native_frame.config.settings.direct_xr_output=false;
             auto fallback_output=resource(device.Get(),fallback_desc,
                 D3D12_HEAP_TYPE_DEFAULT,D3D12_RESOURCE_STATE_RENDER_TARGET);
             if(!compositor.record_native(device.Get(),cmd.Get(),primary.texture.Get(),secondary.texture.Get(),
                     fallback_output.Get(),D3D12_RESOURCE_STATE_RENDER_TARGET,
                     D3D12_RESOURCE_STATE_RENDER_TARGET,native_frame,
                     std::make_shared<const int>(9),frequency))
-                throw std::runtime_error("Compatible sRGB copy fallback failed: "+compositor.error());
+                throw std::runtime_error("Forced copy output failed: "+compositor.error());
+            if(compositor.gpu_milliseconds()>=0.f)
+                throw std::runtime_error("Route switch reused old GPU timing");
             if(compositor.last_native_direct_xr())
-                throw std::runtime_error("Typed sRGB output unexpectedly selected direct-XR raster");
+                throw std::runtime_error("Disabled direct-XR option selected raster route");
             transition(cmd.Get(),fallback_output.Get(),D3D12_RESOURCE_STATE_RENDER_TARGET,
                 D3D12_RESOURCE_STATE_COPY_SOURCE);
             D3D12_TEXTURE_COPY_LOCATION fallback_from{
@@ -256,7 +266,7 @@ int main() try {
             event=CreateEventW(nullptr,FALSE,FALSE,nullptr);
             check(fence->SetEventOnCompletion(signal,event));
             if(WaitForSingleObject(event,30000)!=WAIT_OBJECT_0)
-                throw std::runtime_error("Compatible sRGB fallback GPU fence timeout");
+                throw std::runtime_error("Forced copy output GPU fence timeout");
             CloseHandle(event);
             check(readback->Map(0,&read,&mapped));
             for (UINT y=0;y<32;++y) for (UINT x=0;x<64;++x) {
@@ -266,6 +276,7 @@ int main() try {
             }
             readback->Unmap(0,nullptr);
 
+            native_frame.config.settings.direct_xr_output=true;
             // The same fenced-slot resources and descriptors should be
             // reusable without rewriting SRVs/RTVs on the next frames.
             const auto stable_srv_refreshes=compositor.srv_descriptor_refresh_count();
@@ -279,6 +290,8 @@ int main() try {
                         D3D12_RESOURCE_STATE_RENDER_TARGET,native_frame,
                         std::make_shared<const int>(10+repeat),0))
                     throw std::runtime_error("Cached Native descriptor reuse failed: "+compositor.error());
+                if(compositor.gpu_milliseconds()>=0.f)
+                    throw std::runtime_error("Disabled GPU timing retained an old sample");
                 if(compositor.srv_descriptor_refresh_count()!=stable_srv_refreshes ||
                    compositor.xr_rtv_refresh_count()!=stable_rtv_refreshes)
                     throw std::runtime_error("Stable Native source/XR descriptors were rewritten");

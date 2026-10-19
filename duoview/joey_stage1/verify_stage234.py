@@ -155,6 +155,17 @@ def main():
   if token not in d3d: raise RuntimeError("Late-activation / failure diagnostic regression: "+token)
  if "Missing prewarmed Native gather atlas" not in compositor:
   raise RuntimeError("Missing Native prewarm failure cannot be diagnosed")
+ for token in ("m_duo_direct_xr->draw(", ".direct_xr_output=m_duo_direct_xr->value()",
+               "current.direct_xr_output==candidate.direct_xr_output", "Last submitted XR output path"):
+  if token not in vr_cpp: raise RuntimeError("Output A/B control/diagnostics missing "+token)
+ destroy=d3d[d3d.index("void D3D12Component::OpenXR::destroy_swapchains()"):
+              d3d.index("bool D3D12Component::OpenXR::pre_acquire(")]
+ if not (destroy.index("commands->poisoned") < destroy.index("this->wait_for_all_copies()") <
+         destroy.index("commands->references_retired()") < destroy.index("this->duoview_compositors.clear()") <
+         destroy.index("xrDestroySwapchain(")):
+  raise RuntimeError("DuoView resources must retire before swapchain destruction")
+ if "DuoView command-slot retirement pending; swapchains retained" not in d3d:
+  raise RuntimeError("Failed retirement must stop swapchain reconstruction")
  native_warp=(Path(__file__).parent/"ProductionWarpPinned.cpp").read_text(encoding="utf-8")
  for token in ("record_native(", "for (bool srgb : {false,true})", "for (uint32_t fovea_view : {0u,1u})",
                "ID3D12InfoQueue", "oversized_layout"):
@@ -175,7 +186,11 @@ def main():
                "Stable Native source/XR descriptors were rewritten",
                "Changed XR target refreshed the wrong descriptor set",
                "Typed Native source mismatch did not use the gather fallback",
-               "Repeated Native gather rewrote its cached atlas descriptors"):
+               "Repeated Native gather rewrote its cached atlas descriptors",
+               "Invalid Native destination recorded GPU commands",
+               "Invalid gather destination recorded GPU commands",
+               "Route switch reused old GPU timing",
+               "Disabled GPU timing retained an old sample"):
   if token not in native_warp: raise RuntimeError("Native descriptor cache WARP coverage missing "+token)
  inputs = sorted(EDITED_BACKEND | ADDED_BACKEND)
  hashes = {"backend":{k:sha(a.backend/k) for k in inputs},

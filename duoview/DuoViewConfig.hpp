@@ -21,6 +21,7 @@ struct Settings {
     uint32_t fovea_view{};
     uint32_t diagnostic_view{}; // 0 composite, 1 periphery, 2 fovea
     bool gpu_timing{};
+    bool direct_xr_output{};
     bool stabilize_crop{};
     float guard_fraction{.05f};
     bool independent_shading{};
@@ -98,6 +99,7 @@ inline UiReconciled reconcile_ui_settings(const Settings& requested,
     out.debug_border=requested.debug_border;
     out.eye_tracked=requested.eye_tracked;
     out.gpu_timing=requested.gpu_timing;
+    out.direct_xr_output=requested.direct_xr_output;
     out.stabilize_crop=requested.stabilize_crop;
     out.independent_shading=requested.independent_shading;
     out.native_fix_same_pass=requested.native_fix_same_pass;
