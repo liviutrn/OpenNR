@@ -153,6 +153,10 @@ def main():
                "Missing prewarmed compositor for XR command slot",
                "Native compositing rejected: {}"):
   if token not in d3d: raise RuntimeError("Late-activation / failure diagnostic regression: "+token)
+ if "Compatibility compositor not prewarmed for source size / sRGB" not in compositor:
+  raise RuntimeError("XR record may rebuild GPU resources without prewarm")
+ if "frequency_!=frequency" not in compositor:
+  raise RuntimeError("GPU timer re-prewarm does not refresh changed queue frequency")
  if "Missing prewarmed Native gather atlas" not in compositor:
   raise RuntimeError("Missing Native prewarm failure cannot be diagnosed")
  for token in ("m_duo_direct_xr->draw(", ".direct_xr_output=m_duo_direct_xr->value()",
