@@ -126,6 +126,7 @@ def main():
     const ModSlider::Ptr m_duo_periphery{ModSlider::create(generate_name("DuoViewPeripheralScale"), .05f, .50f, .20f)};
     const ModSlider::Ptr m_duo_density{ModSlider::create(generate_name("DuoViewFovealDensity"), .25f, 4.0f, 1.f)};
     const ModSlider::Ptr m_duo_feather{ModSlider::create(generate_name("DuoViewFeather"), 0.f, .45f, .08f)};
+    const ModSlider::Ptr m_duo_sharpen{ModSlider::create(generate_name("DuoViewGlamaryeFoveaStrength"), 0.f, 2.f, 0.f)};
     const ModToggle::Ptr m_duo_gaze{ModToggle::create(generate_name("DuoViewEyeTracking"), true)};
     const ModToggle::Ptr m_duo_border{ModToggle::create(generate_name("DuoViewDebugBorder"), false)};
     const ModInt32::Ptr m_duo_debug_source{ModSliderInt32::create(generate_name("DuoViewDebugSource"), 0, 2, 0)};
@@ -162,7 +163,7 @@ def main():
     edit(header,'        m_options = {',
         '''        m_options = {
             *m_duo_width, *m_duo_height, *m_duo_periphery, *m_duo_density,
-            *m_duo_feather, *m_duo_gaze, *m_duo_border, *m_duo_debug_source,
+            *m_duo_feather, *m_duo_sharpen, *m_duo_gaze, *m_duo_border, *m_duo_debug_source,
             *m_duo_fovea_view, *m_duo_timing, *m_duo_direct_xr, *m_duo_stabilize, *m_duo_guard,
             *m_duo_native_fix, *m_duo_quant, *m_duo_hold, *m_duo_reacquire,
             *m_duo_offset_x, *m_duo_offset_y,
@@ -198,7 +199,7 @@ def main():
                 if (ImGui::Button("Restore old DuoView settings")) {
                     m_duo_width->value()=.50f; m_duo_height->value()=.50f;
                     m_duo_periphery->value()=.20f; m_duo_density->value()=1.f;
-                    m_duo_feather->value()=.08f; m_duo_gaze->value()=true;
+                    m_duo_feather->value()=.08f; m_duo_sharpen->value()=0.f; m_duo_gaze->value()=true;
                     m_duo_border->value()=false; m_duo_fovea_view->value()=0;
                     m_duo_debug_source->value()=0;
                     m_duo_direct_xr->value()=false;
@@ -213,6 +214,8 @@ def main():
                 m_duo_periphery->draw("Peripheral resolution scale");
                 m_duo_density->draw("Foveal pixel density");
                 m_duo_feather->draw("Blend feather width");
+                m_duo_sharpen->draw("Glamarye fovea strength (0 = off; v0.1 = 0.4)");
+                ImGui::TextWrapped("Glamarye v0.1 Bigger radius and jagged-edge protection. Runs after DLSS at final Mono-pixel spacing within the gaze-tracked fovea. Turn OFF the separate Glamarye OpenXR layer to prevent duplicate sharpening. With sharpening enabled, Direct XR double-wide mode is automatically bypassed to avoid duplicated GPU work.");
                 m_duo_gaze->draw("Eye tracking");
                 m_duo_border->draw("Blend border highlight");
                 m_duo_debug_source->draw("Source diagnostic: 0 Blend / 1 Periphery / 2 Fovea");
@@ -282,6 +285,7 @@ def main():
                         {uevr::duoview::reject_periphery,"Peripheral scale"},
                         {uevr::duoview::reject_density,"Foveal density"},
                         {uevr::duoview::reject_feather,"Feather"},
+                        {uevr::duoview::reject_sharpen,"Glamarye strength"},
                         {uevr::duoview::reject_fovea_view,"Fovea source view"},
                         {uevr::duoview::reject_diagnostic,"Source diagnostic"},
                         {uevr::duoview::reject_guard,"Crop guard"},
@@ -345,7 +349,7 @@ void VR::configure_duoview() {
     uevr::duoview::Settings candidate{
         .crop_width=m_duo_width->value(), .crop_height=m_duo_height->value(),
         .peripheral_scale=m_duo_periphery->value(), .foveal_density=m_duo_density->value(),
-        .feather_fraction=m_duo_feather->value(), .debug_border=m_duo_border->value(),
+        .feather_fraction=m_duo_feather->value(), .sharpen_strength=m_duo_sharpen->value(), .debug_border=m_duo_border->value(),
         .eye_tracked=m_duo_gaze->value(), .fovea_view=static_cast<uint32_t>(m_duo_fovea_view->value()),
         .diagnostic_view=static_cast<uint32_t>(m_duo_debug_source->value()),
         .gpu_timing=m_duo_timing->value(), .direct_xr_output=m_duo_direct_xr->value(), .stabilize_crop=m_duo_stabilize->value(),
@@ -370,7 +374,8 @@ void VR::configure_duoview() {
     }
     if (current.crop_width==candidate.crop_width && current.crop_height==candidate.crop_height &&
         current.peripheral_scale==candidate.peripheral_scale && current.foveal_density==candidate.foveal_density &&
-        current.feather_fraction==candidate.feather_fraction && current.debug_border==candidate.debug_border &&
+        current.feather_fraction==candidate.feather_fraction && current.sharpen_strength==candidate.sharpen_strength &&
+        current.debug_border==candidate.debug_border &&
         current.eye_tracked==candidate.eye_tracked && current.fovea_view==candidate.fovea_view &&
         current.diagnostic_view==candidate.diagnostic_view && current.gpu_timing==candidate.gpu_timing &&
         current.direct_xr_output==candidate.direct_xr_output &&
