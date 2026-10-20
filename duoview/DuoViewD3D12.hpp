@@ -16,8 +16,10 @@ struct ShaderConstants {
     float reserved;
     uint32_t fovea_source_size[2], peripheral_source_size[2];
     uint32_t output_offset[2];
+    float sharpen_strength, sharpen_max_change, sharpen_fxaa_bias;
+    uint32_t sharpen_flags;
 };
-static_assert(sizeof(ShaderConstants) == 104);
+static_assert(sizeof(ShaderConstants) == 120);
 
 class Compositor {
 public:
@@ -135,6 +137,11 @@ public:
         // old compositor+copy fallback for incompatible swapchain formats.
         if (!stereo_destination_valid(xrd,width_,height_))
             return reject("Invalid Mono XR output dimensions, format, or render-target flags");
+        // Preserve v182's original output-path selection independently of
+        // sharpening strength. Never silently switch XR delivery paths when
+        // editing a cosmetic slider: that can disturb late UI composition.
+        // Direct XR renders the same sharpened Mono image into both eye halves;
+        // the default compose-then-copy path still sharpens just once.
         const bool direct_xr=frame.config.settings.direct_xr_output &&
             xrd.Dimension==D3D12_RESOURCE_DIMENSION_TEXTURE2D &&
             xrd.Width==static_cast<uint64_t>(width_)*2 && xrd.Height==height_ &&
@@ -200,7 +207,10 @@ public:
             frame.config.settings.debug_border ? 1u : 0u,
             frame.config.settings.diagnostic_view, 0.f,
             {static_cast<uint32_t>(fd.Width),fd.Height},
-            {static_cast<uint32_t>(vd.Width),vd.Height}
+            {static_cast<uint32_t>(vd.Width),vd.Height},
+            {0u,0u},
+            frame.config.settings.sharpen_strength, 0.10f, 0.02f,
+            3u | (srgb_ ? 0u : 4u) // larger radius, edge protection, SDR conversion
         };
         ensure_srvs(device,fovea,periphery,sampling_format);
         // GPU lifetime remains bound to the exact retired OpenXR command slot,

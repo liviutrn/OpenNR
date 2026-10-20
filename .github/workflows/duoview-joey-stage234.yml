@@ -1,24 +1,13 @@
-name: DuoView Direct Native Source Compositor
-run-name: DuoView Direct Native Source Compositor exact SDK (${{ github.run_number }})
+name: UEVR Quad Views Mono v187 Glamarye UI-Parity Build
+run-name: UEVR Quad Views Mono exact SDK (${{ github.run_number }})
 on:
   push:
-    branches: [fix/duoview-render-transaction-20261019, experiments/duoview-temporal-shading-v22, experiments/joey-duoview-native-stereo-fix-v22-20261018, fix/joey-v22-nativefix-duoview-activation-20261018, experiments/joey-v22-nativefix-gaze-hold-controls-20261018, experiments/joey-duoview-adaptive-saccade-20261018, fix/duoview-v154-controls-offcenter-20261018, fix/duoview-v154-general-controls-20261018, opt/duoview-v158-direct-sources-20261019, opt/duoview-stage2-direct-xr-output-20261019, opt/duoview-stage3-runtime-profile-20261019, opt/duoview-stage4-slot-descriptor-cache-20261019, opt/duoview-stage5-handle-cache-20261019]
-    paths:
-      - '.github/workflows/duoview-joey-stage234.yml'
-      - 'duoview/joey_stage1/**'
-      - 'duoview/DuoViewPSVR2Gaze.hpp'
-      - 'duoview/DuoViewGaze.hpp'
-      - 'duoview/DuoViewCropStability.hpp'
-      - 'duoview/DuoViewState.hpp'
-      - 'duoview/stage10_state_tests.cpp'
-      - 'duoview/production_warp_test.cpp'
-      - 'duoview/stage4_gaze_tests.cpp'
-      - 'duoview/DuoViewConfig.hpp'
-      - 'duoview/DuoViewD3D12.hpp'
-      - 'duoview/DuoViewComposite.hlsl'
-      - 'duoview/DuoViewCompositeRaster.hlsl'
-      - 'duoview/DuoViewNativeCompositeRaster.hlsl'
-      - 'duoview/embed_shader.py'
+    branches:
+      - feature/v182-glamayre-fovea-compiled-20261020
+      - fix/v187-glamayre-ui-output-parity-20261020
+  pull_request:
+    branches:
+      - reference/v182-fused-build-base
   workflow_dispatch:
 permissions:
   contents: read
@@ -162,7 +151,13 @@ jobs:
           Copy-Item evidence/duoview-stage1-source-hashes.json package/
           Copy-Item evidence/duoview-stage234-hashes.json package/
           @'
-          DUOVIEW NATIVE STEREO FIX v22 — ORIGINAL PRIMARY + SECONDARY SOURCES, MONO OUTPUT. HEADSET UNVERIFIED.
+          DUOVIEW v187 Glamarye UI/output-path regression test — original v182 baseline preserved.
+Build 186 was headset-tested but reported a partial/flickering UI. v187 avoids
+sharpen-strength-driven changes to the baseline XR output choice, and reduces
+the extra ImGui help text. GPU and build tests do not prove the UI is fixed:
+test the actual STALKER 2 inventory/HUD and UEVR menu in PSVR2 before adoption.
+Disable the original external Glamarye API layer and NVIDIA Smooth Motion.
+ORIGINAL PRIMARY + SECONDARY SOURCES, MONO OUTPUT.
           Backend: exact Joey 5ac7edc207866569334175e4ed8a7517971547f6 + guarded DuoView modifications.
           Restricted SDK unchanged: joeyhodge/UESDK 3cffbc82429b6165ceec2714f0f0d9ae48f55596.
           Matching frontend source: 60be4b0f9a646109fd9fdf448bacd41477234091, plus ID 6.
@@ -206,16 +201,16 @@ jobs:
           if (@(Get-ChildItem package -File -Filter *.exe).Count -lt 1) { throw "Missing Joey frontend executable" }
           if ((Get-Content package/READ_FIRST.txt -Raw) -notmatch 'warmup keeps the XR transition loop live') { throw 'Stale Native Fix warmup instructions' }
           Get-ChildItem package -Recurse -File | Get-FileHash -Algorithm SHA256 | ConvertTo-Json | Set-Content evidence/package-sha256.json
-          $zip="Joey-DuoView-v22-NativeFix-${{ github.run_number }}.zip"
+          $zip="UEVR-Quad-Views-Mono-v187-Glamarye-UIParity-${{ github.run_number }}.zip"
           Compress-Archive -Path package/* -DestinationPath $zip -Force
           (Get-FileHash $zip -Algorithm SHA256).Hash | Set-Content "$zip.sha256"
       - uses: actions/upload-artifact@v4
         if: success()
         with:
-          name: Joey-DuoView-v22-NativeFix-${{ github.run_number }}
+          name: UEVR-Quad-Views-Mono-v187-Glamarye-UIParity-${{ github.run_number }}
           path: |
-            Joey-DuoView-v22-NativeFix-*.zip
-            Joey-DuoView-v22-NativeFix-*.zip.sha256
+            UEVR-Quad-Views-Mono-v187-Glamarye-UIParity-*.zip
+            UEVR-Quad-Views-Mono-v187-Glamarye-UIParity-*.zip.sha256
           if-no-files-found: error
           retention-days: 90
       - name: Record public source and dependency provenance
@@ -230,7 +225,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: Joey-DuoView-NativeFix-Evidence-${{ github.run_number }}
+          name: UEVR-v187-Glamarye-UIParity-Evidence-${{ github.run_number }}
           path: evidence/
           if-no-files-found: error
 

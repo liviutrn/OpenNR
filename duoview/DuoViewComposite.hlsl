@@ -23,6 +23,10 @@ cbuffer DuoViewCompositeConfig : register(b0)
     uint2 NativeFoveaDimensions;
     uint2 NativePeripheryDimensions;
     uint2 OutputOffset; // offset of current OpenXR eye within doublewide RTV
+    float SharpenStrength;   // 0 = disabled; sampled at final output-pixel spacing
+    float SharpenMaxChange;  // v0.1 limiter (0.10 default)
+    float SharpenFXAABias;  // v0.1 edge detector (0.02 default)
+    uint SharpenFlags;      // bit0=edge protection; bit1=bigger; bit2=manual SDR decode
 };
 
 float2 AtlasSampleUV(uint4 rect, float2 localUv)
