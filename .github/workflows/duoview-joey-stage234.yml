@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - feature/v182-glamayre-fovea-compiled-20261020
+      - fix/v187-glamayre-ui-output-parity-20261020
   pull_request:
     branches:
       - reference/v182-fused-build-base
