@@ -318,10 +318,12 @@ int main(int argc, char** argv) try {
             settings.sharpen_strength = pass == 6 ? 1.f : pass == 7 ? 2.f : 0.f;
             settings.gpu_timing = pass == 3;
             if (production.record(commands.Get(), atlas.Get(), output.Get(), overlapping, settings,
-                atlas_state, output_state, owner))
+                atlas_state, output_state, owner, timestamp_frequency))
                 throw std::runtime_error("Production compositor accepted overlapping atlas regions");
+            // GPU timing is opt-in and requires the queue frequency on the actual record call;
+            // prewarm alone cannot enable timestamp emission.
             if (!production.record(commands.Get(), atlas.Get(), output.Get(), *layout, settings,
-                atlas_state, output_state, owner))
+                atlas_state, output_state, owner, timestamp_frequency))
                 throw std::runtime_error(production.error());
             owner.reset();
             if (packet_lifetime.expired()) throw std::runtime_error("Production compositor lost packet before slot retirement");
