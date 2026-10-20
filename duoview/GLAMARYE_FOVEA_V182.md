@@ -4,7 +4,7 @@ Unchanged archived baseline: https://github.com/liviutrn/UEVR-Quad-Views-Mono/re
 
 This experimental branch fuses the Glamarye v0.1 intelligent-sharpen algorithm into the existing native DuoView composition shader. It works on already-DLSS-upscaled foveal samples, in units of final output pixels, instead of adding an extra OpenXR layer pass over both eyes.
 
-- UI: DuoViewGlamaryeFoveaStrength (0–2), default 0 (preserves v182); 0.4 recommended initial test.
+- UI: DuoViewGlamaryeFoveaStrength (0–2), default 1.0 on new profiles (0 fully disables sharpening; existing saved profiles retain their saved values); 0.4 was the initial v0.1 comparison strength.
 - Foveal source Unreal view 0 or 1 is selected through original v182 settings. Final Mono output is copied to both headset eyes unchanged.
 - Larger radius, jagged-edge protection, max change 0.10 and FXAA bias 0.02 reproduce v0.1 settings.
 - Enabled sharpening forces the existing single-width composition-and-copy route (not the duplicated double-wide direct-XR raster path). No additional OpenXR hook, GPU copy, queue synchronization or shader compilation on the XR render thread.
