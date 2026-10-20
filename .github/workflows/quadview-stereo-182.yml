@@ -1,5 +1,5 @@
 name: Experimental Stereo Quad Views from Build182
-run-name: Quad Views Stereo ID7 (${{ github.run_number }})
+run-name: Quad Views Stereo ID7 (v40 final)
 on:
   push:
     branches: [quadview/stereo-182, quadview/stereo-182-build, quadview/stereo-182-build-next, codex/quadview-id7-v1861-20261020, experiment/id7-stereo-v1861-20261020, experiment/id7-build40-ci-20261021]
@@ -21,14 +21,14 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: liviutrn/UEVR-Quad-Views-Mono
-          ref: 8e9cc9623f663391a23c7ec783940a679ec55a14
+          ref: 8a7086d231241cc5bd8269cc3fec939fecbdbe70
           path: workspace
           fetch-depth: 0
           persist-credentials: false
       - name: Verify canonical Quad Views source identity and protected DuoView
         shell: pwsh
         run: |
-          $expected='8e9cc9623f663391a23c7ec783940a679ec55a14'
+          $expected='8a7086d231241cc5bd8269cc3fec939fecbdbe70'
           $baseline='f0a6be707d1c03f2b6c6bf01982f001aa403e073'
           $actual=(git -C workspace rev-parse HEAD).Trim()
           if ($actual -ne $expected) { throw "Wrong Quad Views source: $actual" }
@@ -201,13 +201,13 @@ jobs:
           if (@(Get-ChildItem package -File -Filter *.exe).Count -lt 1) { throw "Missing Joey frontend executable" }
           if ((Get-Content package/READ_FIRST.txt -Raw) -notmatch 'ID7') { throw 'Missing stereo QuadView instructions' }
           Get-ChildItem package -Recurse -File | Get-FileHash -Algorithm SHA256 | ConvertTo-Json | Set-Content evidence/package-sha256.json
-          $zip="UEVR-QuadViews-Stereo-182base-${{ github.run_number }}.zip"
+          $zip="UEVR-QuadViews-Stereo-182base-v40.zip"
           Compress-Archive -Path package/* -DestinationPath $zip -Force
           (Get-FileHash $zip -Algorithm SHA256).Hash | Set-Content "$zip.sha256"
       - uses: actions/upload-artifact@v4
         if: success()
         with:
-          name: UEVR-QuadViews-Stereo-182base-${{ github.run_number }}
+          name: UEVR-QuadViews-Stereo-182base-v40
           path: |
             UEVR-QuadViews-Stereo-182base-*.zip
             UEVR-QuadViews-Stereo-182base-*.zip.sha256
@@ -217,7 +217,7 @@ jobs:
         if: failure() && steps.build_backend.outcome == 'success' && steps.build_frontend.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
-          name: QuadView-Compiled-Debug-${{ github.run_number }}
+          name: QuadView-Compiled-Debug-v40
           path: |
             backend/build/bin/uevr/*.dll
             backend/build/bin/vr-plugin-nullifier/*.dll
@@ -238,7 +238,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: QuadView-Stereo-Evidence-${{ github.run_number }}
+          name: QuadView-Stereo-Evidence-v40
           path: evidence/
           if-no-files-found: error
 
