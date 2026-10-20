@@ -70,6 +70,68 @@ public:
         return true;
     }
 
+
+    // Game thread observes a fully constructed UE family before the outer
+    // BeginRenderingViewFamilies hook registers its immutable source packet.
+    // Stage the engine-assigned frame now, and consume it only against the
+    // same original family/scene/target and all four original view pointers.
+    bool observe_gt_frame(uint64_t generation, uintptr_t family,
+                          uintptr_t target, uintptr_t scene,
+                          const std::array<uintptr_t, 4>& views,
+                          uint32_t engine_frame) {
+        if (!generation || !family || !target || !scene || engine_frame == 0xffffffffu)
+            return false;
+        for (size_t i = 0; i < views.size(); ++i) {
+            if (!views[i]) return false;
+            for (size_t j = 0; j < i; ++j) if (views[i] == views[j]) return false;
+        }
+        std::scoped_lock lock{mutex_};
+        if (!advance(generation)) return false;
+        FrameTicket* slot{};
+        for (auto& ticket : frame_tickets_) {
+            if (ticket.generation == generation && ticket.family == family) {
+                // A Family pointer can be recycled. Invalidate the older GT
+                // observation rather than allowing it to identify a new draw.
+                slot = &ticket;
+                break;
+            }
+        }
+        if (!slot) {
+            for (auto& ticket : frame_tickets_) {
+                if (!ticket.generation) { slot = &ticket; break; }
+            }
+        }
+        if (!slot) {
+            // These are GT-only observations, not GPU packet owners. Expire
+            // the oldest unclaimed observation when the bounded ring fills.
+            for (auto& ticket : frame_tickets_) {
+                if (!slot || ticket.ordinal < slot->ordinal) slot = &ticket;
+            }
+        }
+        if (!slot) return false;
+        *slot = FrameTicket{generation, family, target, scene, views, engine_frame, ++ticket_clock_};
+        return true;
+    }
+
+    std::optional<uint32_t> take_observed_gt_frame(
+        uint64_t generation, uintptr_t family, uintptr_t target,
+        uintptr_t scene, const std::array<uintptr_t, 4>& views) {
+        std::scoped_lock lock{mutex_};
+        if (!advance(generation) || !family || !target || !scene) return {};
+        FrameTicket* matched{};
+        for (auto& ticket : frame_tickets_) {
+            if (ticket.generation != generation || ticket.family != family ||
+                ticket.target != target || ticket.scene != scene ||
+                ticket.views != views) continue;
+            if (matched) return {}; // Never choose between ambiguous owners.
+            matched = &ticket;
+        }
+        if (!matched) return {};
+        const auto frame = matched->engine_frame;
+        *matched = {};
+        return frame;
+    }
+
     // Called from the game-thread ISceneViewExtension callback after Unreal
     // has assigned FSceneViewFamily::FrameNumber and before FSceneRenderer
     // copies the family/views. The serial plus original-family/view identities
@@ -224,16 +286,28 @@ public:
         for (auto& slot : slots_) {
             if (slot.source && slot.source.generation == generation) slot = {};
         }
+        for (auto& ticket : frame_tickets_) {
+            if (ticket.generation == generation) ticket = {};
+        }
         if (generation >= generation_) generation_ = generation;
     }
 
     void retire_all() {
         std::scoped_lock lock{mutex_};
         for (auto& slot : slots_) slot = {};
+        for (auto& ticket : frame_tickets_) ticket = {};
+        ticket_clock_ = 0;
         generation_ = 0;
     }
 
 private:
+    struct FrameTicket {
+        uint64_t generation{};
+        uintptr_t family{}, target{}, scene{};
+        std::array<uintptr_t, 4> views{};
+        uint32_t engine_frame{};
+        uint64_t ordinal{};
+    };
     struct Slot {
         Source source{};
         uintptr_t command{}, destination{};
@@ -252,12 +326,16 @@ private:
         if (!generation || generation < generation_) return false;
         if (generation != generation_) {
             for (auto& slot : slots_) slot = {};
+            for (auto& ticket : frame_tickets_) ticket = {};
+            ticket_clock_ = 0;
             generation_ = generation;
         }
         return true;
     }
     mutable std::mutex mutex_;
     uint64_t generation_{};
+    uint64_t ticket_clock_{};
+    std::array<FrameTicket, Capacity> frame_tickets_{};
     std::array<Slot, Capacity> slots_{};
 };
 
