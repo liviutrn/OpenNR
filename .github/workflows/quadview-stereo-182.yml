@@ -1,8 +1,8 @@
 name: Experimental Stereo Quad Views from Build182
-run-name: Quad Views Stereo ID7 (v40 final)
+run-name: Quad Views Stereo ID7 (v41 final)
 on:
   push:
-    branches: [quadview/stereo-182, quadview/stereo-182-build, quadview/stereo-182-build-next, codex/quadview-id7-v1861-20261020, experiment/id7-stereo-v1861-20261020, experiment/id7-build40-ci-20261021]
+    branches: [quadview/stereo-182, quadview/stereo-182-build, quadview/stereo-182-build-next, codex/quadview-id7-v1861-20261020, experiment/id7-stereo-v1861-20261020, experiment/id7-build41-ci-20261021]
     paths: ['quadview/**', '.github/workflows/quadview-stereo-182.yml']
   workflow_dispatch:
 permissions:
@@ -21,14 +21,14 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: liviutrn/UEVR-Quad-Views-Mono
-          ref: 7486fc59890b14673cd50770b0dafeb692576716
+          ref: 4138f8a9025e0a512531e2b291cb8d1588ccc40f
           path: workspace
           fetch-depth: 0
           persist-credentials: false
       - name: Verify canonical Quad Views source identity and protected DuoView
         shell: pwsh
         run: |
-          $expected='7486fc59890b14673cd50770b0dafeb692576716'
+          $expected='4138f8a9025e0a512531e2b291cb8d1588ccc40f'
           $baseline='f0a6be707d1c03f2b6c6bf01982f001aa403e073'
           $actual=(git -C workspace rev-parse HEAD).Trim()
           if ($actual -ne $expected) { throw "Wrong Quad Views source: $actual" }
@@ -193,21 +193,23 @@ jobs:
           Copy-Item workspace/quadview/README.md package/QUADVIEW_README.md
           Copy-Item workspace/quadview/RELEASE_NOTES.md package/QUADVIEW_RELEASE_NOTES.md
           Copy-Item workspace/quadview/GLAMARYE_LICENSE.txt package/GLAMARYE_LICENSE.txt
+          Copy-Item workspace/quadview/BUILD41_REVIEW.md package/BUILD41_REVIEW.md
           Copy-Item evidence/quadview-source.json package/
           Copy-Item evidence/quadview-source-generated.json package/
-          @{ baseline='Build182'; baselineSource='67c6e1ec5b931d2922e0ef5d253b8e9bef7a1a80'; overlay=$env:GITHUB_SHA; run=$env:GITHUB_RUN_ID; mode='ID7 stereo quad views'; headsetVerified=$false } | ConvertTo-Json | Set-Content package/QUADVIEW_BUILD.json
-          $needed=@('UEVRBackend.dll','UEVRPluginNullifier.dll','LuaVR.dll','READ_FIRST.txt','QUADVIEW_RELEASE_NOTES.md','GLAMARYE_LICENSE.txt','duoview-stage234-hashes.json','exact-baseline-source.json','quadview-source.json','quadview-source-generated.json','QUADVIEW_BUILD.json')
+          @{ build=41; baseBuild=40; baseSource='7486fc59890b14673cd50770b0dafeb692576716'; baseline='Build182'; baselineSource='67c6e1ec5b931d2922e0ef5d253b8e9bef7a1a80'; sourceRepository='liviutrn/UEVR-Quad-Views-Mono'; canonicalSource='4138f8a9025e0a512531e2b291cb8d1588ccc40f'; overlay='4138f8a9025e0a512531e2b291cb8d1588ccc40f'; ciRunner=$env:GITHUB_SHA; run=$env:GITHUB_RUN_ID; mode='ID7 stereo quad views'; headsetVerified=$false } | ConvertTo-Json | Set-Content package/QUADVIEW_BUILD.json
+          @('Build 41 experimental automated validation', 'Canonical source: 4138f8a9025e0a512531e2b291cb8d1588ccc40f', "CI runner: $env:GITHUB_SHA", "Windows run: https://github.com/liviutrn/OpenNR/actions/runs/$env:GITHUB_RUN_ID", 'Passed: shader compilation and WARP, QuadView contracts and writer model, pinned DuoView contracts, independent DuoView CPU/GPU tests, full backend and auxiliary DLLs, original compatibility suite, matching frontend tests/build, final source-integrity verification.', 'Headset stability and the original RenderThread crash: not verified.') | Set-Content package/BUILD41_VALIDATION.txt
+          $needed=@('UEVRBackend.dll','UEVRPluginNullifier.dll','LuaVR.dll','READ_FIRST.txt','QUADVIEW_RELEASE_NOTES.md','GLAMARYE_LICENSE.txt','duoview-stage234-hashes.json','exact-baseline-source.json','quadview-source.json','quadview-source-generated.json','QUADVIEW_BUILD.json','BUILD41_REVIEW.md','BUILD41_VALIDATION.txt')
           foreach ($name in $needed) { if (!(Test-Path ("package/" + $name))) { throw "Missing critical package file: $name" } }
           if (@(Get-ChildItem package -File -Filter *.exe).Count -lt 1) { throw "Missing Joey frontend executable" }
           if ((Get-Content package/READ_FIRST.txt -Raw) -notmatch 'ID7') { throw 'Missing stereo QuadView instructions' }
           Get-ChildItem package -Recurse -File | Get-FileHash -Algorithm SHA256 | ConvertTo-Json | Set-Content evidence/package-sha256.json
-          $zip="UEVR-QuadViews-Stereo-182base-v40.zip"
+          $zip="UEVR-QuadViews-Stereo-182base-v41.zip"
           Compress-Archive -Path package/* -DestinationPath $zip -Force
           (Get-FileHash $zip -Algorithm SHA256).Hash | Set-Content "$zip.sha256"
       - uses: actions/upload-artifact@v4
         if: success()
         with:
-          name: UEVR-QuadViews-Stereo-182base-v40
+          name: UEVR-QuadViews-Stereo-182base-v41
           path: |
             UEVR-QuadViews-Stereo-182base-*.zip
             UEVR-QuadViews-Stereo-182base-*.zip.sha256
@@ -217,7 +219,7 @@ jobs:
         if: failure() && steps.build_backend.outcome == 'success' && steps.build_frontend.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
-          name: QuadView-Compiled-Debug-v40
+          name: QuadView-Compiled-Debug-v41
           path: |
             backend/build/bin/uevr/*.dll
             backend/build/bin/vr-plugin-nullifier/*.dll
@@ -238,7 +240,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: QuadView-Stereo-Evidence-v40
+          name: QuadView-Stereo-Evidence-v41
           path: evidence/
           if-no-files-found: error
 
