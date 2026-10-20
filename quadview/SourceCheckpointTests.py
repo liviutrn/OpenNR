@@ -162,6 +162,13 @@ class SourceCheckpointTests(unittest.TestCase):
         recorded = json.loads(report.read_text(encoding="utf-8"))
         self.assertEqual(set(recorded["outputs"]), set(checkpoint.GENERATED_OUTPUTS))
 
+    def test_late_quadview_selection_preserves_startup_hook_installation(self) -> None:
+        script = Path(__file__).with_name("apply_quadviews.py").read_text(encoding="utf-8")
+        self.assertIn('vr->is_quadview_supported_title() ||', script)
+        self.assertIn('!vr->is_quadview_supported_title() && !vr->is_quadview_mode_selected()', script)
+        self.assertIn('bool VR::is_quadview_supported_title() const', script)
+        self.assertIn('if (!is_quadview_supported_title())', script)
+
     def test_dirty_sdk_is_still_rejected(self) -> None:
         write(self.sdk, "unexpected.hpp", "untracked SDK change\n")
         with self.assertRaisesRegex(RuntimeError, "restricted SDK working tree changed"):
