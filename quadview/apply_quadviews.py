@@ -227,6 +227,10 @@ def main() -> None:
         "    const auto runtime = get_runtime();\n"
         "    if (runtime == nullptr || !runtime->is_openxr()) return \"Quad Views requires OpenXR\";\n"
         "    if (!is_quadview_supported_title()) return \"Quad Views currently supports STALKER 2 UE5.5 only\";\n"
+        "    // Stay in the previous working rendering mode until the real renderer\n"
+        "    // entry callback has executed. ID7 OpenXR requires a four-view image.\n"
+        "    if (!m_fake_stereo_hook || !m_fake_stereo_hook->quadview_outer_renderer_observed())\n"
+        "        return \"Quad Views warming up: outer renderer interception not observed\";\n"
         "    if (m_extreme_compat_mode->value() || m_splitscreen_compatibility_mode->value() || m_2d_screen_mode->value() ||\n"
         "        m_sceneview_compatibility_mode->value() || m_stereo_emulation_mode) return \"Quad Views requires Extreme Compatibility, split-screen, 2D Screen, SceneView compatibility and Stereo Emulation OFF\";\n"
         "    if (uevr::nascar::is_target()) return \"Quad Views is unavailable for this title's restricted rendering path\";\n"
@@ -319,6 +323,9 @@ def main() -> None:
     edit(backend, "src/mods/vr/FFakeStereoRenderingHook.hpp",
         "    using DuoDelivery = uevr::duoview::Delivery<NativeStereoFramePacket>;\n"
         "    mutable DuoDelivery duoview_delivery{};",
+        "    bool quadview_outer_renderer_observed() const {\n"
+        "        return m_render_module_begin_render_viewfamily_observed.load(std::memory_order_acquire);\n"
+        "    }\n"
         "    struct QuadViewSourcePacket {\n"
         "        std::shared_ptr<const uevr::quadview::Snapshot> producer{};\n"
         "        Microsoft::WRL::ComPtr<ID3D12Resource> atlas{};\n"
