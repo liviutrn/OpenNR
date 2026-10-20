@@ -1,6 +1,7 @@
 #pragma once
 
 #include "QuadViewGeometry.hpp"
+#include "QuadViewSettings.hpp"
 #include <array>
 #include <cstdint>
 #include <memory>
@@ -37,11 +38,21 @@ struct CameraPose {
     bool valid{};
 };
 
+struct GazeEvidence {
+    uint64_t sample_tick{};
+    uint64_t fresh{},reused{},invalid{},expired{},unavailable{};
+    uint32_t age_ms{};
+    bool sampled{},ray_valid{},reader_available{},reader_active{};
+};
+
 struct Snapshot {
     Key key{};
     uint64_t engine_frame{};
     uintptr_t family{}, scene{}, target{};
     Layout layout{};
+    Settings settings{};
+    uint64_t settings_revision{};
+    GazeEvidence gaze{};
     std::array<ViewRecord, 4> views{};
     std::array<uint64_t, 4> expected_projection_hashes{};
     std::array<std::array<double, 16>, 4> projections{};
@@ -87,7 +98,8 @@ struct Snapshot {
 // are captured independently of compositor command-record diagnostics.
 class Producer {
 public:
-    bool begin(Key key, uint64_t engine_frame, uintptr_t target, uintptr_t scene, Layout layout) {
+    bool begin(Key key, uint64_t engine_frame, uintptr_t target, uintptr_t scene, Layout layout,
+               Settings settings = {}, uint64_t settings_revision = 1, GazeEvidence gaze = {}) {
         if (key.generation == 0 || key.draw_serial == 0 ||
             !layout.eye_width || !layout.eye_height || layout.atlas_width != layout.eye_width * 2) return false;
         std::scoped_lock lock{mutex_};
@@ -120,6 +132,9 @@ public:
         snapshot.target = target;
         snapshot.scene = scene;
         snapshot.layout = layout;
+        snapshot.settings = settings;
+        snapshot.settings_revision = settings_revision;
+        snapshot.gaze = gaze;
         pending_.emplace(key, std::move(snapshot));
         return true;
     }

@@ -1,14 +1,17 @@
-EXPERIMENTAL STEREO QUAD VIEWS — BUILD182 BASE
+EXPERIMENTAL STEREO QUAD VIEWS — BUILD182 BASE / BUILD32 P0+P1 SNAPSHOT
 
-EXPERIMENTAL ID7: engine/OpenXR adapters are integrated.
-A package containing this file must pass the full Windows build first.
-Headset stability and ten-minute gameplay acceptance remain unverified.
+SOURCE-ONLY RECOVERY ARCHIVE, NOT A TESTABLE WINDOWS RELEASE.
+Build32 rendered real stereo then crashed with an unsymbolized CPU RenderThread access violation.
+The saved P0 checkpoint contains structural view-count and transition-drain guards.
+The unpublished P1 source contains eye tracking, controls, and focus-only sharpening.
+NO P1 Windows build, GPU shader/WARP verification, or headset validation exists.
+Do NOT install this ZIP as a UEVR package or claim the crash is repaired.
 
 Initial target: STALKER 2 (UE5.5) / DX12 / OpenXR.
 Mode ID7 = Quad Views Stereo (Experimental).
 Mode ID6 = the original monoscopic DuoView baseline.
 
-To test this experimental package:
+Only after a reviewed Windows CI candidate exists, to test that compiled package:
 1. Extract it to a separate folder and run its included UEVR injector.
 2. Use the known-working Build182 game and SteamVR/OpenXR setup.
 3. Turn off Extreme Compatibility, split-screen, SceneView compatibility,
@@ -18,10 +21,11 @@ To test this experimental package:
 6. Check stereo depth, focus alignment, head movement, and frame delivery.
 7. Run a ten-minute gameplay test before treating it as stable.
 
-ID7 initially uses fixed-center focus, without gaze tracking. It composites
-four engine views into ordinary stereo output; runtime Quad Views support
-is not required. Native Stereo Fix is bypassed in ID7, so secondary-pass
-shading differences remain a possible limitation.
+Fixed-center remains an ID7 option. Unverified P1 code also implements
+per-eye PSVR2 eye tracking and fused focus-only sharpening. It composites
+four engine views into ordinary stereo output, without requiring runtime
+Quad Views support. Native Stereo Fix is bypassed; secondary-pass shading
+parity remains an open engineering issue.
 
 Diagnostic 0: blend. 1: context only. 2: focus only. 3: synthetic colors.
 Synthetic colors do not establish that the engine rendered four views.

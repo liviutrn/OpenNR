@@ -169,9 +169,25 @@ class SourceCheckpointTests(unittest.TestCase):
         self.assertIn('bool VR::is_quadview_supported_title() const', script)
         self.assertIn('if (!is_quadview_supported_title())', script)
         self.assertIn('m_render_module_begin_render_viewfamily_observed.load(std::memory_order_acquire)', script)
-        self.assertIn('Waiting for validated scene-view and outer-renderer hooks', script)
         self.assertIn('quadview_outer_renderer_observed() const', script)
+        self.assertIn('Quad Views warming up: scene-view constructor hook is not ready', script)
         self.assertIn('Quad Views warming up: outer renderer interception not observed', script)
+
+    def test_quadview_transition_closes_admission_but_drains_queued_rhi_owners(self) -> None:
+        script = Path(__file__).with_name("apply_quadviews.py").read_text(encoding="utf-8")
+        consumer = Path(__file__).with_name("apply_quadview_consumer.py").read_text(encoding="utf-8")
+        self.assertIn('m_quadview_draw_demand.begin(key.generation,key.draw_serial,is_quadview_mode_selected(),is_mono_transition_pending(),', script)
+        self.assertIn('m_rendering_method->selection().request_token()', script)
+        self.assertIn('quadview_desired_view_count()', script)
+        self.assertIn('quadview_transition_draw_closed()', script)
+        self.assertIn('engine_commands_retired(mono_generation())', script)
+        policy = Path(__file__).with_name("QuadViewViewDemand.hpp").read_text(encoding="utf-8")
+        self.assertIn('class DrawDemandLatch', policy)
+        self.assertIn('source_admission_open(selected, pending)', policy)
+        self.assertIn('demand && demand->source_admission', script)
+        self.assertIn('quadview_delivery.tail_hooked_engine_family(quad_engine,quad_source,', script)
+        self.assertIn('quadview_delivery.executed_engine_family(quad_engine,quad_source,', script)
+        self.assertIn('engine_commands_retired(vr->mono_generation())', consumer)
 
     def test_gt_source_is_published_before_outer_render_thread(self) -> None:
         script = Path(__file__).with_name("apply_quadviews.py").read_text(encoding="utf-8")

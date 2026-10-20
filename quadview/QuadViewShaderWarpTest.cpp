@@ -16,6 +16,7 @@
 #include <iostream>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 using Microsoft::WRL::ComPtr;
 
@@ -69,17 +70,18 @@ static void transition(ID3D12GraphicsCommandList* commands, ID3D12Resource* text
 struct alignas(16) Constants {
     uint32_t eye_and_atlas[4];
     uint32_t rectangles[4][4];
-    float crop[4];
+    float crops[2][4];
     float options[4];
+    float sharpen[4];
 };
-static_assert(sizeof(Constants) == 112);
+static_assert(sizeof(Constants) == 144);
 
 using Color = std::array<uint8_t, 4>;
 static Color source_color(unsigned view, unsigned x, unsigned y) {
     if (view == 0) return {240, 10, 20, 255};
     if (view == 1) return {20, 230, 30, 255};
-    if (view == 2) return {static_cast<uint8_t>(40 + x * 5), static_cast<uint8_t>(20 + y * 4), 200, 255};
-    return {200, static_cast<uint8_t>(40 + x * 3), static_cast<uint8_t>(20 + y * 5), 255};
+    if (view == 2) return {static_cast<uint8_t>(24 + x*x + 2*y), static_cast<uint8_t>(24 + y*y + x), 200, 255};
+    return {200, static_cast<uint8_t>(24 + x*x + 2*y), static_cast<uint8_t>(24 + y*y + x), 255};
 }
 
 int main(int argc, char** argv) try {
@@ -87,7 +89,8 @@ int main(int argc, char** argv) try {
     const bool srgb_output = argc == 3;
     const bool typeless_output = srgb_output && std::string(argv[2]) == "--typeless";
     constexpr uint32_t W = 32, H = 32, AW = 64;
-    const auto layout = uevr::quadview::make_layout(W, H, .5f, .5f, .25f, 1.f, .375f, .5f);
+    const auto layout = uevr::quadview::make_layout(W, H, .5f, .5f, .25f, 1.f,
+        std::array<uevr::quadview::FocusPoint, 2>{{{.375f, .5f}, {.625f, .5f}}});
     if (!layout) throw std::runtime_error("Invalid test layout");
     ComPtr<ID3D12Debug> debug_layer;
     const bool debug_enabled = SUCCEEDED(D3D12GetDebugInterface(IID_PPV_ARGS(&debug_layer)));
@@ -105,6 +108,8 @@ int main(int argc, char** argv) try {
     queue_description.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;
     ComPtr<ID3D12CommandQueue> queue;
     require(device->CreateCommandQueue(&queue_description, IID_PPV_ARGS(&queue)), "CreateCommandQueue");
+    UINT64 timestamp_frequency{};
+    require(queue->GetTimestampFrequency(&timestamp_frequency), "GetTimestampFrequency");
     ComPtr<ID3D12CommandAllocator> allocator;
     require(device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&allocator)), "CreateCommandAllocator");
     ComPtr<ID3D12GraphicsCommandList> commands;
@@ -239,7 +244,7 @@ int main(int argc, char** argv) try {
     ComPtr<ID3D12PipelineState> pipeline;
     require(device->CreateGraphicsPipelineState(&pipeline_description, IID_PPV_ARGS(&pipeline)), "CreateGraphicsPipelineState");
     uevr::quadview::dx12::Compositor production;
-    if (!production.prewarm(device.Get(), atlas_description.Format, output_view_format))
+    if (!production.prewarm(device.Get(), atlas_description.Format, output_view_format,timestamp_frequency))
         throw std::runtime_error(production.error());
     ComPtr<ID3D12Fence> fence;
     require(device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&fence)), "CreateFence");
@@ -248,7 +253,7 @@ int main(int argc, char** argv) try {
         ~Event() { if (value) CloseHandle(value); }
     } event;
     if (!event.value) throw std::runtime_error("CreateEventW failed");
-    Constants constants{{W, H, AW, H}, {}, {.125f, .25f, .625f, .75f}, {0, 0, 0, 0}};
+    Constants constants{{W, H, AW, H}, {}, {}, {0, 0, 0, 0}, {0, 7.f, .10f, .02f}};
     constants.options[2] = srgb_output ? 1.f : 0.f;
     for (unsigned i = 0; i < 4; ++i) {
         const auto& rect = layout->views[i];
@@ -257,16 +262,24 @@ int main(int argc, char** argv) try {
         constants.rectangles[i][2] = rect.width;
         constants.rectangles[i][3] = rect.height;
     }
+    for (unsigned eye = 0; eye != 2; ++eye) {
+        const auto& crop = layout->focus_crops[eye];
+        constants.crops[eye][0] = crop.u0; constants.crops[eye][1] = crop.v0;
+        constants.crops[eye][2] = crop.u1; constants.crops[eye][3] = crop.v1;
+    }
 
     D3D12_RESOURCE_STATES atlas_state = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
-    for (unsigned pass = 0; pass < 6; ++pass) {
-        const unsigned mode = pass % 3;
+    std::vector<uint8_t> baseline_focus;
+    std::vector<uint8_t> strength_one_focus;
+    for (unsigned pass = 0; pass < 9; ++pass) {
+        const unsigned mode = pass < 6 ? pass % 3 : 2u;
         if (pass != 0) {
             require(allocator->Reset(), "Reset allocator");
             require(commands->Reset(allocator.Get(), nullptr), "Reset commands");
             transition(commands.Get(), output.Get(), D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET);
         }
         constants.options[1] = static_cast<float>(mode);
+        constants.sharpen[0] = 0.f; // Exact pixel assertions isolate crop/source selection.
         require(constant_buffer->Map(0, &no_read, &mapped), "Map constants");
         std::memcpy(mapped, &constants, sizeof(constants));
         constant_buffer->Unmap(0, nullptr);
@@ -299,10 +312,15 @@ int main(int argc, char** argv) try {
             }
             auto overlapping = *layout;
             overlapping.views[2] = overlapping.views[0];
-            if (production.record(commands.Get(), atlas.Get(), output.Get(), overlapping, 0.f, mode,
+            uevr::quadview::Settings settings{};
+            settings.diagnostic_view = mode;
+            settings.feather_fraction = 0.f; // Exact hard-crop pixel checks.
+            settings.sharpen_strength = pass == 6 ? 1.f : pass == 7 ? 2.f : 0.f;
+            settings.gpu_timing = pass == 3;
+            if (production.record(commands.Get(), atlas.Get(), output.Get(), overlapping, settings,
                 atlas_state, output_state, owner))
                 throw std::runtime_error("Production compositor accepted overlapping atlas regions");
-            if (!production.record(commands.Get(), atlas.Get(), output.Get(), *layout, 0.f, mode,
+            if (!production.record(commands.Get(), atlas.Get(), output.Get(), *layout, settings,
                 atlas_state, output_state, owner))
                 throw std::runtime_error(production.error());
             owner.reset();
@@ -339,27 +357,73 @@ int main(int argc, char** argv) try {
         }
         D3D12_RANGE read_range{0, static_cast<SIZE_T>(byte_count)};
         require(readback->Map(0, &read_range, &mapped), "Map readback");
+        const bool sharpened = pass == 6 || pass == 7;
+        std::array<bool,2> changed_focus_eye{};
+        std::array<bool,2> changed_strength_eye{};
+        if (pass == 5) {
+            baseline_focus.resize(static_cast<size_t>(footprint.Footprint.RowPitch) * H);
+            std::memcpy(baseline_focus.data(),mapped,baseline_focus.size());
+        }
         for (uint32_t y = 0; y < H; ++y) for (uint32_t x = 0; x < AW; ++x) {
             const unsigned eye = x / W, local_x = x % W;
-            const bool inside = local_x >= 4 && local_x < 20 && y >= 8 && y < 24;
+            const auto& crop = layout->focus_crops[eye];
+            const auto crop_left = static_cast<unsigned>(std::lround(crop.u0 * W));
+            const auto crop_right = static_cast<unsigned>(std::lround(crop.u1 * W));
+            const auto crop_top = static_cast<unsigned>(std::lround(crop.v0 * H));
+            const auto crop_bottom = static_cast<unsigned>(std::lround(crop.v1 * H));
+            const bool inside = local_x >= crop_left && local_x < crop_right && y >= crop_top && y < crop_bottom;
             Color expected = mode == 2 ? Color{10, 10, 10, 255} : source_color(eye, 0, 0);
-            if (mode != 1 && inside) expected = source_color(eye + 2, local_x - 4, y - 8);
-            const auto* pixel = static_cast<const uint8_t*>(mapped) + y * footprint.Footprint.RowPitch + x * 4;
-            for (unsigned channel = 0; channel < 4; ++channel) {
-                if (std::abs(int(pixel[channel]) - int(expected[channel])) > 1)
-                    throw std::runtime_error("Stereo shader mismatch mode=" + std::to_string(mode) +
-                        " x=" + std::to_string(x) + " y=" + std::to_string(y));
+            if (mode != 1 && inside) {
+                const auto& source_rect = layout->views[eye + 2];
+                const float crop_u = ((float(local_x) + .5f) / W - crop.u0) / (crop.u1 - crop.u0);
+                const float crop_v = ((float(y) + .5f) / H - crop.v0) / (crop.v1 - crop.v0);
+                const auto source_x = static_cast<unsigned>(std::clamp(crop_u * source_rect.width,
+                    0.f, float(source_rect.width - 1)));
+                const auto source_y = static_cast<unsigned>(std::clamp(crop_v * source_rect.height,
+                    0.f, float(source_rect.height - 1)));
+                expected = source_color(eye + 2, source_x, source_y);
             }
+            const auto* pixel = static_cast<const uint8_t*>(mapped) + y * footprint.Footprint.RowPitch + x * 4;
+            if (!sharpened || !inside) {
+                for (unsigned channel = 0; channel < 4; ++channel) {
+                    if (std::abs(int(pixel[channel]) - int(expected[channel])) > 1)
+                        throw std::runtime_error("Stereo shader mismatch mode=" + std::to_string(mode) +
+                            " x=" + std::to_string(x) + " y=" + std::to_string(y));
+                }
+            } else {
+                const auto* baseline = baseline_focus.data() + y * footprint.Footprint.RowPitch + x * 4;
+                if (std::abs(int(pixel[0])-int(baseline[0]))>1 ||
+                    std::abs(int(pixel[1])-int(baseline[1]))>1 ||
+                    std::abs(int(pixel[2])-int(baseline[2]))>1)
+                    changed_focus_eye[eye]=true;
+                if (pass==7) {
+                    const auto* strength_one=strength_one_focus.data()+y*footprint.Footprint.RowPitch+x*4;
+                    if (std::abs(int(pixel[0])-int(strength_one[0]))>1 ||
+                        std::abs(int(pixel[1])-int(strength_one[1]))>1 ||
+                        std::abs(int(pixel[2])-int(strength_one[2]))>1)
+                        changed_strength_eye[eye]=true;
+                }
+            }
+        }
+        if (pass == 6) {
+            strength_one_focus.resize(static_cast<size_t>(footprint.Footprint.RowPitch) * H);
+            std::memcpy(strength_one_focus.data(),mapped,strength_one_focus.size());
         }
         D3D12_RANGE no_write{0, 0};
         readback->Unmap(0, &no_write);
+        if (sharpened && (!changed_focus_eye[0] || !changed_focus_eye[1]))
+            throw std::runtime_error("Positive Glamarye strength did not alter both stereo focus images");
+        if (pass==7 && (!changed_strength_eye[0] || !changed_strength_eye[1]))
+            throw std::runtime_error("Glamarye strengths 1 and 2 produced identical stereo focus images");
         if (pass >= 3) {
             if (packet_lifetime.expired()) throw std::runtime_error("Production packet owner disappeared before explicit retirement");
             production.on_slot_retired();
+            if (pass==3 && (!std::isfinite(production.gpu_milliseconds()) || production.gpu_milliseconds()<0.f))
+                throw std::runtime_error("Fence-retired QuadView GPU timestamp result unavailable");
             if (!packet_lifetime.expired()) throw std::runtime_error("Production packet owner leaked after retirement");
         }
     }
-    std::cout << "QuadView WARP: shader and production compositor stereo isolation, off-center ROI, 1:1 focus gradients, atlas clamping, debug views and fence-slot ownership passed.\n";
+    std::cout << "QuadView WARP: stereo isolation, off-center ROI, crop bounds, diagnostic modes, 0/1/2 Glamarye focus strength and slot ownership passed.\n";
     return 0;
 } catch (const std::exception& error) {
     std::cerr << error.what() << '\n';

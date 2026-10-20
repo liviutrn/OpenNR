@@ -24,6 +24,7 @@ def main():
     edit(xr_h, '        uint64_t duoview_serial{};',
          '        uint64_t duoview_serial{};\n        uint64_t quadview_serial{};\n        bool quadview_pose_valid{};')
     edit(xr_h, '    std::optional<PipelineState> capture_duoview_pose(uint32_t frame);', '''    std::optional<PipelineState> capture_quadview_pose(uint32_t frame);
+    std::optional<PipelineState> capture_quadview_current_pose();
     void note_quadview_copy(PipelineState pose, uint64_t generation);
     void invalidate_quadview_scene();
     std::optional<PipelineState> quadview_pending_pose, quadview_submitted_pose;
@@ -51,6 +52,30 @@ def main():
     std::scoped_lock lock{this->sync_assignment_mtx};
     const auto& pose=this->pipeline_states[frame%QUEUE_SIZE];
     if (pose.frame_count!=frame || pose.stage_views.size()!=2 || !pose.quadview_pose_valid) return {};
+    const auto& h=pose.view_space_location.pose.orientation;
+    const double head_norm=double(h.x)*h.x+double(h.y)*h.y+double(h.z)*h.z+double(h.w)*h.w;
+    if (!std::isfinite(head_norm) || std::abs(head_norm-1.0)>.01) return {};
+    for (const auto& view : pose.stage_views) {
+        const auto& p=view.pose.position; const auto& q=view.pose.orientation; const auto& f=view.fov;
+        const double norm=double(q.x)*q.x+double(q.y)*q.y+double(q.z)*q.z+double(q.w)*q.w;
+        if (!std::isfinite(p.x) || !std::isfinite(p.y) || !std::isfinite(p.z) ||
+            !std::isfinite(norm) || std::abs(norm-1.0)>.01 ||
+            !std::isfinite(f.angleLeft) || !std::isfinite(f.angleRight) ||
+            !std::isfinite(f.angleUp) || !std::isfinite(f.angleDown) ||
+            f.angleLeft>=f.angleRight || f.angleDown>=f.angleUp) return {};
+    }
+    return pose;
+}
+
+std::optional<OpenXR::PipelineState> OpenXR::capture_quadview_current_pose() {
+    std::scoped_lock lock{this->sync_assignment_mtx};
+    const auto frame=this->internal_frame_count;
+    const auto& pose=this->pipeline_states[frame%QUEUE_SIZE];
+    if (pose.frame_count!=frame || pose.stage_views.size()!=2 || !pose.quadview_pose_valid ||
+        pose.frame_state.predictedDisplayTime<=0 || pose.frame_state.shouldRender!=XR_TRUE) return {};
+    const auto& h=pose.view_space_location.pose.orientation;
+    const double head_norm=double(h.x)*h.x+double(h.y)*h.y+double(h.z)*h.z+double(h.w)*h.w;
+    if (!std::isfinite(head_norm) || std::abs(head_norm-1.0)>.01) return {};
     for (const auto& view : pose.stage_views) {
         const auto& p=view.pose.position; const auto& q=view.pose.orientation; const auto& f=view.fov;
         const double norm=double(q.x)*q.x+double(q.y)*q.y+double(q.z)*q.z+double(q.w)*q.w;
@@ -129,20 +154,38 @@ std::optional<OpenXR::PipelineState> OpenXR::capture_duoview_pose(uint32_t frame
 
     edit(dx_h, '#include "DuoViewD3D12.hpp"', '#include "DuoViewD3D12.hpp"\n#include "QuadViewD3D12.hpp"')
     edit(dx_h, '        std::unordered_map<d3d12::CommandContext*, std::unique_ptr<uevr::duoview::dx12::Compositor>> duoview_compositors;',
-         '''        void prepare_quadview_compositors(ID3D12Device* device, DXGI_FORMAT source_format);
+         '''        void prepare_quadview_compositors(ID3D12Device* device, DXGI_FORMAT source_format, UINT64 timestamp_frequency);
         std::unordered_map<d3d12::CommandContext*, std::unique_ptr<uevr::quadview::dx12::Compositor>> quadview_compositors;
         std::unordered_map<d3d12::CommandContext*, std::unique_ptr<uevr::duoview::dx12::Compositor>> duoview_compositors;''')
     edit(dx, 'void D3D12Component::on_post_present(VR* vr) {\n    if (vr->is_mono_transition_quiescing()) { return; }\n    if (vr->is_mono_transition_waiting() || m_mono_block_post_present) {',
          'void D3D12Component::on_post_present(VR* vr) {\n    if (vr->is_mono_transition_quiescing()) { return; }\n    // Quad owns separate source proof; retire UI allocations even while its first scene is pending.\n    if ((vr->is_mono_transition_waiting() && !vr->is_quadview_mode_selected()) || m_mono_block_post_present) {')
     edit(dx, 'bool D3D12Component::mono_consumers_retired() {', '''bool D3D12Component::mono_consumers_retired() {
+    const auto vr=VR::get();
+    if (vr && vr->is_quadview_mode_selected()) {
+        if (vr->is_mono_transition_pending() && !vr->quadview_transition_draw_closed()) {
+            vr->set_quadview_status("Waiting for the active viewport draw to latch a closed ID7 admission boundary");
+            return false;
+        }
+        const auto& stereo=vr->get_fake_stereo_hook();
+        if (!stereo || !stereo->quadview_delivery.engine_commands_retired(vr->mono_generation())) {
+            vr->set_quadview_status(stereo && stereo->quadview_delivery.engine_tracking_overflowed(vr->mono_generation())
+                ? "ID7 engine ownership tracking overflowed; transition remains blocked"
+                : "Waiting for tracked ID7 render-thread/RHI owners to execute before transition");
+            return false;
+        }
+    }
     {
         std::scoped_lock lock{m_openxr.mtx};
         for (auto& [commands, compositor] : m_openxr.quadview_compositors) {
             if (!commands || !commands->references_retired()) return false;
-            if (compositor) compositor->on_slot_retired();
+            if (compositor) {
+                compositor->on_slot_retired();
+                if (vr) vr->note_quadview_gpu_ms(compositor->gpu_milliseconds());
+            }
         }
     }''')
-    edit(dx, 'void D3D12Component::OpenXR::initialize(XrSessionCreateInfo& session_info) {', '''void D3D12Component::OpenXR::prepare_quadview_compositors(ID3D12Device* device, DXGI_FORMAT source_format) {
+    edit(dx, 'void D3D12Component::OpenXR::initialize(XrSessionCreateInfo& session_info) {', '''void D3D12Component::OpenXR::prepare_quadview_compositors(ID3D12Device* device, DXGI_FORMAT source_format,
+    UINT64 timestamp_frequency) {
     // Prewarm outside copy(): no pipeline/heap/allocation creation in its callback.
     std::scoped_lock lock{mtx};
     auto it=contexts.find((uint32_t)runtimes::OpenXR::SwapchainIndex::DOUBLE_WIDE);
@@ -161,7 +204,7 @@ std::optional<OpenXR::PipelineState> OpenXR::capture_duoview_pose(uint32_t frame
         // runtimes may expose its resource with a typeless family format.
         if (output_format==DXGI_FORMAT_B8G8R8A8_TYPELESS) output_format=DXGI_FORMAT_B8G8R8A8_UNORM_SRGB;
         if (output_format==DXGI_FORMAT_R8G8B8A8_TYPELESS) output_format=DXGI_FORMAT_R8G8B8A8_UNORM_SRGB;
-        if (!comp->prewarm(device,source_format,output_format))
+        if (!comp->prewarm(device,source_format,output_format,timestamp_frequency))
             SPDLOG_WARNING_EVERY_N_SEC(2,"[QuadView][Prewarm] {}",comp->error());
     }
 }
@@ -199,22 +242,35 @@ void D3D12Component::OpenXR::initialize(XrSessionCreateInfo& session_info) {''')
                         if (source && source->packet && source->packet->producer && source->packet->atlas) {
                             const auto packet=source->packet;
                             const auto frozen=packet->producer;
-                            m_openxr.prepare_quadview_compositors(device,packet->atlas->GetDesc().Format);
+                            UINT64 timestamp_frequency{};
+                            if (frozen->settings.gpu_timing) {
+                                if (const auto hook=g_framework->get_d3d12_hook(); hook) {
+                                    if (const auto queue=hook->get_command_queue(); queue)
+                                        queue->GetTimestampFrequency(&timestamp_frequency);
+                                }
+                            }
+                            m_openxr.prepare_quadview_compositors(device,packet->atlas->GetDesc().Format,timestamp_frequency);
                             bool recorded=false;
                             ID3D12Resource* output=nullptr;
                             uintptr_t command_list=0;
                             const bool accepted=m_openxr.copy(
                                 (uint32_t)runtimes::OpenXR::SwapchainIndex::DOUBLE_WIDE,nullptr,
-                                [this,packet,frozen,&recorded,&output,&command_list](d3d12::CommandContext& commands,ID3D12Resource* destination) {
+                                [this,packet,frozen,timestamp_frequency,&recorded,&output,&command_list](d3d12::CommandContext& commands,ID3D12Resource* destination) {
                                     if (!commands.ready() || frozen->key.generation!=VR::get()->mono_generation()) return;
+                                    if (!commands.references_retired()) {
+                                        VR::get()->set_quadview_status("Waiting for the selected GPU command slot to retire before reuse");
+                                        return;
+                                    }
                                     const auto found=m_openxr.quadview_compositors.find(&commands);
                                     if (found==m_openxr.quadview_compositors.end() || !found->second) return;
                                     auto& comp=*found->second;
                                     comp.on_slot_retired();
+                                    VR::get()->note_quadview_gpu_ms(comp.gpu_milliseconds());
                                     recorded=comp.record(commands.cmd_list.Get(),packet->atlas.Get(),destination,
-                                        frozen->layout,VR::get()->quadview_feather(),VR::get()->quadview_debug_mode(),
+                                        frozen->layout,frozen->settings,
                                         packet->source_state,D3D12_RESOURCE_STATE_RENDER_TARGET,
-                                        std::static_pointer_cast<const void>(packet));
+                                        std::static_pointer_cast<const void>(packet),
+                                        frozen->settings.gpu_timing ? timestamp_frequency : 0);
                                     if (comp.commands_recorded()) commands.has_commands=true;
                                     if (recorded) { output=destination; command_list=reinterpret_cast<uintptr_t>(commands.cmd_list.Get()); }
                                     else SPDLOG_WARNING_EVERY_N_SEC(2,"[QuadView][Composite] {}",comp.error());

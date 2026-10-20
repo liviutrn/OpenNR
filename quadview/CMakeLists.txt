@@ -2,14 +2,37 @@ cmake_minimum_required(VERSION 3.20)
 project(UEVRQuadViewTests LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
-add_executable(QuadViewProducerTests QuadViewTests.cpp)
-if(MSVC)
-  target_compile_options(QuadViewProducerTests PRIVATE /UNDEBUG)
+# Full gaze/stabilization contracts use production DuoView headers from the
+# pinned OpenNR tree. Standalone recovery ZIPs intentionally contain only
+# the QuadView overlay, so do not fabricate stand-in production headers.
+option(QUADVIEW_REQUIRE_DUOVIEW_TESTS "Require the pinned DuoView test dependency (CI gate)" OFF)
+set(QUADVIEW_DUOVIEW_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../duoview")
+if(EXISTS "${QUADVIEW_DUOVIEW_DIR}/DuoViewGaze.hpp" AND
+   EXISTS "${QUADVIEW_DUOVIEW_DIR}/DuoViewCropStability.hpp" AND
+   EXISTS "${QUADVIEW_DUOVIEW_DIR}/DuoViewConfig.hpp" AND
+   EXISTS "${QUADVIEW_DUOVIEW_DIR}/DuoViewFrame.hpp" AND
+   EXISTS "${QUADVIEW_DUOVIEW_DIR}/DuoViewGeometry.hpp")
+  add_executable(QuadViewProducerTests QuadViewTests.cpp)
+  target_include_directories(QuadViewProducerTests PRIVATE "${QUADVIEW_DUOVIEW_DIR}")
+  if(MSVC)
+    target_compile_options(QuadViewProducerTests PRIVATE /UNDEBUG)
+  else()
+    target_compile_options(QuadViewProducerTests PRIVATE -UNDEBUG)
+  endif()
+  set(QUADVIEW_FULL_PRODUCER_TESTS ON)
+elseif(QUADVIEW_REQUIRE_DUOVIEW_TESTS)
+  message(FATAL_ERROR "Exact pinned production DuoView headers are missing; refusing an incomplete CI validation")
 else()
-  target_compile_options(QuadViewProducerTests PRIVATE -UNDEBUG)
+  message(WARNING "Recovery ZIP lacks production DuoView headers: QuadViewProducerTests are UNAVAILABLE (not passed)")
 endif()
 enable_testing()
-add_test(NAME quadview-geometry-history-transaction COMMAND QuadViewProducerTests)
+# Recovery-session property tests; independent of DuoView and restricted SDK headers.
+add_executable(QuadViewResumeContractTests ResumeContractTests.cpp)
+add_test(NAME quadview-settings-layout-properties COMMAND QuadViewResumeContractTests)
+set_tests_properties(quadview-settings-layout-properties PROPERTIES TIMEOUT 60)
+if(QUADVIEW_FULL_PRODUCER_TESTS)
+  add_test(NAME quadview-geometry-history-transaction COMMAND QuadViewProducerTests)
+endif()
 find_package(Threads REQUIRED)
 add_executable(QuadViewAsyncTests QuadViewAsyncTests.cpp)
 target_link_libraries(QuadViewAsyncTests PRIVATE Threads::Threads)

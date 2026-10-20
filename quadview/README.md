@@ -6,17 +6,22 @@ DuoView path. ID7 is intended to render four engine views: left/right
 context at reduced resolution and left/right focus with cropped frusta,
 then compose a distinct full-field image for each eye.
 
-**Status:** portable contracts and the production D3D12 compositor pass
-Windows CI. The engine/OpenXR adapters are integrated as experimental ID7.
-Build-specific results are recorded in the matching Actions run and package
-provenance files. The first headset test of Build 5 produced black output
-without a crash; the delivery correction needs a new headset test.
+**Current work-in-progress status (20 October 2026):** Build 32 was the first
+version confirmed to render true stereo in STALKER 2, but later crashed with
+a CPU RenderThread access violation. The saved P0 checkpoint adds view-count
+latching and mode-transition drain guards. The unpublished P1 snapshot adds
+experimental per-eye PSVR2 gaze/stabilization, independent ID7 controls and
+fused focus-only Glamarye sharpening. These P1 additions are **not** Windows
+compiled or headset validated. The crash root cause remains unproven fixed.
+This source archive is **not** an installable DLL or release.
 
 ## Initial target
 
 - STALKER 2 (UE5.5), DX12, OpenXR.
 - Standard stereo OpenXR submission; runtime quad-view support is not needed.
-- Fixed-center focus. Gaze tracking is not part of the initial ID7 path.
+- Fixed-center mode remains available; P1 adds **unverified** per-eye gaze tracking.
+- The two eyes have separate focus crops, projections and frame-latched controls.
+- P1 adds in-pass focus sharpening with fresh-profile strength 1.0 and zero bypass.
 - Default focus width/height: 50%/50% of each eye's image.
 - Default context resolution: 20% per axis.
 - Focus sampling density: 1.0 relative to the selected eye output size.
@@ -29,7 +34,12 @@ four-view overhead remain.
 
 ## Planned package test procedure
 
-Use a separate extraction folder for the experimental package, keeping
+**Do not install or headset-test this source-only P1 archive as if it were a
+compiled candidate.** First run pinned Windows CI (including production
+DuoView contracts, HLSL/fxc, D3D12 WARP, backend and frontend), review
+its results, and package a new experimental build.
+
+Once a successful, reviewed experimental Windows ZIP exists, use a separate extraction folder for the experimental package, keeping
 the working Build182 package available. Run the included injector with
 the same known-working game and SteamVR/OpenXR configuration as Build182.
 Select **Quad Views Stereo (Experimental)**, ID7.

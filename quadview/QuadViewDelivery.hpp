@@ -37,10 +37,145 @@ public:
         }
     };
 
+    struct EngineTicket {
+        uint64_t generation{}, serial{};
+        uint32_t engine_frame{};
+        uintptr_t family{}, target{}, scene{}, command{};
+        bool render_seen{}, tail_hooked{};
+        explicit operator bool() const {
+            return generation && serial && engine_frame != 0xffffffffu && family && target && scene;
+        }
+        bool same_owner(const EngineTicket& other) const {
+            return generation == other.generation && serial == other.serial &&
+                engine_frame == other.engine_frame && family == other.family &&
+                target == other.target && scene == other.scene;
+        }
+    };
+
+    bool register_engine_family(EngineTicket ticket) {
+        if (!ticket) return false;
+        std::scoped_lock lock{mutex_};
+        if (!advance(ticket.generation)) return false;
+        for (const auto& slot : engine_slots_) {
+            if (slot.ticket && slot.ticket.same_owner(ticket)) return true;
+        }
+        for (auto& slot : engine_slots_) {
+            if (!slot.ticket) {
+                slot.ticket = ticket;
+                return true;
+            }
+        }
+        engine_overflow_generation_ = ticket.generation;
+        return false;
+    }
+
+    std::optional<EngineTicket> render_engine_family(
+        uint64_t generation, uint32_t frame, uintptr_t target, uintptr_t scene) {
+        std::scoped_lock lock{mutex_};
+        if (!advance(generation) || !target || !scene) return {};
+        EngineSlot* match{};
+        for (auto& slot : engine_slots_) {
+            auto& ticket = slot.ticket;
+            if (!ticket || ticket.generation != generation || ticket.engine_frame != frame ||
+                ticket.target != target || ticket.scene != scene || ticket.render_seen) continue;
+            if (match) return {};
+            match = &slot;
+        }
+        if (!match) return {};
+        match->ticket.render_seen = true;
+        return match->ticket;
+    }
+
+    bool tail_hooked_engine_family(const EngineTicket& ticket, uintptr_t command) {
+        std::scoped_lock lock{mutex_};
+        auto* slot = find_engine(ticket);
+        if (!slot || !slot->ticket.render_seen || slot->ticket.tail_hooked || !command) return false;
+        slot->ticket.command = command;
+        slot->ticket.tail_hooked = true;
+        return true;
+    }
+
+    bool tail_hooked_engine_family(const EngineTicket& ticket, const Source& source, uintptr_t command) {
+        std::scoped_lock lock{mutex_};
+        auto* engine = find_engine(ticket);
+        if (!engine || !engine->ticket.render_seen || engine->ticket.tail_hooked || !command) return false;
+        Slot* producer{};
+        if (source) {
+            producer = find(source);
+            if (!producer || !producer->render_seen || producer->tail_hooked ||
+                source.generation != ticket.generation || source.serial != ticket.serial ||
+                source.engine_frame != ticket.engine_frame || source.family != ticket.family ||
+                source.target != ticket.target || source.scene != ticket.scene) return false;
+        }
+        engine->ticket.command = command;
+        engine->ticket.tail_hooked = true;
+        if (producer) { producer->command = command; producer->tail_hooked = true; }
+        return true;
+    }
+
+    bool executed_engine_family(const EngineTicket& ticket, uintptr_t command) {
+        std::scoped_lock lock{mutex_};
+        auto* slot = find_engine(ticket);
+        if (!slot || !slot->ticket.tail_hooked || slot->ticket.command != command) return false;
+        *slot = {};
+        return true;
+    }
+
+    bool executed_engine_family(const EngineTicket& ticket, const Source& source,
+                                uintptr_t command, uint32_t thread) {
+        std::scoped_lock lock{mutex_};
+        auto* engine = find_engine(ticket);
+        if (!engine || !engine->ticket.tail_hooked || engine->ticket.command != command || !thread) return false;
+        Slot* producer{};
+        if (source) {
+            producer = find(source);
+            if (!producer || !producer->tail_hooked || producer->command != command || producer->executed ||
+                source.generation != ticket.generation || source.serial != ticket.serial ||
+                source.engine_frame != ticket.engine_frame || source.family != ticket.family ||
+                source.target != ticket.target || source.scene != ticket.scene) return false;
+        }
+        if (producer) {
+            producer->thread = thread;
+            producer->executed = true;
+            for (auto& older : slots_) {
+                if (&older != producer && older.source && older.executed &&
+                    older.source.generation == source.generation && older.source.serial < source.serial &&
+                    older.source.target == source.target && !older.submitted) older = {};
+            }
+        }
+        *engine = {};
+        return true;
+    }
+
+    bool engine_commands_retired(uint64_t generation) const {
+        std::scoped_lock lock{mutex_};
+        if (engine_overflow_generation_ == generation) return false;
+        for (const auto& slot : engine_slots_) {
+            if (slot.ticket && slot.ticket.generation == generation) return false;
+        }
+        for (const auto& slot : slots_) {
+            if (slot.source && slot.source.generation == generation && !slot.executed) return false;
+        }
+        return true;
+    }
+
+    size_t pending_engine_commands(uint64_t generation) const {
+        std::scoped_lock lock{mutex_};
+        size_t count{};
+        for (const auto& slot : engine_slots_)
+            if (slot.ticket && slot.ticket.generation == generation) ++count;
+        return count;
+    }
+
+    bool engine_tracking_overflowed(uint64_t generation) const {
+        std::scoped_lock lock{mutex_};
+        return engine_overflow_generation_ == generation;
+    }
+
     // Publish the validated assigned frame and source in one ledger insertion.
     // Separate family() + bind_engine_frame() calls allow a render-thread race.
     bool register_bound(Source source) {
-        if (!source || source.engine_frame == 0xffffffffu || !source.engine_frame) return false;
+        if (!source || source.engine_frame == 0xffffffffu) return false;
         for (size_t i = 0; i < source.view_ids.size(); ++i) {
             if (!source.view_ids[i]) return false;
             for (size_t j = 0; j < i; ++j) if (source.view_ids[i] == source.view_ids[j]) return false;
@@ -65,10 +200,6 @@ public:
                 return true;
             }
         }
-        // Startup can outrun RHI-tail discovery or reject every render-family
-        // callback before an owner is attached to a command. Recycle the oldest
-        // such registration so the ledger can recover once hooks become ready;
-        // never evict a hooked or executed command owner.
         Slot* recoverable{};
         for (auto& slot : slots_) {
             if (slot.source && !slot.tail_hooked && !slot.executed && !slot.submitted &&
@@ -76,10 +207,12 @@ public:
                 recoverable = &slot;
             }
         }
-        if (recoverable == nullptr) return false;
-        *recoverable = {};
-        recoverable->source = std::move(source);
-        return true;
+        if (recoverable != nullptr) {
+            *recoverable = {};
+            recoverable->source = std::move(source);
+            return true;
+        }
+        return false;
     }
 
 
@@ -230,7 +363,7 @@ public:
         // newer family. Submitted sources retain their command-slot owner until
         // explicit retirement.
         for (auto& older : slots_) {
-            if (&older != slot && older.source &&
+            if (&older != slot && older.source && older.executed &&
                 older.source.generation == source.generation &&
                 older.source.serial < source.serial &&
                 older.source.target == source.target && !older.submitted) {
@@ -301,6 +434,10 @@ public:
         for (auto& ticket : frame_tickets_) {
             if (ticket.generation == generation) ticket = {};
         }
+        for (auto& slot : engine_slots_) {
+            if (slot.ticket.generation == generation) slot = {};
+        }
+        if (engine_overflow_generation_ == generation) engine_overflow_generation_ = 0;
         if (generation >= generation_) generation_ = generation;
     }
 
@@ -308,11 +445,14 @@ public:
         std::scoped_lock lock{mutex_};
         for (auto& slot : slots_) slot = {};
         for (auto& ticket : frame_tickets_) ticket = {};
+        for (auto& slot : engine_slots_) slot = {};
         ticket_clock_ = 0;
+        engine_overflow_generation_ = 0;
         generation_ = 0;
     }
 
 private:
+    struct EngineSlot { EngineTicket ticket{}; };
     struct FrameTicket {
         uint64_t generation{}, draw_serial{};
         uintptr_t family{}, target{}, scene{};
@@ -334,12 +474,18 @@ private:
         for (const auto& slot : slots_) if (slot.source && slot.source.same_owner(source)) return &slot;
         return nullptr;
     }
+    EngineSlot* find_engine(const EngineTicket& ticket) {
+        for (auto& slot : engine_slots_) if (slot.ticket && slot.ticket.same_owner(ticket)) return &slot;
+        return nullptr;
+    }
     bool advance(uint64_t generation) {
         if (!generation || generation < generation_) return false;
         if (generation != generation_) {
             for (auto& slot : slots_) slot = {};
             for (auto& ticket : frame_tickets_) ticket = {};
+            for (auto& slot : engine_slots_) slot = {};
             ticket_clock_ = 0;
+            engine_overflow_generation_ = 0;
             generation_ = generation;
         }
         return true;
@@ -348,7 +494,9 @@ private:
     uint64_t generation_{};
     uint64_t ticket_clock_{};
     std::array<FrameTicket, Capacity> frame_tickets_{};
+    std::array<EngineSlot, Capacity> engine_slots_{};
     std::array<Slot, Capacity> slots_{};
+    uint64_t engine_overflow_generation_{};
 };
 
 } // namespace uevr::quadview

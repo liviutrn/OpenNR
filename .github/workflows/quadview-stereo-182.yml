@@ -2,7 +2,7 @@ name: Experimental Stereo Quad Views from Build182
 run-name: Quad Views Stereo ID7 (${{ github.run_number }})
 on:
   push:
-    branches: [quadview/stereo-182, quadview/stereo-182-build, quadview/stereo-182-build-next]
+    branches: [quadview/stereo-182, quadview/stereo-182-build, quadview/stereo-182-build-next, codex/quadview-id7-v1861-20261020, experiment/id7-stereo-v1861-20261020]
     paths: ['quadview/**', '.github/workflows/quadview-stereo-182.yml']
   workflow_dispatch:
 permissions:
@@ -95,7 +95,7 @@ jobs:
       - name: Test QuadView contracts, asynchronous delivery, and production GPU compositor
         shell: pwsh
         run: |
-          cmake -S workspace/quadview -B quad_tests -G 'Visual Studio 17 2022' -A x64 *> evidence/quad-configure.log
+          cmake -S workspace/quadview -B quad_tests -G 'Visual Studio 17 2022' -A x64 -DQUADVIEW_REQUIRE_DUOVIEW_TESTS=ON *> evidence/quad-configure.log
           $code=$LASTEXITCODE; Get-Content evidence/quad-configure.log | Select-Object -Last 40
           if ($code -ne 0) { throw 'QuadView tests configuration failed' }
           cmake --build quad_tests --config Release --parallel 2 *> evidence/quad-build.log
@@ -181,10 +181,12 @@ jobs:
           Copy-Item evidence/duoview-stage234-hashes.json package/
           Copy-Item workspace/quadview/READ_FIRST.txt package/READ_FIRST.txt
           Copy-Item workspace/quadview/README.md package/QUADVIEW_README.md
+          Copy-Item workspace/quadview/RELEASE_NOTES.md package/QUADVIEW_RELEASE_NOTES.md
+          Copy-Item workspace/quadview/GLAMARYE_LICENSE.txt package/GLAMARYE_LICENSE.txt
           Copy-Item evidence/quadview-source.json package/
           Copy-Item evidence/quadview-source-generated.json package/
           @{ baseline='Build182'; baselineSource='67c6e1ec5b931d2922e0ef5d253b8e9bef7a1a80'; overlay=$env:GITHUB_SHA; run=$env:GITHUB_RUN_ID; mode='ID7 stereo quad views'; headsetVerified=$false } | ConvertTo-Json | Set-Content package/QUADVIEW_BUILD.json
-          $needed=@('UEVRBackend.dll','UEVRPluginNullifier.dll','LuaVR.dll','READ_FIRST.txt','duoview-stage234-hashes.json','exact-baseline-source.json','quadview-source.json','quadview-source-generated.json','QUADVIEW_BUILD.json')
+          $needed=@('UEVRBackend.dll','UEVRPluginNullifier.dll','LuaVR.dll','READ_FIRST.txt','QUADVIEW_RELEASE_NOTES.md','GLAMARYE_LICENSE.txt','duoview-stage234-hashes.json','exact-baseline-source.json','quadview-source.json','quadview-source-generated.json','QUADVIEW_BUILD.json')
           foreach ($name in $needed) { if (!(Test-Path ("package/" + $name))) { throw "Missing critical package file: $name" } }
           if (@(Get-ChildItem package -File -Filter *.exe).Count -lt 1) { throw "Missing Joey frontend executable" }
           if ((Get-Content package/READ_FIRST.txt -Raw) -notmatch 'ID7') { throw 'Missing stereo QuadView instructions' }
