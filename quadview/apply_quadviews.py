@@ -323,9 +323,6 @@ def main() -> None:
     edit(backend, "src/mods/vr/FFakeStereoRenderingHook.hpp",
         "    using DuoDelivery = uevr::duoview::Delivery<NativeStereoFramePacket>;\n"
         "    mutable DuoDelivery duoview_delivery{};",
-        "    bool quadview_outer_renderer_observed() const {\n"
-        "        return m_render_module_begin_render_viewfamily_observed.load(std::memory_order_acquire);\n"
-        "    }\n"
         "    struct QuadViewSourcePacket {\n"
         "        std::shared_ptr<const uevr::quadview::Snapshot> producer{};\n"
         "        Microsoft::WRL::ComPtr<ID3D12Resource> atlas{};\n"
@@ -337,6 +334,13 @@ def main() -> None:
         "    using QuadViewDelivery = uevr::quadview::Delivery<QuadViewSourcePacket>;\n"
         "    mutable DuoDelivery duoview_delivery{};\n"
         "    mutable QuadViewDelivery quadview_delivery{};")
+    # This accessor must be public: VR's game-thread selection gate queries it.
+    edit(backend, "src/mods/vr/FFakeStereoRenderingHook.hpp",
+        "    const char* get_splitscreen_compatibility_status_text();",
+        "    const char* get_splitscreen_compatibility_status_text();\n"
+        "    bool quadview_outer_renderer_observed() const {\n"
+        "        return m_render_module_begin_render_viewfamily_observed.load(std::memory_order_acquire);\n"
+        "    }")
     edit(backend, "src/mods/vr/FFakeStereoRenderingHook.hpp",
         "        duoview_delivery.retire();",
         "        duoview_delivery.retire();\n        quadview_delivery.retire_all();")
