@@ -234,7 +234,7 @@ jobs:
 
 
       - name: Publish v186.1 Glamarye release to UEVR Quad Views Mono
-        if: success() && github.event_name == 'push' && github.ref == 'refs/heads/release/v186-glamayre-default-1-20261020'
+        if: success() && ((github.event_name == 'push' && github.ref == 'refs/heads/release/v186-glamayre-default-1-20261020') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == 'liviutrn/OpenNR' && github.event.pull_request.head.ref == 'release/v186-glamayre-default-1-20261020'))
         shell: pwsh
         env:
           GH_TOKEN: ${{ secrets.UEVR_SOURCE_TOKEN || secrets.PAT_TOKEN }}
