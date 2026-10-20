@@ -564,6 +564,48 @@ def main() -> None:
         "    }\n\n"
         "    // Observe Native Fix's original two-view main family before the fix")
 
+    # Bind the queued source at the ISceneViewExtension callback. Unreal has
+    # assigned the actual family frame number here, while this is still the
+    # original game-thread family and its original FSceneView pointers. The
+    # render-thread callback may receive FViewInfo copies, so it must not use
+    # pointer equality to recover this owner.
+    edit(backend, "src/mods/vr/FFakeStereoRenderingHook.cpp",
+        "    auto views_ptr = view_family.get_views();\n    if (const auto packet = duoview_build_packet; packet && packet->duoview_frame) {",
+        "    auto views_ptr = view_family.get_views();\n"
+        "    if (vr->is_quadview_renderer_active()) {\n"
+        "        auto* qv_rtm=g_hook->get_render_target_manager();\n"
+        "        auto* qv_target=view_family.get_render_target();\n"
+        "        auto* qv_scene=view_family.get_scene_interface();\n"
+        "        auto* qv_expected_target=qv_rtm != nullptr ? qv_rtm->get_view_family_render_target() : nullptr;\n"
+        "        if (qv_target == qv_expected_target && qv_target != nullptr && qv_scene != nullptr) {\n"
+        "            std::array<uintptr_t,4> qv_game_view_ids{};\n"
+        "            bool qv_views_valid=views_ptr != nullptr && views_ptr->count == 4 && views_ptr->capacity >= 4 &&\n"
+        "                views_ptr->data != nullptr && is_readable_process_range(reinterpret_cast<uintptr_t>(views_ptr->data), sizeof(void*)*4);\n"
+        "            if (qv_views_valid) {\n"
+        "                for (size_t i=0; i!=4; ++i) {\n"
+        "                    qv_game_view_ids[i]=reinterpret_cast<uintptr_t>(views_ptr->data[i]);\n"
+        "                    if (!qv_game_view_ids[i]) qv_views_valid=false;\n"
+        "                    for (size_t j=0; j<i; ++j) if (qv_game_view_ids[i]==qv_game_view_ids[j]) qv_views_valid=false;\n"
+        "                }\n"
+        "            }\n"
+        "            const auto qv_key=vr->quadview_producer_key();\n"
+        "            const auto qv_bound=qv_views_valid ? g_hook->quadview_delivery.bind_engine_frame(qv_key.generation,\n"
+        "                qv_key.draw_serial, reinterpret_cast<uintptr_t>(&view_family), reinterpret_cast<uintptr_t>(qv_target),\n"
+        "                reinterpret_cast<uintptr_t>(qv_scene), qv_game_view_ids, frame_count)\n"
+        "                : std::optional<FFakeStereoRenderingHook::QuadViewDelivery::Source>{};\n"
+        "            if (qv_bound) {\n"
+        "                SPDLOG_INFO_EVERY_N_SEC(2, \"[QuadViews][BeginFamily] bound serial={} engine_frame={} producer_frame={} family={:x} views={:x},{:x},{:x},{:x}\",\n"
+        "                    qv_bound->serial, qv_bound->engine_frame, qv_bound->packet->producer->engine_frame,\n"
+        "                    qv_bound->family, qv_game_view_ids[0], qv_game_view_ids[1], qv_game_view_ids[2], qv_game_view_ids[3]);\n"
+        "            } else {\n"
+        "                vr->set_quadview_status(\"Could not bind the queued four-view owner to Unreal's assigned family frame\");\n"
+        "                SPDLOG_WARNING_EVERY_N_SEC(2, \"[QuadViews][BeginFamily] binding rejected serial={} frame={} views_valid={} family={:x}\",\n"
+        "                    qv_key.draw_serial, frame_count, qv_views_valid, reinterpret_cast<uintptr_t>(&view_family));\n"
+        "            }\n"
+        "        }\n"
+        "    }\n"
+        "    if (const auto packet = duoview_build_packet; packet && packet->duoview_frame) {")
+
     # Attach the QV source transaction to the exact RHI command tail created
     # by its main-family render callback. The family queue can run ahead; only
     # the executed tail below retires prior owners of a reused atlas.
@@ -688,17 +730,18 @@ def main() -> None:
         "                qv_views ? qv_views->count : 0, qv_views ? qv_views->capacity : 0,\n"
         "                qv_views ? reinterpret_cast<uintptr_t>(qv_views->data) : 0, frame_count);\n"
         "        } else {\n"
-        "            quad_source_opt=g_hook->quadview_delivery.render_exact_views(vr->mono_generation(),\n"
-        "                reinterpret_cast<uintptr_t>(view_family.get_render_target()),\n"
-        "                reinterpret_cast<uintptr_t>(view_family.get_scene_interface()), qv_render_view_ids);\n"
+        "            quad_source_opt=g_hook->quadview_delivery.render(vr->mono_generation(), frame_count,\n"
+        "                reinterpret_cast<uintptr_t>(&view_family), reinterpret_cast<uintptr_t>(view_family.get_render_target()),\n"
+        "                reinterpret_cast<uintptr_t>(view_family.get_scene_interface()));\n"
         "            if (quad_source_opt) {\n"
         "                SPDLOG_INFO_EVERY_N_SEC(2, \"[QuadViews][RenderFamily] matched serial={} source_frame={} render_frame={} family_copy={:x}\",\n"
         "                    quad_source_opt->serial, quad_source_opt->engine_frame, frame_count, reinterpret_cast<uintptr_t>(&view_family));\n"
         "            } else {\n"
-        "                vr->set_quadview_status(\"Four-view render family has no exact constructor-view owner\");\n"
-        "                SPDLOG_WARNING_EVERY_N_SEC(2, \"[QuadViews][RenderFamily] unmatched frame={} scene={:x} target={:x} views={:x},{:x},{:x},{:x}\",\n"
+        "                vr->set_quadview_status(\"Four-view render family has no unique bound engine-frame owner\");\n"
+        "                SPDLOG_WARNING_EVERY_N_SEC(2, \"[QuadViews][RenderFamily] unmatched frame={} scene={:x} target={:x} family_copy={:x} views={:x},{:x},{:x},{:x}\",\n"
         "                    frame_count, reinterpret_cast<uintptr_t>(view_family.get_scene_interface()),\n"
         "                    reinterpret_cast<uintptr_t>(view_family.get_render_target()),\n"
+        "                    reinterpret_cast<uintptr_t>(&view_family),\n"
         "                    qv_render_view_ids[0], qv_render_view_ids[1], qv_render_view_ids[2], qv_render_view_ids[3]);\n"
         "            }\n"
         "        }\n"

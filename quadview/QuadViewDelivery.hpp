@@ -18,17 +18,22 @@ public:
     struct Source {
         std::shared_ptr<const Packet> packet{};
         uint64_t generation{}, serial{};
-        uint32_t engine_frame{}; // UE producer frame, for family/RHI correlation only.
+        uint32_t engine_frame{}; // BeginRenderViewFamily-assigned frame after binding; pre-engine value is diagnostic only.
         uint64_t pose_frame_token{}; // Frozen OpenXR frame token carried by this source.
         uintptr_t family{}, target{}, scene{};
-        // Ordered identities of the four constructed FSceneViews. Unlike the
-        // optional UE family frame field, these survive an FSceneViewFamily copy.
+        // The GT BeginRenderViewFamily callback binds the pre-engine producer
+        // registration to Unreal's current frame number while the original
+        // FSceneViewFamily and its four FSceneView pointers are still present.
+        // The RT callback may receive renderer-owned FViewInfo copies, so it
+        // matches the bound frame/target/scene tuple rather than view addresses.
         std::array<uintptr_t, 4> view_ids{};
+        bool engine_frame_bound{};
         explicit operator bool() const { return packet && generation && serial && family && target && scene; }
         bool same_owner(const Source& other) const {
             return packet == other.packet && generation == other.generation && serial == other.serial &&
                 engine_frame == other.engine_frame && pose_frame_token == other.pose_frame_token && family == other.family &&
-                target == other.target && scene == other.scene && view_ids == other.view_ids;
+                target == other.target && scene == other.scene && view_ids == other.view_ids &&
+                engine_frame_bound == other.engine_frame_bound;
         }
     };
 
@@ -65,16 +70,60 @@ public:
         return true;
     }
 
+    // Called from the game-thread ISceneViewExtension callback after Unreal
+    // has assigned FSceneViewFamily::FrameNumber and before FSceneRenderer
+    // copies the family/views. The serial plus original-family/view identities
+    // make this a one-to-one binding even when UE reuses object addresses.
+    // A conflicting already-bound tuple is rejected instead of leaving the RT
+    // callback to guess between two owners.
+    std::optional<Source> bind_engine_frame(uint64_t generation, uint64_t serial,
+                                            uintptr_t family, uintptr_t target, uintptr_t scene,
+                                            const std::array<uintptr_t, 4>& views,
+                                            uint32_t engine_frame) {
+        if (!generation || !serial || !family || !target || !scene || engine_frame == 0xffffffffu) return {};
+        for (size_t i = 0; i < views.size(); ++i) {
+            if (!views[i]) return {};
+            for (size_t j = 0; j < i; ++j) if (views[i] == views[j]) return {};
+        }
+
+        std::scoped_lock lock{mutex_};
+        if (!advance(generation)) return {};
+
+        Slot* match{};
+        for (auto& slot : slots_) {
+            const auto& source = slot.source;
+            if (!source || source.generation != generation || source.serial != serial ||
+                source.family != family || source.target != target || source.scene != scene ||
+                source.view_ids != views) continue;
+            if (match != nullptr) return {};
+            match = &slot;
+        }
+        if (match == nullptr || match->render_seen || match->source.engine_frame_bound) return {};
+
+        for (const auto& slot : slots_) {
+            const auto& source = slot.source;
+            if (&slot != match && source && source.generation == generation && source.engine_frame_bound &&
+                source.engine_frame == engine_frame && source.target == target && source.scene == scene) {
+                return {};
+            }
+        }
+
+        match->source.engine_frame = engine_frame;
+        match->source.engine_frame_bound = true;
+        return match->source;
+    }
+
     std::optional<Source> render(uint64_t generation, uint32_t frame,
                                  uintptr_t family, uintptr_t target, uintptr_t scene) {
         std::scoped_lock lock{mutex_};
         if (!advance(generation) || !family || !target || !scene) return {};
         Slot* match{};
         for (auto& slot : slots_) {
-            if (slot.source && slot.source.generation == generation &&
+            if (slot.source && slot.source.generation == generation && slot.source.engine_frame_bound &&
                 // Unreal may pass a renderer-owned copy of FSceneViewFamily to
-                // the render thread. Resolve that copy by its validated engine
-                // frame, target and scene; keep source.family as provenance.
+                // the render thread. Resolve it by the exact frame bound on the
+                // original GT family, target and scene; keep source.family as
+                // provenance only.
                 slot.source.engine_frame == frame &&
                 slot.source.target == target && slot.source.scene == scene) {
                 if (match != nullptr) return {}; // Multiple matching owners are ambiguous.
@@ -82,33 +131,6 @@ public:
             }
         }
         if (match == nullptr || match->render_seen) return {};
-        match->render_seen = true;
-        return match->source;
-    }
-
-    // The STALKER 2 family FrameNumber observed in Build 5 was always
-    // 0xffffffff (uninitialized). Match exactly the four immutable engine
-    // view identities instead of silently accepting a different frame.
-    // Never fall back to target/scene alone: those are reused every frame.
-    std::optional<Source> render_exact_views(uint64_t generation,
-                                              uintptr_t target, uintptr_t scene,
-                                              const std::array<uintptr_t, 4>& views) {
-        std::scoped_lock lock{mutex_};
-        if (!advance(generation) || !target || !scene) return {};
-        for (size_t i = 0; i < views.size(); ++i) {
-            if (!views[i]) return {};
-            for (size_t j = 0; j < i; ++j) if (views[i] == views[j]) return {};
-        }
-        Slot* match{};
-        for (auto& slot : slots_) {
-            if (slot.source && slot.source.generation == generation &&
-                slot.source.target == target && slot.source.scene == scene &&
-                slot.source.view_ids == views) {
-                if (match != nullptr) return {}; // Ambiguity must be rejected.
-                match = &slot;
-            }
-        }
-        if (!match || match->render_seen) return {};
         match->render_seen = true;
         return match->source;
     }

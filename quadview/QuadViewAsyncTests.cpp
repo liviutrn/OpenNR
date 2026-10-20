@@ -13,9 +13,10 @@ struct Token { uint64_t serial{}, pose_frame{}; };
 int main() {
     using Ledger = uevr::quadview::Delivery<Token>;
     using Source = Ledger::Source;
-    // Regression: the actual STALKER 2 main family FrameNumber was 0xffffffff
-    // on every ID7 game-thread callback. Only exact ordered view identities
-    // may authorize the renderer-owned family copy in that case.
+    // Regression: the outer producer sees the pre-engine 0xffffffff frame.
+    // The GT extension callback binds each exact draw serial to the assigned
+    // frame before UE copies its FSceneViewFamily/FSceneView objects. Persistent
+    // scene states and even reused view addresses therefore cannot alias frames.
     {
         Ledger strict;
         Source first{};
@@ -24,16 +25,72 @@ int main() {
         first.pose_frame_token = 7; first.family = 0x3000;
         first.target = 0x4000; first.scene = 0x5000;
         first.view_ids = {0x1010, 0x2020, 0x3030, 0x4040};
+        Source second = first;
+        second.packet = std::make_shared<const Token>(Token{2, 8});
+        second.serial = 2; second.pose_frame_token = 8;
         if (!strict.family(first)) throw std::runtime_error("Exact-view registration failed");
-        if (strict.render_exact_views(1, first.target, first.scene, {0x1010, 0x2020, 0x3030, 0x5050}))
-            throw std::runtime_error("Wrong fourth scene view matched the atlas");
-        if (strict.render_exact_views(1, first.target + 1, first.scene, first.view_ids))
-            throw std::runtime_error("Wrong target matched the atlas");
-        const auto matched = strict.render_exact_views(1, first.target, first.scene, first.view_ids);
-        if (!matched || !matched->same_owner(first))
-            throw std::runtime_error("Uninitialized frame ID blocked exact four-view match");
-        if (strict.render_exact_views(1, first.target, first.scene, first.view_ids))
-            throw std::runtime_error("Duplicate four-view render was accepted");
+        if (!strict.family(second)) throw std::runtime_error("Second queued draw registration failed");
+        if (strict.render(1, 0xffffffffu, 0x3800, first.target, first.scene))
+            throw std::runtime_error("Pre-engine sentinel was treated as an assigned frame");
+        if (strict.bind_engine_frame(1, first.serial, first.family + 1, first.target, first.scene,
+                first.view_ids, 100))
+            throw std::runtime_error("Wrong original family was allowed to bind");
+        if (strict.bind_engine_frame(1, first.serial, first.family, first.target, first.scene,
+                {0x1010, 0x2020, 0x3030, 0x5050}, 100))
+            throw std::runtime_error("Wrong ordered game-thread view IDs were allowed to bind");
+        const auto second_bound = strict.bind_engine_frame(1, second.serial, second.family,
+            second.target, second.scene, second.view_ids, 102);
+        const auto first_bound = strict.bind_engine_frame(1, first.serial, first.family,
+            first.target, first.scene, first.view_ids, 101);
+        if (!second_bound || !first_bound || !second_bound->engine_frame_bound || !first_bound->engine_frame_bound)
+            throw std::runtime_error("Assigned engine frame did not bind to both queued owners");
+        if (strict.bind_engine_frame(1, first.serial, first.family, first.target, first.scene,
+                first.view_ids, 101))
+            throw std::runtime_error("Duplicate BeginRenderViewFamily binding was accepted");
+        Source conflicting = first;
+        conflicting.serial = 3;
+        conflicting.packet = std::make_shared<const Token>(Token{3, 9});
+        if (!strict.family(conflicting)) throw std::runtime_error("Conflicting draw registration failed unexpectedly");
+        if (strict.bind_engine_frame(1, conflicting.serial, conflicting.family, conflicting.target,
+                conflicting.scene, conflicting.view_ids, 101))
+            throw std::runtime_error("Ambiguous frame/target/scene tuple acquired a second owner");
+
+        const auto matched_second = strict.render(1, 102, 0x3900, second.target, second.scene);
+        if (!matched_second || !matched_second->same_owner(*second_bound))
+            throw std::runtime_error("Renderer-owned family copy did not match its frame-bound source");
+        if (strict.render(1, 101, 0x3901, first.target + 1, first.scene))
+            throw std::runtime_error("Wrong target matched a bound source");
+        if (strict.render(1, 101, 0x3901, first.target, first.scene + 1))
+            throw std::runtime_error("Wrong scene matched a bound source");
+        const auto matched_first = strict.render(1, 101, 0x3901, first.target, first.scene);
+        if (!matched_first || !matched_first->same_owner(*first_bound))
+            throw std::runtime_error("Out-of-order render callback was paired with the wrong draw");
+        if (strict.render(1, 101, 0x3901, first.target, first.scene))
+            throw std::runtime_error("Duplicate render-family callback was accepted");
+
+        Source invalid_advance_guard = first;
+        invalid_advance_guard.serial = 4;
+        invalid_advance_guard.packet = std::make_shared<const Token>(Token{4, 10});
+        if (!strict.family(invalid_advance_guard)) throw std::runtime_error("Additional queued owner registration failed");
+        const auto guard_bound = strict.bind_engine_frame(1, invalid_advance_guard.serial,
+            invalid_advance_guard.family, invalid_advance_guard.target, invalid_advance_guard.scene,
+            invalid_advance_guard.view_ids, 103);
+        if (!guard_bound) throw std::runtime_error("Additional queued owner did not bind");
+        if (strict.bind_engine_frame(2, 5, 0x6000, 0x4000, 0x5000, first.view_ids, 0xffffffffu))
+            throw std::runtime_error("Unassigned sentinel was bound as a render frame");
+        const auto guard_render = strict.render(1, 103, 0x3902, first.target, first.scene);
+        if (!guard_render || !guard_render->same_owner(*guard_bound))
+            throw std::runtime_error("Rejected invalid binding advanced and cleared the active generation");
+
+        Source restarted = first;
+        restarted.generation = 2; restarted.serial = 1;
+        restarted.packet = std::make_shared<const Token>(Token{4, 10});
+        if (!strict.family(restarted)) throw std::runtime_error("New generation registration failed");
+        const auto restarted_bound = strict.bind_engine_frame(2, restarted.serial, restarted.family,
+            restarted.target, restarted.scene, restarted.view_ids, 1);
+        if (!restarted_bound || strict.render(1, 101, first.family, first.target, first.scene) ||
+            !strict.render(2, 1, restarted.family + 0x800, restarted.target, restarted.scene))
+            throw std::runtime_error("Generation restart retained a stale frame owner");
     }
     constexpr uint64_t count = 100000;
     constexpr uint32_t rhi_thread = 42;
@@ -65,12 +122,18 @@ int main() {
                 source.packet = std::make_shared<const Token>(Token{serial, serial % 3});
                 source.generation = 1;
                 source.serial = serial;
-                source.engine_frame = static_cast<uint32_t>(0xfffffff0ull + serial);
+                source.engine_frame = 0xffffffffu; // Outer producer has not seen the assigned FrameNumber yet.
                 source.pose_frame_token = serial % 3;
                 source.family = 0x300 + 16 * static_cast<uintptr_t>(serial % 4);
                 source.target = 0x1000;
                 source.scene = 0x2000;
+                source.view_ids = {0x1010, 0x2020, 0x3030, 0x4040}; // Unreal may reuse these allocations and histories.
                 if (!delivery.family(source)) throw std::runtime_error("Producer registration lost a queued family");
+                const auto engine_frame = static_cast<uint32_t>(0xffffffffull + source.serial); // Exercise rollover to frame zero.
+                const auto bound = delivery.bind_engine_frame(source.generation, source.serial, source.family,
+                    source.target, source.scene, source.view_ids, engine_frame);
+                if (!bound) throw std::runtime_error("BeginRenderViewFamily failed to bind the queued source");
+                source = *bound;
                 {
                     std::scoped_lock lock{mutex};
                     pending.push_back(std::move(source));

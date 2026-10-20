@@ -9,7 +9,8 @@ then compose a distinct full-field image for each eye.
 **Status:** portable contracts and the production D3D12 compositor pass
 Windows CI. The engine/OpenXR adapters are integrated as experimental ID7.
 Build-specific results are recorded in the matching Actions run and package
-provenance files. Headset acceptance remains outstanding.
+provenance files. The first headset test of Build 5 produced black output
+without a crash; the delivery correction needs a new headset test.
 
 ## Initial target
 

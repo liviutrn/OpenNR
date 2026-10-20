@@ -156,8 +156,13 @@ int main() {
     struct SourceToken { uint64_t serial{}, pose_frame_token{}; };
     Delivery<SourceToken> delivery;
     const auto token = std::make_shared<const SourceToken>(SourceToken{21, 0});
-    const Delivery<SourceToken>::Source source{token, 8, 21, 95, 0, 0x300, 0x100, 0x200};
-    assert(delivery.family(source));
+    const Delivery<SourceToken>::Source source_registration{token, 8, 21, 0xffffffffu, 0, 0x300, 0x100, 0x200,
+        {0x110, 0x120, 0x130, 0x140}};
+    assert(delivery.family(source_registration));
+    const auto source_bound = delivery.bind_engine_frame(8, 21, 0x300, 0x100, 0x200,
+        source_registration.view_ids, 95);
+    assert(source_bound && source_bound->engine_frame_bound && source_bound->engine_frame == 95);
+    const auto& source = *source_bound;
     const auto rendered = delivery.render(8, 95, 0x3ff, 0x100, 0x200); // Render-thread family may be a copy.
     assert(rendered && rendered->same_owner(source));
     assert(!delivery.select(8, 123)); // A source is ineligible before its RHI command executes.
@@ -180,9 +185,14 @@ int main() {
     // A newer draw can reuse the same atlas target. Its own pose token and RHI
     // command keep it distinct from the source still being presented.
     const auto token2 = std::make_shared<const SourceToken>(SourceToken{22, 1});
-    const Delivery<SourceToken>::Source source2{token2, 8, 22, 96, 1, 0x301, 0x100, 0x200};
-    assert(delivery.family(source2));
-    const auto rendered2 = delivery.render(8, 96, 0x301, 0x100, 0x200);
+    const Delivery<SourceToken>::Source source2_registration{token2, 8, 22, 0xffffffffu, 1, 0x301, 0x100, 0x200,
+        {0x210, 0x220, 0x230, 0x240}};
+    assert(delivery.family(source2_registration));
+    const auto source2_bound = delivery.bind_engine_frame(8, 22, 0x301, 0x100, 0x200,
+        source2_registration.view_ids, 96);
+    assert(source2_bound);
+    const auto& source2 = *source2_bound;
+    const auto rendered2 = delivery.render(8, 96, 0x901, 0x100, 0x200);
     assert(rendered2 && rendered2->same_owner(source2));
     assert(delivery.tail_hooked(source2, 0x701));
     assert(delivery.executed(source2, 0x701, 123));
@@ -197,43 +207,67 @@ int main() {
     Delivery<SourceToken> ambiguous_delivery;
     const auto ambiguous_a = std::make_shared<const SourceToken>(SourceToken{41, 4});
     const auto ambiguous_b = std::make_shared<const SourceToken>(SourceToken{42, 5});
-    const Delivery<SourceToken>::Source ambiguous_source_a{ambiguous_a, 9, 41, 100, 4, 0x301, 0x100, 0x200};
-    const Delivery<SourceToken>::Source ambiguous_source_b{ambiguous_b, 9, 42, 100, 5, 0x302, 0x100, 0x200};
+    const Delivery<SourceToken>::Source ambiguous_source_a{ambiguous_a, 9, 41, 0xffffffffu, 4, 0x301, 0x100, 0x200,
+        {0x310, 0x320, 0x330, 0x340}};
+    const Delivery<SourceToken>::Source ambiguous_source_b{ambiguous_b, 9, 42, 0xffffffffu, 5, 0x302, 0x100, 0x200,
+        {0x410, 0x420, 0x430, 0x440}};
     assert(ambiguous_delivery.family(ambiguous_source_a));
     assert(ambiguous_delivery.family(ambiguous_source_b));
-    assert(!ambiguous_delivery.render(9, 100, 0x3ff, 0x100, 0x200)); // Never guess between identical frame/target/scene owners.
+    const auto ambiguous_bound = ambiguous_delivery.bind_engine_frame(9, 41, 0x301, 0x100, 0x200,
+        ambiguous_source_a.view_ids, 100);
+    assert(ambiguous_bound);
+    assert(!ambiguous_delivery.bind_engine_frame(9, 42, 0x302, 0x100, 0x200,
+        ambiguous_source_b.view_ids, 100)); // A reused target/scene/frame tuple cannot acquire a second owner.
+    const auto non_ambiguous_render = ambiguous_delivery.render(9, 100, 0x3ff, 0x100, 0x200);
+    assert(non_ambiguous_render && non_ambiguous_render->same_owner(*ambiguous_bound));
 
     Delivery<SourceToken, 2> startup_recovery;
     const auto startup_a = std::make_shared<const SourceToken>(SourceToken{51, 6});
     const auto startup_b = std::make_shared<const SourceToken>(SourceToken{52, 7});
     const auto startup_c = std::make_shared<const SourceToken>(SourceToken{53, 8});
-    const Delivery<SourceToken, 2>::Source startup_source_a{startup_a, 10, 51, 201, 6, 0x311, 0x100, 0x200};
-    const Delivery<SourceToken, 2>::Source startup_source_b{startup_b, 10, 52, 202, 7, 0x312, 0x100, 0x200};
-    const Delivery<SourceToken, 2>::Source startup_source_c{startup_c, 10, 53, 203, 8, 0x313, 0x100, 0x200};
+    const Delivery<SourceToken, 2>::Source startup_source_a{startup_a, 10, 51, 0xffffffffu, 6, 0x311, 0x100, 0x200,
+        {0x510, 0x520, 0x530, 0x540}};
+    const Delivery<SourceToken, 2>::Source startup_source_b{startup_b, 10, 52, 0xffffffffu, 7, 0x312, 0x100, 0x200,
+        {0x610, 0x620, 0x630, 0x640}};
+    const Delivery<SourceToken, 2>::Source startup_source_c{startup_c, 10, 53, 0xffffffffu, 8, 0x313, 0x100, 0x200,
+        {0x710, 0x720, 0x730, 0x740}};
     assert(startup_recovery.family(startup_source_a));
     assert(startup_recovery.family(startup_source_b));
     assert(startup_recovery.family(startup_source_c)); // Oldest never-hooked registration is recycled.
+    assert(!startup_recovery.bind_engine_frame(10, 51, 0x311, 0x100, 0x200, startup_source_a.view_ids, 201));
+    assert(startup_recovery.bind_engine_frame(10, 52, 0x312, 0x100, 0x200, startup_source_b.view_ids, 202));
+    const auto startup_source_c_bound = startup_recovery.bind_engine_frame(10, 53, 0x313, 0x100, 0x200,
+        startup_source_c.view_ids, 203);
+    assert(startup_source_c_bound);
     assert(!startup_recovery.render(10, 201, 0x911, 0x100, 0x200));
     const auto newest_render = startup_recovery.render(10, 203, 0x913, 0x100, 0x200);
-    assert(newest_render && newest_render->same_owner(startup_source_c));
-    assert(startup_recovery.tail_hooked(startup_source_c, 0x753));
-    assert(startup_recovery.executed(startup_source_c, 0x753, 123));
+    assert(newest_render && newest_render->same_owner(*startup_source_c_bound));
+    assert(startup_recovery.tail_hooked(*startup_source_c_bound, 0x753));
+    assert(startup_recovery.executed(*startup_source_c_bound, 0x753, 123));
     const auto newest_selected = startup_recovery.select(10, 123);
-    assert(newest_selected && newest_selected->same_owner(startup_source_c));
+    assert(newest_selected && newest_selected->same_owner(*startup_source_c_bound));
 
     // Render-ahead may queue a newer family before its RHI command executes.
     // Keep the older completed image eligible until actual atlas overwrite.
     const auto token3 = std::make_shared<const SourceToken>(SourceToken{31, 2});
-    const Delivery<SourceToken>::Source source3{token3, 8, 31, 97, 2, 0x302, 0x100, 0x200};
-    assert(delivery.family(source3));
+    const Delivery<SourceToken>::Source source3_registration{token3, 8, 31, 0xffffffffu, 2, 0x302, 0x100, 0x200,
+        {0x810, 0x820, 0x830, 0x840}};
+    assert(delivery.family(source3_registration));
+    const auto source3_bound = delivery.bind_engine_frame(8, 31, 0x302, 0x100, 0x200, source3_registration.view_ids, 97);
+    assert(source3_bound);
+    const auto& source3 = *source3_bound;
     assert(delivery.render(8, 97, 0x302, 0x100, 0x200));
     assert(delivery.tail_hooked(source3, 0x702));
     assert(delivery.executed(source3, 0x702, 123));
     const auto token4 = std::make_shared<const SourceToken>(SourceToken{32, 3});
-    const Delivery<SourceToken>::Source source4{token4, 8, 32, 98, 3, 0x303, 0x100, 0x200};
-    assert(delivery.family(source4));
+    const Delivery<SourceToken>::Source source4_registration{token4, 8, 32, 0xffffffffu, 3, 0x303, 0x100, 0x200,
+        {0x910, 0x920, 0x930, 0x940}};
+    assert(delivery.family(source4_registration));
     const auto held_while_render_ahead = delivery.select(8, 123);
     assert(held_while_render_ahead && held_while_render_ahead->same_owner(source3));
+    const auto source4_bound = delivery.bind_engine_frame(8, 32, 0x303, 0x100, 0x200, source4_registration.view_ids, 98);
+    assert(source4_bound);
+    const auto& source4 = *source4_bound;
     assert(delivery.render(8, 98, 0x303, 0x100, 0x200));
     assert(delivery.tail_hooked(source4, 0x703));
     assert(delivery.executed(source4, 0x703, 123));

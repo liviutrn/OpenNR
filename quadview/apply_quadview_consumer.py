@@ -211,7 +211,6 @@ void D3D12Component::OpenXR::initialize(XrSessionCreateInfo& session_info) {''')
                                     if (found==m_openxr.quadview_compositors.end() || !found->second) return;
                                     auto& comp=*found->second;
                                     comp.on_slot_retired();
-                                    VR::get()->get_openxr_runtime()->invalidate_quadview_scene();
                                     recorded=comp.record(commands.cmd_list.Get(),packet->atlas.Get(),destination,
                                         frozen->layout,VR::get()->quadview_feather(),VR::get()->quadview_debug_mode(),
                                         packet->source_state,D3D12_RESOURCE_STATE_RENDER_TARGET,
@@ -237,14 +236,47 @@ void D3D12Component::OpenXR::initialize(XrSessionCreateInfo& session_info) {''')
                                 stereo->quadview_delivery.retire(source->generation,source->serial);
                             } else {
                                 vr->set_quadview_status("Waiting for a reusable QuadView output slot");
+                                SPDLOG_WARNING_EVERY_N_SEC(2,"[QuadView][CopyRejected] serial={} accepted={} recorded={} output={:x} generation={}/{}",
+                                    source->serial,accepted,recorded,reinterpret_cast<uintptr_t>(output),
+                                    source->generation,vr->mono_generation());
                             }
                         } else {
                             vr->set_quadview_status("Waiting for four distinct main-family views and executed source");
+                            SPDLOG_WARNING_EVERY_N_SEC(2,"[QuadView][OutputWaiting] no executed source generation={} thread={}",
+                                vr->mono_generation(),GetCurrentThreadId());
                         }
                     } else if (vr->is_duoview_renderer_active()) {
                         const auto packet = native_stereo_packet;''')
     edit(dx, '    const bool duo_copy=vr->is_duoview_renderer_active() &&',
          '    const bool duo_copy=(vr->is_duoview_renderer_active() || vr->is_quadview_mode_selected()) &&')
+    # Once an acquired image is released, OpenXR selects that image for the
+    # next projection submission. An old pose cannot make an unwritten image
+    # safe to hold. Invalidate at publication, not on entering the compositor:
+    # failures before acquisition retain the previous image/pose; every release
+    # path clears stale proof, and only accepted copies install replacement proof.
+    edit(dx, '    const auto& swapchain = vr->m_openxr->swapchains[swapchain_idx];\n    XrSwapchainImageReleaseInfo release_info{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};',
+         '''    const auto& swapchain = vr->m_openxr->swapchains[swapchain_idx];
+    if (vr->is_quadview_mode_selected() &&
+        swapchain_idx==(uint32_t)runtimes::OpenXR::SwapchainIndex::DOUBLE_WIDE)
+        vr->m_openxr->invalidate_quadview_scene();
+    XrSwapchainImageReleaseInfo release_info{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};''')
+    edit(dx, '            XrSwapchainImageReleaseInfo release_info{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};\n            if (XR_SUCCEEDED(xrReleaseSwapchainImage(swapchain.handle, &release_info))) {',
+         '''            if (vr->is_quadview_mode_selected() &&
+                swapchain_idx==(uint32_t)runtimes::OpenXR::SwapchainIndex::DOUBLE_WIDE)
+                vr->m_openxr->invalidate_quadview_scene();
+            XrSwapchainImageReleaseInfo release_info{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
+            if (XR_SUCCEEDED(xrReleaseSwapchainImage(swapchain.handle, &release_info))) {''')
+    edit(dx, '    XrSwapchainImageReleaseInfo release_info{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};\n    auto result = xrReleaseSwapchainImage(swapchain.handle, &release_info);\n\n    // SteamVR shenanigans.',
+         '''    // Invalidate the old image/pose only when publishing a replacement.
+    // A failed recording or enqueue still releases this acquired image, so it
+    // must not be submitted using the previous image's pose.
+    if (vr->is_quadview_mode_selected() &&
+        swapchain_idx==(uint32_t)runtimes::OpenXR::SwapchainIndex::DOUBLE_WIDE)
+        vr->m_openxr->invalidate_quadview_scene();
+    XrSwapchainImageReleaseInfo release_info{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
+    auto result = xrReleaseSwapchainImage(swapchain.handle, &release_info);
+
+    // SteamVR shenanigans.''')
     for path, content in changed.items():
         path.write_text(content, encoding='utf-8')
     print(f'Applied QuadView consumer adapter to {len(changed)} source files.')

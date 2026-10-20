@@ -26,6 +26,10 @@ shading differences remain a possible limitation.
 Diagnostic 0: blend. 1: context only. 2: focus only. 3: synthetic colors.
 Synthetic colors do not establish that the engine rendered four views.
 
+Delivery diagnostics must progress through Producer, BeginFamily,
+RenderFamily, RHI tail/execution, CopyEnqueued, and Submit. If the image
+is black, preserve the complete log so the first missing stage is visible.
+
 The full scene-target allocation is retained. Pixel-area reductions do
 not establish a proportional performance improvement. CI test success
 does not establish headset stability or shading parity.
