@@ -352,6 +352,18 @@ def main() -> None:
         "    if (g_hook->m_sceneview_data.inside_post_init_properties) {\n        return 2;\n    }",
         "    if (g_hook->m_sceneview_data.inside_post_init_properties) {\n        return 2;\n    }\n\n"
         "    if (vr->is_quadview_renderer_active()) {\n"
+        "        // Never request four renderer views until the real outer renderer\n"
+        "        // hook has been observed. Constructor-only evidence cannot\n"
+        "        // authorize an extra pair of GPU scene views.\n"
+        "        const bool producer_ready = g_hook->m_has_view_extensions_installed &&\n"
+        "            !!g_hook->m_sceneview_data.constructor_hook;\n"
+        "        const bool renderer_ready = !!g_hook->m_render_module_begin_render_viewfamily_hook &&\n"
+        "            g_hook->m_render_module_begin_render_viewfamily_observed.load(std::memory_order_acquire);\n"
+        "        if (!producer_ready || !renderer_ready) {\n"
+        "            vr->set_quadview_status(\"Waiting for validated scene-view and outer-renderer hooks before requesting four GPU views\");\n"
+        "            SPDLOG_WARNING_EVERY_N_SEC(2, \"[QuadViews][ActivationGate] producer={} outer_renderer={}\", producer_ready, renderer_ready);\n"
+        "            return 2u;\n"
+        "        }\n"
         "        return vr->quadview_begin_frame().has_value() ? 4u : 2u;\n    }")
     edit(backend, "src/mods/vr/FFakeStereoRenderingHook.cpp",
         "    static bool index_starts_from_one = true;\n    const bool medium_one_based_eye_pass = medium_is_current_game();",
