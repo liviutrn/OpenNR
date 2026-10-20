@@ -23,6 +23,17 @@ static std::array<double, 16> projection_for_test(uint32_t index) {
 
 int main() {
     using namespace uevr::quadview;
+    // The supported STALKER 2 game must install the BeginRenderViewFamily
+    // callback at injection, even if the active/requested mode is still 0.
+    // Rendering-mode ID7 is usually enabled later through the UI.
+    constexpr auto family_hook_required = [](bool supported_game, bool selected,
+                                              bool requested, bool legacy_need) {
+        return supported_game || selected || requested || legacy_need;
+    };
+    static_assert(family_hook_required(true, false, false, false));
+    static_assert(!family_hook_required(false, false, false, false));
+    static_assert(family_hook_required(false, true, false, false));
+    static_assert(family_hook_required(false, false, true, false));
     const auto layout = make_layout(1800, 1920);
     assert(layout);
     assert(layout->atlas_width == 3600 && layout->atlas_height == 1920);
