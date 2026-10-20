@@ -21,11 +21,14 @@ public:
         uint32_t engine_frame{}; // UE producer frame, for family/RHI correlation only.
         uint64_t pose_frame_token{}; // Frozen OpenXR frame token carried by this source.
         uintptr_t family{}, target{}, scene{};
+        // Ordered identities of the four constructed FSceneViews. Unlike the
+        // optional UE family frame field, these survive an FSceneViewFamily copy.
+        std::array<uintptr_t, 4> view_ids{};
         explicit operator bool() const { return packet && generation && serial && family && target && scene; }
         bool same_owner(const Source& other) const {
             return packet == other.packet && generation == other.generation && serial == other.serial &&
                 engine_frame == other.engine_frame && pose_frame_token == other.pose_frame_token && family == other.family &&
-                target == other.target && scene == other.scene;
+                target == other.target && scene == other.scene && view_ids == other.view_ids;
         }
     };
 
@@ -79,6 +82,33 @@ public:
             }
         }
         if (match == nullptr || match->render_seen) return {};
+        match->render_seen = true;
+        return match->source;
+    }
+
+    // The STALKER 2 family FrameNumber observed in Build 5 was always
+    // 0xffffffff (uninitialized). Match exactly the four immutable engine
+    // view identities instead of silently accepting a different frame.
+    // Never fall back to target/scene alone: those are reused every frame.
+    std::optional<Source> render_exact_views(uint64_t generation,
+                                              uintptr_t target, uintptr_t scene,
+                                              const std::array<uintptr_t, 4>& views) {
+        std::scoped_lock lock{mutex_};
+        if (!advance(generation) || !target || !scene) return {};
+        for (size_t i = 0; i < views.size(); ++i) {
+            if (!views[i]) return {};
+            for (size_t j = 0; j < i; ++j) if (views[i] == views[j]) return {};
+        }
+        Slot* match{};
+        for (auto& slot : slots_) {
+            if (slot.source && slot.source.generation == generation &&
+                slot.source.target == target && slot.source.scene == scene &&
+                slot.source.view_ids == views) {
+                if (match != nullptr) return {}; // Ambiguity must be rejected.
+                match = &slot;
+            }
+        }
+        if (!match || match->render_seen) return {};
         match->render_seen = true;
         return match->source;
     }
