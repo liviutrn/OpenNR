@@ -12,6 +12,8 @@ float2 NativeSampleUV(float2 local, uint2 active, uint2 resourceSize) {
     return texels / float2(resourceSize);
 }
 
+#include "DuoViewGlamaryeFovea.hlsl"
+
 float4 PSNativeMain(VertexOut i) : SV_TARGET0 {
     // A compatible double-wide XR target can be filled in one raster draw.
     // Reuse the same Mono image coordinates in each half without changing
@@ -29,7 +31,12 @@ float4 PSNativeMain(VertexOut i) : SV_TARGET0 {
         const float2 localFovea = (fullUv - CropUv.xy) / (CropUv.zw - CropUv.xy);
         const float2 foveaSample = NativeSampleUV(
             localFovea, FoveaRect.zw, NativeFoveaDimensions);
-        const float4 fovea = SourceAtlas.SampleLevel(LinearClamp, foveaSample, 0.0);
+        float4 fovea = SourceAtlas.SampleLevel(LinearClamp, foveaSample, 0.0);
+        // Exactly one sharpening evaluation in one Mono output image; output
+        // is later duplicated to both eyes by the existing v182 copy path.
+        // With Strength=0 the baseline composition remains unchanged.
+        if (SharpenStrength > 0.0 && DebugViewMode == 0)
+            fovea.rgb = GlamSharpenNativeFovea(fullUv, fovea.rgb);
         result = DebugViewMode == 2 ? fovea : lerp(periphery,fovea,weight);
     }
     if (DebugBorder && weight > 0.01 && weight < 0.1)
