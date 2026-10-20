@@ -75,11 +75,11 @@ public:
     // BeginRenderingViewFamilies hook registers its immutable source packet.
     // Stage the engine-assigned frame now, and consume it only against the
     // same original family/scene/target and all four original view pointers.
-    bool observe_gt_frame(uint64_t generation, uintptr_t family,
+    bool observe_gt_frame(uint64_t generation, uint64_t draw_serial, uintptr_t family,
                           uintptr_t target, uintptr_t scene,
                           const std::array<uintptr_t, 4>& views,
                           uint32_t engine_frame) {
-        if (!generation || !family || !target || !scene || engine_frame == 0xffffffffu)
+        if (!generation || !draw_serial || !family || !target || !scene || engine_frame == 0xffffffffu)
             return false;
         for (size_t i = 0; i < views.size(); ++i) {
             if (!views[i]) return false;
@@ -109,18 +109,18 @@ public:
             }
         }
         if (!slot) return false;
-        *slot = FrameTicket{generation, family, target, scene, views, engine_frame, ++ticket_clock_};
+        *slot = FrameTicket{generation, draw_serial, family, target, scene, views, engine_frame, ++ticket_clock_};
         return true;
     }
 
     std::optional<uint32_t> take_observed_gt_frame(
-        uint64_t generation, uintptr_t family, uintptr_t target,
+        uint64_t generation, uint64_t draw_serial, uintptr_t family, uintptr_t target,
         uintptr_t scene, const std::array<uintptr_t, 4>& views) {
         std::scoped_lock lock{mutex_};
-        if (!advance(generation) || !family || !target || !scene) return {};
+        if (!advance(generation) || !draw_serial || !family || !target || !scene) return {};
         FrameTicket* matched{};
         for (auto& ticket : frame_tickets_) {
-            if (ticket.generation != generation || ticket.family != family ||
+            if (ticket.generation != generation || ticket.draw_serial != draw_serial || ticket.family != family ||
                 ticket.target != target || ticket.scene != scene ||
                 ticket.views != views) continue;
             if (matched) return {}; // Never choose between ambiguous owners.
@@ -302,7 +302,7 @@ public:
 
 private:
     struct FrameTicket {
-        uint64_t generation{};
+        uint64_t generation{}, draw_serial{};
         uintptr_t family{}, target{}, scene{};
         std::array<uintptr_t, 4> views{};
         uint32_t engine_frame{};
