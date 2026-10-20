@@ -126,7 +126,7 @@ def main():
     const ModSlider::Ptr m_duo_periphery{ModSlider::create(generate_name("DuoViewPeripheralScale"), .05f, .50f, .20f)};
     const ModSlider::Ptr m_duo_density{ModSlider::create(generate_name("DuoViewFovealDensity"), .25f, 4.0f, 1.f)};
     const ModSlider::Ptr m_duo_feather{ModSlider::create(generate_name("DuoViewFeather"), 0.f, .45f, .08f)};
-    const ModSlider::Ptr m_duo_sharpen{ModSlider::create(generate_name("DuoViewGlamaryeFoveaStrength"), 0.f, 2.f, 0.f)};
+    const ModSlider::Ptr m_duo_sharpen{ModSlider::create(generate_name("DuoViewGlamaryeFoveaStrength"), 0.f, 2.f, 1.f)};
     const ModToggle::Ptr m_duo_gaze{ModToggle::create(generate_name("DuoViewEyeTracking"), true)};
     const ModToggle::Ptr m_duo_border{ModToggle::create(generate_name("DuoViewDebugBorder"), false)};
     const ModInt32::Ptr m_duo_debug_source{ModSliderInt32::create(generate_name("DuoViewDebugSource"), 0, 2, 0)};
@@ -199,7 +199,7 @@ def main():
                 if (ImGui::Button("Restore old DuoView settings")) {
                     m_duo_width->value()=.50f; m_duo_height->value()=.50f;
                     m_duo_periphery->value()=.20f; m_duo_density->value()=1.f;
-                    m_duo_feather->value()=.08f; m_duo_sharpen->value()=0.f; m_duo_gaze->value()=true;
+                    m_duo_feather->value()=.08f; m_duo_sharpen->value()=1.f; m_duo_gaze->value()=true;
                     m_duo_border->value()=false; m_duo_fovea_view->value()=0;
                     m_duo_debug_source->value()=0;
                     m_duo_direct_xr->value()=false;
@@ -214,7 +214,7 @@ def main():
                 m_duo_periphery->draw("Peripheral resolution scale");
                 m_duo_density->draw("Foveal pixel density");
                 m_duo_feather->draw("Blend feather width");
-                m_duo_sharpen->draw("Glamarye fovea strength (0 = off; v0.1 = 0.4)");
+                m_duo_sharpen->draw("Glamarye fovea strength (default 1.0; 0 = off)");
                 ImGui::TextWrapped("Glamarye v0.1 Bigger radius and jagged-edge protection. Runs after DLSS at final Mono-pixel spacing within the gaze-tracked fovea. Turn OFF the separate Glamarye OpenXR layer to prevent duplicate sharpening. With sharpening enabled, Direct XR double-wide mode is automatically bypassed to avoid duplicated GPU work.");
                 m_duo_gaze->draw("Eye tracking");
                 m_duo_border->draw("Blend border highlight");
