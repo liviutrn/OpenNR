@@ -89,5 +89,57 @@ int main() try {
     for(UINT y=0;y<32;++y) for(UINT x=0;x<32;++x)
         if(std::memcmp(sample(x,y),sample(x+32,y),4)) throw std::runtime_error("Reused mono copy mismatch");
     readback->Unmap(0,nullptr);
+    // Fused Glamarye strength > 0 must execute the NATIVE two-source pixel
+    // shader on a real D3D12 WARP device, then copy exactly one sharpened
+    // Mono output to both OpenXR eye halves.
+    check(allocator->Reset());
+    check(cmd->Reset(allocator.Get(),nullptr));
+    auto native_fovea=resource(device.Get(),texture(64,32,D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET),
+        D3D12_HEAP_TYPE_DEFAULT,D3D12_RESOURCE_STATE_COPY_DEST);
+    auto native_periphery=resource(device.Get(),texture(64,32,D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET),
+        D3D12_HEAP_TYPE_DEFAULT,D3D12_RESOURCE_STATE_COPY_DEST);
+    transition(cmd.Get(),atlas.Get(),D3D12_RESOURCE_STATE_RENDER_TARGET,D3D12_RESOURCE_STATE_COPY_SOURCE);
+    D3D12_TEXTURE_COPY_LOCATION sourceAtlas{atlas.Get(),D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX};
+    D3D12_TEXTURE_COPY_LOCATION toFocus{native_fovea.Get(),D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX};
+    D3D12_TEXTURE_COPY_LOCATION toContext{native_periphery.Get(),D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX};
+    cmd->CopyTextureRegion(&toFocus,0,0,0,&sourceAtlas,nullptr);
+    const D3D12_BOX contextBox{layout->periphery.x,layout->periphery.y,0,
+        layout->periphery.x+layout->periphery.width,
+        layout->periphery.y+layout->periphery.height,1};
+    cmd->CopyTextureRegion(&toContext,0,0,0,&sourceAtlas,&contextBox);
+    transition(cmd.Get(),atlas.Get(),D3D12_RESOURCE_STATE_COPY_SOURCE,D3D12_RESOURCE_STATE_RENDER_TARGET);
+    transition(cmd.Get(),native_fovea.Get(),D3D12_RESOURCE_STATE_COPY_DEST,D3D12_RESOURCE_STATE_RENDER_TARGET);
+    transition(cmd.Get(),native_periphery.Get(),D3D12_RESOURCE_STATE_COPY_DEST,D3D12_RESOURCE_STATE_RENDER_TARGET);
+    transition(cmd.Get(),stereo.Get(),D3D12_RESOURCE_STATE_COPY_SOURCE,D3D12_RESOURCE_STATE_RENDER_TARGET);
+    uevr::duoview::ViewFrame nativeFrame{};
+    nativeFrame.config=uevr::duoview::FrameConfig{
+        {1,3},*layout,{.5f,.5f},{},2};
+    nativeFrame.config.settings.sharpen_strength=.4f;
+    nativeFrame.config.settings.fovea_view=0;
+    nativeFrame.config.settings.direct_xr_output=true; // fused path must override to single Mono
+    if (!compositor.record_native(device.Get(),cmd.Get(),
+        native_fovea.Get(),native_periphery.Get(),stereo.Get(),
+        D3D12_RESOURCE_STATE_RENDER_TARGET,D3D12_RESOURCE_STATE_RENDER_TARGET,
+        nativeFrame,{},frequency))
+        throw std::runtime_error("Native fused Glamarye WARP failed: "+compositor.error());
+    if (compositor.last_native_direct_xr())
+        throw std::runtime_error("Native fused sharpening erroneously rasterized twice");
+    transition(cmd.Get(),stereo.Get(),D3D12_RESOURCE_STATE_RENDER_TARGET,D3D12_RESOURCE_STATE_COPY_SOURCE);
+    cmd->CopyTextureRegion(&to,0,0,0,&from,nullptr);
+    check(cmd->Close()); queue->ExecuteCommandLists(1,lists);
+    check(queue->Signal(fence.Get(),3));
+    event=CreateEventW(nullptr,FALSE,FALSE,nullptr);
+    check(fence->SetEventOnCompletion(3,event));
+    if(WaitForSingleObject(event,30000)!=WAIT_OBJECT_0)
+        throw std::runtime_error("Fused native sharpening WARP GPU timeout");
+    CloseHandle(event);
+    check(readback->Map(0,&read,&mapped));
+    if(sample(16,16)[2]<240 || sample(1,1)[0]<240)
+        throw std::runtime_error("Fused native fovea/context output corrupted");
+    for(UINT y=0;y<32;++y) for(UINT x=0;x<32;++x)
+        if(std::memcmp(sample(x,y),sample(x+32,y),4))
+            throw std::runtime_error("Fused native Mono eye duplication mismatch");
+    readback->Unmap(0,nullptr);
+    std::cout << "Native fused Glamarye WARP path, focus-only, no duplicate full XR pass: PASS\\n";
     std::cout << "Production shader, BGRA8 raster, moved gaze, retired-slot reuse, GPU timestamps: 2048 exact pixel pairs PASS\n";
 } catch(const std::exception& e) { std::cerr<<e.what()<<'\n';return 1; }
