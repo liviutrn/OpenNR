@@ -180,8 +180,8 @@ class SourceCheckpointTests(unittest.TestCase):
         render = script.index('[QuadViews][RenderFamily]')
         self.assertLess(gt, producer)
         self.assertLess(producer, render)
-        self.assertIn('quadview_delivery.family(std::move(qv_source))', script)
-        self.assertIn('quadview_delivery.bind_engine_frame(', script)
+        self.assertIn('quadview_delivery.register_bound(std::move(qv_source))', script)
+        self.assertNotIn('quadview_delivery.family(std::move(qv_source))', script)
         self.assertNotIn('[QuadViews][Producer] missing GT frame', script)
         self.assertNotIn('take_observed_gt_frame(key.generation', script)
 
