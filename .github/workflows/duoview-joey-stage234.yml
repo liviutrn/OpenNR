@@ -6,7 +6,7 @@ on:
       - feature/v182-glamayre-fovea-compiled-20261020
   pull_request:
     branches:
-      - build-182
+      - reference/v182-fused-build-base
   workflow_dispatch:
 permissions:
   contents: read
