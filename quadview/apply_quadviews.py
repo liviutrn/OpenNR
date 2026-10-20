@@ -105,6 +105,7 @@ def main() -> None:
         "    bool is_using_mono() const { return uevr::mono::is_mono_family(m_rendering_method->value()); }\n"
         "    bool is_using_duoview_mono() const { return m_rendering_method->value() == RenderingMethod::DUOVIEW_MONO; }\n"
         "    bool is_quadview_mode_selected() const { return m_rendering_method->value() == RenderingMethod::QUAD_VIEWS_STEREO; }\n"
+        "    bool is_quadview_supported_title() const;\n"
         "    bool is_quadview_renderer_active() const;\n"
         "    const char* quadview_unavailable_reason() const;\n"
         "    bool is_duoview_renderer_active() const;")
@@ -209,18 +210,23 @@ def main() -> None:
 
     edit(backend, "src/mods/VR.cpp",
         "const char* VR::mono_unavailable_reason() const {",
-        "const char* VR::quadview_unavailable_reason() const {\n"
-        "    if (!is_quadview_mode_selected() && requested_rendering_method() != RenderingMethod::QUAD_VIEWS_STEREO) return nullptr;\n"
-        "    if (!m_is_d3d12 || g_framework == nullptr || !g_framework->is_dx12()) return \"Quad Views requires DX12\";\n"
-        "    const auto runtime = get_runtime();\n"
-        "    if (runtime == nullptr || !runtime->is_openxr()) return \"Quad Views requires OpenXR\";\n"
+        "bool VR::is_quadview_supported_title() const {\n"
+        "    // Hook installation occurs at startup, before ID7 is selected.\n"
+        "    // Cache title support independently of the active rendering mode.\n"
         "    static const bool stalker2_ue55 = [] {\n"
         "        const auto path=utility::get_module_pathw(utility::get_executable());\n"
         "        const auto detected_version=sdk::search_for_version(utility::get_executable()).value_or(L\"0.00\");\n"
         "        const auto file_version=sdk::get_file_version_info();\n"
         "        return path && uevr::games::is_stalker2_ue55_runtime(*path,detected_version,file_version.dwFileVersionMS);\n"
         "    }();\n"
-        "    if (!stalker2_ue55) return \"Quad Views currently supports STALKER 2 UE5.5 only\";\n"
+        "    return stalker2_ue55;\n"
+        "}\n\n"
+        "const char* VR::quadview_unavailable_reason() const {\n"
+        "    if (!is_quadview_mode_selected() && requested_rendering_method() != RenderingMethod::QUAD_VIEWS_STEREO) return nullptr;\n"
+        "    if (!m_is_d3d12 || g_framework == nullptr || !g_framework->is_dx12()) return \"Quad Views requires DX12\";\n"
+        "    const auto runtime = get_runtime();\n"
+        "    if (runtime == nullptr || !runtime->is_openxr()) return \"Quad Views requires OpenXR\";\n"
+        "    if (!is_quadview_supported_title()) return \"Quad Views currently supports STALKER 2 UE5.5 only\";\n"
         "    if (m_extreme_compat_mode->value() || m_splitscreen_compatibility_mode->value() || m_2d_screen_mode->value() ||\n"
         "        m_sceneview_compatibility_mode->value() || m_stereo_emulation_mode) return \"Quad Views requires Extreme Compatibility, split-screen, 2D Screen, SceneView compatibility and Stereo Emulation OFF\";\n"
         "    if (uevr::nascar::is_target()) return \"Quad Views is unavailable for this title's restricted rendering path\";\n"
@@ -330,12 +336,14 @@ def main() -> None:
     edit(backend, "src/mods/vr/FFakeStereoRenderingHook.cpp",
         "    if (!vr->is_ghosting_fix_enabled() && !vr->is_splitscreen_compatibility_enabled() && !vr->is_sceneview_compatibility_enabled() && !vr->is_native_stereo_fix_enabled()) {",
         "    if (!vr->is_ghosting_fix_enabled() && !vr->is_splitscreen_compatibility_enabled() && !vr->is_sceneview_compatibility_enabled() && !vr->is_native_stereo_fix_enabled() &&\n"
-        "        !vr->is_quadview_mode_selected() && vr->requested_rendering_method() != VR::RenderingMethod::QUAD_VIEWS_STEREO) {")
+        "        !vr->is_quadview_supported_title() && !vr->is_quadview_mode_selected() &&\n"
+        "        vr->requested_rendering_method() != VR::RenderingMethod::QUAD_VIEWS_STEREO) {")
     edit(backend, "src/mods/vr/FFakeStereoRenderingHook.cpp",
         "    const bool needs_begin_rendering_viewfamilies_hook = uevr::nascar::needs_generic_renderer_hook(\n"
         "        uevr::nascar::is_target(), vr->is_native_stereo_fix_enabled(),\n"
         "        vr->is_dibr_single_view_requested(), vr->is_splitscreen_compatibility_enabled());",
-        "    const bool needs_begin_rendering_viewfamilies_hook = vr->is_quadview_renderer_active() ||\n"
+        "    const bool needs_begin_rendering_viewfamilies_hook = vr->is_quadview_supported_title() ||\n"
+        "        vr->is_quadview_renderer_active() ||\n"
         "        (vr->is_quadview_mode_selected() && !vr->is_mono_transition_pending()) ||\n"
         "        uevr::nascar::needs_generic_renderer_hook(\n"
         "            uevr::nascar::is_target(), vr->is_native_stereo_fix_enabled(),\n"
