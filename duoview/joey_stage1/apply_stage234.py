@@ -215,7 +215,7 @@ def main():
                 m_duo_density->draw("Foveal pixel density");
                 m_duo_feather->draw("Blend feather width");
                 m_duo_sharpen->draw("Glamarye fovea strength (0 = off; v0.1 = 0.4)");
-                ImGui::TextWrapped("Glamarye v0.1 Bigger radius and jagged-edge protection. Runs after DLSS at final Mono-pixel spacing within the gaze-tracked fovea. Turn OFF the separate Glamarye OpenXR layer to prevent duplicate sharpening. With sharpening enabled, Direct XR double-wide mode is automatically bypassed to avoid duplicated GPU work.");
+                ImGui::TextUnformatted("Glamarye: Bigger sharpen + edge guard. Disable the separate XR layer.");
                 m_duo_gaze->draw("Eye tracking");
                 m_duo_border->draw("Blend border highlight");
                 m_duo_debug_source->draw("Source diagnostic: 0 Blend / 1 Periphery / 2 Fovea");
