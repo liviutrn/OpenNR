@@ -137,11 +137,12 @@ public:
         // old compositor+copy fallback for incompatible swapchain formats.
         if (!stereo_destination_valid(xrd,width_,height_))
             return reject("Invalid Mono XR output dimensions, format, or render-target flags");
-        // Direct double-wide raster would run sharpening twice on the same
-        // monoscopic foveal content. Use the existing single-Mono compose+copy
-        // when fused sharpening is enabled; leave v182 behavior otherwise.
+        // Preserve v182's original output-path selection independently of
+        // sharpening strength. Never silently switch XR delivery paths when
+        // editing a cosmetic slider: that can disturb late UI composition.
+        // Direct XR renders the same sharpened Mono image into both eye halves;
+        // the default compose-then-copy path still sharpens just once.
         const bool direct_xr=frame.config.settings.direct_xr_output &&
-            frame.config.settings.sharpen_strength <= 0.0f &&
             xrd.Dimension==D3D12_RESOURCE_DIMENSION_TEXTURE2D &&
             xrd.Width==static_cast<uint64_t>(width_)*2 && xrd.Height==height_ &&
             xrd.DepthOrArraySize==1 && xrd.MipLevels==1 &&
