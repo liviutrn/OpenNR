@@ -337,7 +337,27 @@ int main(int argc, char** argv) try {
         output_location.pResource = output.Get();
         output_location.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
         commands->CopyTextureRegion(&readback_location, 0, 0, 0, &output_location, nullptr);
-        require(commands->Close(), "Close commands");
+        // Close() reports recording-time errors (E_INVALIDARG) but not the command
+        // that caused them. Surface the D3D12 debug queue before throwing so CI
+        // can identify the exact API contract violation instead of hiding it.
+        const HRESULT close_result=commands->Close();
+        if (FAILED(close_result)) {
+            std::string details="Close commands: "+std::to_string(close_result);
+            if (info_queue) {
+                const auto n=info_queue->GetNumStoredMessagesAllowedByRetrievalFilter();
+                for (UINT64 idx=0; idx<n; ++idx) {
+                    SIZE_T bytes{};
+                    if (FAILED(info_queue->GetMessage(idx,nullptr,&bytes)) || !bytes) continue;
+                    auto storage=std::make_unique<uint8_t[]>(bytes);
+                    auto* msg=reinterpret_cast<D3D12_MESSAGE*>(storage.get());
+                    if (SUCCEEDED(info_queue->GetMessage(idx,msg,&bytes)) &&
+                        msg->Severity<=D3D12_MESSAGE_SEVERITY_WARNING && msg->pDescription) {
+                        details+="\nD3D12 ["+std::to_string(msg->ID)+"] "+msg->pDescription;
+                    }
+                }
+            }
+            throw std::runtime_error(details);
+        }
         ID3D12CommandList* lists[]{commands.Get()};
         queue->ExecuteCommandLists(1, lists);
         require(queue->Signal(fence.Get(), pass + 1), "Signal fence");
