@@ -20,13 +20,23 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          repository: liviutrn/UEVR-Quad-Views-Mono
+          ref: f5dd4c0d3780b05fc6d6ab0aab3d38518b2080f7
           path: workspace
+          fetch-depth: 0
           persist-credentials: false
-      - name: Verify preserved Build182 overlay
+      - name: Verify canonical Quad Views source identity and protected DuoView
         shell: pwsh
         run: |
-          python workspace/scripts/verify_baseline.py
-          if ($LASTEXITCODE -ne 0) { throw 'Build182 overlay identity changed' }
+          $expected='f5dd4c0d3780b05fc6d6ab0aab3d38518b2080f7'
+          $baseline='f0a6be707d1c03f2b6c6bf01982f001aa403e073'
+          $actual=(git -C workspace rev-parse HEAD).Trim()
+          if ($actual -ne $expected) { throw "Wrong Quad Views source: $actual" }
+          git -C workspace merge-base --is-ancestor $baseline HEAD
+          if ($LASTEXITCODE -ne 0) { throw 'Quad Views source is not based on pinned ID7 parent' }
+          git -C workspace diff --exit-code $baseline HEAD -- duoview scripts/verify_baseline.py BASELINE_SOURCE_SHA256SUMS
+          if ($LASTEXITCODE -ne 0) { throw 'Protected DuoView source changed' }
+          Write-Host "Compiling canonical Quad Views source $actual"
       - uses: actions/checkout@v4
         with:
           repository: joeyhodge/UEVR
