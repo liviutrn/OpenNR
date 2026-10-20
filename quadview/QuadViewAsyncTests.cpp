@@ -13,6 +13,28 @@ struct Token { uint64_t serial{}, pose_frame{}; };
 int main() {
     using Ledger = uevr::quadview::Delivery<Token>;
     using Source = Ledger::Source;
+    // Regression: the actual STALKER 2 main family FrameNumber was 0xffffffff
+    // on every ID7 game-thread callback. Only exact ordered view identities
+    // may authorize the renderer-owned family copy in that case.
+    {
+        Ledger strict;
+        Source first{};
+        first.packet = std::make_shared<const Token>(Token{1, 7});
+        first.generation = 1; first.serial = 1; first.engine_frame = 0xffffffffu;
+        first.pose_frame_token = 7; first.family = 0x3000;
+        first.target = 0x4000; first.scene = 0x5000;
+        first.view_ids = {0x1010, 0x2020, 0x3030, 0x4040};
+        if (!strict.family(first)) throw std::runtime_error("Exact-view registration failed");
+        if (strict.render_exact_views(1, first.target, first.scene, {0x1010, 0x2020, 0x3030, 0x5050}))
+            throw std::runtime_error("Wrong fourth scene view matched the atlas");
+        if (strict.render_exact_views(1, first.target + 1, first.scene, first.view_ids))
+            throw std::runtime_error("Wrong target matched the atlas");
+        const auto matched = strict.render_exact_views(1, first.target, first.scene, first.view_ids);
+        if (!matched || !matched->same_owner(first))
+            throw std::runtime_error("Uninitialized frame ID blocked exact four-view match");
+        if (strict.render_exact_views(1, first.target, first.scene, first.view_ids))
+            throw std::runtime_error("Duplicate four-view render was accepted");
+    }
     constexpr uint64_t count = 100000;
     constexpr uint32_t rhi_thread = 42;
     Ledger delivery;
