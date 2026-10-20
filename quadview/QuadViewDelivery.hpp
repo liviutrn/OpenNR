@@ -37,6 +37,18 @@ public:
         }
     };
 
+    // Publish the validated assigned frame and source in one ledger insertion.
+    // Separate family() + bind_engine_frame() calls allow a render-thread race.
+    bool register_bound(Source source) {
+        if (!source || source.engine_frame == 0xffffffffu || !source.engine_frame) return false;
+        for (size_t i = 0; i < source.view_ids.size(); ++i) {
+            if (!source.view_ids[i]) return false;
+            for (size_t j = 0; j < i; ++j) if (source.view_ids[i] == source.view_ids[j]) return false;
+        }
+        source.engine_frame_bound = true;
+        return family(std::move(source));
+    }
+
     bool family(Source source) {
         std::scoped_lock lock{mutex_};
         if (!source || !advance(source.generation)) return false;
