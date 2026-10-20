@@ -1,0 +1,33 @@
+name: DuoView v182 Fovea Glamarye Shader & WARP CI
+on:
+  push:
+    branches:
+      - feature/v182-glamayre-fovea-compiled-20261020
+  pull_request:
+    branches:
+      - build-182
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  shader-and-gpu:
+    runs-on: windows-2022
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure independent DuoView shader and CPU tests
+        shell: pwsh
+        run: |
+          cmake -S duoview -B duo_tests -G 'Visual Studio 17 2022' -A x64
+          if ($LASTEXITCODE -ne 0) { throw 'Configuration failed' }
+      - name: Compile offline DXBC and production WARP test runner
+        shell: pwsh
+        run: |
+          cmake --build duo_tests --config Release --parallel 2
+          if ($LASTEXITCODE -ne 0) { throw 'Build or fused pixel shader compilation failed' }
+          if (!(Test-Path duo_tests/DuoViewShaderSource.hpp)) { throw 'Missing precompiled DXBC' }
+      - name: Execute geometry, gaze, immutable setting and production GPU tests
+        shell: pwsh
+        run: |
+          ctest --test-dir duo_tests -C Release --output-on-failure --no-tests=error
+          if ($LASTEXITCODE -ne 0) { throw 'Independent CPU or WARP GPU test failed' }
