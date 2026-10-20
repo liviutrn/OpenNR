@@ -168,6 +168,8 @@ class SourceCheckpointTests(unittest.TestCase):
         self.assertIn('!vr->is_quadview_supported_title() && !vr->is_quadview_mode_selected()', script)
         self.assertIn('bool VR::is_quadview_supported_title() const', script)
         self.assertIn('if (!is_quadview_supported_title())', script)
+        self.assertIn('m_render_module_begin_render_viewfamily_observed.load(std::memory_order_acquire)', script)
+        self.assertIn('Waiting for validated scene-view and outer-renderer hooks', script)
 
     def test_dirty_sdk_is_still_rejected(self) -> None:
         write(self.sdk, "unexpected.hpp", "untracked SDK change\n")
