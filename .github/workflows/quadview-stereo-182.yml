@@ -21,14 +21,14 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: liviutrn/UEVR-Quad-Views-Mono
-          ref: f5dd4c0d3780b05fc6d6ab0aab3d38518b2080f7
+          ref: 10dc2012652cbca00082162e7414ba96f48de732
           path: workspace
           fetch-depth: 0
           persist-credentials: false
       - name: Verify canonical Quad Views source identity and protected DuoView
         shell: pwsh
         run: |
-          $expected='f5dd4c0d3780b05fc6d6ab0aab3d38518b2080f7'
+          $expected='10dc2012652cbca00082162e7414ba96f48de732'
           $baseline='f0a6be707d1c03f2b6c6bf01982f001aa403e073'
           $actual=(git -C workspace rev-parse HEAD).Trim()
           if ($actual -ne $expected) { throw "Wrong Quad Views source: $actual" }
