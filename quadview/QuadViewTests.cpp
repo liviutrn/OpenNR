@@ -193,6 +193,20 @@ int main() {
     assert(delivery.submitted(source, 0x800));
     assert(!delivery.select(8, 123)); // Duplicate Present cannot resubmit an accepted source.
 
+    // The direct GT producer must publish already frame-bound atomically.
+    {
+        Delivery<SourceToken> immediate;
+        const std::array<uintptr_t,4> views{0x101,0x102,0x103,0x104};
+        auto packet=std::make_shared<const SourceToken>(SourceToken{70,5});
+        Delivery<SourceToken>::Source owner{packet,19,70,975,5,0x100,0x200,0x300,views};
+        assert(immediate.register_bound(owner));
+        const auto chosen=immediate.render(19,975,0x500,0x200,0x300);
+        assert(chosen && chosen->serial==70 && chosen->engine_frame_bound);
+        assert(!immediate.register_bound(owner));
+        Delivery<SourceToken>::Source sentinel{packet,19,71,0xffffffffu,5,0x101,0x200,0x300,views};
+        assert(!immediate.register_bound(sentinel));
+    }
+
     // A staged GT observation must precede source registration, which is
     // itself in the outer renderer hook. The old Build 9 ordering attempted
     // bind_engine_frame before any source existed and always failed closed.
