@@ -99,11 +99,11 @@ int main() {
         source.generation=2; source.serial=1; source.engine_frame=0xffffffffu;
         source.pose_frame_token=3;source.family=0x501;source.target=0x601;source.scene=0x701;
         source.view_ids={0x101,0x102,0x103,0x104};
-        if (!gt_before_outer.observe_gt_frame(source.generation,source.family,source.target,
+        if (!gt_before_outer.observe_gt_frame(source.generation,source.serial,source.family,source.target,
             source.scene,source.view_ids,777)) throw std::runtime_error("GT pre-render ticket rejected");
-        const auto frame=gt_before_outer.take_observed_gt_frame(source.generation,source.family,
+        const auto frame=gt_before_outer.take_observed_gt_frame(source.generation,source.serial,source.family,
             source.target,source.scene,source.view_ids);
-        if(!frame || *frame!=777 || gt_before_outer.take_observed_gt_frame(source.generation,
+        if(!frame || *frame!=777 || gt_before_outer.take_observed_gt_frame(source.generation,source.serial,
             source.family,source.target,source.scene,source.view_ids))
             throw std::runtime_error("One-time GT frame ticket invalid");
         if(!gt_before_outer.family(source)) throw std::runtime_error("Late outer-producer registration rejected");
