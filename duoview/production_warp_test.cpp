@@ -116,14 +116,14 @@ int main() try {
         {1,3},*layout,{.5f,.5f},{},2};
     nativeFrame.config.settings.sharpen_strength=.4f;
     nativeFrame.config.settings.fovea_view=0;
-    nativeFrame.config.settings.direct_xr_output=true; // fused path must override to single Mono
+    nativeFrame.config.settings.direct_xr_output=true; // preserve v182 opt-in Direct XR route
     if (!compositor.record_native(device.Get(),cmd.Get(),
         native_fovea.Get(),native_periphery.Get(),stereo.Get(),
         D3D12_RESOURCE_STATE_RENDER_TARGET,D3D12_RESOURCE_STATE_RENDER_TARGET,
         nativeFrame,{},frequency))
         throw std::runtime_error("Native fused Glamarye WARP failed: "+compositor.error());
-    if (compositor.last_native_direct_xr())
-        throw std::runtime_error("Native fused sharpening erroneously rasterized twice");
+    if (!compositor.last_native_direct_xr())
+        throw std::runtime_error("Native sharpen unexpectedly changed v182 Direct XR route");
     transition(cmd.Get(),stereo.Get(),D3D12_RESOURCE_STATE_RENDER_TARGET,D3D12_RESOURCE_STATE_COPY_SOURCE);
     cmd->CopyTextureRegion(&to,0,0,0,&from,nullptr);
     check(cmd->Close()); queue->ExecuteCommandLists(1,lists);
@@ -140,6 +140,36 @@ int main() try {
         if(std::memcmp(sample(x,y),sample(x+32,y),4))
             throw std::runtime_error("Fused native Mono eye duplication mismatch");
     readback->Unmap(0,nullptr);
-    std::cout << "Native fused Glamarye WARP path, focus-only, no duplicate full XR pass: PASS\\n";
+    // Same sharpened view, baseline v182 default compose-then-copy path:
+    // changing only this setting must not require a different delivery state.
+    check(allocator->Reset());
+    check(cmd->Reset(allocator.Get(),nullptr));
+    transition(cmd.Get(),stereo.Get(),D3D12_RESOURCE_STATE_COPY_SOURCE,D3D12_RESOURCE_STATE_RENDER_TARGET);
+    nativeFrame.config.key.frame=4;
+    nativeFrame.config.settings.direct_xr_output=false;
+    if (!compositor.record_native(device.Get(),cmd.Get(),
+        native_fovea.Get(),native_periphery.Get(),stereo.Get(),
+        D3D12_RESOURCE_STATE_RENDER_TARGET,D3D12_RESOURCE_STATE_RENDER_TARGET,
+        nativeFrame,{},frequency))
+        throw std::runtime_error("Native sharpen copy-path WARP failed: "+compositor.error());
+    if (compositor.last_native_direct_xr())
+        throw std::runtime_error("Default v182 Mono-copy path changed under sharpening");
+    transition(cmd.Get(),stereo.Get(),D3D12_RESOURCE_STATE_RENDER_TARGET,D3D12_RESOURCE_STATE_COPY_SOURCE);
+    cmd->CopyTextureRegion(&to,0,0,0,&from,nullptr);
+    check(cmd->Close()); queue->ExecuteCommandLists(1,lists);
+    check(queue->Signal(fence.Get(),4));
+    event=CreateEventW(nullptr,FALSE,FALSE,nullptr);
+    check(fence->SetEventOnCompletion(4,event));
+    if(WaitForSingleObject(event,30000)!=WAIT_OBJECT_0)
+        throw std::runtime_error("Native Mono-copy sharpen WARP GPU timeout");
+    CloseHandle(event);
+    check(readback->Map(0,&read,&mapped));
+    if(sample(16,16)[2]<240 || sample(1,1)[0]<240)
+        throw std::runtime_error("Native sharpen copy path output corrupted");
+    for(UINT y=0;y<32;++y) for(UINT x=0;x<32;++x)
+        if(std::memcmp(sample(x,y),sample(x+32,y),4))
+            throw std::runtime_error("v182 Mono-copy sharpen eye duplication mismatch");
+    readback->Unmap(0,nullptr);
+    std::cout << "Native Glamarye fovea paths (v182 Direct XR and Mono copy) WARP: PASS\\n";
     std::cout << "Production shader, BGRA8 raster, moved gaze, retired-slot reuse, GPU timestamps: 2048 exact pixel pairs PASS\n";
 } catch(const std::exception& e) { std::cerr<<e.what()<<'\n';return 1; }
