@@ -7,7 +7,7 @@ This experimental branch fuses the Glamarye v0.1 intelligent-sharpen algorithm i
 - UI: DuoViewGlamaryeFoveaStrength (0–2), default 0 (preserves v182); 0.4 recommended initial test.
 - Foveal source Unreal view 0 or 1 is selected through original v182 settings. Final Mono output is copied to both headset eyes unchanged.
 - Larger radius, jagged-edge protection, max change 0.10 and FXAA bias 0.02 reproduce v0.1 settings.
-- Enabled sharpening forces the existing single-width composition-and-copy route (not the duplicated double-wide direct-XR raster path). No additional OpenXR hook, GPU copy, queue synchronization or shader compilation on the XR render thread.
+- The stable v182 XR output choice is preserved at every sharpening strength: default single-width compose+copy, or opt-in double-wide Direct XR. In the opt-in path, both eye halves are shaded individually. No additional OpenXR hook, GPU copy, queue synchronization or shader compilation on the XR render thread.
 - External Glamarye OpenXR layer must be disabled when testing fused sharpening; otherwise it will sharpen twice.
 
 Quality caveat: center-pixel sampling scale matches v0.1. At feather/crop boundaries the operations differ: this version sharpens focus *before* mixing, while v0.1 sharpens the final blended image. Foveal sample neighborhoods are clamped to the native source texture. Validate image appearance in the headset.
