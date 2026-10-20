@@ -173,6 +173,18 @@ class SourceCheckpointTests(unittest.TestCase):
         self.assertIn('quadview_outer_renderer_observed() const', script)
         self.assertIn('Quad Views warming up: outer renderer interception not observed', script)
 
+    def test_gt_source_is_published_before_outer_render_thread(self) -> None:
+        script = Path(__file__).with_name("apply_quadviews.py").read_text(encoding="utf-8")
+        gt = script.index("# Publish the exact source at the engine game-thread BeginRenderViewFamily")
+        producer = script.index('[QuadViews][GTProducer] BOUND')
+        render = script.index('[QuadViews][RenderFamily]')
+        self.assertLess(gt, producer)
+        self.assertLess(producer, render)
+        self.assertIn('quadview_delivery.family(std::move(qv_source))', script)
+        self.assertIn('quadview_delivery.bind_engine_frame(', script)
+        self.assertNotIn('[QuadViews][Producer] missing GT frame', script)
+        self.assertNotIn('take_observed_gt_frame(key.generation', script)
+
     def test_dirty_sdk_is_still_rejected(self) -> None:
         write(self.sdk, "unexpected.hpp", "untracked SDK change\n")
         with self.assertRaisesRegex(RuntimeError, "restricted SDK working tree changed"):
