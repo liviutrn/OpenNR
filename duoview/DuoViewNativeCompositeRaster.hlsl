@@ -32,9 +32,9 @@ float4 PSNativeMain(VertexOut i) : SV_TARGET0 {
         const float2 foveaSample = NativeSampleUV(
             localFovea, FoveaRect.zw, NativeFoveaDimensions);
         float4 fovea = SourceAtlas.SampleLevel(LinearClamp, foveaSample, 0.0);
-        // Exactly one sharpening evaluation in one Mono output image; output
-        // is later duplicated to both eyes by the existing v182 copy path.
-        // With Strength=0 the baseline composition remains unchanged.
+        // v182's chosen output path is unchanged: default single-Mono
+        // composition copies to two eyes; opt-in Direct XR writes both halves.
+        // Sharpen at strength 0 skips all additional foveal samples.
         if (SharpenStrength > 0.0 && DebugViewMode == 0)
             fovea.rgb = GlamSharpenNativeFovea(fullUv, fovea.rgb);
         result = DebugViewMode == 2 ? fovea : lerp(periphery,fovea,weight);
