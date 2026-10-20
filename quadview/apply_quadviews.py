@@ -612,11 +612,9 @@ def main() -> None:
         "    }\n\n"
         "    // Observe Native Fix's original two-view main family before the fix")
 
-    # Bind the queued source at the ISceneViewExtension callback. Unreal has
-    # assigned the actual family frame number here, while this is still the
-    # original game-thread family and its original FSceneView pointers. The
-    # render-thread callback may receive FViewInfo copies, so it must not use
-    # pointer equality to recover this owner.
+    # Stage the GT frame number before the outer renderer creates the packet.
+    # The producer later consumes this one-shot exact-family observation.
+    # Render-thread FViewInfo copies must never be correlated by pointer.
     edit(backend, "src/mods/vr/FFakeStereoRenderingHook.cpp",
         "    auto views_ptr = view_family.get_views();\n    if (const auto packet = duoview_build_packet; packet && packet->duoview_frame) {",
         "    auto views_ptr = view_family.get_views();\n"
@@ -655,7 +653,7 @@ def main() -> None:
         "            SPDLOG_WARNING_EVERY_N_SEC(2,\"[QuadViews][BeginFamily] skipped frame={} target={:x} expected={:x} scene={:x}\",\n"
         "                frame_count,reinterpret_cast<uintptr_t>(qv_target),\n"
         "                reinterpret_cast<uintptr_t>(qv_expected_target),reinterpret_cast<uintptr_t>(qv_scene));\n"
-        "        }\n""        }\n"
+        "        }\n"
         "    }\n"
         "    if (const auto packet = duoview_build_packet; packet && packet->duoview_frame) {")
 
