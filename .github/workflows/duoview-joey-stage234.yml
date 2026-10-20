@@ -1,24 +1,13 @@
-name: DuoView Direct Native Source Compositor
-run-name: DuoView Direct Native Source Compositor exact SDK (${{ github.run_number }})
+name: UEVR Quad Views Mono v186.1 Glamarye Release Build
+run-name: UEVR Quad Views Mono exact SDK (${{ github.run_number }})
 on:
   push:
-    branches: [fix/duoview-render-transaction-20261019, experiments/duoview-temporal-shading-v22, experiments/joey-duoview-native-stereo-fix-v22-20261018, fix/joey-v22-nativefix-duoview-activation-20261018, experiments/joey-v22-nativefix-gaze-hold-controls-20261018, experiments/joey-duoview-adaptive-saccade-20261018, fix/duoview-v154-controls-offcenter-20261018, fix/duoview-v154-general-controls-20261018, opt/duoview-v158-direct-sources-20261019, opt/duoview-stage2-direct-xr-output-20261019, opt/duoview-stage3-runtime-profile-20261019, opt/duoview-stage4-slot-descriptor-cache-20261019, opt/duoview-stage5-handle-cache-20261019]
-    paths:
-      - '.github/workflows/duoview-joey-stage234.yml'
-      - 'duoview/joey_stage1/**'
-      - 'duoview/DuoViewPSVR2Gaze.hpp'
-      - 'duoview/DuoViewGaze.hpp'
-      - 'duoview/DuoViewCropStability.hpp'
-      - 'duoview/DuoViewState.hpp'
-      - 'duoview/stage10_state_tests.cpp'
-      - 'duoview/production_warp_test.cpp'
-      - 'duoview/stage4_gaze_tests.cpp'
-      - 'duoview/DuoViewConfig.hpp'
-      - 'duoview/DuoViewD3D12.hpp'
-      - 'duoview/DuoViewComposite.hlsl'
-      - 'duoview/DuoViewCompositeRaster.hlsl'
-      - 'duoview/DuoViewNativeCompositeRaster.hlsl'
-      - 'duoview/embed_shader.py'
+    branches:
+      - feature/v182-glamayre-fovea-compiled-20261020
+      - release/v186-glamayre-default-1-20261020
+  pull_request:
+    branches:
+      - reference/v182-fused-build-base
   workflow_dispatch:
 permissions:
   contents: read
@@ -157,12 +146,21 @@ jobs:
           Copy-Item backend/build/bin/vr-plugin-nullifier/UEVRPluginNullifier.dll package/
           Copy-Item backend/build/bin/LuaVR/LuaVR.dll package/
           Copy-Item workspace/duoview/clean_restart/baseline.lock.json package/
+          Copy-Item workspace/RELEASE_NOTES_V186_GLAMARYE.md package/
+          Copy-Item workspace/duoview/LICENSE-GLAMARYE.txt package/
           Copy-Item evidence/exact-baseline-source.json package/
           Copy-Item evidence/duoview-stage1-edits.json package/
           Copy-Item evidence/duoview-stage1-source-hashes.json package/
           Copy-Item evidence/duoview-stage234-hashes.json package/
           @'
-          DUOVIEW NATIVE STEREO FIX v22 — ORIGINAL PRIMARY + SECONDARY SOURCES, MONO OUTPUT. HEADSET UNVERIFIED.
+          UEVR QUAD VIEWS MONO v186.1 — INTEGRATED GLAMARYE FOVEA SHARPEN.
+          Baseline: stable v182, with fused Bigger Sharpen in the native compositor.
+          Fovea sharpening strength: range 0.0-2.0, fresh-profile default 1.0 (0=OFF).
+          Existing profiles may preserve older slider values.
+          Disable/unregister the external Glamarye OpenXR API layer to avoid double sharpening.
+          See RELEASE_NOTES_V186_GLAMARYE.md and LICENSE-GLAMARYE.txt in this package.
+          User-tested Build186 headset session was smooth with NVIDIA Smooth Motion disabled.
+          The original v182 release remains unmodified.
           Backend: exact Joey 5ac7edc207866569334175e4ed8a7517971547f6 + guarded DuoView modifications.
           Restricted SDK unchanged: joeyhodge/UESDK 3cffbc82429b6165ceec2714f0f0d9ae48f55596.
           Matching frontend source: 60be4b0f9a646109fd9fdf448bacd41477234091, plus ID 6.
@@ -201,21 +199,21 @@ jobs:
           Restored engine view order and optical gaze mapping are source verified. Actual Lumen/shadow/exposure and visual parity require a headset test; no gamma correction applied.
           The eye-tracked source/compositor and first-use pacing are NOT headset verified.
           '@ | Set-Content package/READ_FIRST.txt
-          $needed=@('UEVRBackend.dll','UEVRPluginNullifier.dll','LuaVR.dll','READ_FIRST.txt','duoview-stage234-hashes.json','exact-baseline-source.json')
+          $needed=@('UEVRBackend.dll','UEVRPluginNullifier.dll','LuaVR.dll','READ_FIRST.txt','duoview-stage234-hashes.json','exact-baseline-source.json','RELEASE_NOTES_V186_GLAMARYE.md','LICENSE-GLAMARYE.txt')
           foreach ($name in $needed) { if (!(Test-Path ("package/" + $name))) { throw "Missing critical package file: $name" } }
           if (@(Get-ChildItem package -File -Filter *.exe).Count -lt 1) { throw "Missing Joey frontend executable" }
           if ((Get-Content package/READ_FIRST.txt -Raw) -notmatch 'warmup keeps the XR transition loop live') { throw 'Stale Native Fix warmup instructions' }
           Get-ChildItem package -Recurse -File | Get-FileHash -Algorithm SHA256 | ConvertTo-Json | Set-Content evidence/package-sha256.json
-          $zip="Joey-DuoView-v22-NativeFix-${{ github.run_number }}.zip"
+          $zip="UEVR-Quad-Views-Mono-v186.1-Glamarye-${{ github.run_number }}.zip"
           Compress-Archive -Path package/* -DestinationPath $zip -Force
           (Get-FileHash $zip -Algorithm SHA256).Hash | Set-Content "$zip.sha256"
       - uses: actions/upload-artifact@v4
         if: success()
         with:
-          name: Joey-DuoView-v22-NativeFix-${{ github.run_number }}
+          name: UEVR-Quad-Views-Mono-v186.1-Glamarye-${{ github.run_number }}
           path: |
-            Joey-DuoView-v22-NativeFix-*.zip
-            Joey-DuoView-v22-NativeFix-*.zip.sha256
+            UEVR-Quad-Views-Mono-v186.1-Glamarye-*.zip
+            UEVR-Quad-Views-Mono-v186.1-Glamarye-*.zip.sha256
           if-no-files-found: error
           retention-days: 90
       - name: Record public source and dependency provenance
@@ -230,7 +228,25 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: Joey-DuoView-NativeFix-Evidence-${{ github.run_number }}
+          name: UEVR-v186.1-Glamarye-Evidence-${{ github.run_number }}
           path: evidence/
           if-no-files-found: error
 
+
+      - name: Publish v186.1 Glamarye release to UEVR Quad Views Mono
+        if: success() && ((github.event_name == 'push' && github.ref == 'refs/heads/release/v186-glamayre-default-1-20261020') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == 'liviutrn/OpenNR' && github.event.pull_request.head.ref == 'release/v186-glamayre-default-1-20261020'))
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.UEVR_SOURCE_TOKEN || secrets.PAT_TOKEN }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:GH_TOKEN)) { throw 'Release token not configured' }
+          $archive="UEVR-Quad-Views-Mono-v186.1-Glamarye-${{ github.run_number }}.zip"
+          $checksum="$archive.sha256"
+          if (!(Test-Path $archive) -or !(Test-Path $checksum)) { throw "Missing release assets" }
+          gh release create "v186.1-glamayre" $archive $checksum `
+            --repo "liviutrn/UEVR-Quad-Views-Mono" `
+            --target "release/v186-glamayre-default-1-20261020" `
+            --title "v186.1 — Integrated Glamarye Fovea Sharpen (default 1.0)" `
+            --notes-file "workspace/RELEASE_NOTES_V186_GLAMARYE.md" `
+            --latest
+          if ($LASTEXITCODE -ne 0) { throw 'GitHub release publish failed; build artifact remains uploaded' }

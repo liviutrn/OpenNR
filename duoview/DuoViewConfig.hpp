@@ -16,6 +16,7 @@ struct Settings {
     float peripheral_scale{.20f};
     float foveal_density{1.f};
     float feather_fraction{.08f};
+    float sharpen_strength{}; // Glamarye fovea-only; 0 preserves v182 output.
     bool debug_border{};
     bool eye_tracked{true};
     uint32_t fovea_view{};
@@ -49,7 +50,8 @@ enum UiReject : uint32_t {
     reject_diagnostic=1u<<6, reject_guard=1u<<7, reject_quant=1u<<8,
     reject_hold=1u<<9, reject_reacquire=1u<<10, reject_offset_u=1u<<11,
     reject_offset_v=1u<<12, reject_micro=1u<<13,
-    reject_breakout=1u<<14, reject_still=1u<<15, reject_relock=1u<<16
+    reject_breakout=1u<<14, reject_still=1u<<15, reject_relock=1u<<16,
+    reject_sharpen=1u<<17
 };
 struct UiReconciled {
     Settings settings{};
@@ -119,6 +121,7 @@ inline UiReconciled reconcile_ui_settings(const Settings& requested,
         else result.rejected|=mask;
     };
     scalar(requested.feather_fraction,0.f,.45f,reject_feather,&Settings::feather_fraction);
+    scalar(requested.sharpen_strength,0.f,2.f,reject_sharpen,&Settings::sharpen_strength);
     scalar(requested.guard_fraction,0.f,.05f,reject_guard,&Settings::guard_fraction);
     scalar(requested.gaze_offset_u,-.25f,.25f,reject_offset_u,&Settings::gaze_offset_u);
     scalar(requested.gaze_offset_v,-.25f,.25f,reject_offset_v,&Settings::gaze_offset_v);
@@ -160,7 +163,9 @@ class ConfigLatch {
 public:
     bool set_settings(Settings proposed) {
         std::scoped_lock lock{mutex_};
-        if (!std::isfinite(proposed.feather_fraction) ||
+        if (!std::isfinite(proposed.sharpen_strength) || proposed.sharpen_strength<0.f ||
+            proposed.sharpen_strength>2.f ||
+            !std::isfinite(proposed.feather_fraction) ||
             proposed.feather_fraction < 0.f || proposed.feather_fraction > .45f ||
             proposed.fovea_view > 1 || proposed.diagnostic_view > 2 ||
             !std::isfinite(proposed.guard_fraction) || proposed.guard_fraction<0.f || proposed.guard_fraction>.05f ||
