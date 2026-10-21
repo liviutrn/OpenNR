@@ -1,5 +1,5 @@
-name: DuoView v186.1 Foreground and UI Convergence Experiment
-# CI relay run 4: dual fovea/periphery 0.33-3.0 foreground calibration
+name: DuoView v186.1 MPC TanFOV + Visible OpenXR Convergence
+# CI relay run 5: actual MPC_FOV.TanFOV readback and DuoView-menu convergence
 run-name: UEVR Quad Views Mono exact SDK (${{ github.run_number }})
 on:
   push:
@@ -24,7 +24,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: liviutrn/UEVR-Quad-Views-Mono
-          ref: experiment/duoview-fp-hud-convergence-20261021
+          ref: fix/duoview-mpc-fov-hud-visible-20261021
           path: workspace
           persist-credentials: false
       - uses: actions/checkout@v4
@@ -197,16 +197,16 @@ jobs:
           if (@(Get-ChildItem package -File -Filter *.exe).Count -lt 1) { throw "Missing Joey frontend executable" }
           if ((Get-Content package/READ_FIRST.txt -Raw) -notmatch 'warmup keeps the XR transition loop live') { throw 'Stale Native Fix warmup instructions' }
           Get-ChildItem package -Recurse -File | Get-FileHash -Algorithm SHA256 | ConvertTo-Json | Set-Content evidence/package-sha256.json
-          $zip="UEVR-Quad-Views-Mono-v1861-HUD-FP-${{ github.run_number }}.zip"
+          $zip="UEVR-DuoView-MPC-FOV-HUD-${{ github.run_number }}.zip"
           Compress-Archive -Path package/* -DestinationPath $zip -Force
           (Get-FileHash $zip -Algorithm SHA256).Hash | Set-Content "$zip.sha256"
       - uses: actions/upload-artifact@v4
         if: success()
         with:
-          name: UEVR-Quad-Views-Mono-v1861-HUD-FP-${{ github.run_number }}
+          name: UEVR-DuoView-MPC-FOV-HUD-${{ github.run_number }}
           path: |
-            UEVR-Quad-Views-Mono-v1861-HUD-FP-*.zip
-            UEVR-Quad-Views-Mono-v1861-HUD-FP-*.zip.sha256
+            UEVR-DuoView-MPC-FOV-HUD-*.zip
+            UEVR-DuoView-MPC-FOV-HUD-*.zip.sha256
           if-no-files-found: error
           retention-days: 90
       - name: Record public source and dependency provenance
@@ -221,7 +221,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: UEVR-v1861-HUD-FP-Evidence-${{ github.run_number }}
+          name: UEVR-MPC-FOV-HUD-Evidence-${{ github.run_number }}
           path: evidence/
           if-no-files-found: error
 
