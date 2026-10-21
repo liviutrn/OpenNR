@@ -1,5 +1,5 @@
 name: DuoView v186.1 Foreground and UI Convergence Experiment
-# CI relay run 3: foreground patch anchors matched against v186.1 producer
+# CI relay run 4: dual fovea/periphery 0.33-3.0 foreground calibration
 run-name: UEVR Quad Views Mono exact SDK (${{ github.run_number }})
 on:
   push:
