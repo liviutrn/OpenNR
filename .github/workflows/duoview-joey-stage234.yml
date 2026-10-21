@@ -1,10 +1,10 @@
 name: DuoView v186.1 MPC TanFOV + Visible OpenXR Convergence
-# CI relay run 5: actual MPC_FOV.TanFOV readback and DuoView-menu convergence
+# CI final relay: latest 21 Oct MPC_FOV.TanFOV, live controller validation, visible convergence
 run-name: UEVR Quad Views Mono exact SDK (${{ github.run_number }})
 on:
   push:
     branches:
-      - experiment/v1861-hud-fp-ci-relay-20261021
+      - experiment/duoview-mpc-tanfov-final-20261021
   pull_request:
     branches:
       - build-182
@@ -153,7 +153,12 @@ jobs:
           Copy-Item evidence/duoview-stage1-source-hashes.json package/
           Copy-Item evidence/duoview-stage234-hashes.json package/
           @'
-          DUOVIEW NATIVE STEREO FIX v22 — ORIGINAL PRIMARY + SECONDARY SOURCES, MONO OUTPUT. HEADSET UNVERIFIED.
+          DUOVIEW EXPERIMENT: STALKER 2 MPC_FOV.TanFOV AND VISIBLE OPENXR CONVERGENCE. HEADSET UNVERIFIED.
+NEW: DuoView Mono ID6 > quality and diagnostics: set Fovea/Periphery MPC TanFOV ON/OFF with independent 0.33-3.0 sliders (factor 1=unchanged).
+NEW: same menu > OpenXR UI convergence. Use Overlay Type Quad and UI Distance/Size 10/10; turn convergence ON, reference 2m, calibrate manual per-eye shift -0.05..+0.05 m.
+MPC status 6 means exact Kismet library read/write/readback verified in-game. Because MPC_FOV is shared by WORLD, it DOES NOT by itself verify separate visual first-person scale per producer view. Use fovea/periphery debug sources for actual VR comparison.
+Removed: ineffective UE5 native first-person parameter heuristic from previous Build 195. Stable release unaffected.
+DUOVIEW NATIVE STEREO FIX v22 — ORIGINAL PRIMARY + SECONDARY SOURCES, MONO OUTPUT. HEADSET UNVERIFIED.
           Backend: exact Joey 5ac7edc207866569334175e4ed8a7517971547f6 + guarded DuoView modifications.
           Restricted SDK unchanged: joeyhodge/UESDK 3cffbc82429b6165ceec2714f0f0d9ae48f55596.
           Matching frontend source: 60be4b0f9a646109fd9fdf448bacd41477234091, plus ID 6.
