@@ -1,4 +1,5 @@
 name: DuoView v186.1 Foreground and UI Convergence Experiment
+# CI relay run 2: include tested foreground crop morph parameters
 run-name: UEVR Quad Views Mono exact SDK (${{ github.run_number }})
 on:
   push:
