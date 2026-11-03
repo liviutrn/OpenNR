@@ -25,18 +25,24 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "Patch syntax invalid" }
           python CheekyPort/scripts/apply_v063_nr_view.py upstream-cheeky
           if ($LASTEXITCODE -ne 0) { throw "Strict patch failed" }
-      - name: Compile and run upstream regression tests
+      - name: Compile full upstream solution (no unrelated FG hardware tests)
         working-directory: upstream-cheeky
         shell: pwsh
         run: |
-          ./scripts/build.ps1 -Configuration Release
-          if ($LASTEXITCODE -ne 0) { throw "Upstream build or tests failed" }
-      - name: Verify selection modes
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio/Installer/vswhere.exe'
+          $msbuild = & $vswhere -latest -products * -requires Microsoft.Component.MSBuild -find 'MSBuild/**/Bin/MSBuild.exe' | Select-Object -First 1
+          if (-not $msbuild) { throw "MSBuild not found" }
+          & $msbuild CheekyFoveatedDLSS.sln /m /nr:false /nologo /verbosity:minimal /t:Build /p:Configuration=Release /p:Platform=x64 /p:PlatformToolset=v143
+          if ($LASTEXITCODE -ne 0) { throw "Compilation failed" }
+      - name: Run focused NR and source-view regressions
         working-directory: upstream-cheeky
         shell: pwsh
         run: |
-          ./bin/Release/CheekyTests.exe --opennr-v063
-          if ($LASTEXITCODE -ne 0) { throw "View selection test failed" }
+          foreach ($suite in @('--opennr-v063', '--nr-processing', '--d3d12-history', '--stereo-support', '--alignment-history')) {
+            Write-Host "Checking: $suite"
+            ./bin/Release/CheekyTests.exe $suite
+            if ($LASTEXITCODE -ne 0) { throw "Failed regression suite: $suite" }
+          }
       - name: Install Inno Setup if absent
         shell: pwsh
         run: |
