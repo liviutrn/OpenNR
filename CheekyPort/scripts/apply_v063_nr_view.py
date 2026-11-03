@@ -178,4 +178,25 @@ patch("tests/gaze_tests.cpp","int main(int argc, char** argv) {",
         update_settings(old);
         return failures ? 1 : 0;
     }''')
+
+# Independent integration tests use the *real* UEVR runtime command bridge,
+# rather than just calling the selector directly in the coordinator fixture.
+patch("tests/uevr_tests.cpp",
+      '        for (unsigned i = 0; i < 35; ++i) { Sleep(10); present(); }',
+      r'''        command("1\n201\nset\nEyeProcessingMode=0");
+        require(field(received, "EyeProcessingMode")==0, "Both mode acknowledged by live UEVR runtime");
+        command("1\n202\nset\nEyeProcessingMode=1");
+        require(field(received, "EyeProcessingMode")==1, "View 0 mode acknowledged by live UEVR runtime");
+        command("1\n203\nset\nEyeProcessingMode=2");
+        require(field(received, "EyeProcessingMode")==2, "View 1 mode acknowledged by live UEVR runtime");
+        for (unsigned i = 0; i < 35; ++i) { Sleep(10); present(); }''')
+patch("tests/uevr_tests.cpp",
+      '        require(!saved.eye_calibration_continuous, "Calibration policy must be saved per game");',
+      '''        require(saved.eye_processing_mode == 2U, "View selection was not persisted to disk");
+        require(!saved.eye_calibration_continuous, "Calibration policy must be saved per game");''')
+patch("tests/uevr_tests.cpp",
+      '        require(field(received,"NrProcessingOrder")==1 && std::abs(field(received,"NrWorkingScale")-0.37)<0.0001,',
+      '''        require(field(received,"EyeProcessingMode")==2, "UEVR plugin reload lost selected view");
+        require(field(received,"NrProcessingOrder")==1 && std::abs(field(received,"NrWorkingScale")-0.37)<0.0001,''')
+
 print("Cheeky v0.6.3 r13 minimal source selector applied")
