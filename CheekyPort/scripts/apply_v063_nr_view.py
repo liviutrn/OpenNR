@@ -236,6 +236,7 @@ patch("uevr/scripts/cheeky_foveated_dlss.lua",
         if imgui.button("Save current as Template 2") then send("nr_template_save_2") end
         imgui.same_line()
         if imgui.button("Load Template 2") then send("nr_template_load_2") end
+        if imgui.button("Toggle Template 1 / 2") then send("nr_template_toggle") end
         imgui.end_disabled()
         text("Loading changes NR only; source-view selection, SR and FG are untouched.")''')
 # The game config directory is established by UEVR; no user-supplied path.
@@ -244,13 +245,17 @@ patch("uevr/runtime.cpp",
       '        if (action == "reset_nr") { reset_dlss_nr(); return true; }',
       '''        if (action == "reset_nr") { reset_dlss_nr(); return true; }
         if (action.starts_with("nr_template_save_") ||
-            action.starts_with("nr_template_load_")) {
+            action.starts_with("nr_template_load_") ||
+            action == "nr_template_toggle") {
             const bool saving = action.starts_with("nr_template_save_");
-            const auto suffix = action.substr(saving ? 17U : 17U);
-            if (suffix != "1" && suffix != "2") {
+            const bool toggling = action == "nr_template_toggle";
+            const auto suffix = toggling ? "" : action.substr(17U);
+            if (!toggling && suffix != "1" && suffix != "2") {
                 s.message = "Invalid NR template slot"; return false;
             }
-            const std::uint32_t slot = static_cast<std::uint32_t>(suffix[0] - '0');
+            const auto slot = toggling
+                ? (configured_settings().nr_template_active == 1U ? 2U : 1U)
+                : static_cast<std::uint32_t>(suffix[0] - '0');
             const auto filepath = s.directory /
                 (slot == 1U ? L"CheekyFoveatedDLSS-NR-Template-1.ini"
                             : L"CheekyFoveatedDLSS-NR-Template-2.ini");
@@ -284,20 +289,26 @@ patch("uevr/runtime.cpp",
 # Tests exercise the real UEVR API, persistence and two profiles.
 patch("tests/uevr_tests.cpp",
       '        for (unsigned i = 0; i < 35; ++i) { Sleep(10); present(); }',
-      '''        command("1\\\\n210\\\\nset\\\\nNrPreset=1\\\\nNrPasses=1\\\\nNrWidth=0.4\\\\nNrIntensity=0.7");
-        command("1\\\\n211\\\\nnr_template_save_1");
+      '''        command("1\\n210\\nset\\nNrPreset=1\\nNrPasses=1\\nNrWidth=0.4\\nNrIntensity=0.7");
+        command("1\\n211\\nnr_template_save_1");
         require(field(received, "NrTemplateActive")==1, "Template 1 save acknowledged");
-        command("1\\\\n212\\\\nset\\\\nNrPreset=2\\\\nNrPasses=2\\\\nNrWidth=0.7\\\\nNrIntensity=0.35");
-        command("1\\\\n213\\\\nnr_template_save_2");
+        command("1\\n212\\nset\\nNrPreset=2\\nNrPasses=2\\nNrWidth=0.7\\nNrIntensity=0.35");
+        command("1\\n213\\nnr_template_save_2");
         require(field(received, "NrTemplateActive")==2, "Template 2 save acknowledged");
-        command("1\\\\n214\\\\nnr_template_load_1");
+        command("1\\n214\\nnr_template_load_1");
         require(field(received, "NrPreset")==1 && field(received, "NrPasses")==1 &&
             std::abs(field(received, "NrWidth")-0.4)<0.0001,
             "Template 1 model, pass count and crop restored");
-        command("1\\\\n215\\\\nnr_template_load_2");
+        command("1\\n215\\nnr_template_load_2");
         require(field(received, "NrPreset")==2 && field(received, "NrPasses")==2 &&
             std::abs(field(received, "NrWidth")-0.7)<0.0001,
             "Template 2 model, pass count and crop restored");
+        command("1\\n216\\nnr_template_toggle");
+        require(field(received, "NrPreset")==1 && field(received,"NrTemplateActive")==1,
+            "One-click toggle switched from template 2 to template 1");
+        command("1\\n217\\nnr_template_toggle");
+        require(field(received, "NrPreset")==2 && field(received,"NrTemplateActive")==2,
+            "One-click toggle switched from template 1 to template 2");
         require(std::filesystem::exists(root/"CheekyFoveatedDLSS-NR-Template-1.ini") &&
             std::filesystem::exists(root/"CheekyFoveatedDLSS-NR-Template-2.ini"),
             "Both template files persisted");
