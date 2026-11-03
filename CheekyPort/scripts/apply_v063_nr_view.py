@@ -292,7 +292,7 @@ patch("tests/uevr_tests.cpp",
       '''        command("1\\n210\\nset\\nNrPreset=1\\nNrPasses=1\\nNrWidth=0.4\\nNrIntensity=0.7");
         command("1\\n211\\nnr_template_save_1");
         require(field(received, "NrTemplateActive")==1, "Template 1 save acknowledged");
-        command("1\\n212\\nset\\nNrPreset=2\\nNrPasses=2\\nNrWidth=0.7\\nNrIntensity=0.35");
+        command("1\\n212\\nset\\nNrPreset=2\\nNrPasses=2\\nNrWidth=0.7\\nNrIntensity=0.35\\nNrPass2IndependentCrop=true\\nNrPass2CropWidth=0.3\\nNrPass2CropHeight=0.45");
         command("1\\n213\\nnr_template_save_2");
         require(field(received, "NrTemplateActive")==2, "Template 2 save acknowledged");
         command("1\\n214\\nnr_template_load_1");
@@ -301,8 +301,12 @@ patch("tests/uevr_tests.cpp",
             "Template 1 model, pass count and crop restored");
         command("1\\n215\\nnr_template_load_2");
         require(field(received, "NrPreset")==2 && field(received, "NrPasses")==2 &&
-            std::abs(field(received, "NrWidth")-0.7)<0.0001,
-            "Template 2 model, pass count and crop restored");
+            std::abs(field(received, "NrWidth")-0.7)<0.0001 &&
+            field(received, "NrPass2IndependentCrop")==1 &&
+            std::abs(field(received, "NrPass2CropWidth")-0.3)<0.0001 &&
+            std::abs(field(received, "NrPass2CropHeight")-0.45)<0.0001 &&
+            field(received, "EyeProcessingMode")==2,
+            "Template 2 restores independent second crop without changing DuoView source selector");
         command("1\\n216\\nnr_template_toggle");
         require(field(received, "NrPreset")==1 && field(received,"NrTemplateActive")==1,
             "One-click toggle switched from template 2 to template 1");
