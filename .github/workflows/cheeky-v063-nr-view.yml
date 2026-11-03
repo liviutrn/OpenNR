@@ -1,0 +1,71 @@
+name: Cheeky 0.6.3 NR view selector
+on:
+  push:
+    branches:
+      - experiments/cheeky-v063-nr-view-select
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: windows-2022
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - name: Checkout pinned Cheeky 0.6.3
+        uses: actions/checkout@v4
+        with:
+          repository: ClarkCheekyKent/CheekyFoveatedDLSS
+          ref: 39bfc96214498e5e21cf861f0eb21f875697b428
+          path: upstream-cheeky
+      - name: Apply focused r13 selector
+        shell: pwsh
+        run: |
+          python -m py_compile CheekyPort/scripts/apply_v063_nr_view.py
+          if ($LASTEXITCODE -ne 0) { throw "Patch syntax invalid" }
+          python CheekyPort/scripts/apply_v063_nr_view.py upstream-cheeky
+          if ($LASTEXITCODE -ne 0) { throw "Strict patch failed" }
+      - name: Compile and run upstream regression tests
+        working-directory: upstream-cheeky
+        shell: pwsh
+        run: |
+          ./scripts/build.ps1 -Configuration Release
+          if ($LASTEXITCODE -ne 0) { throw "Upstream build or tests failed" }
+      - name: Verify selection modes
+        working-directory: upstream-cheeky
+        shell: pwsh
+        run: |
+          ./bin/Release/CheekyTests.exe --opennr-v063
+          if ($LASTEXITCODE -ne 0) { throw "View selection test failed" }
+      - name: Install Inno Setup if absent
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "C:\Program Files (x86)\Inno Setup 6\ISCC.exe")) {
+            choco install innosetup -y --no-progress
+            if ($LASTEXITCODE -ne 0) { throw "Installer tool failed" }
+          }
+      - name: Build matching OpenXR installer
+        working-directory: upstream-cheeky
+        shell: pwsh
+        run: |
+          ./scripts/build-installer.ps1 -SkipBuild
+          if ($LASTEXITCODE -ne 0) { throw "OpenXR installer failed" }
+      - name: Package UEVR
+        working-directory: upstream-cheeky
+        shell: pwsh
+        run: |
+          ./scripts/package-uevr.ps1 -Configuration Release -Label v063-nrview
+          if ($LASTEXITCODE -ne 0) { throw "UEVR package failed" }
+          if (@(Get-ChildItem bin/Release/*-UEVR-v063-nrview.zip).Count -ne 1) {
+            throw "Missing UEVR archive"
+          }
+          Get-ChildItem bin/Release/*-UEVR-v063-nrview.zip | Get-FileHash -Algorithm SHA256
+      - name: Upload experimental headset-test package
+        uses: actions/upload-artifact@v4
+        with:
+          name: Cheeky-0.6.3-UEVR-NR-View-Selector
+          path: |
+            upstream-cheeky/bin/Release/*-UEVR-v063-nrview.zip
+            upstream-cheeky/bin/installer/CheekyOpenXRSetup.exe
+          if-no-files-found: error
+          retention-days: 20
