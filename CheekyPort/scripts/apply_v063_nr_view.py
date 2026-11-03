@@ -430,8 +430,7 @@ patch("src/dlss_nr.cpp",
         processing_width,""",
       """    Settings allocation_settings = settings;
     const bool independent_crops_allowed = settings.nr_foveated &&
-        !settings.nr_use_sr_foveation && !frame.color_is_region &&
-        !frame.has_shared_sr_crop;
+        !settings.nr_use_sr_foveation && !frame.color_is_region;
     if (independent_crops_allowed) {
         for (std::uint32_t index = 1U;
              index < std::clamp(settings.nr_passes, 1U, max_nr_passes); ++index) {
@@ -448,7 +447,8 @@ patch("src/dlss_nr.cpp",
 patch("src/dlss_nr.cpp",
       """    const auto signature = dlss_nr_history_signature(nr_settings_signature(settings, region), {""",
       """    const auto first_region = independent_crops_allowed
-        ? calculate_region(settings, processing_width, processing_height, nullptr,
+        ? calculate_region(settings, processing_width, processing_height,
+            frame.has_shared_sr_crop ? &frame.shared_sr_crop : nullptr,
             frame.input_width, frame.input_height, frame.has_center ? &frame.center : nullptr)
         : region;
     const auto signature = dlss_nr_history_signature(
@@ -480,7 +480,8 @@ patch("src/dlss_nr.cpp",
             pass_view.settings_signature != pass_signature;
         passes[pass] = {&pass_view, std::move(pass_settings), pass_signature, pass_reset};""",
       """        const auto pass_region = independent_crops_allowed
-            ? calculate_region(pass_settings, processing_width, processing_height, nullptr,
+            ? calculate_region(pass_settings, processing_width, processing_height,
+                frame.has_shared_sr_crop ? &frame.shared_sr_crop : nullptr,
                 frame.input_width, frame.input_height, frame.has_center ? &frame.center : nullptr)
             : region;
         const auto crop = dlss_nr_pass_subrect(region, pass_region, working_width, working_height);
