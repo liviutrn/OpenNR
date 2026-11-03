@@ -322,7 +322,7 @@ patch("tests/uevr_tests.cpp",
         command("1\\n215\\nnr_template_load_2");
         require(field(received, "NrPreset")==2 && field(received, "NrPasses")==2 &&
             std::abs(field(received, "NrWidth")-0.7)<0.0001 &&
-            field(received, "NrPass2IndependentCrop")==1 &&
+            received.find("\\"NrPass2IndependentCrop\\":true") != std::string::npos &&
             std::abs(field(received, "NrPass2CropWidth")-0.3)<0.0001 &&
             std::abs(field(received, "NrPass2CropHeight")-0.45)<0.0001 &&
             field(received, "EyeProcessingMode")==2,
