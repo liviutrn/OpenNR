@@ -47,7 +47,7 @@ patch("uevr/scripts/cheeky_foveated_dlss.lua",
 '''        if draft.EyeProcessingMode ~= nil then
             section("DuoView: NR source view")
             combo("NR processing view", "EyeProcessingMode",
-                {[0]="Both", [1]="View 0 only (fovea)", [2]="View 1 only"}, {0,1,2})
+                {[0]="Both", [1]="View 0 only", [2]="View 1 only"}, {0,1,2})
             text("Deselected view uses native game DLSS; UEVR still renders both.")
             text("Unknown/shared-mono mapping stays native until identified.")
         end
