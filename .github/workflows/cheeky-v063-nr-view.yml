@@ -52,6 +52,9 @@ jobs:
             ./bin/Release/CheekyTests.exe $suite
             if ($LASTEXITCODE -ne 0) { throw "Failed regression suite: $suite" }
           }
+          Write-Host "Testing UEVR host bridge, mode switching and saved setting across reload"
+          ./bin/Release/CheekyUEVRTests.exe
+          if ($LASTEXITCODE -ne 0) { throw "Real UEVR runtime integration failed" }
       - name: Install Inno Setup if absent
         shell: pwsh
         run: |
