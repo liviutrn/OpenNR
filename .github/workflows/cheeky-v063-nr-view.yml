@@ -1,8 +1,8 @@
-name: Cheeky 0.6.3 NR view selector
+name: Cheeky 0.6.3 NR dual templates and per-pass crops
 on:
   push:
     branches:
-      - experiments/cheeky-v063-nr-view-select
+      - experiments/cheeky-v063-dual-nr-profiles-crops
   workflow_dispatch:
 permissions:
   contents: read
@@ -96,7 +96,7 @@ jobs:
       - name: Upload experimental headset-test package
         uses: actions/upload-artifact@v4
         with:
-          name: Cheeky-0.6.3-UEVR-NR-View-Selector
+          name: Cheeky-0.6.3-UEVR-NR-Dual-Templates
           path: |
             upstream-cheeky/bin/Release/*-UEVR-v063-nrview.zip
             upstream-cheeky/bin/installer/CheekyOpenXRSetup.exe
