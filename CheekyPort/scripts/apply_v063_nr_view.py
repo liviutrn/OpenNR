@@ -189,4 +189,118 @@ patch("tests/uevr_tests.cpp",
       '''        require(field(received,"EyeProcessingMode")==2, "UEVR plugin reload lost selected view");
         require(field(received,"NrProcessingOrder")==1 && std::abs(field(received,"NrWorkingScale")-0.37)<0.0001,''')
 
+
+# Per-game dual NR templates. Templates live beside the usual Cheeky INI, but
+# only Nr* fields are restored. SR, FG and DuoView source selection remain live.
+patch("src/settings.hpp",
+      "    std::uint32_t nr_preset{};",
+      "    std::uint32_t nr_preset{};\n    std::uint32_t nr_template_active{}; // 0 custom; 1/2 last loaded or saved slot")
+patch("src/settings.cpp",
+      "std::atomic<std::uint32_t> nr_preset{};",
+      "std::atomic<std::uint32_t> nr_preset{};\nstd::atomic<std::uint32_t> nr_template_active{};")
+patch("src/settings.cpp",
+      "    settings.nr_preset = nr_preset.load(std::memory_order_acquire);",
+      "    settings.nr_preset = nr_preset.load(std::memory_order_acquire);\n    settings.nr_template_active = nr_template_active.load(std::memory_order_acquire);")
+patch("src/settings.cpp",
+      "    nr_preset.store((std::min)(settings.nr_preset, 7U), std::memory_order_release);",
+      "    nr_preset.store((std::min)(settings.nr_preset, 7U), std::memory_order_release);\n    nr_template_active.store((std::min)(settings.nr_template_active, 2U), std::memory_order_release);")
+patch("uevr/settings_fields.inc",
+      'CHEEKY_SETTING("NrPreset", nr_preset)',
+      'CHEEKY_SETTING("NrPreset", nr_preset)\nCHEEKY_SETTING("NrTemplateActive", nr_template_active)')
+# 310.9.16 NR packs original and faster models. Values are independently
+# verified: 1=original 310.8, 2=new 310.9, 0=runtime default (new on 310.9).
+patch("uevr/scripts/cheeky_foveated_dlss.lua",
+      '                slider("NR working scale", "NrWorkingScale", 0.1, 1)',
+      '''                slider("NR working scale", "NrWorkingScale", 0.1, 1)
+                if draft.NrPreset ~= nil then
+                    combo("NR model", "NrPreset",
+                        {[0]="Default (DLL choice)",[1]="Original (310.8 / A)",
+                         [2]="Faster (310.9 / B)"}, {0,1,2})
+                    text("Model change recreates NR features and resets temporal history.")
+                end''')
+patch("uevr/scripts/cheeky_foveated_dlss.lua",
+      '    if imgui.tree_node("DLSS-NR (experimental)") then',
+      '''    if imgui.tree_node("DLSS-NR (experimental)") then
+        section("Saved NR templates")
+        text("Save or load all NR settings, including model and pass settings.")
+        if draft.NrTemplateActive ~= nil then
+            local active = draft.NrTemplateActive
+            text("Last loaded/saved template: " .. (active == 1 and "1" or active == 2 and "2" or "Custom"))
+        end
+        local blocked = pending_apply ~= nil or next(dirty) ~= nil
+        if blocked then text("Apply pending edits before saving or switching templates.") end
+        imgui.begin_disabled(blocked)
+        if imgui.button("Save current as Template 1") then send("nr_template_save_1") end
+        imgui.same_line()
+        if imgui.button("Load Template 1") then send("nr_template_load_1") end
+        if imgui.button("Save current as Template 2") then send("nr_template_save_2") end
+        imgui.same_line()
+        if imgui.button("Load Template 2") then send("nr_template_load_2") end
+        imgui.end_disabled()
+        text("Loading changes NR only; source-view selection, SR and FG are untouched.")''')
+# The game config directory is established by UEVR; no user-supplied path.
+# On error leave current settings completely untouched, including active slot.
+patch("uevr/runtime.cpp",
+      '        if (action == "reset_nr") { reset_dlss_nr(); return true; }',
+      '''        if (action == "reset_nr") { reset_dlss_nr(); return true; }
+        if (action.starts_with("nr_template_save_") ||
+            action.starts_with("nr_template_load_")) {
+            const bool saving = action.starts_with("nr_template_save_");
+            const auto suffix = action.substr(saving ? 17U : 17U);
+            if (suffix != "1" && suffix != "2") {
+                s.message = "Invalid NR template slot"; return false;
+            }
+            const std::uint32_t slot = static_cast<std::uint32_t>(suffix[0] - '0');
+            const auto filepath = s.directory /
+                (slot == 1U ? L"CheekyFoveatedDLSS-NR-Template-1.ini"
+                            : L"CheekyFoveatedDLSS-NR-Template-2.ini");
+            auto settings = configured_settings();
+            std::string error;
+            if (saving) {
+                // Preserve all Nr* fields as a transaction; template loading
+                // deliberately ignores every other saved setting.
+                if (!write_settings_file(filepath, settings, error)) {
+                    s.message = "NR template save failed: " + error; return false;
+                }
+            } else {
+                Settings stored{};
+                if (!read_settings_file(filepath, stored, error)) {
+                    s.message = "NR template load failed: " + error; return false;
+                }
+#define CHEEKY_SETTING(name, field) if (std::string_view(name).starts_with("Nr") && std::string_view(name) != "NrTemplateActive") settings.field = stored.field;
+#include "settings_fields.inc"
+#undef CHEEKY_SETTING
+                update_settings(settings);
+                reset_dlss_nr(); // Do not reuse another model's temporal history.
+            }
+            settings.nr_template_active = slot;
+            update_settings(settings);
+            ++s.revision;
+            s.applied_request = id;
+            s.message = saving ? "NR Template saved" : "NR Template loaded";
+            request_save(s);
+            return true;
+        }''')
+# Tests exercise the real UEVR API, persistence and two profiles.
+patch("tests/uevr_tests.cpp",
+      '        for (unsigned i = 0; i < 35; ++i) { Sleep(10); present(); }',
+      '''        command("1\\\\n210\\\\nset\\\\nNrPreset=1\\\\nNrPasses=1\\\\nNrWidth=0.4\\\\nNrIntensity=0.7");
+        command("1\\\\n211\\\\nnr_template_save_1");
+        require(field(received, "NrTemplateActive")==1, "Template 1 save acknowledged");
+        command("1\\\\n212\\\\nset\\\\nNrPreset=2\\\\nNrPasses=2\\\\nNrWidth=0.7\\\\nNrIntensity=0.35");
+        command("1\\\\n213\\\\nnr_template_save_2");
+        require(field(received, "NrTemplateActive")==2, "Template 2 save acknowledged");
+        command("1\\\\n214\\\\nnr_template_load_1");
+        require(field(received, "NrPreset")==1 && field(received, "NrPasses")==1 &&
+            std::abs(field(received, "NrWidth")-0.4)<0.0001,
+            "Template 1 model, pass count and crop restored");
+        command("1\\\\n215\\\\nnr_template_load_2");
+        require(field(received, "NrPreset")==2 && field(received, "NrPasses")==2 &&
+            std::abs(field(received, "NrWidth")-0.7)<0.0001,
+            "Template 2 model, pass count and crop restored");
+        require(std::filesystem::exists(root/"CheekyFoveatedDLSS-NR-Template-1.ini") &&
+            std::filesystem::exists(root/"CheekyFoveatedDLSS-NR-Template-2.ini"),
+            "Both template files persisted");
+        for (unsigned i = 0; i < 35; ++i) { Sleep(10); present(); }''')
+
 print("Cheeky v0.6.3 r13 minimal source selector applied")
