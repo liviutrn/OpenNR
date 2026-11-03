@@ -547,4 +547,38 @@ patch("tests/gaze_tests.cpp",
             "Out-of-allocation NR crop is rejected without GPU access");
         // Independent source mapping regressions; UEVR serialization is''')
 
+
+# Keep per-pass temporal history coherent when a smaller crop shifts relative
+# to the shared source allocation near screen boundaries.
+patch("src/settings.hpp", '#include <cstdint>', '#include <algorithm>\n#include <cstdint>')
+patch("src/dlss_nr.cpp",
+      "    NrRegion last_region{};",
+      "    NrRegion last_region{};\n    NrPassSubrect last_crop{};")
+patch("src/dlss_nr.cpp",
+      "    passes[0] = {&view, settings, signature, reset, first_crop};",
+      """    const bool first_crop_changed = view.was_enabled &&
+        (view.last_crop.x != first_crop.x || view.last_crop.y != first_crop.y ||
+         view.last_crop.width != first_crop.width || view.last_crop.height != first_crop.height);
+    passes[0] = {&view, settings, signature, reset || first_crop_changed, first_crop};""")
+patch("src/dlss_nr.cpp",
+      """        const bool pass_reset = reset || !pass_view.was_enabled ||
+            pass_view.settings_signature != pass_signature;
+        passes[pass] = {&pass_view, std::move(pass_settings), pass_signature, pass_reset, crop};""",
+      """        const bool crop_changed = pass_view.was_enabled &&
+            (pass_view.last_crop.x != crop.x || pass_view.last_crop.y != crop.y ||
+             pass_view.last_crop.width != crop.width || pass_view.last_crop.height != crop.height);
+        const bool pass_reset = reset || !pass_view.was_enabled || crop_changed ||
+            pass_view.settings_signature != pass_signature;
+        passes[pass] = {&pass_view, std::move(pass_settings), pass_signature, pass_reset, crop};""")
+patch("src/dlss_nr.cpp",
+      """    view.last_region = region; view.last_order = settings.nr_processing_order;""",
+      """    view.last_region = region; view.last_crop = passes[0].crop;
+    view.last_order = settings.nr_processing_order;""")
+patch("src/dlss_nr.cpp",
+      """        passes[pass].view->settings_signature = passes[pass].signature;
+        passes[pass].view->was_enabled = true;""",
+      """        passes[pass].view->settings_signature = passes[pass].signature;
+        passes[pass].view->last_crop = passes[pass].crop;
+        passes[pass].view->was_enabled = true;""")
+
 print("Cheeky v0.6.3 r13 minimal source selector applied")
