@@ -128,6 +128,26 @@ patch("tests/gaze_tests.cpp","int main(int argc, char** argv) {",
         s.eye_processing_mode = 3U;
         update_settings(s);
         expect(configured_settings().eye_processing_mode == 0U, "Invalid mode to Both");
+        // Regression: an SR crop may provide gaze positioning even when NR
+        // has a separately configured size. It must not disable NR pass crops.
+        Settings independent_settings{};
+        independent_settings.nr_foveated = true;
+        independent_settings.nr_use_sr_foveation = false;
+        independent_settings.nr_width = 0.7F;
+        independent_settings.nr_height = 0.6F;
+        independent_settings.nr_extra_passes[0].independent_crop = true;
+        independent_settings.nr_extra_passes[0].crop_width = 0.3F;
+        independent_settings.nr_extra_passes[0].crop_height = 0.4F;
+        const FoveationGeometry sr_gaze_crop{256U,192U,512U,384U,
+            256U,192U,512U,384U};
+        const auto outer_nr = calculate_region(independent_settings,1024U,768U,
+            &sr_gaze_crop,1024U,768U,nullptr);
+        const auto inner_nr = calculate_region(
+            nr_pass_settings(independent_settings,1U),1024U,768U,
+            &sr_gaze_crop,1024U,768U,nullptr);
+        const auto mapped = dlss_nr_pass_subrect(outer_nr,inner_nr,512U,384U);
+        expect(mapped.valid && mapped.width < 512U && mapped.height < 384U,
+            "SR gaze metadata keeps independent NR pass crop active");
         // Independent source mapping regressions; UEVR serialization is
         // tested separately by the native UEVR runtime integration harness.
         // Assigned source identity must not silently depend on the initial
