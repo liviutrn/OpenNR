@@ -25,6 +25,15 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "Patch syntax invalid" }
           python CheekyPort/scripts/apply_v063_nr_view.py upstream-cheeky
           if ($LASTEXITCODE -ne 0) { throw "Strict patch failed" }
+          # Upstream v0.6.3 tag still carries an old 0.6.2 version.h.
+          # Correct release identity in the isolated test package before compiling.
+          $header = "upstream-cheeky/shared/version.h"
+          $text = Get-Content $header -Raw
+          if (-not $text.Contains('#define CHEEKY_VERSION "0.6.2"')) {
+            throw "Unexpected upstream source-version header: review before packaging"
+          }
+          $text = $text.Replace('#define CHEEKY_VERSION "0.6.2"', '#define CHEEKY_VERSION "0.6.3"')
+          [IO.File]::WriteAllText((Resolve-Path $header), $text, [Text.UTF8Encoding]::new($false))
       - name: Compile full upstream solution (no unrelated FG hardware tests)
         working-directory: upstream-cheeky
         shell: pwsh
@@ -60,12 +69,27 @@ jobs:
         working-directory: upstream-cheeky
         shell: pwsh
         run: |
+          # The upstream PowerShell packager verifies its ZIP hashes internally.
+          # Its last cmdlet may retain an unrelated native LASTEXITCODE, so verify
+          # the actual output rather than trusting that inherited exit code.
           ./scripts/package-uevr.ps1 -Configuration Release -Label v063-nrview
-          if ($LASTEXITCODE -ne 0) { throw "UEVR package failed" }
-          if (@(Get-ChildItem bin/Release/*-UEVR-v063-nrview.zip).Count -ne 1) {
-            throw "Missing UEVR archive"
+          $zip = @(Get-ChildItem bin/Release/*-UEVR-v063-nrview.zip)
+          if ($zip.Count -ne 1) { throw "Missing or ambiguous UEVR archive" }
+          if ($zip[0].Name -ne "CheekyFoveatedDLSS-0.6.3-UEVR-v063-nrview.zip") {
+            throw "Incorrect version-stamped UEVR archive: $($zip[0].Name)"
           }
-          Get-ChildItem bin/Release/*-UEVR-v063-nrview.zip | Get-FileHash -Algorithm SHA256
+          $test = [IO.Compression.ZipFile]::OpenRead($zip[0].FullName)
+          try {
+            foreach ($expected in @("plugins/CheekyFoveatedDLSS.dll",
+                                  "plugins/CheekyFoveatedDLSS/CheekyFoveatedDLSSRuntime.dll",
+                                  "scripts/cheeky_foveated_dlss.lua",
+                                  "OpenXR/CheekyOpenXRSetup.exe")) {
+              if (-not @($test.Entries | Where-Object FullName -EQ $expected).Count) {
+                throw "Missing required UEVR payload: $expected"
+              }
+            }
+          } finally { $test.Dispose() }
+          $zip[0] | Get-FileHash -Algorithm SHA256
       - name: Upload experimental headset-test package
         uses: actions/upload-artifact@v4
         with:
