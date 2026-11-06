@@ -1,8 +1,8 @@
-name: Cheeky 0.6.3 NR dual templates and per-pass crops
+name: Cheeky 0.6.3 TriView dual-fovea NR (lean VRAM)
 on:
   push:
     branches:
-      - experiments/cheeky-v063-dual-nr-profiles-crops
+      - experiment/cheeky-v063-triview-dual-fovea-nr-20261106
   workflow_dispatch:
 permissions:
   contents: read
@@ -18,7 +18,7 @@ jobs:
           repository: ClarkCheekyKent/CheekyFoveatedDLSS
           ref: 39bfc96214498e5e21cf861f0eb21f875697b428
           path: upstream-cheeky
-      - name: Apply focused r13 selector
+      - name: Apply TriView dual-fovea NR routing and VRAM cleanup
         shell: pwsh
         run: |
           python -m py_compile CheekyPort/scripts/apply_v063_nr_view.py
@@ -75,10 +75,10 @@ jobs:
           # The upstream PowerShell packager verifies its ZIP hashes internally.
           # Its last cmdlet may retain an unrelated native LASTEXITCODE, so verify
           # the actual output rather than trusting that inherited exit code.
-          ./scripts/package-uevr.ps1 -Configuration Release -Label v063-nrview
-          $zip = @(Get-ChildItem bin/Release/*-UEVR-v063-nrview.zip)
+          ./scripts/package-uevr.ps1 -Configuration Release -Label v063-triview-nr
+          $zip = @(Get-ChildItem bin/Release/*-UEVR-v063-triview-nr.zip)
           if ($zip.Count -ne 1) { throw "Missing or ambiguous UEVR archive" }
-          if ($zip[0].Name -ne "CheekyFoveatedDLSS-0.6.3-UEVR-v063-nrview.zip") {
+          if ($zip[0].Name -ne "CheekyFoveatedDLSS-0.6.3-UEVR-v063-triview-nr.zip") {
             throw "Incorrect version-stamped UEVR archive: $($zip[0].Name)"
           }
           $test = [IO.Compression.ZipFile]::OpenRead($zip[0].FullName)
@@ -96,9 +96,9 @@ jobs:
       - name: Upload experimental headset-test package
         uses: actions/upload-artifact@v4
         with:
-          name: Cheeky-0.6.3-UEVR-NR-Dual-Templates
+          name: Cheeky-0.6.3-UEVR-TriView-Foveas-NR-LowVRAM
           path: |
-            upstream-cheeky/bin/Release/*-UEVR-v063-nrview.zip
+            upstream-cheeky/bin/Release/*-UEVR-v063-triview-nr.zip
             upstream-cheeky/bin/installer/CheekyOpenXRSetup.exe
           if-no-files-found: error
           retention-days: 20
