@@ -10,20 +10,21 @@ def patch(path,old,new,count=1):
     print("PATCH",path,count)
 
 patch("src/settings.hpp","    bool enabled{true};",
-      "    bool enabled{true};\n    std::uint32_t eye_processing_mode{0U}; // Both=0, view0=1, view1=2")
+      "    bool enabled{true};\n    std::uint32_t eye_processing_mode{0U}; // All=0, Duo view0=1, Duo view1=2, Tri foveas=3")
 patch("src/settings.hpp","[[nodiscard]] Settings settings_for_view(",
-      "[[nodiscard]] bool cheeky_processing_allowed_for_view(const Settings&, std::uint64_t) noexcept;\n[[nodiscard]] Settings settings_for_view(")
+      "[[nodiscard]] bool cheeky_processing_allowed_for_view(const Settings&, std::uint64_t) noexcept;\n[[nodiscard]] bool cheeky_triview_fovea(std::uint64_t) noexcept;\n[[nodiscard]] Settings settings_for_view(")
 patch("src/settings.cpp","std::atomic<bool> enabled{true};",
       "std::atomic<bool> enabled{true};\nstd::atomic<std::uint32_t> eye_processing_mode{0U};")
 patch("src/settings.cpp","    settings.enabled = enabled.load(std::memory_order_acquire);",
       "    settings.enabled = enabled.load(std::memory_order_acquire);\n    settings.eye_processing_mode = eye_processing_mode.load(std::memory_order_acquire);")
 patch("src/settings.cpp","    enabled.store(settings.enabled, std::memory_order_release);",
-      "    enabled.store(settings.enabled, std::memory_order_release);\n    eye_processing_mode.store(settings.eye_processing_mode <= 2U ? settings.eye_processing_mode : 0U, std::memory_order_release);")
+      "    enabled.store(settings.enabled, std::memory_order_release);\n    eye_processing_mode.store(settings.eye_processing_mode <= 3U ? settings.eye_processing_mode : 0U, std::memory_order_release);")
 patch("src/settings.cpp","Settings settings_for_view(\n",
 """bool cheeky_processing_allowed_for_view(const Settings& settings,
     const std::uint64_t view_id) noexcept {
     if (settings.eye_processing_mode == 0U) return true;
-    if (view_id == 0U || settings.eye_processing_mode > 2U) return false;
+    if (settings.eye_processing_mode == 3U) return cheeky_triview_fovea(view_id);
+    if (view_id == 0U || settings.eye_processing_mode > 3U) return false;
     // Identical to proven r13: use existing role coordinator, not handle order.
     static_cast<void>(settings_for_view(settings, view_id));
     const auto role = stereo_eye_assignment(view_id);
@@ -45,11 +46,11 @@ patch("uevr/scripts/cheeky_foveated_dlss.lua",
 patch("uevr/scripts/cheeky_foveated_dlss.lua",
       '        reset_group("Reset Stereo / gaze defaults", "gaze")',
 '''        if draft.EyeProcessingMode ~= nil then
-            section("DuoView: NR source view")
+            section("NR source selection: TriView / DuoView")
             combo("NR processing view", "EyeProcessingMode",
-                {[0]="Both", [1]="View 0 only", [2]="View 1 only"}, {0,1,2})
-            text("Deselected view uses native game DLSS; UEVR still renders both.")
-            text("Unknown/shared-mono mapping stays native until identified.")
+                {[0]="All rendered DLSS views", [1]="DuoView View 0", [2]="DuoView View 1",\n                 [3]="TriView: both foveas only"}, {0,1,2,3})
+            text("TriView foveas: matching stereo output sizes; mono periphery bypasses NR.")
+            text("Ambiguous or incomplete mapping bypasses NR safely. All processes every DLSS view.")
         end
         reset_group("Reset Stereo / gaze defaults", "gaze")''')
 
@@ -125,29 +126,9 @@ patch("tests/gaze_tests.cpp","int main(int argc, char** argv) {",
         s.eye_processing_mode = 2U;
         expect(!cheeky_processing_allowed_for_view(s,99001), "View 0 deselected");
         expect(cheeky_processing_allowed_for_view(s,99002), "View 1 selected");
-        s.eye_processing_mode = 3U;
+        s.eye_processing_mode = 4U;
         update_settings(s);
-        expect(configured_settings().eye_processing_mode == 0U, "Invalid mode to Both");
-        // Regression: an SR crop may provide gaze positioning even when NR
-        // has a separately configured size. It must not disable NR pass crops.
-        Settings independent_settings{};
-        independent_settings.nr_foveated = true;
-        independent_settings.nr_use_sr_foveation = false;
-        independent_settings.nr_width = 0.7F;
-        independent_settings.nr_height = 0.6F;
-        independent_settings.nr_extra_passes[0].independent_crop = true;
-        independent_settings.nr_extra_passes[0].crop_width = 0.3F;
-        independent_settings.nr_extra_passes[0].crop_height = 0.4F;
-        const FoveationGeometry sr_gaze_crop{256U,192U,512U,384U,
-            256U,192U,512U,384U};
-        const auto outer_nr = calculate_region(independent_settings,1024U,768U,
-            &sr_gaze_crop,1024U,768U,nullptr);
-        const auto inner_nr = calculate_region(
-            nr_pass_settings(independent_settings,1U),1024U,768U,
-            &sr_gaze_crop,1024U,768U,nullptr);
-        const auto mapped = dlss_nr_pass_subrect(outer_nr,inner_nr,512U,384U);
-        expect(mapped.valid && mapped.width < 512U && mapped.height < 384U,
-            "SR gaze metadata keeps independent NR pass crop active");
+        expect(configured_settings().eye_processing_mode == 0U, "Invalid mode to All");
         // Independent source mapping regressions; UEVR serialization is
         // tested separately by the native UEVR runtime integration harness.
         // Assigned source identity must not silently depend on the initial
@@ -339,271 +320,3 @@ patch("tests/uevr_tests.cpp",
         for (unsigned i = 0; i < 35; ++i) { Sleep(10); present(); }''')
 
 
-# Independent *actual* evaluation subrects for chained NR passes.
-# Keep the full shared HDR proxy and its depth/motion guides in a common coordinate
-# space. Each pass has a centered, independently sized NGX evaluation rectangle.
-# A partial pass copies its input to the output before neural evaluation so
-# pixels outside that rectangle keep the preceding pass (no uninitialized GPU
-# output, and no extra game render or composition pass).
-patch("src/settings.hpp",
-      "    float local_tone_strength{1.0F};\n    bool operator==(const NrExtraPass&) const = default;",
-      """    float local_tone_strength{1.0F};
-    bool independent_crop{false}; // When false inherit the first NR crop size.
-    float crop_width{0.56F};      // Fractions of this DLSS source view.
-    float crop_height{0.56F};
-    bool operator==(const NrExtraPass&) const = default;""")
-patch("src/settings.cpp",
-      "        tuning(pass.local_tone_strength, 2.0F, 1.0F),\n    };",
-      """        tuning(pass.local_tone_strength, 2.0F, 1.0F),
-        pass.independent_crop,
-        std::isfinite(pass.crop_width) ? std::clamp(pass.crop_width, 0.2F, 1.0F) : 0.56F,
-        std::isfinite(pass.crop_height) ? std::clamp(pass.crop_height, 0.2F, 1.0F) : 0.56F,
-    };""")
-patch("src/settings.hpp",
-      "    if (extra.same_as_pass1) return result;\n    result.nr_style = extra.style;",
-      """    if (extra.independent_crop && result.nr_foveated && !result.nr_use_sr_foveation) {
-        result.nr_width = std::clamp(extra.crop_width, 0.2F, 1.0F);
-        result.nr_height = std::clamp(extra.crop_height, 0.2F, 1.0F);
-    }
-    if (extra.same_as_pass1) return result;
-    result.nr_style = extra.style;""")
-# This helper is pure integer geometry and unit-testable without an NVIDIA GPU.
-patch("src/dlss_nr_contract.hpp",
-      "#include <cstdint>",
-      "#include <cstdint>\n#include <algorithm>")
-patch("src/dlss_nr_contract.hpp",
-      "struct ScaledSubrect {",
-      """struct NrPassSubrect {
-    std::uint32_t x{}, y{}, width{}, height{};
-    bool valid{};
-    [[nodiscard]] bool full(std::uint32_t w, std::uint32_t h) const noexcept {
-        return valid && !x && !y && width == w && height == h;
-    }
-};
-
-// Transfer a pass's absolute input region to the working-resolution allocation.
-// Nested region checks prevent a mapping error from silently cropping wrong pixels.
-[[nodiscard]] inline NrPassSubrect dlss_nr_pass_subrect(
-    const NrRegion& allocation, const NrRegion& pass,
-    std::uint32_t working_width, std::uint32_t working_height
-) noexcept {
-    NrPassSubrect out{};
-    if (!working_width || !working_height || !allocation.width || !allocation.height ||
-        !pass.width || !pass.height || pass.base_x < allocation.base_x ||
-        pass.base_y < allocation.base_y ||
-        std::uint64_t(pass.base_x) + pass.width > std::uint64_t(allocation.base_x) + allocation.width ||
-        std::uint64_t(pass.base_y) + pass.height > std::uint64_t(allocation.base_y) + allocation.height)
-        return out;
-    const auto convert = [](std::uint32_t delta, std::uint32_t length,
-        std::uint32_t full, std::uint32_t capacity, std::uint32_t& first,
-        std::uint32_t& extent) noexcept {
-        const auto begin = (std::uint64_t(delta) * capacity + full / 2U) / full;
-        const auto end = (std::uint64_t(delta + length) * capacity + full / 2U) / full;
-        first = std::uint32_t(std::min<std::uint64_t>(begin, capacity - 1U));
-        extent = std::uint32_t(std::min<std::uint64_t>(capacity - first,
-            std::max<std::uint64_t>(end > first ? end - first : 1U, 1U)));
-    };
-    convert(pass.base_x - allocation.base_x, pass.width, allocation.width,
-            working_width, out.x, out.width);
-    convert(pass.base_y - allocation.base_y, pass.height, allocation.height,
-            working_height, out.y, out.height);
-    out.valid = out.width != 0U && out.height != 0U;
-    return out;
-}
-
-struct ScaledSubrect {""")
-patch("uevr/settings_fields.inc",
-      'CHEEKY_SETTING("NrPass2SameAsPass1", nr_extra_passes[0].same_as_pass1)',
-      '''CHEEKY_SETTING("NrPass2SameAsPass1", nr_extra_passes[0].same_as_pass1)
-CHEEKY_SETTING("NrPass2IndependentCrop", nr_extra_passes[0].independent_crop)
-CHEEKY_SETTING("NrPass2CropWidth", nr_extra_passes[0].crop_width)
-CHEEKY_SETTING("NrPass2CropHeight", nr_extra_passes[0].crop_height)''')
-patch("uevr/settings_fields.inc",
-      'CHEEKY_SETTING("NrPass3SameAsPass1", nr_extra_passes[1].same_as_pass1)',
-      '''CHEEKY_SETTING("NrPass3SameAsPass1", nr_extra_passes[1].same_as_pass1)
-CHEEKY_SETTING("NrPass3IndependentCrop", nr_extra_passes[1].independent_crop)
-CHEEKY_SETTING("NrPass3CropWidth", nr_extra_passes[1].crop_width)
-CHEEKY_SETTING("NrPass3CropHeight", nr_extra_passes[1].crop_height)''')
-# Keep crop independent of model-tuning "Same as pass 1" switch.
-patch("uevr/scripts/cheeky_foveated_dlss.lua",
-      '    if not imgui.tree_node("Pass " .. number .. " settings") then return end',
-      '''    if not imgui.tree_node("Pass " .. number .. " settings") then return end
-    check("Independent crop size##" .. p, p .. "IndependentCrop")
-    if draft[p .. "IndependentCrop"] == true then
-        slider("Crop width (of source)##" .. p, p .. "CropWidth", 0.2, 1)
-        slider("Crop height (of source)##" .. p, p .. "CropHeight", 0.2, 1)
-        text("Centered on the same gaze point as Pass 1.")
-        if draft.NrUseSrFoveation then
-            text("Disable Use SR size and shape for independent crops.")
-        end
-    end''')
-patch("uevr/scripts/cheeky_foveated_dlss.lua",
-      '                    text("Each extra pass refines the previous one and costs about one more NR evaluation.")',
-      '''                    text("Each pass may use its own crop width and height.")
-                    text("Different crops use NVIDIA NGX subrects; GPU savings depend on runtime support.")
-                    text("Each extra pass refines the previous output and costs one more NR evaluation.")''')
-# The codec allocates the encompassing pass region and produces the shared
-# normalized color/guide textures only once.
-patch("src/dlss_nr.cpp",
-      """    const auto region = calculate_region(
-        settings,
-        processing_width,""",
-      """    Settings allocation_settings = settings;
-    const bool independent_crops_allowed = settings.nr_foveated &&
-        !settings.nr_use_sr_foveation && !frame.color_is_region;
-    if (independent_crops_allowed) {
-        for (std::uint32_t index = 1U;
-             index < std::clamp(settings.nr_passes, 1U, max_nr_passes); ++index) {
-            const auto pass = nr_pass_settings(settings, index);
-            allocation_settings.nr_width = std::max(allocation_settings.nr_width, pass.nr_width);
-            allocation_settings.nr_height = std::max(allocation_settings.nr_height, pass.nr_height);
-        }
-    }
-    const auto region = calculate_region(
-        allocation_settings,
-        processing_width,""")
-# NR histories must invalidate if the individual first crop changes while the
-# union/allocation region stays constant because another pass is larger.
-patch("src/dlss_nr.cpp",
-      """    const auto signature = dlss_nr_history_signature(nr_settings_signature(settings, region), {""",
-      """    const auto first_region = independent_crops_allowed
-        ? calculate_region(settings, processing_width, processing_height,
-            frame.has_shared_sr_crop ? &frame.shared_sr_crop : nullptr,
-            frame.input_width, frame.input_height, frame.has_center ? &frame.center : nullptr)
-        : region;
-    const auto signature = dlss_nr_history_signature(
-        nr_settings_signature(settings, region) ^
-            (nr_settings_signature(settings, first_region) * 0x9e3779b97f4a7c15ULL), {""")
-patch("src/dlss_nr.cpp",
-      """        bool reset{};
-    };
-    std::array<ModelPass, max_nr_passes> passes{};
-    passes[0] = {&view, settings, signature, reset};""",
-      """        bool reset{};
-        NrPassSubrect crop{};
-    };
-    std::array<ModelPass, max_nr_passes> passes{};
-    const auto first_crop = dlss_nr_pass_subrect(region, first_region,
-        working_width, working_height);
-    if (!first_crop.valid) {
-        diagnostics.state = DlssNrState::input_preparation_failed;
-        diagnostics.skip_reason = "NR pass 1 crop outside shared allocation";
-        ++diagnostics.failed_calls;
-        return false;
-    }
-    passes[0] = {&view, settings, signature, reset, first_crop};""")
-patch("src/dlss_nr.cpp",
-      """        // Chain the signature so a change to an earlier pass resets later ones.
-        const auto pass_signature = (passes[pass - 1U].signature * 1099511628211ULL) ^
-            nr_settings_signature(pass_settings, region);
-        const bool pass_reset = reset || !pass_view.was_enabled ||
-            pass_view.settings_signature != pass_signature;
-        passes[pass] = {&pass_view, std::move(pass_settings), pass_signature, pass_reset};""",
-      """        const auto pass_region = independent_crops_allowed
-            ? calculate_region(pass_settings, processing_width, processing_height,
-                frame.has_shared_sr_crop ? &frame.shared_sr_crop : nullptr,
-                frame.input_width, frame.input_height, frame.has_center ? &frame.center : nullptr)
-            : region;
-        const auto crop = dlss_nr_pass_subrect(region, pass_region, working_width, working_height);
-        if (!crop.valid) {
-            diagnostics.state = DlssNrState::input_preparation_failed;
-            diagnostics.skip_reason = "Later NR pass crop outside shared allocation";
-            ++diagnostics.failed_calls;
-            return false;
-        }
-        // Chain signatures so changes in any earlier pass invalidate descendants.
-        const auto pass_signature = (passes[pass - 1U].signature * 1099511628211ULL) ^
-            nr_settings_signature(pass_settings, pass_region);
-        const bool pass_reset = reset || !pass_view.was_enabled ||
-            pass_view.settings_signature != pass_signature;
-        passes[pass] = {&pass_view, std::move(pass_settings), pass_signature, pass_reset, crop};""")
-patch("src/dlss_nr.cpp",
-      """        move_model_output(output, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
-        auto* const parameters = model.view->parameters;
-        parameters->Set("DLSSNR.Color", pass_input);""",
-      """        // When the pass covers only part of the common HDR proxy, preserve the
-        // rest of its preceding pass by copying first. This is recorded on the
-        // same command list, with explicit source/destination state transitions.
-        if (!model.crop.full(working_width, working_height)) {
-            if (pass_input == gpu->color_proxy) {
-                transition(frame.command_list, pass_input,
-                    D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
-                    D3D12_RESOURCE_STATE_COPY_SOURCE);
-            } else move_model_output(pass_input, D3D12_RESOURCE_STATE_COPY_SOURCE);
-            move_model_output(output, D3D12_RESOURCE_STATE_COPY_DEST);
-            frame.command_list->CopyResource(output, pass_input);
-            if (pass_input == gpu->color_proxy) {
-                transition(frame.command_list, pass_input,
-                    D3D12_RESOURCE_STATE_COPY_SOURCE,
-                    D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
-            } else move_model_output(pass_input, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
-        }
-        move_model_output(output, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
-        auto* const parameters = model.view->parameters;
-        parameters->Set("DLSSNR.Color", pass_input);""")
-# Set matching color/depth/motion/output NGX subrects; guides are a single
-# coherent common-resolution texture, so all four share exactly the same crop.
-for key in ("Color", "Output", "Depth", "MVec"):
-    patch("src/dlss_nr.cpp",
-          f'        parameters->Set("DLSSNR.{key}SubrectBaseX", 0U);',
-          f'        parameters->Set("DLSSNR.{key}SubrectBaseX", model.crop.x);')
-    patch("src/dlss_nr.cpp",
-          f'        parameters->Set("DLSSNR.{key}SubrectBaseY", 0U);',
-          f'        parameters->Set("DLSSNR.{key}SubrectBaseY", model.crop.y);')
-    patch("src/dlss_nr.cpp",
-          f'        parameters->Set("DLSSNR.{key}SubrectWidth", working_width);',
-          f'        parameters->Set("DLSSNR.{key}SubrectWidth", model.crop.width);')
-    patch("src/dlss_nr.cpp",
-          f'        parameters->Set("DLSSNR.{key}SubrectHeight", working_height);',
-          f'        parameters->Set("DLSSNR.{key}SubrectHeight", model.crop.height);')
-# Geometry unit tests prove nested, asymmetric, full-sized and invalid crops.
-patch("tests/gaze_tests.cpp",
-      '        // Independent source mapping regressions; UEVR serialization is',
-      '''        const NrRegion outer{100U, 50U, 800U, 600U};
-        const NrRegion middle{300U, 200U, 400U, 300U};
-        const NrRegion invalid{0U, 0U, 400U, 300U};
-        const auto inner = dlss_nr_pass_subrect(outer, middle, 400U, 300U);
-        expect(inner.valid && inner.x == 100U && inner.y == 75U &&
-            inner.width == 200U && inner.height == 150U,
-            "Later pass independent centered crop has correct pixel subrect");
-        expect(dlss_nr_pass_subrect(outer, outer, 400U, 300U).full(400U, 300U),
-            "Matching pass crops preserve the old full-frame model path");
-        expect(!dlss_nr_pass_subrect(outer, invalid, 400U, 300U).valid,
-            "Out-of-allocation NR crop is rejected without GPU access");
-        // Independent source mapping regressions; UEVR serialization is''')
-
-
-# Keep per-pass temporal history coherent when a smaller crop shifts relative
-# to the shared source allocation near screen boundaries.
-patch("src/settings.hpp", '#include <cstdint>', '#include <algorithm>\n#include <cstdint>')
-patch("src/dlss_nr.cpp",
-      "    NrRegion last_region{};",
-      "    NrRegion last_region{};\n    NrPassSubrect last_crop{};")
-patch("src/dlss_nr.cpp",
-      "    passes[0] = {&view, settings, signature, reset, first_crop};",
-      """    const bool first_crop_changed = view.was_enabled &&
-        (view.last_crop.x != first_crop.x || view.last_crop.y != first_crop.y ||
-         view.last_crop.width != first_crop.width || view.last_crop.height != first_crop.height);
-    passes[0] = {&view, settings, signature, reset || first_crop_changed, first_crop};""")
-patch("src/dlss_nr.cpp",
-      """        const bool pass_reset = reset || !pass_view.was_enabled ||
-            pass_view.settings_signature != pass_signature;
-        passes[pass] = {&pass_view, std::move(pass_settings), pass_signature, pass_reset, crop};""",
-      """        const bool crop_changed = pass_view.was_enabled &&
-            (pass_view.last_crop.x != crop.x || pass_view.last_crop.y != crop.y ||
-             pass_view.last_crop.width != crop.width || pass_view.last_crop.height != crop.height);
-        const bool pass_reset = reset || !pass_view.was_enabled || crop_changed ||
-            pass_view.settings_signature != pass_signature;
-        passes[pass] = {&pass_view, std::move(pass_settings), pass_signature, pass_reset, crop};""")
-patch("src/dlss_nr.cpp",
-      """    view.last_region = region; view.last_order = settings.nr_processing_order;""",
-      """    view.last_region = region; view.last_crop = passes[0].crop;
-    view.last_order = settings.nr_processing_order;""")
-patch("src/dlss_nr.cpp",
-      """        passes[pass].view->settings_signature = passes[pass].signature;
-        passes[pass].view->was_enabled = true;""",
-      """        passes[pass].view->settings_signature = passes[pass].signature;
-        passes[pass].view->last_crop = passes[pass].crop;
-        passes[pass].view->was_enabled = true;""")
-
-print("Cheeky v0.6.3 r13 minimal source selector applied")
