@@ -129,6 +129,27 @@ patch("tests/gaze_tests.cpp","int main(int argc, char** argv) {",
         s.eye_processing_mode = 4U;
         update_settings(s);
         expect(configured_settings().eye_processing_mode == 0U, "Invalid mode to All");
+        s.eye_processing_mode = 3U;
+        update_settings(s);
+        expect(configured_settings().eye_processing_mode == 3U, "TriView selector persisted");
+        expect(!cheeky_processing_allowed_for_view(s,99001),
+               "Incomplete TriView mapping must not guess");
+        register_stereo_view(99004);
+        note_stereo_view_evaluation(99001,12U,800U,500U,1600U,1000U);
+        note_stereo_view_evaluation(99002,12U,800U,500U,1600U,1000U);
+        note_stereo_view_evaluation(99004,12U,1000U,600U,4000U,2000U);
+        expect(cheeky_processing_allowed_for_view(s,99001) &&
+               cheeky_processing_allowed_for_view(s,99002) &&
+               !cheeky_processing_allowed_for_view(s,99004),
+               "TriView both equal-size foveas, no full-FOV mono periphery");
+        note_stereo_view_evaluation(99004,12U,800U,500U,1600U,1000U);
+        expect(!cheeky_processing_allowed_for_view(s,99001) &&
+               !cheeky_processing_allowed_for_view(s,99004),
+               "Three same-size sources are ambiguous, fail closed");
+        unregister_stereo_view(99004);
+        s.eye_processing_mode = 0U;
+        expect(cheeky_processing_allowed_for_view(s,99001),
+               "All mode supports any source count");
         // Independent source mapping regressions; UEVR serialization is
         // tested separately by the native UEVR runtime integration harness.
         // Assigned source identity must not silently depend on the initial
@@ -169,6 +190,51 @@ patch("tests/gaze_tests.cpp","int main(int argc, char** argv) {",
         update_settings(old);
         return failures ? 1 : 0;
     }''')
+
+# Geometry-only TriView identification: no extra D3D12 resources, shaders,
+# per-view buffers or latency. Uses the already-collected NGX evaluation sizes.
+patch("src/settings.cpp",
+      "bool cheeky_processing_allowed_for_view(const Settings& settings,",
+      """bool cheeky_triview_fovea(const std::uint64_t view_id) noexcept {
+    if (!view_id) return false;
+    // Prefer verified OpenXR quad roles when those exist.
+    const auto quad = quad_view_snapshot();
+    if (quad.active) {
+        if (quad.status != 2) return false;
+        const auto* role = quad_view_assignment(quad, view_id, stereo_view_generation(view_id));
+        return role != nullptr && role->focus;
+    }
+    // TriView's two *real* stereo foveas are the unique equal-output-size
+    // pair among three DLSS source calls. The mono full-FOV source is unique.
+    // Use game evaluation geometry, never NGX handle creation/evaluation order.
+    std::lock_guard lock(stereo_views_mutex);
+    const auto now = GetTickCount64();
+    const StereoView* v[3]{};
+    unsigned n{};
+    for (const auto& source : stereo_views) {
+        if (!source.evaluation_calls || source.graphics_api != 12U ||
+            !source.evaluation_output_width || !source.evaluation_output_height ||
+            source.last_evaluation_ms > now ||
+            now - source.last_evaluation_ms > 2000U) continue;
+        if (n == 3U) return false; // A fourth live source makes role inference unsafe.
+        v[n++] = &source;
+    }
+    if (n != 3U) return false; // Do not process a partial / startup set.
+    const auto equal = [](const StereoView* a, const StereoView* b) noexcept {
+        return a->evaluation_output_width == b->evaluation_output_width &&
+               a->evaluation_output_height == b->evaluation_output_height;
+    };
+    const bool ab = equal(v[0],v[1]), ac = equal(v[0],v[2]), bc = equal(v[1],v[2]);
+    if (ab && !ac && !bc)
+        return view_id == v[0]->view_id || view_id == v[1]->view_id;
+    if (ac && !ab && !bc)
+        return view_id == v[0]->view_id || view_id == v[2]->view_id;
+    if (bc && !ab && !ac)
+        return view_id == v[1]->view_id || view_id == v[2]->view_id;
+    return false; // All-equal or no equal pair: do not process unknown periphery.
+}
+
+bool cheeky_processing_allowed_for_view(const Settings& settings,""")
 
 # Independent integration tests use the *real* UEVR runtime command bridge,
 # rather than just calling the selector directly in the coordinator fixture.
@@ -293,7 +359,7 @@ patch("tests/uevr_tests.cpp",
       '''        command("1\\n210\\nset\\nNrPreset=1\\nNrPasses=1\\nNrWidth=0.4\\nNrIntensity=0.7");
         command("1\\n211\\nnr_template_save_1");
         require(field(received, "NrTemplateActive")==1, "Template 1 save acknowledged");
-        command("1\\n212\\nset\\nNrPreset=2\\nNrPasses=2\\nNrWidth=0.7\\nNrIntensity=0.35\\nNrPass2IndependentCrop=true\\nNrPass2CropWidth=0.3\\nNrPass2CropHeight=0.45");
+        command("1\\n212\\nset\\nNrPreset=2\\nNrPasses=2\\nNrWidth=0.7\\nNrIntensity=0.35");
         command("1\\n213\\nnr_template_save_2");
         require(field(received, "NrTemplateActive")==2, "Template 2 save acknowledged");
         command("1\\n214\\nnr_template_load_1");
@@ -303,11 +369,8 @@ patch("tests/uevr_tests.cpp",
         command("1\\n215\\nnr_template_load_2");
         require(field(received, "NrPreset")==2 && field(received, "NrPasses")==2 &&
             std::abs(field(received, "NrWidth")-0.7)<0.0001 &&
-            received.find("\\"NrPass2IndependentCrop\\":true") != std::string::npos &&
-            std::abs(field(received, "NrPass2CropWidth")-0.3)<0.0001 &&
-            std::abs(field(received, "NrPass2CropHeight")-0.45)<0.0001 &&
             field(received, "EyeProcessingMode")==2,
-            "Template 2 restores independent second crop without changing DuoView source selector");
+            "Template 2 restores NR only and preserves DuoView source selection");
         command("1\\n216\\nnr_template_toggle");
         require(field(received, "NrPreset")==1 && field(received,"NrTemplateActive")==1,
             "One-click toggle switched from template 2 to template 1");
@@ -320,3 +383,36 @@ patch("tests/uevr_tests.cpp",
         for (unsigned i = 0; i < 35; ++i) { Sleep(10); present(); }''')
 
 
+# Reduce VRAM after model switches without violating GPU recording lifetimes.
+# A stale cached feature remains only until its in-flight submissions complete.
+patch("src/dlss_nr.cpp",
+      "constexpr std::size_t retired_feature_capacity = 1U;",
+      "constexpr std::size_t retired_feature_capacity = 0U; // no idle old A/B NR model")
+
+# Retire old-resolution fovea scratch sets after a resize / profile change.
+# Keep upstream's 8-slot cache for rotating live source textures to avoid
+# per-frame allocations or GPU stalls.
+patch("src/dlss_nr.cpp",
+      """    auto* exposure = debug_exposure_supported(debug_exposure) ? debug_exposure.texture : nullptr;
+    for (auto& gpu : view.gpu_resources) {""",
+      """    auto* exposure = debug_exposure_supported(debug_exposure) ? debug_exposure.texture : nullptr;
+    if (!border_only) {
+        for (auto it = view.gpu_resources.begin(); it != view.gpu_resources.end();) {
+            const bool stale = !it->border_only &&
+                (it->width != region.width || it->height != region.height ||
+                 it->working_width != working_width ||
+                 it->working_height != working_height);
+            if (stale) {
+                it->uses.collect();
+                if (it->uses.empty()) {
+                    release_gpu(*it);
+                    it = view.gpu_resources.erase(it);
+                    continue;
+                }
+            }
+            ++it;
+        }
+    }
+    for (auto& gpu : view.gpu_resources) {""")
+
+print("Cheeky v0.6.3 TriView NR: two foveas, mono bypass, original NR crops, lean VRAM")
