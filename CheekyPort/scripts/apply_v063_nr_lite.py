@@ -75,7 +75,7 @@ edit("src/settings.cpp",
     '''    fg_settings = settings.fg;
     fg_settings.enabled = false; // NR Lite must not run Cheeky FG
     fg_settings.force_reflex_off = false; // NR Lite does not override Reflex
-    nr_passes = std::clamp(settings.nr_passes, 1U, 2U);''')
+    nr_passes = std::clamp(settings.nr_passes, 1U, max_nr_passes);''')
 edit("src/settings.cpp",
     '''    reflex_override::requested.store(settings.fg.force_reflex_off,std::memory_order_release);''',
     '''    reflex_override::requested.store(false,std::memory_order_release);''')
