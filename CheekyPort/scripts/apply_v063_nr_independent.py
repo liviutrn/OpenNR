@@ -264,6 +264,29 @@ patch("uevr/nr_lite_budget_policy.hpp",
             features==3U ? 2304ULL : features>=1U ? 1536ULL : 0ULL) * nr_lite_mib;
     }""")
 
+# Execute against the actual runtime source-view observation code, not mocks.
+patch("tests/gaze_tests.cpp",
+    '''        note_stereo_view_evaluation(99004,12U,1000U,600U,4000U,2000U);
+        expect(cheeky_processing_allowed_for_view(s,99001) &&''',
+    '''        note_stereo_view_evaluation(99004,12U,1000U,600U,4000U,2000U);
+        s.nr_enabled=true; s.nr_passes=2U;
+        s.nr_pass1_views=7U; s.nr_pass2_views=3U;
+        expect(cheeky_nr_selected_passes(s,99001)==3U &&
+               cheeky_nr_selected_passes(s,99002)==3U &&
+               cheeky_nr_selected_passes(s,99004)==1U,
+               "Pass1 all, pass2 foveas excludes peripheral pass2");
+        s.nr_pass1_views=4U; s.nr_pass2_views=3U;
+        expect(cheeky_nr_selected_passes(s,99001)==2U &&
+               cheeky_nr_selected_passes(s,99002)==2U &&
+               cheeky_nr_selected_passes(s,99004)==1U,
+               "Independent pass mask routing");
+        s.nr_pass1_views=0U; s.nr_pass2_views=4U;
+        expect(cheeky_nr_selected_passes(s,99001)==0U &&
+               cheeky_nr_selected_passes(s,99004)==2U,
+               "Pass2-only peripheral routing");
+        s.nr_enabled=false; s.nr_pass1_views=3U; s.nr_pass2_views=3U;
+        expect(cheeky_processing_allowed_for_view(s,99001) &&''')
+
 # The previous build had intentionally changed defaults to Before SR, and this
 # test was still asserting upstream's After SR default. Update only that check.
 patch("tests/nr_processing_tests.cpp",
