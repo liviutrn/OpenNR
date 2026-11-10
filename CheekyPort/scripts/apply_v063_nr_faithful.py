@@ -98,7 +98,8 @@ patch("uevr/scripts/cheeky_foveated_dlss.lua",
             slider("Neural saturation change", "NrEditChroma", 0, 2)
             slider("Neural hue change", "NrEditHue", 0, 2)
             text("Detail-preservation filter is experimental and OFF until GPU/visual validation.")
-            text("Spatial filter disabled pending measured under-1ms cost and halo validation.")
+            text("Experimental 4-neighbour spatial detail. OFF until cost/halos are verified.")
+            slider("Spatial detail preservation", "NrDetailPreservation", 0, 1)
         end''')
 
 # Embed eight more shader constants in the SAME root-constants block.
@@ -143,6 +144,37 @@ float3 FaithfulShoulder(float3 linear_color) {
 // Decode-space result editor. Every edit is measured against the ORIGINAL
 // proxy fed to NGX, not against the game frame, making no-edit exact identity.
 // A luminance-only result preserves the game's hue and saturation.
+
+// Same-frame, edge-gated four-neighbour high-frequency NR edit. No history,
+// no persistent GPU surface and no second NR evaluation. Costs extra texture
+// reads ONLY when DetailPreservation > 0; do not enable as default until timed.
+float FaithfulSpatialDetail(float2 position) {
+    const int2 size = int2(ProxySize);
+    const int2 point = clamp(int2(round(position)), int2(0, 0), size - 1);
+    const float3 cp = Source1.Load(int3(point, 0)).rgb;
+    const float3 cn = Source2.Load(int3(point, 0)).rgb;
+    const float base = max(Luminance(cp), 1e-4);
+    const float center = clamp(log2(max(Luminance(cn), 1e-4) / base), -2.0, 2.0);
+    float sum = center;
+    float weight_sum = 1.0;
+    [unroll] for (int i = 0; i < 4; ++i) {
+        const int2 offset = i == 0 ? int2(-2, 0) :
+                            i == 1 ? int2(2, 0) :
+                            i == 2 ? int2(0, -2) : int2(0, 2);
+        const int2 q = clamp(point + offset, int2(0, 0), size - 1);
+        const float yp = max(Luminance(Source1.Load(int3(q, 0)).rgb), 1e-4);
+        const float yn = max(Luminance(Source2.Load(int3(q, 0)).rgb), 1e-4);
+        // Similar original materials only. Reject sky/grass boundaries to
+        // avoid leaking the brightness edit across an actual scene edge.
+        const float same = saturate(1.0 - 2.5 * abs(log2(yp / base)));
+        sum += same * clamp(log2(yn / yp), -2.0, 2.0);
+        weight_sum += same;
+    }
+    const float broad = sum / max(weight_sum, 1.0);
+    // Convert encoded-domain log contrast to approximate linear detail.
+    return clamp(1.5 * (center - broad), -1.0, 1.0);
+}
+
 float3 FaithfulUpgrade(float3 original, float3 proxy, float3 neural,
                        float2 proxy_position) {
     const float eps = 1e-5;
@@ -158,6 +190,10 @@ float3 FaithfulUpgrade(float3 original, float3 proxy, float3 neural,
     const float lighten = stops >= 0.0 ? EditBrighten :
         EditDarken * lerp(1.0, 0.5, hi);
     stops *= lighten * trust * TransferStrength * ColorStrength;
+    if (DetailPreservation > 0.0001 && trust > 0.01) {
+        const float fine = FaithfulSpatialDetail(proxy_position);
+        stops += fine * DetailPreservation * trust * TransferStrength * ColorStrength;
+    }
 
     const float3 ln_p = log2(max(proxy, eps));
     const float3 ln_n = log2(max(neural, eps));
