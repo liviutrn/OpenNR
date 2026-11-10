@@ -1,0 +1,113 @@
+name: Cheeky 0.6.3 NR Lite native-SR and atlas readiness
+on:
+  push:
+    branches:
+      - experiment/cheeky-v063-triview-nr-lite-lite-vram-20261110
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: windows-2022
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - name: Checkout pinned Cheeky 0.6.3
+        uses: actions/checkout@v4
+        with:
+          repository: ClarkCheekyKent/CheekyFoveatedDLSS
+          ref: 39bfc96214498e5e21cf861f0eb21f875697b428
+          path: upstream-cheeky
+      - name: Apply TriView dual-fovea NR routing and VRAM cleanup
+        shell: pwsh
+        run: |
+          python -m py_compile CheekyPort/scripts/apply_v063_nr_view.py
+          if ($LASTEXITCODE -ne 0) { throw "Patch syntax invalid" }
+          python CheekyPort/scripts/apply_v063_nr_view.py upstream-cheeky
+          if ($LASTEXITCODE -ne 0) { throw "Strict patch failed" }
+          # Upstream v0.6.3 tag still carries an old 0.6.2 version.h.
+          # Correct release identity in the isolated test package before compiling.
+          $header = "upstream-cheeky/shared/version.h"
+          $text = Get-Content $header -Raw
+          if (-not $text.Contains('#define CHEEKY_VERSION "0.6.2"')) {
+            throw "Unexpected upstream source-version header: review before packaging"
+          }
+          $text = $text.Replace('#define CHEEKY_VERSION "0.6.2"', '#define CHEEKY_VERSION "0.6.3"')
+          [IO.File]::WriteAllText((Resolve-Path $header), $text, [Text.UTF8Encoding]::new($false))
+      - name: Apply NR-only GPU lifetime and atlas probe
+        shell: pwsh
+        run: |
+          python -m py_compile CheekyPort/scripts/apply_v063_nr_lite.py
+          if ($LASTEXITCODE -ne 0) { throw "NR-Lite patch syntax invalid" }
+          python CheekyPort/scripts/apply_v063_nr_lite.py upstream-cheeky
+          if ($LASTEXITCODE -ne 0) { throw "NR-Lite strict patch failed" }
+          python CheekyPort/tests/test_v063_nr_lite.py upstream-cheeky
+          if ($LASTEXITCODE -ne 0) { throw "NR-Lite static checks failed" }
+      - name: Compile full upstream solution (no unrelated FG hardware tests)
+        working-directory: upstream-cheeky
+        shell: pwsh
+        run: |
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio/Installer/vswhere.exe'
+          $msbuild = & $vswhere -latest -products * -requires Microsoft.Component.MSBuild -find 'MSBuild/**/Bin/MSBuild.exe' | Select-Object -First 1
+          if (-not $msbuild) { throw "MSBuild not found" }
+          & $msbuild CheekyFoveatedDLSS.sln /m /nr:false /nologo /verbosity:minimal /t:Build /p:Configuration=Release /p:Platform=x64 /p:PlatformToolset=v143
+          if ($LASTEXITCODE -ne 0) { throw "Compilation failed" }
+      - name: Run focused NR and source-view regressions
+        working-directory: upstream-cheeky
+        shell: pwsh
+        run: |
+          foreach ($suite in @('--opennr-v063', '--nr-processing', '--d3d12-history', '--stereo-support', '--alignment-history')) {
+            Write-Host "Checking: $suite"
+            ./bin/Release/CheekyTests.exe $suite
+            if ($LASTEXITCODE -ne 0) { throw "Failed regression suite: $suite" }
+          }
+          Write-Host "Testing UEVR host bridge, mode switching and saved setting across reload"
+          ./bin/Release/CheekyUEVRTests.exe
+          if ($LASTEXITCODE -ne 0) { throw "Real UEVR runtime integration failed" }
+      - name: Install Inno Setup if absent
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "C:\Program Files (x86)\Inno Setup 6\ISCC.exe")) {
+            choco install innosetup -y --no-progress
+            if ($LASTEXITCODE -ne 0) { throw "Installer tool failed" }
+          }
+      - name: Build matching OpenXR installer
+        working-directory: upstream-cheeky
+        shell: pwsh
+        run: |
+          ./scripts/build-installer.ps1 -SkipBuild
+          if ($LASTEXITCODE -ne 0) { throw "OpenXR installer failed" }
+      - name: Package UEVR
+        working-directory: upstream-cheeky
+        shell: pwsh
+        run: |
+          # The upstream PowerShell packager verifies its ZIP hashes internally.
+          # Its last cmdlet may retain an unrelated native LASTEXITCODE, so verify
+          # the actual output rather than trusting that inherited exit code.
+          ./scripts/package-uevr.ps1 -Configuration Release -Label v063-triview-nr-lite
+          $zip = @(Get-ChildItem bin/Release/*-UEVR-v063-triview-nr-lite.zip)
+          if ($zip.Count -ne 1) { throw "Missing or ambiguous UEVR archive" }
+          if ($zip[0].Name -ne "CheekyFoveatedDLSS-0.6.3-UEVR-v063-triview-nr-lite.zip") {
+            throw "Incorrect version-stamped UEVR archive: $($zip[0].Name)"
+          }
+          $test = [IO.Compression.ZipFile]::OpenRead($zip[0].FullName)
+          try {
+            foreach ($expected in @("plugins/CheekyFoveatedDLSS.dll",
+                                  "plugins/CheekyFoveatedDLSS/CheekyFoveatedDLSSRuntime.dll",
+                                  "scripts/cheeky_foveated_dlss.lua",
+                                  "OpenXR/CheekyOpenXRSetup.exe")) {
+              if (-not @($test.Entries | Where-Object FullName -EQ $expected).Count) {
+                throw "Missing required UEVR payload: $expected"
+              }
+            }
+          } finally { $test.Dispose() }
+          $zip[0] | Get-FileHash -Algorithm SHA256
+      - name: Upload experimental headset-test package
+        uses: actions/upload-artifact@v4
+        with:
+          name: Cheeky-0.6.3-UEVR-NR-Lite-VRAM-AtlasProbe
+          path: |
+            upstream-cheeky/bin/Release/*-UEVR-v063-triview-nr-lite.zip
+            upstream-cheeky/bin/installer/CheekyOpenXRSetup.exe
+          if-no-files-found: error
+          retention-days: 20
