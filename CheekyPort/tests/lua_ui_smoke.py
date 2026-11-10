@@ -97,6 +97,6 @@ expected = [
 ]
 absent = [name for name in expected if seen[name] is None]
 if absent:
-    raise RuntimeError(f"Generated UI did not expose all pass controls: {absent}")
+    raise RuntimeError(f"Generated UI missing {absent}; observed controls={list(seen.keys())}")
 print("PASS Lua 5.4 UI smoke: loaded enabled runtime, decoded snapshot, rendered real NR UI,"
       " validated both source masks, pass-2 crop and 2-pass controls")
