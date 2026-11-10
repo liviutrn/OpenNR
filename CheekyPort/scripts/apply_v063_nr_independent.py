@@ -409,7 +409,7 @@ patch("src/dlss_nr.cpp",
 # selective skips *inside* evaluate_nr_selected_passes must not invalidate the
 # other pass (pass-2-only and pass-1-only must retain their own histories).
 patch("src/dlss_nr.hpp",
-    "void skip_dlss_nr_history(DlssViewId) noexcept;",
+    "void skip_dlss_nr_history(DlssViewId view_id) noexcept;",
     """void skip_dlss_nr_history(DlssViewId) noexcept;
 inline void skip_dlss_nr_source_history(const DlssViewId id) noexcept {
     skip_dlss_nr_history(id);
