@@ -16,8 +16,8 @@ constexpr std::uint64_t nr_lite_mib = 1024ULL * 1024ULL;
     if (requested.eye_processing_mode != 3U || !requested.nr_enabled)
         return 0ULL;
 
-    // Enabling NR creates a separate feature/history for each stereo fovea.
-    if (!current.nr_enabled)
+    // Enabling NR or switching into TriView mode can instantiate a second eye.
+    if (!current.nr_enabled || current.eye_processing_mode != 3U)
         return (requested.nr_foveated ? 1024ULL : 2304ULL) * nr_lite_mib;
 
     // Expanding NR beyond the prior crop recreates NVIDIA model histories;
