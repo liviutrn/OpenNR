@@ -9,7 +9,7 @@ def has(path, fragments):
         assert fragment in data, f"{path}: missing {fragment}"
 has("src/settings.hpp",["nr_pass1_views{3U}","nr_pass2_views{3U}","nr_pass2_foveated{false}"])
 has("src/settings.cpp",["cheeky_nr_source_role","cheeky_nr_selected_passes",
-                        "role==0U","return 4U"])
+                        "const auto role = cheeky_nr_source_role(view_id);","return 4U"])
 has("src/dlss_nr.cpp",["evaluate_nr_selected_passes","frame.view_id ^ (1ULL << 63U)",
                        "pass_frame.view_id ^= (1ULL << 63U)",
                        "second.nr_foveated = settings.nr_pass2_foveated",

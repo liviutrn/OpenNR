@@ -147,9 +147,9 @@ patch("src/settings.cpp",
     "        result.nr_enabled=settings.nr_enabled&&role&&cheeky_nr_selected_passes(settings,view_id)!=0U;")
 
 patch("src/dlss_nr.hpp",
-    "    DlssNrRoute route{DlssNrRoute::none};",
-    """    DlssNrRoute route{DlssNrRoute::none};
-    // 1 or 2, the logical pass independently selected for this source.
+    "    std::uint32_t view_output_base_x{}, view_output_base_y{}; // Retained when Before NR switches color to input space.",
+    """    std::uint32_t view_output_base_x{}, view_output_base_y{}; // Retained when Before NR switches color to input space.
+    // Appended to preserve layout of existing aggregate DlssNrFrame initializers.
     std::uint32_t logical_pass{1U};
     std::uint32_t source_role{};""")
 patch("src/dlss_nr.hpp",
@@ -214,8 +214,8 @@ patch("src/dlss_nr.cpp",
     } else {
         skip_dlss_nr_history(frame.view_id ^ (1ULL << 63U));
     }
-    static std::uint64_t trace_counter{};
-    const auto count = ++trace_counter;
+    static std::atomic<std::uint64_t> trace_counter{};
+    const auto count = trace_counter.fetch_add(1U,std::memory_order_relaxed)+1U;
     if (count <= 12U || count % 300U == 0U)
         trace_event("[CheekyNR][PerPass] source=%llu role=%u selected=%u first=%u second=%u pass2Crop=%u model=%u area=%ux%u",
             static_cast<unsigned long long>(frame.view_id), role, chosen,
