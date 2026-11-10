@@ -74,6 +74,11 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "Lua compiler dependency unavailable" }
           python CheekyPort/tests/lua_release_gate.py source upstream-cheeky
           if ($LASTEXITCODE -ne 0) { throw "Generated Lua syntax gate failed" }
+      - name: Exercise generated Lua UI with mocked UEVR event bridge
+        shell: pwsh
+        run: |
+          python CheekyPort/tests/lua_ui_smoke.py upstream-cheeky
+          if ($LASTEXITCODE -ne 0) { throw "Real generated Lua UI smoke test failed" }
       - name: Compile full upstream solution (no unrelated FG hardware tests)
         working-directory: upstream-cheeky
         shell: pwsh
