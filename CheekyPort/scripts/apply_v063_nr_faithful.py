@@ -204,6 +204,27 @@ patch("src/nr_codec_shader.hpp",
 # detail/halo/frametime comparison is required before enabling it. Its setting
 # remains 0 and this initial build does not allocate any extra textures.
 
+# SDR/uncertain-HDR NGX paths need the same faithful controls, otherwise a
+# misreported HDR flag silently falls back to the uncorrected legacy transfer.
+# Preserve the exact old behavior when ReconstructionMode is 0.
+patch("src/nr_codec_shader.hpp",
+    """    if (HdrMode == 0) {
+        const float4 processed = float4(lerp(original_sample.rgb, neural_sample.rgb,
+            TransferStrength * ColorStrength), original_sample.a);
+        Output0[SourceBase + dispatch_id.xy] = lerp(original_sample, processed, foveation_weight);
+        return;
+    }""",
+    """    if (HdrMode == 0) {
+        const float3 faithful = FaithfulUpgrade(original_sample.rgb,
+            proxy_sample.rgb, neural_sample.rgb, proxy_position);
+        const float3 color = ReconstructionMode == 1U
+            ? saturate(faithful)
+            : lerp(original_sample.rgb, neural_sample.rgb, TransferStrength * ColorStrength);
+        const float4 processed = float4(color, original_sample.a);
+        Output0[SourceBase + dispatch_id.xy] = lerp(original_sample, processed, foveation_weight);
+        return;
+    }""")
+
 patch("src/dlss_nr.cpp",
     "    root_parameters[2].Constants.Num32BitValues = 40U;",
     "    root_parameters[2].Constants.Num32BitValues = 48U;")
