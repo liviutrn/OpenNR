@@ -129,7 +129,7 @@ edit("uevr/scripts/cheeky_foveated_dlss.lua",
     text(string.format("Source A: %.0f (%d frames) | Source B: %.0f (%d frames)",
         tonumber(nd.view_a_id) or 0, tonumber(nd.view_a_frames) or 0,
         tonumber(nd.view_b_id) or 0, tonumber(nd.view_b_frames) or 0))
-    local mem = status.gpu_memory and status.gpu_memory.local
+    local mem = status.gpu_memory and status.gpu_memory["local"]
     if mem and mem.valid then
         text(string.format("Current DXGI VRAM headroom: %.0f MiB (excludes future model allocations)",
             (tonumber(mem.headroom_bytes) or 0) / 1048576))
