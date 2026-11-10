@@ -13,17 +13,19 @@ constexpr std::uint64_t nr_lite_mib = 1024ULL * 1024ULL;
     const Settings& current, const Settings& requested) noexcept {
     // Other integrations preserve original behavior. This guard is targeted
     // at the two-fovea TriView setup where we know VRAM is constrained.
-    if (requested.eye_processing_mode != 3U || !requested.nr_enabled)
+    if (requested.eye_processing_mode > 3U || !requested.nr_enabled)
         return 0ULL;
 
     // Enabling NR or switching into TriView mode can instantiate a second eye.
-    if (!current.nr_enabled || current.eye_processing_mode != 3U)
-        return (requested.nr_foveated ? 1024ULL : 2304ULL) * nr_lite_mib;
+    if (!current.nr_enabled || current.eye_processing_mode != requested.eye_processing_mode)
+        return (requested.nr_foveated
+            ? (requested.eye_processing_mode == 0U ? 2048ULL : 1024ULL)
+            : (requested.eye_processing_mode == 0U ? 3072ULL : 2304ULL)) * nr_lite_mib;
 
     // Expanding NR beyond the prior crop recreates NVIDIA model histories;
     // old ones cannot be freed until all recording and GPU fences retire.
     if (current.nr_foveated && !requested.nr_foveated)
-        return 2304ULL * nr_lite_mib;
+        return (requested.eye_processing_mode == 0U ? 3072ULL : 2304ULL) * nr_lite_mib;
 
     // After-SR operates on larger images; switching NR order can reallocate
     // both eye features, even when the region selector was unchanged.
