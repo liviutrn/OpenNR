@@ -311,4 +311,15 @@ patch("src/nr_parameters.hpp",
     std::memcpy(&shoulder_bits, &settings.nr_shoulder_knee, sizeof(shoulder_bits));
     append(shoulder_bits);""")
 
+# The checked-in Vulkan SPIR-V remains the pinned upstream 40-DWORD codec.
+# The extended 48-DWORD root block is for regenerated D3D12 HLSL ONLY.
+# Preserve Vulkan's original push-constant interface and legacy behavior.
+vulkan = root / "src/vulkan_nr.cpp"
+source = vulkan.read_text(encoding="utf-8")
+if source.count("sizeof(CodecConstants)") != 6:
+    raise RuntimeError("Vulkan codec ABI uses unexpected number of push-constant sites")
+source = source.replace("sizeof(CodecConstants)", "(40U * sizeof(std::uint32_t))")
+vulkan.write_text(source, encoding="utf-8", newline="\n")
+print("PASS Vulkan retained original 40-DWORD codec ABI")
+
 print("PASS Faithful HDR shader result editor, persisted controls, exposure metadata")
