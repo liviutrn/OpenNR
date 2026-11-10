@@ -31,17 +31,20 @@ constexpr std::uint64_t nr_lite_mib = 1024ULL * 1024ULL;
     // both eye features, even when the region selector was unchanged.
     if (current.nr_processing_order != requested.nr_processing_order)
         return (requested.nr_processing_order == NrProcessingOrder::after_upscaling
-            ? 2560ULL : 1536ULL) * nr_lite_mib;
+            ? (requested.eye_processing_mode == 0U ? 3072ULL : 2560ULL)
+            : (requested.eye_processing_mode == 0U ? 2048ULL : 1536ULL)) * nr_lite_mib;
 
     if (requested.nr_passes > current.nr_passes)
-        return 1536ULL * nr_lite_mib;
+        return (requested.eye_processing_mode == 0U ? 2304ULL : 1536ULL) * nr_lite_mib;
 
     const bool growing = requested.nr_working_scale > current.nr_working_scale + 0.0001F ||
         (requested.nr_foveated && current.nr_foveated &&
             (requested.nr_width > current.nr_width + 0.0001F ||
              requested.nr_height > current.nr_height + 0.0001F));
     if (growing)
-        return (requested.nr_foveated ? 1024ULL : 2304ULL) * nr_lite_mib;
+        return (requested.nr_foveated
+            ? (requested.eye_processing_mode == 0U ? 2048ULL : 1024ULL)
+            : (requested.eye_processing_mode == 0U ? 3072ULL : 2304ULL)) * nr_lite_mib;
 
     // The model's parameters are part of its feature key. An edit can create
     // a new model even if the texture dimensions have not changed.
@@ -53,7 +56,7 @@ constexpr std::uint64_t nr_lite_mib = 1024ULL * 1024ULL;
         requested.nr_skin_structure_strength != current.nr_skin_structure_strength ||
         requested.nr_automatic_mask != current.nr_automatic_mask ||
         requested.nr_ui_correction != current.nr_ui_correction;
-    return rekey ? 768ULL * nr_lite_mib : 0ULL;
+    return rekey ? (requested.eye_processing_mode == 0U ? 1536ULL : 768ULL) * nr_lite_mib : 0ULL;
 }
 
 [[nodiscard]] inline bool nr_lite_has_headroom(
