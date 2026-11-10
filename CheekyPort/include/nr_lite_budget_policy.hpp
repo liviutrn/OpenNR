@@ -16,8 +16,8 @@ constexpr std::uint64_t nr_lite_mib = 1024ULL * 1024ULL;
     if (requested.eye_processing_mode > 3U || !requested.nr_enabled)
         return 0ULL;
 
-    // Enabling NR or switching into TriView mode can instantiate a second eye.
-    if (!current.nr_enabled || current.eye_processing_mode != requested.eye_processing_mode)
+    // Enabling NR instantiates model histories and is always budget-gated.
+    if (!current.nr_enabled)
         return (requested.nr_foveated
             ? (requested.eye_processing_mode == 0U ? 2048ULL : 1024ULL)
             : (requested.eye_processing_mode == 0U ? 3072ULL : 2304ULL)) * nr_lite_mib;
@@ -56,7 +56,19 @@ constexpr std::uint64_t nr_lite_mib = 1024ULL * 1024ULL;
         requested.nr_skin_structure_strength != current.nr_skin_structure_strength ||
         requested.nr_automatic_mask != current.nr_automatic_mask ||
         requested.nr_ui_correction != current.nr_ui_correction;
-    return rekey ? (requested.eye_processing_mode == 0U ? 1536ULL : 768ULL) * nr_lite_mib : 0ULL;
+    if (rekey) return (requested.eye_processing_mode == 0U ? 1536ULL : 768ULL) * nr_lite_mib;
+
+    // Switching to fewer processed views MUST remain a recovery operation
+    // even under a nearly exhausted VRAM budget. All -> foveas and foveas ->
+    // one eye do not add new features when model dimensions/tuning are stable.
+    if (current.eye_processing_mode != requested.eye_processing_mode) {
+        if (current.eye_processing_mode == 0U ||
+            (current.eye_processing_mode == 3U &&
+             (requested.eye_processing_mode == 1U || requested.eye_processing_mode == 2U)))
+            return 0ULL;
+        return (requested.eye_processing_mode == 0U ? 2048ULL : 1024ULL) * nr_lite_mib;
+    }
+    return 0ULL;
 }
 
 [[nodiscard]] inline bool nr_lite_has_headroom(
