@@ -98,7 +98,7 @@ patch("uevr/scripts/cheeky_foveated_dlss.lua",
             slider("Neural saturation change", "NrEditChroma", 0, 2)
             slider("Neural hue change", "NrEditHue", 0, 2)
             text("Detail-preservation filter is experimental and OFF until GPU/visual validation.")
-            slider("Experimental spatial detail", "NrDetailPreservation", 0, 1)
+            text("Spatial filter disabled pending measured under-1ms cost and halo validation.")
         end''')
 
 # Embed eight more shader constants in the SAME root-constants block.
@@ -146,6 +146,8 @@ float3 FaithfulShoulder(float3 linear_color) {
 float3 FaithfulUpgrade(float3 original, float3 proxy, float3 neural,
                        float2 proxy_position) {
     const float eps = 1e-5;
+    if (!all(isfinite(original)) || !all(isfinite(proxy)) || !all(isfinite(neural)))
+        return original;
     const float py = Luminance(max(proxy, 0.0));
     const float ny = Luminance(max(neural, 0.0));
     const float oy = Luminance(max(original, 0.0));
@@ -223,8 +225,9 @@ patch("src/dlss_nr.cpp",
 patch("src/dlss_nr.cpp",
     "    const auto exposure_state = debug_exposure.state;",
     """    if (pipeline == gpu.encode_pipeline) {
-        static std::atomic<std::uint64_t> exposure_log_counter{};
-        const auto sequence = exposure_log_counter.fetch_add(1U, std::memory_order_relaxed);
+        static std::array<std::atomic<std::uint64_t>, 5> exposure_log_counter{};
+        const auto idx = (std::min)(frame.source_role, 4U);
+        const auto sequence = exposure_log_counter[idx].fetch_add(1U, std::memory_order_relaxed);
         if ((sequence & 127ULL) == 0ULL) {
             const bool valid = gpu.exposure &&
                 debug_exposure_supported(debug_exposure);
@@ -239,4 +242,16 @@ patch("src/dlss_nr.cpp",
         }
     }
     const auto exposure_state = debug_exposure.state;""")
+
+# Switching the input shoulder changes NVIDIA inference input, so reset the
+# neural history ONLY when the HDR input encoding/mode changes. Shader-only
+# result sliders must preserve histories and feature keys.
+patch("src/nr_parameters.hpp",
+    "    append(static_cast<std::uint32_t>(settings.nr_processing_order));",
+    """    append(static_cast<std::uint32_t>(settings.nr_processing_order));
+    append(settings.nr_reconstruction_mode);
+    std::uint32_t shoulder_bits{};
+    std::memcpy(&shoulder_bits, &settings.nr_shoulder_knee, sizeof(shoulder_bits));
+    append(shoulder_bits);""")
+
 print("PASS Faithful HDR shader result editor, persisted controls, exposure metadata")
