@@ -20,7 +20,7 @@ checks = {
     "separate-eye view routing retained": "EyeProcessingMode" in settings and "cheeky_processing_allowed_for_view" in hook,
     "source timing/atlas probe": "[CheekyNR][AtlasProbe]" in hook and "frame.view_id" in hook,
     "NR scratch and committed VRAM metrics": "[CheekyNR][VRAM]" in nr and "GetResourceAllocationInfo" in nr,
-    "Before-NR copies protected by recording lifetime": "input.uses.record(frame.command_list)" in before and "complete(input)" in before,
+    "Before-NR copies protected by recording lifetime": "selected->uses.record(frame.command_list)" in before and "complete(input)" in before,
     "one-pass can reclaim pass-2 intermediate": "if (!border_only && !need_second_pass)" in nr and "release(cached.pass_output)" in nr,
     "dormant pass2 NGX features retire safely": "stale_pass.retired = true;" in nr and "collect_retired_views()" in nr,
     "NR Lite retains styles/intensity/depth/motion tuning": all(f'"{k}"' in ui for k in ["NrStyle", "NrIntensity", "NrDepthConvention", "NrMotionScaleXMultiplier", "NrMotionScaleYMultiplier"]),
