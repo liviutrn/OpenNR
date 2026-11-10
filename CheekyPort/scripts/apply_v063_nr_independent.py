@@ -230,6 +230,40 @@ patch("src/hooks.cpp",
     '    const bool evaluated = evaluate_dlss_nr(\n        frame,\n        view_settings\n    );',
     '    const bool evaluated = evaluate_nr_selected_passes(\n        frame,\n        view_settings\n    );')
 
+# Independent source masks can instantiate additional opaque NVIDIA NR features.
+# Preserve the existing conservative guard on every expanding setting change.
+patch("uevr/nr_lite_budget_policy.hpp",
+    "    // Enabling NR instantiates model histories and is always budget-gated.",
+    """    // Guard reconfiguration that adds any new per-source model feature.
+    // Reducing the source set is always a memory-recovery operation.
+    const auto first_new = requested.nr_pass1_views & ~(current.nr_pass1_views);
+    const auto second_new = requested.nr_passes>=2U
+        ? requested.nr_pass2_views &
+            ~(current.nr_passes>=2U ? current.nr_pass2_views : 0U) : 0U;
+    const bool pass2_grows = current.nr_pass2_foveated && !requested.nr_pass2_foveated;
+    const bool pass2_region_grows = requested.nr_pass2_foveated && current.nr_pass2_foveated &&
+        (requested.nr_pass2_width > current.nr_pass2_width + 0.0001F ||
+         requested.nr_pass2_height > current.nr_pass2_height + 0.0001F);
+    if (current.nr_enabled && (first_new || second_new || pass2_grows || pass2_region_grows))
+        return (first_new && second_new ? 3072ULL : 2048ULL) * nr_lite_mib;
+    // Enabling NR instantiates model histories and is always budget-gated.""")
+patch("uevr/nr_lite_budget_policy.hpp",
+    """    if (!current.nr_enabled)
+        return (requested.nr_foveated
+            ? (requested.eye_processing_mode == 0U ? 2048ULL : 1024ULL)
+            : (requested.eye_processing_mode == 0U ? 3072ULL : 2304ULL)) * nr_lite_mib;""",
+    """    if (!current.nr_enabled) {
+        const auto source_count=[](unsigned m) noexcept {
+            return (m&1U?1U:0U)+(m&2U?1U:0U)+(m&4U?1U:0U);
+        };
+        const auto features=source_count(requested.nr_pass1_views) +
+            (requested.nr_passes>=2U ? source_count(requested.nr_pass2_views) : 0U);
+        // Admission headroom is deliberately larger than measured resource
+        // bytes: NVIDIA's internal NGX allocations are not observable.
+        return (features>=5U ? 4096ULL : features==4U ? 3072ULL :
+            features==3U ? 2304ULL : features>=1U ? 1536ULL : 0ULL) * nr_lite_mib;
+    }""")
+
 # The previous build had intentionally changed defaults to Before SR, and this
 # test was still asserting upstream's After SR default. Update only that check.
 patch("tests/nr_processing_tests.cpp",
