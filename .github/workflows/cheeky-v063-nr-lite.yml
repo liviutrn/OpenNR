@@ -43,6 +43,13 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "NR-Lite strict patch failed" }
           python CheekyPort/tests/test_v063_nr_lite.py upstream-cheeky
           if ($LASTEXITCODE -ne 0) { throw "NR-Lite static checks failed" }
+      - name: Apply full-fovea defaults and actual-state diagnostics
+        shell: pwsh
+        run: |
+          python -m py_compile CheekyPort/scripts/apply_v063_nr_visibility.py
+          if ($LASTEXITCODE -ne 0) { throw "NR diagnostics patch syntax invalid" }
+          python CheekyPort/scripts/apply_v063_nr_visibility.py upstream-cheeky
+          if ($LASTEXITCODE -ne 0) { throw "NR diagnostics strict patch failed" }
       - name: Compile full upstream solution (no unrelated FG hardware tests)
         working-directory: upstream-cheeky
         shell: pwsh
@@ -105,7 +112,7 @@ jobs:
       - name: Upload experimental headset-test package
         uses: actions/upload-artifact@v4
         with:
-          name: Cheeky-0.6.3-UEVR-NR-Lite-VRAM-AtlasProbe
+          name: Cheeky-0.6.3-UEVR-NR-Lite-FullFovea-Diagnostics
           path: |
             upstream-cheeky/bin/Release/*-UEVR-v063-triview-nr-lite.zip
             upstream-cheeky/bin/installer/CheekyOpenXRSetup.exe
