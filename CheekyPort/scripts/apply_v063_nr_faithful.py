@@ -150,9 +150,9 @@ float3 FaithfulShoulder(float3 linear_color) {
 // reads ONLY when DetailPreservation > 0; do not enable as default until timed.
 float FaithfulSpatialDetail(float2 position) {
     const int2 size = int2(ProxySize);
-    const int2 point = clamp(int2(round(position)), int2(0, 0), size - 1);
-    const float3 cp = Source1.Load(int3(point, 0)).rgb;
-    const float3 cn = Source2.Load(int3(point, 0)).rgb;
+    const int2 texel = clamp(int2(round(position)), int2(0, 0), size - 1);
+    const float3 cp = Source1.Load(int3(texel, 0)).rgb;
+    const float3 cn = Source2.Load(int3(texel, 0)).rgb;
     const float base = max(Luminance(cp), 1e-4);
     const float center = clamp(log2(max(Luminance(cn), 1e-4) / base), -2.0, 2.0);
     float sum = center;
@@ -161,7 +161,7 @@ float FaithfulSpatialDetail(float2 position) {
         const int2 offset = i == 0 ? int2(-2, 0) :
                             i == 1 ? int2(2, 0) :
                             i == 2 ? int2(0, -2) : int2(0, 2);
-        const int2 q = clamp(point + offset, int2(0, 0), size - 1);
+        const int2 q = clamp(texel + offset, int2(0, 0), size - 1);
         const float yp = max(Luminance(Source1.Load(int3(q, 0)).rgb), 1e-4);
         const float yn = max(Luminance(Source2.Load(int3(q, 0)).rgb), 1e-4);
         // Similar original materials only. Reject sky/grass boundaries to
