@@ -65,6 +65,21 @@ edit("src/hooks.cpp",
         }
         auto* processed = prepare(list, params, settings);''')
 
+# A previous Cheeky profile may have FG enabled even though this reduced UI
+# no longer shows FG controls. Force Cheeky's own FG completely OFF and do not
+# let old saved profiles disable Reflex on the user's behalf. VectorXR remains
+# a separate product and is not altered by these settings.
+edit("src/settings.cpp",
+    '''    fg_settings = settings.fg;
+    nr_passes = std::clamp(settings.nr_passes, 1U, max_nr_passes);''',
+    '''    fg_settings = settings.fg;
+    fg_settings.enabled = false; // NR Lite must not run Cheeky FG
+    fg_settings.force_reflex_off = false; // NR Lite does not override Reflex
+    nr_passes = std::clamp(settings.nr_passes, 1U, 2U);''')
+edit("src/settings.cpp",
+    '''    reflex_override::requested.store(settings.fg.force_reflex_off,std::memory_order_release);''',
+    '''    reflex_override::requested.store(false,std::memory_order_release);''')
+
 # The current pool keeps full-sized private Before-NR inputs. Report committed
 # allocation size (not raw width*height) and whether a GPU recording still owns
 # each resource. Never free until NrLifetime observes recording+queue retirement.
@@ -278,7 +293,7 @@ panel = """uevr.lua.add_script_panel("Cheeky TriView NR Lite", function()
         if imgui.button("Reconnect") then send("get") end
         return
     end
-    if not imgui.tree_node("DLSS 5 NR — game-native SR", true) then return end
+    if not imgui.tree_node("DLSS 5 NR — game-native SR") then return end
     donate_button()
     text("Only NVIDIA NR is applied by this plugin. STALKER 2 retains its own DLSS SR.")
     text("Atlas batching requires verified two-eye inputs; this build collects routing diagnostics.")
