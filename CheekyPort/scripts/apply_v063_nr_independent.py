@@ -349,6 +349,11 @@ patch("tests/nr_processing_tests.cpp",
         settings.nr_processing_order = NrProcessingOrder::after_upscaling;
         update_settings(settings);
         const int calls = nr_test_evaluations;""")
+# Reset NR uses the new Settings{} Before-SR default (unlike old-file migration).
+patch("tests/uevr_tests.cpp",
+    '''field(received,"NrIntensity")==1 && field(received,"NrProcessingOrder")==0 && field(received,"GazeSmoothingMs")==60,''',
+    '''field(received,"NrIntensity")==1 && field(received,"NrProcessingOrder")==1 && field(received,"GazeSmoothingMs")==60,''')
+
 # Keep the upstream UEVR legacy migration test: files lacking NR order
 # intentionally migrate to After SR, despite fresh NR-Lite defaulting Before SR.
 
