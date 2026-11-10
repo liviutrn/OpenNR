@@ -155,6 +155,25 @@ patch("src/nr_parameters.hpp",
     """            settings.nr_paper_white_scale,""")
 
 
+# Test real source-role observer logic with a fourth live desktop DLSS view,
+# not a mock of the role classifier. In this case the foveae stay selectable,
+# but the 2 unknown non-foveal sources must be excluded.
+patch("tests/gaze_tests.cpp",
+    """        s.nr_enabled=false; s.nr_pass1_views=3U; s.nr_pass2_views=3U;
+        expect(cheeky_processing_allowed_for_view(s,99001) &&""",
+    """        register_stereo_view(99005);
+        note_stereo_view_evaluation(99005,12U,800U,500U,2560U,1440U);
+        s.nr_enabled=true; s.nr_passes=1U;
+        s.nr_pass1_views=3U; s.nr_pass2_views=3U;
+        expect(cheeky_nr_selected_passes(s,99001)==1U &&
+               cheeky_nr_selected_passes(s,99002)==1U &&
+               cheeky_nr_selected_passes(s,99004)==0U &&
+               cheeky_nr_selected_passes(s,99005)==0U,
+               "Fourth desktop view must not suppress foveal NR or receive NR");
+        unregister_stereo_view(99005);
+        s.nr_enabled=false; s.nr_passes=2U;
+        expect(cheeky_processing_allowed_for_view(s,99001) &&""")
+
 # Upstream's test asserts 3 models because upstream supports 3; NR Lite
 # intentionally limits it to 2. Check the actual contract, not the old bound.
 patch("tests/nr_processing_tests.cpp",
