@@ -278,7 +278,9 @@ patch("uevr/nr_lite_budget_policy.hpp",
         // Admission headroom is deliberately larger than measured resource
         // bytes: NVIDIA's internal NGX allocations are not observable.
         return (features>=5U ? 4096ULL : features==4U ? 3072ULL :
-            features==3U ? 2304ULL : features>=1U ? 1536ULL : 0ULL) * nr_lite_mib;
+            features==3U ? 2304ULL : features>=2U ?
+            (requested.nr_foveated ? 1024ULL : 2304ULL) :
+            features==1U ? (requested.nr_foveated ? 1024ULL : 1536ULL) : 0ULL) * nr_lite_mib;
     }""")
 
 # Execute against the actual runtime source-view observation code, not mocks.
