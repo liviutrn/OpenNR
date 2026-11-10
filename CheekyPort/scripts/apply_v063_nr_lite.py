@@ -306,6 +306,7 @@ panel = """uevr.lua.add_script_panel("Cheeky TriView NR Lite", function()
             {[0]="All DLSS views", [1]="Duo view 0", [2]="Duo view 1",
              [3]="TriView: both stereo foveas"}, {3,0,1,2})
         text("Mode 3 fails closed when the live TriView geometry is ambiguous.")
+        text("All DLSS views also runs NR on the periphery and costs more VRAM.")
     end
     if draft.NrProcessingOrder ~= nil then
         combo("NR placement", "NrProcessingOrder",
@@ -414,6 +415,8 @@ bool nr_lite_check_budget(State& s, const Settings& previous,
     const Settings& next, const char* reason) noexcept {
     const auto required = nr_lite_required_headroom(previous, next);
     if (!required) return true;
+    // Software WARP test devices have no dedicated NVIDIA VRAM.
+    if (s.graphics_ready && s.memory.dedicated_capacity == 0U) return true;
     if (s.graphics_ready) s.memory.poll(GetTickCount64(), true);
     const bool valid = s.graphics_ready && s.memory.local.valid;
     const auto usage = s.memory.local.usage;
@@ -505,6 +508,10 @@ edit("tests/nr_processing_tests.cpp",
             require(nr_lite_required_headroom(old, active) > 0U,
                 "Enabling two-eye NR must be budget-gated");
             full = active; full.nr_passes = 2U;
+            Settings all_views = active;
+            all_views.eye_processing_mode = 0U;
+            require(nr_lite_required_headroom(active, all_views) >= 2048ULL * nr_lite_mib,
+                "All-view mode must reserve room for periphery NR");
             require(nr_lite_required_headroom(active, full) >= 1024ULL * nr_lite_mib,
                 "Two-pass model allocation must be budget-gated");
         }
