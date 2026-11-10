@@ -3,6 +3,7 @@ on:
   push:
     branches:
       - experiment/cheeky-v063-triview-nr-lite-vram-20261110
+      - experiment/cheeky-v063-independent-pass-routing-gpu-trace-20261110
   workflow_dispatch:
 permissions:
   contents: read
@@ -50,6 +51,22 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "NR diagnostics patch syntax invalid" }
           python CheekyPort/scripts/apply_v063_nr_visibility.py upstream-cheeky
           if ($LASTEXITCODE -ne 0) { throw "NR diagnostics strict patch failed" }
+      - name: Apply independent NR view masks and pass-2 crop
+        shell: pwsh
+        run: |
+          python -m py_compile CheekyPort/scripts/apply_v063_nr_independent.py
+          if ($LASTEXITCODE -ne 0) { throw "Independent-pass patch syntax invalid" }
+          python CheekyPort/scripts/apply_v063_nr_independent.py upstream-cheeky
+          if ($LASTEXITCODE -ne 0) { throw "Independent-pass strict patch failed" }
+      - name: Install GPU stage timing and regression assertions
+        shell: pwsh
+        run: |
+          python -m py_compile CheekyPort/scripts/apply_v063_nr_gpu_trace.py
+          if ($LASTEXITCODE -ne 0) { throw "GPU profiler patch syntax invalid" }
+          python CheekyPort/scripts/apply_v063_nr_gpu_trace.py upstream-cheeky
+          if ($LASTEXITCODE -ne 0) { throw "GPU profiler strict patch failed" }
+          python CheekyPort/tests/test_v063_perpass.py upstream-cheeky
+          if ($LASTEXITCODE -ne 0) { throw "NR pass routing regression assertions failed" }
       - name: Compile full upstream solution (no unrelated FG hardware tests)
         working-directory: upstream-cheeky
         shell: pwsh
@@ -112,7 +129,7 @@ jobs:
       - name: Upload experimental headset-test package
         uses: actions/upload-artifact@v4
         with:
-          name: Cheeky-0.6.3-UEVR-NR-Lite-FullFovea-Diagnostics
+          name: Cheeky-0.6.3-UEVR-IndependentPasses-GPUTrace
           path: |
             upstream-cheeky/bin/Release/*-UEVR-v063-triview-nr-lite.zip
             upstream-cheeky/bin/installer/CheekyOpenXRSetup.exe
