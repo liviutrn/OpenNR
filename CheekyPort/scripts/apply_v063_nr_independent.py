@@ -138,9 +138,8 @@ bool cheeky_processing_allowed_for_view(const Settings& settings,""")
 # need Cheeky's intermediate preparation.
 patch("src/settings.cpp",
     "    if (settings.eye_processing_mode == 0U) return true;",
-    """    if (!settings.nr_enabled) return true;
-    return cheeky_nr_selected_passes(settings, view_id) != 0U;
-    // Legacy single-view source selection is superseded by per-pass masks.
+    """    if (settings.nr_enabled) return cheeky_nr_selected_passes(settings, view_id) != 0U;
+    // Preserve legacy routing behavior while NR is disabled (existing regressions).
     if (settings.eye_processing_mode == 0U) return true;""")
 # Quad role used to suppress periphery NR; honor independent pass masks instead.
 patch("src/settings.cpp",
@@ -170,6 +169,22 @@ patch("src/dlss_nr.cpp",
         return false;
     }
     const auto role = cheeky_nr_source_role(frame.view_id);
+    // Same region: reuse the upstream optimized single-codec two-pass chain.
+    // The two model features/histories remain independent (view.pass=0 and 1).
+    // Different pass crops still require two distinct codec evaluations.
+    const bool same_region = settings.nr_foveated == settings.nr_pass2_foveated &&
+        (!settings.nr_foveated ||
+         (!settings.nr_use_sr_foveation &&
+          settings.nr_width==settings.nr_pass2_width &&
+          settings.nr_height==settings.nr_pass2_height &&
+          settings.nr_roundness==settings.nr_pass2_roundness &&
+          settings.nr_transition_width==settings.nr_pass2_transition_width));
+    if (chosen==3U && same_region) {
+        auto shared_frame=frame;
+        shared_frame.logical_pass=1U;
+        shared_frame.source_role=role;
+        return evaluate_dlss_nr(shared_frame,settings);
+    }
     bool first_ok = false;
     bool second_ok = false;
     if (chosen & 1U) {
