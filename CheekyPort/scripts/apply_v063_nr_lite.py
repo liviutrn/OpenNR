@@ -143,6 +143,21 @@ edit("src/dlss_nr.cpp",
     );
     if (gpu == nullptr) return false;''')
 
+# A second-pass NGX feature can retain much more opaque NVIDIA memory than
+# the pass_output texture. Retire pass-2/3 handles when switching down to one
+# pass. The normal NrLifetime collector decides when release is safe.
+edit("src/dlss_nr.cpp",
+    '''    ++diagnostics.candidate_calls;
+    auto& view = find_or_create_view(frame.view_id);''',
+    '''    ++diagnostics.candidate_calls;
+    const auto wanted_passes = std::clamp(settings.nr_passes, 1U, max_nr_passes);
+    for (auto& stale_pass : views) {
+        if (stale_pass.view_id == frame.view_id && stale_pass.pass >= wanted_passes)
+            stale_pass.retired = true;
+    }
+    collect_retired_views(); // no GPU wait; incomplete recordings stay alive
+    auto& view = find_or_create_view(frame.view_id);''')
+
 # Conserve truly abandoned scratch sets, but NOT the live rotating pool.
 # A GPU-finished idle slot with no use for >3 seconds is releasable provided
 # another idle slot of the same class remains warm. Never wait on a fence.
