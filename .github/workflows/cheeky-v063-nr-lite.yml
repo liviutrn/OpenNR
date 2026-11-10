@@ -2,7 +2,7 @@ name: Cheeky 0.6.3 NR Lite native-SR and atlas readiness
 on:
   push:
     branches:
-      - experiment/cheeky-v063-triview-nr-lite-lite-vram-20261110
+      - experiment/cheeky-v063-triview-nr-lite-vram-20261110
   workflow_dispatch:
 permissions:
   contents: read
