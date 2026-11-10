@@ -388,6 +388,127 @@ edit("tests/uevr_tests.cpp",
     '''        require(!current_settings().fg.enabled && !configured_settings().fg.enabled,
             "NR Lite forces FG off, including across plugin detachment");''')
 
+# The user's actual crash followed switching NrFoveated OFF at 9.5 GiB
+# process usage / 10.1 GiB DXGI budget. Reject dangerous setting transactions
+# BEFORE NVIDIA allocates an enlarged feature/history. This keeps existing
+# settings and every in-flight recording intact, without blocking the GPU.
+from shutil import copyfile
+budget_header = root.parent / "CheekyPort/include/nr_lite_budget_policy.hpp"
+if not budget_header.is_file():
+    raise RuntimeError("Missing NR Lite budget policy header")
+copyfile(budget_header, root / "uevr/nr_lite_budget_policy.hpp")
+print("NR-LITE budget policy installed")
+
+edit("uevr/runtime.cpp",
+    '#include "gpu_memory.hpp"',
+    '#include "gpu_memory.hpp"\n#include "nr_lite_budget_policy.hpp"')
+
+edit("uevr/runtime.cpp",
+    'State& state() { static auto* instance = new State; return *instance; }',
+    '''State& state() { static auto* instance = new State; return *instance; }
+
+// Reconfiguration gate for both direct edits and saved-template loads.
+// A rejected transaction leaves current NR settings and temporal histories
+// unchanged. Never force-release an NGX model still owned by GPU recordings.
+bool nr_lite_check_budget(State& s, const Settings& previous,
+    const Settings& next, const char* reason) noexcept {
+    const auto required = nr_lite_required_headroom(previous, next);
+    if (!required) return true;
+    if (s.graphics_ready) s.memory.poll(GetTickCount64(), true);
+    const bool valid = s.graphics_ready && s.memory.local.valid;
+    const auto usage = s.memory.local.usage;
+    const auto budget = s.memory.local.budget;
+    const auto free_mib = budget > usage ? (budget - usage) >> 20U : 0U;
+    const auto required_mib = required >> 20U;
+    if (nr_lite_has_headroom(required, valid, usage, budget)) {
+        trace_event("[CheekyNR][VRAMGuard] approved action=%s freeMiB=%llu reserveMiB=%llu nrFoveated=%u passes=%u",
+            reason, static_cast<unsigned long long>(free_mib),
+            static_cast<unsigned long long>(required_mib),
+            next.nr_foveated ? 1U : 0U, next.nr_passes);
+        return true;
+    }
+    s.message = "NR change refused: insufficient free VRAM for safe model reallocation. "
+                "Keep NR foveation enabled or lower the TriView resolution first.";
+    trace_event("[CheekyNR][VRAMGuard] REJECTED action=%s valid=%u usedMiB=%llu budgetMiB=%llu freeMiB=%llu reserveMiB=%llu nrFoveated=%u passes=%u",
+        reason, valid ? 1U : 0U,
+        static_cast<unsigned long long>(usage >> 20U),
+        static_cast<unsigned long long>(budget >> 20U),
+        static_cast<unsigned long long>(free_mib),
+        static_cast<unsigned long long>(required_mib),
+        next.nr_foveated ? 1U : 0U, next.nr_passes);
+    return false;
+}''')
+
+edit("uevr/runtime.cpp",
+    '''#undef CHEEKY_SETTING
+                update_settings(settings);
+                reset_dlss_nr(); // Do not reuse another model's temporal history.''',
+    '''#undef CHEEKY_SETTING
+                if (!nr_lite_check_budget(s, configured_settings(), settings, "template")) return false;
+                update_settings(settings);
+                reset_dlss_nr(); // Do not reuse another model's temporal history.''')
+
+edit("uevr/runtime.cpp",
+    '''        update_settings(settings);
+        if (was_manual_mapping != settings.manual_stereo_mapping)''',
+    '''        if (!nr_lite_check_budget(s, configured_settings(), settings, action.c_str())) return false;
+        update_settings(settings);
+        if (was_manual_mapping != settings.manual_stereo_mapping)''')
+
+# Print the rejection rather than the stale "Settings applied" snapshot. The
+# shared Lua on_lua_event handler already handles rejected acknowledgements.
+edit("uevr/scripts/cheeky_foveated_dlss.lua",
+    '''    text("Only NVIDIA NR is applied by this plugin. STALKER 2 retains its own DLSS SR.")''',
+    '''    text("Only NVIDIA NR is applied by this plugin. STALKER 2 retains its own DLSS SR.")
+    local message = tostring(status.message or "")
+    if message ~= "" and message ~= "Settings applied" and not message:match("^Ready%.") then
+        text(message)
+    end''')
+
+# Fix the original Lua combo's non-contiguous zero-based values on the
+# NR-before/after selector. This can otherwise pick the wrong option.
+edit("uevr/scripts/cheeky_foveated_dlss.lua",
+    '''            {[0]="After SR", [1]="Before SR (recommended)"})''',
+    '''            {[0]="After SR", [1]="Before SR (recommended)"}, {0,1})''')
+
+# Run policy regression against the actual settings types on Windows.
+edit("tests/nr_processing_tests.cpp",
+    '#include "dlss_nr_input.hpp"',
+    '#include "dlss_nr_input.hpp"\n#include "../uevr/nr_lite_budget_policy.hpp"')
+edit("tests/nr_processing_tests.cpp",
+    '''        // Old INIs exposed intensity up to 2, although the model saturates at 1.''',
+    '''        // Full-frame NR in TriView requires significant EXTRA headroom:
+        // previous active NGX features cannot be force-released mid-recording.
+        {
+            Settings old{}, active{}, full{};
+            active.eye_processing_mode = 3U;
+            active.nr_enabled = true;
+            active.nr_foveated = true;
+            active.nr_processing_order = NrProcessingOrder::before_upscaling;
+            old = active;
+            full = active;
+            full.nr_foveated = false;
+            const auto required = nr_lite_required_headroom(old, full);
+            require(required >= 2048ULL * nr_lite_mib,
+                "Disabling NR foveation must reserve sufficient peak VRAM");
+            require(!nr_lite_has_headroom(required, true,
+                9504ULL * nr_lite_mib, 10150ULL * nr_lite_mib),
+                "Full-frame NR must refuse the observed 10 Nov low-budget state");
+            require(nr_lite_has_headroom(required, true,
+                6000ULL * nr_lite_mib, 10150ULL * nr_lite_mib),
+                "Full-frame NR should remain available when enough VRAM exists");
+            require(!nr_lite_has_headroom(required, false, 0U, 0U),
+                "Unknown DXGI headroom must fail closed for expanded models");
+            require(nr_lite_required_headroom(full, old) == 0U,
+                "Returning to smaller NR foveation should always remain possible");
+            old.nr_enabled = false;
+            require(nr_lite_required_headroom(old, active) > 0U,
+                "Enabling two-eye NR must be budget-gated");
+            full = active; full.nr_passes = 2U;
+            require(nr_lite_required_headroom(active, full) >= 1024ULL * nr_lite_mib,
+                "Two-pass model allocation must be budget-gated");
+        }
+        // Old INIs exposed intensity up to 2, although the model saturates at 1.''')
 # Static generation tests do not pretend the atlas is scheduled. Failure to
 # intercept the native fallback is a fatal integration regression.
 hook = (root / "src/hooks.cpp").read_text(encoding="utf-8")
