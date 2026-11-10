@@ -154,4 +154,11 @@ patch("src/nr_parameters.hpp",
             settings.nr_color_strength,""",
     """            settings.nr_paper_white_scale,""")
 
+
+# Upstream's test asserts 3 models because upstream supports 3; NR Lite
+# intentionally limits it to 2. Check the actual contract, not the old bound.
+patch("tests/nr_processing_tests.cpp",
+    "require(actual.nr_passes == max_nr_passes && actual.nr_extra_passes[0] == second &&",
+    "require(actual.nr_passes == 2U && actual.nr_extra_passes[0] == second &&")
+
 print("PASS NR safety: no third inference, mask retire, pass2 budget, 3/4 source routing")
