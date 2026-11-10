@@ -67,6 +67,13 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "GPU profiler strict patch failed" }
           python CheekyPort/tests/test_v063_perpass.py upstream-cheeky
           if ($LASTEXITCODE -ne 0) { throw "NR pass routing regression assertions failed" }
+      - name: Independently compile generated Lua (Lua 5.1 and 5.4)
+        shell: pwsh
+        run: |
+          python -m pip install --disable-pip-version-check --no-input --only-binary=:all: lupa==2.8
+          if ($LASTEXITCODE -ne 0) { throw "Lua compiler dependency unavailable" }
+          python CheekyPort/tests/lua_release_gate.py source upstream-cheeky
+          if ($LASTEXITCODE -ne 0) { throw "Generated Lua syntax gate failed" }
       - name: Compile full upstream solution (no unrelated FG hardware tests)
         working-directory: upstream-cheeky
         shell: pwsh
@@ -126,6 +133,11 @@ jobs:
             }
           } finally { $test.Dispose() }
           $zip[0] | Get-FileHash -Algorithm SHA256
+      - name: Verify exact packaged Lua bytes and compile every packaged script
+        shell: pwsh
+        run: |
+          python CheekyPort/tests/lua_release_gate.py package upstream-cheeky
+          if ($LASTEXITCODE -ne 0) { throw "Packaged Lua release gate failed" }
       - name: Upload experimental headset-test package
         uses: actions/upload-artifact@v4
         with:
