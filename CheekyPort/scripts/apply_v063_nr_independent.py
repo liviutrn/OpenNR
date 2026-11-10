@@ -51,7 +51,7 @@ patch("src/settings.cpp",
     settings.nr_pass2_transition_width = nr_pass2_transition_width;""")
 patch("src/settings.cpp",
     "    nr_passes = std::clamp(settings.nr_passes, 1U, max_nr_passes);",
-    """    nr_passes = std::clamp(settings.nr_passes, 1U, 2U);
+    """    nr_passes = std::clamp(settings.nr_passes, 1U, max_nr_passes);
     nr_pass1_views = settings.nr_pass1_views & 7U;
     nr_pass2_views = settings.nr_pass2_views & 7U;
     nr_pass2_foveated = settings.nr_pass2_foveated;
@@ -309,6 +309,47 @@ patch("tests/gaze_tests.cpp",
 patch("tests/nr_processing_tests.cpp",
     'require(settings.nr_processing_order == NrProcessingOrder::after_upscaling,\n            "Default order changed");',
     'require(settings.nr_processing_order == NrProcessingOrder::before_upscaling,\n            "TriView NR Lite must default to Before SR");')
+
+# Unit-test executables do not link hooks.cpp or NVIDIA's NR implementation.
+# Mirror their established fake evaluator and GPU profiler no-op contracts.
+patch("tests/nr_processing_tests.cpp",
+    """    return nr_test_succeeds && frame.color != nullptr;
+}""",
+    """    return nr_test_succeeds && frame.color != nullptr;
+}
+bool evaluate_nr_selected_passes(const DlssNrFrame& f,const Settings& s) noexcept {
+    return evaluate_dlss_nr(f,s);
+}
+void* nr_gpu_stage_begin(ID3D12GraphicsCommandList*,NrGpuStage,
+    std::uint32_t,std::uint32_t,bool,std::uint32_t,std::uint32_t) noexcept {return nullptr;}
+void nr_gpu_stage_end(void*,bool) noexcept {}""")
+patch("tests/nr_observer_tests.cpp",
+    """    return nr_test_succeeds && frame.color;
+}""",
+    """    return nr_test_succeeds && frame.color;
+}
+bool evaluate_nr_selected_passes(const DlssNrFrame& f,const Settings& s) noexcept {
+    return evaluate_dlss_nr(f,s);
+}
+void* nr_gpu_stage_begin(ID3D12GraphicsCommandList*,NrGpuStage,
+    std::uint32_t,std::uint32_t,bool,std::uint32_t,std::uint32_t) noexcept {return nullptr;}
+void nr_gpu_stage_end(void*,bool) noexcept {}""")
+# The feature's chosen default is Before SR. The old test for an explicit
+# After-SR scenario must now opt into After SR, not rely on the new default.
+patch("tests/nr_processing_tests.cpp",
+    """        settings = Settings{};
+        update_settings(settings);
+        const int calls = nr_test_evaluations;""",
+    """        settings = Settings{};
+        settings.nr_processing_order = NrProcessingOrder::after_upscaling;
+        update_settings(settings);
+        const int calls = nr_test_evaluations;""")
+patch("tests/uevr_tests.cpp",
+    """r.nr_processing_order == NrProcessingOrder::after_upscaling &&
+        r.nr_working_scale == 0.37f, "Missing NR order must default to After" """.rstrip(),
+    """r.nr_processing_order == NrProcessingOrder::before_upscaling &&
+        r.nr_working_scale == 0.37f, "Missing NR order must default to Before" """.rstrip())
+
 
 # Editor: each pass has an independent source mask. Old global source selector
 # is hidden (but retained on disk for backwards compatibility).
