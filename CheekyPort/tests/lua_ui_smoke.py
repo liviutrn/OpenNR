@@ -24,7 +24,7 @@ imgui = {
     ColumnFlags = nil,
     tree_node = function(label)
         return label == "Cheeky Foveated DLSS"
-          or label == "DLSS-NR (experimental)"
+          or label == "DLSS 5 NR — game-native SR"
           or label == "Stereo and gaze"
           or label == "Pass 2 settings"
     end,
