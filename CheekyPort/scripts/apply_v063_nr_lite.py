@@ -512,6 +512,8 @@ edit("tests/nr_processing_tests.cpp",
             all_views.eye_processing_mode = 0U;
             require(nr_lite_required_headroom(active, all_views) >= 2048ULL * nr_lite_mib,
                 "All-view mode must reserve room for periphery NR");
+            require(nr_lite_required_headroom(all_views, active) == 0U,
+                "All-views to stereo-foveas is a low-memory recovery path");
             require(nr_lite_required_headroom(active, full) >= 1024ULL * nr_lite_mib,
                 "Two-pass model allocation must be budget-gated");
         }
