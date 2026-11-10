@@ -171,11 +171,12 @@ float3 FaithfulUpgrade(float3 original, float3 proxy, float3 neural,
                                  -0.6, 0.6);
     const float3 directionally_edited =
         max(original, 0.0) * exp2(limited * trust * TransferStrength * ColorStrength);
-    const float lum = Luminance(directional_edited);
+    const float lum = Luminance(directionally_edited);
     // Renormalize the chroma edit so it cannot secretly shift brightness.
     float3 result = directionally_edited * (oy / max(lum, eps));
     result *= exp2(stops);
-    return result;
+    // Preserve signed out-of-gamut HDR channels when the NR edit is neutral.
+    return result + min(original, 0.0);
 }
 """
 
