@@ -316,9 +316,10 @@ patch("src/nr_parameters.hpp",
 # Preserve Vulkan's original push-constant interface and legacy behavior.
 vulkan = root / "src/vulkan_nr.cpp"
 source = vulkan.read_text(encoding="utf-8")
-if source.count("sizeof(CodecConstants)") != 6:
+if source.count("sizeof(CodecConstants)") != 3 or source.count("sizeof(codec)") != 3:
     raise RuntimeError("Vulkan codec ABI uses unexpected number of push-constant sites")
 source = source.replace("sizeof(CodecConstants)", "(40U * sizeof(std::uint32_t))")
+source = source.replace("sizeof(codec)", "(40U * sizeof(std::uint32_t))")
 vulkan.write_text(source, encoding="utf-8", newline="\n")
 print("PASS Vulkan retained original 40-DWORD codec ABI")
 
