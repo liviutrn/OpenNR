@@ -153,7 +153,8 @@ patch("src/dlss_nr.hpp",
     """    std::uint32_t view_output_base_x{}, view_output_base_y{}; // Retained when Before NR switches color to input space.
     // Appended to preserve layout of existing aggregate DlssNrFrame initializers.
     std::uint32_t logical_pass{1U};
-    std::uint32_t source_role{};""")
+    std::uint32_t source_role{};
+    bool first_pass_completed{};""")
 patch("src/dlss_nr.hpp",
     '[[nodiscard]] bool evaluate_dlss_nr(',
     '''[[nodiscard]] bool evaluate_nr_selected_passes(const DlssNrFrame&, const Settings&) noexcept;
@@ -212,6 +213,7 @@ patch("src/dlss_nr.cpp",
         pass_frame.view_id ^= (1ULL << 63U); // Second NR history separate from source and pass 1.
         pass_frame.logical_pass = 2U;
         pass_frame.source_role = role;
+        pass_frame.first_pass_completed = first_ok;
         second_ok = evaluate_dlss_nr(pass_frame, second);
     } else {
         skip_dlss_nr_history(frame.view_id ^ (1ULL << 63U));
@@ -231,10 +233,11 @@ void draw_dlss_nr_border(const DlssNrFrame& input_frame,""")
 # one model evaluation per invocation.
 patch("src/dlss_nr.cpp",
     '    diagnostics.active_passes = pass_count;',
-    '''    diagnostics.active_passes = frame.logical_pass == 2U ? 2U : pass_count;''')
+    '''    diagnostics.active_passes = pass_count +
+        (frame.logical_pass == 2U && frame.first_pass_completed ? 1U : 0U);''')
 patch("src/dlss_nr.cpp",
     '    if (pass_count >= 2U) ++diagnostics.completed_two_pass_frames;',
-    '''    if (pass_count >= 2U || frame.logical_pass == 2U)
+    '''    if (pass_count >= 2U || (frame.logical_pass == 2U && frame.first_pass_completed))
         ++diagnostics.completed_two_pass_frames;''')
 
 patch("src/dlss_nr_input.cpp",
@@ -346,12 +349,8 @@ patch("tests/nr_processing_tests.cpp",
         settings.nr_processing_order = NrProcessingOrder::after_upscaling;
         update_settings(settings);
         const int calls = nr_test_evaluations;""")
-patch("tests/uevr_tests.cpp",
-    """r.nr_processing_order == NrProcessingOrder::after_upscaling &&
-        r.nr_working_scale == 0.37f, "Missing NR order must default to After" """.rstrip(),
-    """r.nr_processing_order == NrProcessingOrder::before_upscaling &&
-        r.nr_working_scale == 0.37f, "Missing NR order must default to Before" """.rstrip())
-
+# Keep the upstream UEVR legacy migration test: files lacking NR order
+# intentionally migrate to After SR, despite fresh NR-Lite defaulting Before SR.
 
 # Editor: each pass has an independent source mask. Old global source selector
 # is hidden (but retained on disk for backwards compatibility).
@@ -378,6 +377,7 @@ s=s[:start]+'''    text("Each model pass has independent source coverage. A/B ar
         text("If pass 1 does not target a source, pass 2 runs alone there.")
     end
 ''' + s[end:]
+s=s.replace('        .. " | views " .. tostring(applied.EyeProcessingMode or "?")' + "\\n", '')
 s=s.replace('    text("APPLIED: NR " .. (applied.NrEnabled and "ON" or "OFF")',
 '''    text("ACTIVE TARGETS pass 1=" .. tostring(applied.NrPass1Views or 0)
        .. " pass 2=" .. tostring(applied.NrPass2Views or 0)
@@ -387,6 +387,7 @@ s=s.replace('    if draft.NrFoveated ~= applied.NrFoveated or draft.NrPasses ~= 
 '''    if draft.NrPass1Views ~= applied.NrPass1Views or draft.NrPass2Views ~= applied.NrPass2Views
        or draft.NrPass2Foveated ~= applied.NrPass2Foveated
        or draft.NrFoveated ~= applied.NrFoveated or draft.NrPasses ~= applied.NrPasses''',1)
+s=s.replace('        or draft.EyeProcessingMode ~= applied.EyeProcessingMode then', '        then')
 p.write_text(s,encoding="utf-8",newline="\n")
 
 print("PASS NR independent view selection, separate logical histories, per-pass crops, persisted UI")
