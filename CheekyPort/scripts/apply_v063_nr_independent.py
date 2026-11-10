@@ -128,8 +128,10 @@ std::uint32_t cheeky_nr_selected_passes(const Settings& settings,
     const auto second = settings.nr_passes >= 2U
         ? (settings.nr_pass2_views & 7U) : 0U;
     const auto role = cheeky_nr_source_role(view_id);
-    const bool run_first = role ? (first & role)!=0 : first==7U;
-    const bool run_second = role ? (second & role)!=0 : second==7U;
+    // Even mask=7 targets only the three VERIFIED TriView source IDs.
+    // Unknown/desktop sources never allocate an extra NVIDIA NR feature.
+    const bool run_first = role != 0U && (first & role)!=0U;
+    const bool run_second = role != 0U && (second & role)!=0U;
     return (run_first ? 1U : 0U) | (run_second ? 2U : 0U);
 }
 
