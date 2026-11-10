@@ -395,4 +395,34 @@ s=s.replace('    if draft.NrFoveated ~= applied.NrFoveated or draft.NrPasses ~= 
 s=s.replace('        or draft.EyeProcessingMode ~= applied.EyeProcessingMode then', '        then')
 p.write_text(s,encoding="utf-8",newline="\n")
 
+# Independently reviewed lifecycle: pass 2's synthetic view ID is deliberately
+# separate for NVIDIA history isolation. When the physical NGX view is released,
+# BOTH IDs must be retired; otherwise reloading scenes/saves retains orphaned
+# model features indefinitely (VRAM leak on a 12-GB card).
+patch("src/dlss_nr.cpp",
+    "    for (auto& view : views) if (view.view_id == view_id) view.retired = true;",
+    """    const auto pass2_view_id = view_id ^ (1ULL << 63U);
+    for (auto& view : views)
+        if (view.view_id == view_id || view.view_id == pass2_view_id)
+            view.retired = true;""")
+# A failed/missing physical source must invalidate both temporal histories;
+# selective skips *inside* evaluate_nr_selected_passes must not invalidate the
+# other pass (pass-2-only and pass-1-only must retain their own histories).
+patch("src/dlss_nr.hpp",
+    "void skip_dlss_nr_history(DlssViewId) noexcept;",
+    """void skip_dlss_nr_history(DlssViewId) noexcept;
+inline void skip_dlss_nr_source_history(const DlssViewId id) noexcept {
+    skip_dlss_nr_history(id);
+    if (id && (id & (1ULL << 63U)) == 0ULL)
+        skip_dlss_nr_history(id ^ (1ULL << 63U));
+}""")
+for path in ("src/hooks.cpp", "src/dlss_nr_input.cpp"):
+    f=root/path; data=f.read_text(encoding="utf-8")
+    prior=data.count("skip_dlss_nr_history(")
+    if prior < 1:
+        raise RuntimeError(f"{path}: no source skip sites to make pass-safe")
+    f.write_text(data.replace("skip_dlss_nr_history(", "skip_dlss_nr_source_history("),
+                 encoding="utf-8", newline="\n")
+    print(f"NR-LIFETIME: source skip now invalidates both histories in {path}: {prior} sites")
+
 print("PASS NR independent view selection, separate logical histories, per-pass crops, persisted UI")
