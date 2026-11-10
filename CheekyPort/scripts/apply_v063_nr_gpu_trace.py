@@ -84,9 +84,9 @@ patch("src/hooks.cpp",
             (kind<D3D12TimingKind::nr_stage_copy && !diagnostic_should_sample_gpu_time(
                 kind == D3D12TimingKind::native_peripheral_dlss''')
 patch("src/hooks.cpp",
-'''                         : DiagnosticGpuTiming::d3d12_peripheral_dlaa
+'''                        : DiagnosticGpuTiming::d3d12_peripheral_dlaa
             )) {''',
-'''                         : DiagnosticGpuTiming::d3d12_peripheral_dlaa
+'''                        : DiagnosticGpuTiming::d3d12_peripheral_dlaa
             ))) {''')
 # Stage token uses the existing fence-safe query ring. All calls are nonblocking.
 patch("src/hooks.cpp",
