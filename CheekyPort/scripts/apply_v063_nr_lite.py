@@ -377,6 +377,17 @@ if 'nr_template_save_1' not in s or 'EyeProcessingMode' not in s:
 p.write_text(common + "\n" + panel, encoding="utf-8", newline="\n")
 print("NR-LITE UI: removed FG, eye tracking and private SR panels")
 
+# The original UEVR integration fixture expects Cheeky FG to be enabled by
+# a saved option. In NR Lite this is intentionally forbidden; assert the new
+# invariant instead of silently skipping the fixture.
+edit("tests/uevr_tests.cpp",
+    '''        require(current_settings().fg.enabled && current_settings().fg.width==1 && current_settings().fg.height==0.2f &&''',
+    '''        require(!current_settings().fg.enabled && current_settings().fg.width==1 && current_settings().fg.height==0.2f &&''')
+edit("tests/uevr_tests.cpp",
+    '''        require(!current_settings().fg.enabled && configured_settings().fg.enabled,"Detach pauses FG and preserves preference");''',
+    '''        require(!current_settings().fg.enabled && !configured_settings().fg.enabled,
+            "NR Lite forces FG off, including across plugin detachment");''')
+
 # Static generation tests do not pretend the atlas is scheduled. Failure to
 # intercept the native fallback is a fatal integration regression.
 hook = (root / "src/hooks.cpp").read_text(encoding="utf-8")
