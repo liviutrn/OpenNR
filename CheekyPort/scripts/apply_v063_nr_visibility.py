@@ -22,6 +22,11 @@ def edit(name, old, new):
 edit("src/settings.hpp", "NrProcessingOrder nr_processing_order{NrProcessingOrder::after_upscaling};",
      "NrProcessingOrder nr_processing_order{NrProcessingOrder::before_upscaling};")
 edit("src/settings.hpp", "bool nr_foveated{true};", "bool nr_foveated{false};")
+# TriView defaults to stereo foveas only (explicit All mode is still available).
+edit("src/settings.hpp", "std::uint32_t eye_processing_mode{0U}; // All=0",
+     "std::uint32_t eye_processing_mode{3U}; // All=0")
+edit("src/settings.cpp", "std::atomic<std::uint32_t> eye_processing_mode{0U};",
+     "std::atomic<std::uint32_t> eye_processing_mode{3U};")
 edit("src/settings.cpp", "std::atomic<NrProcessingOrder> nr_order{NrProcessingOrder::after_upscaling};",
      "std::atomic<NrProcessingOrder> nr_order{NrProcessingOrder::before_upscaling};")
 edit("src/settings.cpp", "std::atomic<bool> nr_foveated{true};",
