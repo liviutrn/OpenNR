@@ -377,7 +377,7 @@ s=s[:start]+'''    text("Each model pass has independent source coverage. A/B ar
         text("If pass 1 does not target a source, pass 2 runs alone there.")
     end
 ''' + s[end:]
-s=s.replace('        .. " | views " .. tostring(applied.EyeProcessingMode or "?")' + "\\n", '')
+s=s.replace('        .. " | views " .. tostring(applied.EyeProcessingMode or "?")' + "\n", '')
 s=s.replace('    text("APPLIED: NR " .. (applied.NrEnabled and "ON" or "OFF")',
 '''    text("ACTIVE TARGETS pass 1=" .. tostring(applied.NrPass1Views or 0)
        .. " pass 2=" .. tostring(applied.NrPass2Views or 0)
