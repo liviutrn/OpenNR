@@ -27,6 +27,13 @@ has("uevr/scripts/cheeky_foveated_dlss.lua",["Pass 1 source views",
     "ACTIVE TARGETS pass 1="])
 has("tests/gaze_tests.cpp",["Pass1 all, pass2 foveas excludes peripheral pass2",
     "Independent pass mask routing","Pass2-only peripheral routing"])
+# Review regression: logical pass 2 must be released with its physical source.
+has("src/dlss_nr.cpp", ["const auto pass2_view_id = view_id ^ (1ULL << 63U);",
+                        "view.view_id == pass2_view_id"])
+has("src/dlss_nr.hpp", ["inline void skip_dlss_nr_source_history",
+                        "skip_dlss_nr_history(id ^ (1ULL << 63U))"])
+has("src/hooks.cpp", ["skip_dlss_nr_source_history("])
+has("src/dlss_nr_input.cpp", ["skip_dlss_nr_source_history("])
 # No shared NVIDIA feature: synthetic pass-2 view ID preserves history isolation.
 # No forced NR on periphery; masks select every source independently.
 print("NR independent-mask and GPU trace static contracts: OK")
