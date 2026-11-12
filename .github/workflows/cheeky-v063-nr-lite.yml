@@ -6,6 +6,7 @@ on:
       - experiment/cheeky-v063-independent-pass-routing-gpu-trace-20261110
       - experiment/cheeky-v063-faithful-hdr-stability-20261110
       - experiment/cheeky-v063-duo-tri-foveas-only-20261112
+      - experiment/cheeky-v063-manual-duo-tri-targets-20261112
   workflow_dispatch:
 permissions:
   contents: read
@@ -89,6 +90,15 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "DuoView/TriView strict patch failed" }
           python CheekyPort/tests/test_v063_duo_tri.py upstream-cheeky
           if ($LASTEXITCODE -ne 0) { throw "DuoView/TriView regression contract failed" }
+      - name: Apply reviewed explicit four-layout NR targeting and source tests
+        shell: pwsh
+        run: |
+          python -m py_compile CheekyPort/scripts/apply_v063_nr_targets_v2.py CheekyPort/tests/test_v063_nr_targets_v2.py
+          if ($LASTEXITCODE -ne 0) { throw "NR four-mode patch/test syntax failed" }
+          python CheekyPort/scripts/apply_v063_nr_targets_v2.py upstream-cheeky
+          if ($LASTEXITCODE -ne 0) { throw "Strict four-mode NR source patch failed" }
+          python CheekyPort/tests/test_v063_nr_targets_v2.py upstream-cheeky
+          if ($LASTEXITCODE -ne 0) { throw "Four-mode source contract failed" }
       - name: Recompile every embedded HLSL shader from modified sources
         working-directory: upstream-cheeky
         shell: pwsh
@@ -181,7 +191,7 @@ jobs:
       - name: Upload experimental headset-test package
         uses: actions/upload-artifact@v4
         with:
-          name: Cheeky-0.6.3-UEVR-DuoTri-FoveasOnly-Experimental
+          name: Cheeky-0.6.3-UEVR-DuoTri-FourModes-Reviewed-Experimental
           path: |
             upstream-cheeky/bin/Release/*-UEVR-v063-triview-nr-lite.zip
             upstream-cheeky/bin/installer/CheekyOpenXRSetup.exe
