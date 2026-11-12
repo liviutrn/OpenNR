@@ -178,6 +178,20 @@ patch("src/dlss_nr.cpp",
       "const auto role = cheeky_nr_source_role(frame.view_id);",
       "const auto role = cheeky_nr_source_role_for(settings, frame.view_id);")
 
+# NR BEFORE SR must exclude unselected sources BEFORE allocating its private
+# full-source color texture. Previously even a skipped periphery could reserve
+# up to four large scratch inputs. Also break temporal histories on bypass.
+patch("src/dlss_nr_input.cpp",
+      """    std::lock_guard execution_lock(calibration12_execution_mutex());
+    const auto resolution = dlss_nr_processing_resolution(""",
+      """    if (cheeky_nr_selected_passes(settings, frame.view_id) == 0U) {
+        skip_dlss_nr_history(frame.view_id);
+        skip_dlss_nr_history(frame.view_id ^ (1ULL << 63U));
+        return nullptr; // No NVIDIA model and no Before-SR private input buffer
+    }
+    std::lock_guard execution_lock(calibration12_execution_mutex());
+    const auto resolution = dlss_nr_processing_resolution(""")
+
 # Source-role switches must not let old NGX model allocations survive as valid
 # histories. Existing collect_retired_views remains GPU-fence aware.
 patch("src/dlss_nr.cpp",
