@@ -180,20 +180,16 @@ patch("src/dlss_nr.cpp",
       "const auto role = cheeky_nr_source_role(frame.view_id);",
       "const auto role = cheeky_nr_source_role_for(settings, frame.view_id);")
 
-# Filter the actual NATIVE NGX hook before calling generic Before-SR input
-# preparation. The low-level input allocator remains untouched, preserving the
-# WARP recording/allocator/replay tests and invalid-frame diagnostic contract.
-# Only live game evaluations use the source-role policy before scratch allocation.
+# Filter native NGX evaluation BEFORE any scratch allocation; preserve the
+# lower-level input allocator and WARP lifetime/replay/invalid-frame tests.
+# The existing helper invalidates BOTH per-pass histories on a physical skip.
 patch("src/hooks.cpp",
       """        auto* processed = prepare(list, params, settings);
-        if (!processed && settings.eye_independent_coverage) skip_dlss_nr_history(frame.view_id);""",
+        if (!processed && settings.eye_independent_coverage) skip_dlss_nr_source_history(frame.view_id);""",
       """        const auto selected_passes = cheeky_nr_selected_passes(settings, frame.view_id);
-        if (!selected_passes) {
-            skip_dlss_nr_history(frame.view_id);
-            skip_dlss_nr_history(frame.view_id ^ (1ULL << 63U));
-        }
+        if (!selected_passes) skip_dlss_nr_source_history(frame.view_id);
         auto* processed = selected_passes ? prepare(list, params, settings) : nullptr;
-        if (!processed && settings.eye_independent_coverage) skip_dlss_nr_history(frame.view_id);""")
+        if (!processed && settings.eye_independent_coverage) skip_dlss_nr_source_history(frame.view_id);""")
 
 # Source-role switches must not let old NGX model allocations survive as valid
 # histories. Existing collect_retired_views remains GPU-fence aware.
