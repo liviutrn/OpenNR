@@ -38,11 +38,10 @@ checks = {
     "TriView original three/four-source classifier kept":
         "if (pairs != 1U) return 0U;" in state and
         "if (settings.nr_target_mode < 2U || (n != 3U && n != 4U))" in state,
-    "unselected sources avoid Before-SR input allocation":
-        "cheeky_nr_selected_passes(settings, frame.view_id) == 0U" in inputs and
-        inputs.index("cheeky_nr_selected_passes(settings, frame.view_id) == 0U") <
-        inputs.index("std::lock_guard execution_lock(calibration12_execution_mutex());", 
-                     inputs.index("ID3D12Resource* prepare_dlss_nr_input(")),
+    "native Before-SR source exclusion occurs before scratch allocation":
+        "const auto selected_passes = cheeky_nr_selected_passes(settings, frame.view_id);" in hooks
+        and "auto* processed = selected_passes ? prepare(list, params, settings) : nullptr;" in hooks
+        and "cheeky_nr_selected_passes(" not in inputs,
     "actual NR feature retirement stays fence-aware":
         "release_dlss_nr_resources(); // GPU-fence-aware full mode switch" in runtime
         and "collect_retired_views()" in nr,
