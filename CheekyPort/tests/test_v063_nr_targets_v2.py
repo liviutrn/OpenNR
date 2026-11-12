@@ -48,6 +48,9 @@ checks = {
                             "TriView Stereo: both foveas", "TriView Stereo: all three",
                             "Pass 1 source views", "Pass 2 source views",
                             "Duo mono fovea source"]),
+    "NR template loads preserve current Duo/Tri target mode":
+        'std::string_view(name) != "NrTargetMode"' in runtime and
+        'std::string_view(name) != "NrDuoFoveaSource"' in runtime,
     "existing saved settings consumed with bounds":
         'key=="NrTargetMode"' in io and 'parsed > (key=="NrTargetMode" ? 3U : 2U)' in io
         and "(mask & 7U)" in io,
