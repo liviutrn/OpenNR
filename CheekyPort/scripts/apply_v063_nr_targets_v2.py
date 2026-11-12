@@ -203,9 +203,14 @@ patch("src/dlss_nr.cpp",
 patch("uevr/runtime.cpp",
       '''        update_settings(settings);
         if (was_manual_mapping != settings.manual_stereo_mapping)''',
-      '''        const bool nr_sources_changed =
-            configured_settings().nr_target_mode != settings.nr_target_mode ||
-            configured_settings().nr_duo_fovea_source != settings.nr_duo_fovea_source;
+      '''        const auto previous_nr = configured_settings();
+        const bool nr_sources_changed =
+            previous_nr.nr_target_mode != settings.nr_target_mode ||
+            previous_nr.nr_duo_fovea_source != settings.nr_duo_fovea_source ||
+            previous_nr.nr_pass1_views != settings.nr_pass1_views ||
+            previous_nr.nr_pass2_views != settings.nr_pass2_views;
+        // Mask reductions must release old Before-SR private color textures,
+        // not just the model features. Both release paths are GPU-fence aware.
         update_settings(settings);
         if (nr_sources_changed) release_dlss_nr_resources(); // GPU-fence-aware full mode switch
         if (was_manual_mapping != settings.manual_stereo_mapping)''')
