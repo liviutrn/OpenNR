@@ -125,8 +125,10 @@ old = old[:first] + """    if (n == 2U) {
                 v[0]->evaluation_output_height, v[1]->evaluation_output_width,
                 v[1]->evaluation_output_height);
             // Conflicting input/output observations must never choose a target.
-            if (input && output && input != output) return 0U;
-            identified = input ? input : output;
+            // A contradictory signal cannot identify a *single* fovea, but
+            // the fully selected Duo BOTH layout can still process both.
+            identified = (input && output && input != output)
+                ? 0 : (input ? input : output);
         }
         if (!identified && settings.nr_target_mode == 1U) {
             // When BOTH sources are explicitly targeted by every active pass,
