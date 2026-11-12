@@ -180,23 +180,20 @@ patch("src/dlss_nr.cpp",
       "const auto role = cheeky_nr_source_role(frame.view_id);",
       "const auto role = cheeky_nr_source_role_for(settings, frame.view_id);")
 
-# NR BEFORE SR must exclude unselected sources BEFORE allocating its private
-# full-source color texture. Previously even a skipped periphery could reserve
-# up to four large scratch inputs. Also break temporal histories on bypass.
-patch("src/dlss_nr_input.cpp",
-      """    std::lock_guard execution_lock(calibration12_execution_mutex());
-    const auto resolution = dlss_nr_processing_resolution(""",
-      """    // Keep invalid-frame diagnostic behavior for view ID zero. Real source
-    // IDs are filtered before any scratch allocation; source-zero frames still
-    // reach the original validation path (and allocate nothing).
-    if (frame.view_id != 0U &&
-        cheeky_nr_selected_passes(settings, frame.view_id) == 0U) {
-        skip_dlss_nr_history(frame.view_id);
-        skip_dlss_nr_history(frame.view_id ^ (1ULL << 63U));
-        return nullptr; // No NVIDIA model and no Before-SR private input buffer
-    }
-    std::lock_guard execution_lock(calibration12_execution_mutex());
-    const auto resolution = dlss_nr_processing_resolution(""")
+# Filter the actual NATIVE NGX hook before calling generic Before-SR input
+# preparation. The low-level input allocator remains untouched, preserving the
+# WARP recording/allocator/replay tests and invalid-frame diagnostic contract.
+# Only live game evaluations use the source-role policy before scratch allocation.
+patch("src/hooks.cpp",
+      """        auto* processed = prepare(list, params, settings);
+        if (!processed && settings.eye_independent_coverage) skip_dlss_nr_history(frame.view_id);""",
+      """        const auto selected_passes = cheeky_nr_selected_passes(settings, frame.view_id);
+        if (!selected_passes) {
+            skip_dlss_nr_history(frame.view_id);
+            skip_dlss_nr_history(frame.view_id ^ (1ULL << 63U));
+        }
+        auto* processed = selected_passes ? prepare(list, params, settings) : nullptr;
+        if (!processed && settings.eye_independent_coverage) skip_dlss_nr_history(frame.view_id);""")
 
 # Source-role switches must not let old NGX model allocations survive as valid
 # histories. Existing collect_retired_views remains GPU-fence aware.
