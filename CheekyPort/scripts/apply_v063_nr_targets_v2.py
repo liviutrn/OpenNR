@@ -194,6 +194,13 @@ patch("uevr/runtime.cpp",
         if (nr_sources_changed) release_dlss_nr_resources(); // GPU-fence-aware full mode switch
         if (was_manual_mapping != settings.manual_stereo_mapping)''')
 
+# NR templates are model/settings presets, not a hidden renderer-mode switch.
+# The prior template loader deliberately excluded the old EyeProcessingMode;
+# preserve that guarantee for the new mode and manual source selection.
+patch("uevr/runtime.cpp",
+      '#define CHEEKY_SETTING(name, field) if (std::string_view(name).starts_with("Nr") && std::string_view(name) != "NrTemplateActive") settings.field = stored.field;',
+      '#define CHEEKY_SETTING(name, field) if (std::string_view(name).starts_with("Nr") && std::string_view(name) != "NrTemplateActive" && std::string_view(name) != "NrTargetMode" && std::string_view(name) != "NrDuoFoveaSource") settings.field = stored.field;')
+
 # Admission policy must consider the EFFECTIVE mode, not assume 2 fixed foveas.
 patch("uevr/nr_lite_budget_policy.hpp",
       """    const auto first_new = requested.nr_pass1_views & ~(current.nr_pass1_views);
