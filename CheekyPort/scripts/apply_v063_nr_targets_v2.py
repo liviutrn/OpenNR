@@ -128,6 +128,19 @@ old = old[:first] + """    if (n == 2U) {
             if (input && output && input != output) return 0U;
             identified = input ? input : output;
         }
+        if (!identified && settings.nr_target_mode == 1U) {
+            // When BOTH sources are explicitly targeted by every active pass,
+            // we do not need to know which is the fovea. Give them temporary
+            // deterministic roles solely to let both pass-masks select both.
+            // Partial per-source masks still fail closed until A/B is supplied.
+            const auto full_or_none = [](const std::uint32_t m) noexcept {
+                const auto selected = m & 5U;
+                return selected == 0U || selected == 5U;
+            };
+            if (full_or_none(settings.nr_pass1_views) &&
+                (settings.nr_passes < 2U || full_or_none(settings.nr_pass2_views)))
+                identified = v[0]->view_id < v[1]->view_id ? +1 : -1;
+        }
         if (!identified) return 0U; // Ambiguous: manual A/B override is available
         const StereoView* fovea = identified > 0 ? v[0] : v[1];
         const StereoView* periphery = identified > 0 ? v[1] : v[0];
@@ -178,7 +191,7 @@ patch("uevr/runtime.cpp",
             configured_settings().nr_target_mode != settings.nr_target_mode ||
             configured_settings().nr_duo_fovea_source != settings.nr_duo_fovea_source;
         update_settings(settings);
-        if (nr_sources_changed) reset_dlss_nr(); // GPU-fence-aware retirement
+        if (nr_sources_changed) release_dlss_nr_resources(); // GPU-fence-aware full mode switch
         if (was_manual_mapping != settings.manual_stereo_mapping)''')
 
 # Admission policy must consider the EFFECTIVE mode, not assume 2 fixed foveas.
@@ -198,7 +211,11 @@ patch("uevr/nr_lite_budget_policy.hpp",
     // headroom before instantiating its replacement even without a new mask.
     if (current.nr_enabled && requested.nr_enabled &&
         current.nr_duo_fovea_source != requested.nr_duo_fovea_source)
-        return 1536ULL * nr_lite_mib;""")
+        return 1536ULL * nr_lite_mib;
+    if (current.nr_enabled && requested.nr_enabled &&
+        current.nr_target_mode != requested.nr_target_mode &&
+        (current.nr_target_mode / 2U != requested.nr_target_mode / 2U))
+        return 2048ULL * nr_lite_mib; // Duo <-> Tri can create entirely new NGX features""")
 patch("uevr/nr_lite_budget_policy.hpp",
       """const auto features=source_count(requested.nr_pass1_views) +
             (requested.nr_passes>=2U ? source_count(requested.nr_pass2_views) : 0U);""",
@@ -232,7 +249,8 @@ panel = """    text("Select exactly the renderer layout in UEVR. No NR source is
     end
     if (draft.NrTargetMode or 2) < 2 then
         text("Duo auto: larger observed DLSS input region is the fovea (20% confidence gap).")
-        text("If both DLSS sources expose identical sizes, choose A/B manually.")
+        text("If both sources have equal sizes, Duo BOTH works with full-source masks;")
+        text("for per-source targeting choose A/B manually.")
         combo("Duo mono fovea source", "NrDuoFoveaSource",
             {[0]="Auto by input resolution", [1]="Source A (lower DLSS handle ID)",
              [2]="Source B (higher DLSS handle ID)"}, {0,1,2})
@@ -290,7 +308,16 @@ fixture = """        // The selected layout is authoritative; source roles are e
         note_stereo_view_evaluation(99111,12U,1200U,800U,2400U,1600U);
         expect(cheeky_nr_selected_passes(s,99110)==0U &&
                cheeky_nr_selected_passes(s,99111)==0U,
-               "Identical source dimensions fail closed without manual override");
+               "Identical source dimensions fail closed in fovea-only mode");
+        s.nr_target_mode=1U; s.nr_pass1_views=5U; s.nr_pass2_views=5U;
+        expect(cheeky_nr_selected_passes(s,99110)==3U &&
+               cheeky_nr_selected_passes(s,99111)==3U,
+               "Duo all-sources mode works even when both input areas are equal");
+        s.nr_pass1_views=1U;
+        expect(cheeky_nr_selected_passes(s,99110)==0U &&
+               cheeky_nr_selected_passes(s,99111)==0U,
+               "Ambiguous Duo source identity never guesses a partial pass mask");
+        s.nr_target_mode=0U; s.nr_pass1_views=7U; s.nr_pass2_views=7U;
         s.nr_duo_fovea_source=1U;
         expect(cheeky_nr_selected_passes(s,99110)==3U &&
                cheeky_nr_selected_passes(s,99111)==0U,
