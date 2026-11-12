@@ -186,7 +186,11 @@ patch("src/dlss_nr.cpp",
 patch("src/dlss_nr_input.cpp",
       """    std::lock_guard execution_lock(calibration12_execution_mutex());
     const auto resolution = dlss_nr_processing_resolution(""",
-      """    if (cheeky_nr_selected_passes(settings, frame.view_id) == 0U) {
+      """    // Keep invalid-frame diagnostic behavior for view ID zero. Real source
+    // IDs are filtered before any scratch allocation; source-zero frames still
+    // reach the original validation path (and allocate nothing).
+    if (frame.view_id != 0U &&
+        cheeky_nr_selected_passes(settings, frame.view_id) == 0U) {
         skip_dlss_nr_history(frame.view_id);
         skip_dlss_nr_history(frame.view_id ^ (1ULL << 63U));
         return nullptr; // No NVIDIA model and no Before-SR private input buffer
