@@ -672,6 +672,9 @@ void nr_probe_capture_one(const DlssNrFrame& frame,const GpuResources& gpu,
         capture->hue=settings.nr_edit_hue;
         capture->pedestal=settings.nr_dark_pedestal;
         capture->working_scale=settings.nr_working_scale;
+        // Register lifetime ownership BEFORE submitting copy commands; if a
+        // container allocation fails, no GPU-referenced staging can be freed.
+        nr_probe_inflight.push_back(capture);
         for(size_t i=0;i<sources.size();++i){
             const auto& src=sources[i];
             nr_probe_transition(frame.command_list,src.tex,src.state,D3D12_RESOURCE_STATE_COPY_SOURCE);
@@ -687,7 +690,6 @@ void nr_probe_capture_one(const DlssNrFrame& frame,const GpuResources& gpu,
             frame.command_list->CopyTextureRegion(&dst,0U,0U,0U,&from,&box);
             nr_probe_transition(frame.command_list,src.tex,D3D12_RESOURCE_STATE_COPY_SOURCE,src.state);
         }
-        nr_probe_inflight.push_back(capture);
         trace_event("[CheekyNR][FrameCapture] copy_recorded source=%llu bytes=%llu; no GPU wait",
             static_cast<unsigned long long>(frame.view_id),
             static_cast<unsigned long long>(required));
