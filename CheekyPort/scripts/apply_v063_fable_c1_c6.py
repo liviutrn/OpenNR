@@ -239,8 +239,19 @@ patch("uevr/nr_lite_budget_policy.hpp",
             added1 || added2 ? 2048ULL : 0ULL)*nr_lite_mib;
         const auto hint_reserve=current.nr_duo_fovea_source != requested.nr_duo_fovea_source
             ? 1536ULL*nr_lite_mib : 0ULL;
-        if(mask_reserve || hint_reserve)
-            return (std::max)(mask_reserve,hint_reserve);
+        if(mask_reserve || hint_reserve) {
+            // Preserve all other model-growth checks; an A/B hint change can
+            // coincide with full-frame NR expansion, new model tuning, etc.
+            // Mask/hint changes are neutralized ONLY in this recursive check.
+            auto comparable=current;
+            comparable.nr_target_mode=requested.nr_target_mode;
+            comparable.nr_duo_fovea_source=requested.nr_duo_fovea_source;
+            comparable.nr_pass1_views=requested.nr_pass1_views;
+            comparable.nr_pass2_views=requested.nr_pass2_views;
+            comparable.nr_passes=requested.nr_passes;
+            return (std::max)((std::max)(mask_reserve,hint_reserve),
+                nr_lite_required_headroom(comparable,requested));
+        }
     }
     // Guard reconfiguration that adds any new per-source model feature.''')
 # The old mask-growth/hint branches remain for crop/per-pass growth, but are
