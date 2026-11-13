@@ -133,8 +133,8 @@ edit("uevr/nr_lite_budget_policy.hpp",'''    const bool rekey = requested.nr_pre
 '''    const bool rekey = requested.nr_create_flags_mode != current.nr_create_flags_mode ||
         requested.nr_preset != current.nr_preset ||''')
 # 4. Decoded faithful pedestal, no cost or mathematical change at zero.
-edit("src/nr_codec_shader.hpp",'     float ReservedFaithful;',
- '     float DarkPedestal;')
+edit("src/nr_codec_shader.hpp",'    float ReservedFaithful;',
+ '    float DarkPedestal;')
 edit("src/dlss_nr.cpp",'    constants.reserved_faithful = 0.0F;',
  '    constants.reserved_faithful = settings.nr_dark_pedestal;')
 # Existing FaithfulUpgrade code is preserved for DarkPedestal == 0; the positive
@@ -272,7 +272,7 @@ edit("uevr/scripts/cheeky_foveated_dlss.lua",
 
 # 8. Decode-only shader visualization. Reuse one existing padding DWORD:
 # faithful D3D12 codec root size remains exactly 48 DWORD and Vulkan stays 40.
-edit("src/nr_codec_shader.hpp","     uint ExposurePadding;","     uint DebugView;")
+edit("src/nr_codec_shader.hpp","    uint ExposurePadding;","    uint DebugView;")
 edit("src/dlss_nr.cpp",
 '''    constants.padding[0] = std::bit_cast<std::uint32_t>(gpu.exposure''',
 '''    constants.padding[1] = settings.nr_debug_view; // Zero when OFF; unused old slot.
