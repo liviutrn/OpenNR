@@ -2,7 +2,7 @@ name: Cheeky 0.6.3 NR Lite native-SR and atlas readiness
 on:
   push:
     branches:
-      - experiment/cheeky-v063-duotri-adjustable-guard-1536-vram-20261110
+      - experiment/cheeky-v063-duotri-preheadset-instrumented-vram-20261110
       - experiment/cheeky-v063-independent-pass-routing-gpu-trace-20261110
       - experiment/cheeky-v063-faithful-hdr-stability-20261110
       - experiment/cheeky-v063-duo-tri-foveas-only-20261112
@@ -10,6 +10,7 @@ on:
       - experiment/cheeky-v063-fable-review-hardening-20261113
       - experiment/cheeky-v063-fable-c1-c6-safe-20261113
       - experiment/cheeky-v063-adjustable-vram-guard-20261113
+      - experiment/cheeky-v063-preheadset-probes-20261113
   workflow_dispatch:
 permissions:
   contents: read
@@ -135,6 +136,15 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "VRAM guard C++ test fixture patch failed" }
           python CheekyPort/tests/test_v063_adjustable_guard.py upstream-cheeky
           if ($LASTEXITCODE -ne 0) { throw "Adjustable NR guard source contract failed" }
+      - name: Apply experimental preheadset opt-in NR probes and lossless capture
+        shell: pwsh
+        run: |
+          python -m py_compile CheekyPort/scripts/apply_v063_preheadset.py CheekyPort/tests/test_v063_preheadset.py
+          if ($LASTEXITCODE -ne 0) { throw "Preheadset scripts failed to compile" }
+          python CheekyPort/scripts/apply_v063_preheadset.py upstream-cheeky
+          if ($LASTEXITCODE -ne 0) { throw "Preheadset generated code patch failed" }
+          python CheekyPort/tests/test_v063_preheadset.py upstream-cheeky
+          if ($LASTEXITCODE -ne 0) { throw "Preheadset source and shadow reference contract failed" }
       - name: Recompile every embedded HLSL shader from modified sources
         working-directory: upstream-cheeky
         shell: pwsh
@@ -201,10 +211,10 @@ jobs:
           # The upstream PowerShell packager verifies its ZIP hashes internally.
           # Its last cmdlet may retain an unrelated native LASTEXITCODE, so verify
           # the actual output rather than trusting that inherited exit code.
-          ./scripts/package-uevr.ps1 -Configuration Release -Label v063-duotri-adjustable-guard-1536
-          $zip = @(Get-ChildItem bin/Release/*-UEVR-v063-duotri-adjustable-guard-1536.zip)
+          ./scripts/package-uevr.ps1 -Configuration Release -Label v063-duotri-preheadset-instrumented
+          $zip = @(Get-ChildItem bin/Release/*-UEVR-v063-duotri-preheadset-instrumented.zip)
           if ($zip.Count -ne 1) { throw "Missing or ambiguous UEVR archive" }
-          if ($zip[0].Name -ne "CheekyFoveatedDLSS-0.6.3-UEVR-v063-duotri-adjustable-guard-1536.zip") {
+          if ($zip[0].Name -ne "CheekyFoveatedDLSS-0.6.3-UEVR-v063-duotri-preheadset-instrumented.zip") {
             throw "Incorrect version-stamped UEVR archive: $($zip[0].Name)"
           }
           $test = [IO.Compression.ZipFile]::OpenRead($zip[0].FullName)
@@ -227,9 +237,9 @@ jobs:
       - name: Upload experimental headset-test package
         uses: actions/upload-artifact@v4
         with:
-          name: Cheeky-0.6.3-UEVR-DuoTri-AdjustableVRAM1536-Experimental
+          name: Cheeky-0.6.3-UEVR-DuoTri-PreHeadset-Instrumented
           path: |
-            upstream-cheeky/bin/Release/*-UEVR-v063-duotri-adjustable-guard-1536.zip
+            upstream-cheeky/bin/Release/*-UEVR-v063-duotri-preheadset-instrumented.zip
             upstream-cheeky/bin/installer/CheekyOpenXRSetup.exe
           if-no-files-found: error
           retention-days: 20
