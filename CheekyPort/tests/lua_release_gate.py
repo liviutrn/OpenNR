@@ -59,7 +59,7 @@ def main() -> None:
         print(f"PASS source Lua release gate: {len(lua_files)} files compiled in two Lua runtimes")
         return
 
-    archives = list((root / "bin/Release").glob("*-UEVR-v063-triview-nr-lite.zip"))
+    archives = list((root / "bin/Release").glob("CheekyFoveatedDLSS-0.6.3-UEVR-v063-*.zip"))
     if len(archives) != 1:
         raise RuntimeError(f"Expected exactly one UEVR ZIP, found {len(archives)}")
     archive = archives[0]
