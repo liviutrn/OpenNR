@@ -202,8 +202,8 @@ replace("src/nr_probe_capture.hpp",
                  << ",\\n  \\"timestamp_ms\\":" << capture->sample_tick
                  << ",\\n  \\"source_id\\":\\"" << capture->source_id''')
 replace("src/nr_probe_capture.hpp",
-'''                 << ",\\n  \\"source_role\\":" << capture->source_role''',
-'''                 << ",\\n  \\"source_role\\":" << capture->source_role
+'''                 << "\\",\\n  \\"source_role\\":" << capture->source_role''',
+'''                 << "\\",\\n  \\"source_role\\":" << capture->source_role
                  << ",\\n  \\"dll_file_version\\":\\"" << capture->dll_version
                  << "\\",\\n  \\"logical_pass\\":" << capture->logical_pass
                  << ",\\n  \\"nr_passes_requested\\":" << capture->nr_passes_requested
