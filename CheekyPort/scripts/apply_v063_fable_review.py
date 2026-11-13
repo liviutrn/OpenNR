@@ -31,14 +31,15 @@ patch("src/settings.hpp",
 }
 [[nodiscard]] inline std::uint32_t cheeky_nr_target_mask(const Settings& settings) noexcept {''')
 patch("src/settings.cpp",
-      '        result.nr_enabled=settings.nr_enabled&&role&&role->focus;',
+      '        result.nr_enabled=settings.nr_enabled&&role&&cheeky_nr_selected_passes(settings,view_id)!=0U;',
       '''        // Explicit TriView-All may enable the ONE periphery of a 3-source
         // compositor. Ordinary 4-source QuadViews remain unchanged.
         unsigned physical_source_count{};
         for (const auto& source : quad.sources)
             if (source.dlss_view) ++physical_source_count;
         result.nr_enabled=settings.nr_enabled&&role&&
-            (role->focus || (!role->focus && physical_source_count==3U &&
+            cheeky_nr_selected_passes(settings,view_id)!=0U&&
+            (role->focus || (physical_source_count==3U &&
                             cheeky_nr_tri_periphery_requested(settings)));''')
 
 # The old automatic Duo heuristic could choose a view using output extents
