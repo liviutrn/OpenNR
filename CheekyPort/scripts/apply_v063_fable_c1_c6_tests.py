@@ -59,6 +59,11 @@ extra='''        // Fable C1/C4: requested-source admission and same-family reco
             change.nr_target_mode=1U;
             require(nr_lite_required_headroom(duo,change)>=2048ULL*nr_lite_mib,
                     "Simultaneous size-hint and new periphery target needs MAX reserve");
+            Settings big_hint=duo;
+            big_hint.nr_duo_fovea_source=2U;
+            big_hint.nr_foveated=false;
+            require(nr_lite_required_headroom(duo,big_hint)>=2304ULL*nr_lite_mib,
+                    "A size-hint edit cannot hide simultaneous full-frame NR growth");
         }
 '''
 s=s.replace(anchor,extra+anchor,1)
