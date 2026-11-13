@@ -217,7 +217,7 @@ patch("uevr/nr_lite_budget_policy.hpp",
       '#include <cstdint>',
       '#include <cstdint>\n#include <algorithm>')
 patch("uevr/nr_lite_budget_policy.hpp",
-      '''    // Pass 2 has its own feature key. Changes here can allocate a new opaque''',
+      '''    // Guard reconfiguration that adds any new per-source model feature.''',
       '''    if (current.nr_enabled && requested.nr_enabled) {
         // A renderer-family switch creates new physical NGX models while the
         // prior family is still pending GPU retirement. Reserve no more than
@@ -242,7 +242,7 @@ patch("uevr/nr_lite_budget_policy.hpp",
         if(mask_reserve || hint_reserve)
             return (std::max)(mask_reserve,hint_reserve);
     }
-    // Pass 2 has its own feature key. Changes here can allocate a new opaque''')
+    // Guard reconfiguration that adds any new per-source model feature.''')
 # The old mask-growth/hint branches remain for crop/per-pass growth, but are
 # unreachable for the new settings cases handled above. Their semantics are
 # now deliberately constrained by the more complete preflight.
