@@ -838,4 +838,26 @@ edit("tests/uevr_tests.cpp",
 #include "../src/nr_parameters.hpp"''')
 print("PASS compiled host tests for live parsing, non-persistent view, budget and look-only template switching")
 
+
+# MSVC C2026: one embedded raw string is limited to ~16 KiB by this toolchain.
+# Preserve the single source symbol (and unmodified shader logic) by removing
+# only HLSL comments, blank lines and indentation; no code or macros are edited.
+# This avoids breaking the existing shader-regeneration regex, which expects
+# one C++ raw string and checks exact generated D3D12 bytecode.
+codec=root/"src/nr_codec_shader.hpp"
+text=codec.read_text(encoding="utf-8")
+prefix='inline constexpr char nr_codec_shader[] = R"('
+if text.count(prefix)!=1: raise RuntimeError("Unexpected codec source string declaration")
+start=text.index(prefix)+len(prefix);end=text.index(')";',start)
+raw=text[start:end]
+compact_lines=[]
+for line in raw.splitlines():
+    line=line.split("//",1)[0].strip()
+    if line:compact_lines.append(line)
+clean="\n".join(compact_lines)+"\n"
+if len(clean)>=16300:
+    raise RuntimeError(f"Codec HLSL still exceeds MSC string literal budget: {len(clean)}")
+codec.write_text(text[:start]+clean+text[end:],encoding="utf-8",newline="\n")
+print(f"PASS embedded NR HLSL single-literal compression {len(raw)} -> {len(clean)} bytes (comments/whitespace only)")
+
 print("PASS pre-headset setup, DLL version, optional pedestal & flags, look-only template swaps, downscale")
