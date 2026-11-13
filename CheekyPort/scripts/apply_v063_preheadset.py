@@ -336,6 +336,119 @@ edit("src/nr_codec_shader.hpp",
 print("PASS opt-in debug view: existing root constant padding only, no new layouts")
 
 
+
+# 10. Approximate DXGI process-wide NR model cost probe. Only sample at
+# model creation, once its first evaluation recording is GPU-complete and
+# once after a 2s quiet interval. NO device waits; no VRAM-policy feedback.
+edit("src/dlss_nr.cpp",
+'''#include "runtime_search.hpp"''',
+'''#include "runtime_search.hpp"
+#include "../uevr/gpu_memory.hpp"''')
+edit("src/dlss_nr.cpp",
+'''struct ViewState {
+    NrLifetime uses;''',
+'''struct NrFeatureCost {
+    Microsoft::WRL::ComPtr<IDXGIAdapter3> adapter;
+    NrLifetime first_evaluation;
+    std::uint64_t before{},after{},first{},settled{},ready_ms{};
+    std::uint32_t width{},height{},preset{},logical_pass{};
+    bool valid{},pending{},gpu_done{},logged{};
+};
+struct ViewState {
+    NrLifetime uses;
+    NrFeatureCost feature_cost;''')
+edit("src/dlss_nr.cpp",
+'''    NgxHandle* handle{};
+    constexpr std::uint32_t neural_feature_id = 18U;
+    result = runtime.create_feature(''',
+'''    // Creation-time DXGI counters cover the entire process, not only NGX.
+    // Query only on feature creation; GPU completion and settled samples are
+    // taken asynchronously by the existing lifetime collector.
+    GpuMemory model_memory{};
+    if(runtime.device) {
+        model_memory.attach(1U,runtime.device,nullptr);
+        model_memory.poll(GetTickCount64(),true);
+    }
+    NgxHandle* handle{};
+    constexpr std::uint32_t neural_feature_id = 18U;
+    result = runtime.create_feature(''')
+edit("src/dlss_nr.cpp",
+'''    view.parameters = parameters;
+    view.handle = handle;
+    view.key = key;''',
+'''    view.feature_cost = {};
+    if(model_memory.local.valid && model_memory.adapter) {
+        auto& cost=view.feature_cost;
+        cost.adapter=model_memory.adapter;
+        cost.before=model_memory.local.usage;
+        DXGI_QUERY_VIDEO_MEMORY_INFO info{};
+        if(SUCCEEDED(cost.adapter->QueryVideoMemoryInfo(0U,
+            DXGI_MEMORY_SEGMENT_GROUP_LOCAL,&info))) {
+            cost.after=info.CurrentUsage;cost.valid=true;
+            cost.width=working_width;cost.height=working_height;
+            cost.preset=preset;cost.logical_pass=view.pass;
+        }
+    }
+    view.parameters = parameters;
+    view.handle = handle;
+    view.key = key;''')
+edit("src/dlss_nr.cpp",
+'''        if (!ngx_succeeded(result)) { failed_pass = pass; break; }
+        if (pass + 1U < pass_count) {''',
+'''        if (!ngx_succeeded(result)) { failed_pass = pass; break; }
+        if(model.view->feature_cost.valid && !model.view->feature_cost.pending &&
+           !model.view->feature_cost.gpu_done)
+            model.view->feature_cost.pending =
+                model.view->feature_cost.first_evaluation.record(frame.command_list);
+        if (pass + 1U < pass_count) {''')
+# Collector runs under execution gate and shares nr_mutex with ViewState.
+# GPU memory API polling itself happens only at the two timed milestones.
+edit("src/dlss_nr.cpp",
+'''void collect_dlss_nr_submissions() noexcept {
+    std::lock_guard execution_lock(calibration12_execution_mutex());
+    nr_probe_poll();
+    const auto live = current_settings();''',
+'''void collect_dlss_nr_submissions() noexcept {
+    std::lock_guard execution_lock(calibration12_execution_mutex());
+    nr_probe_poll();
+    {
+        std::lock_guard lock(nr_mutex);
+        const auto now=GetTickCount64();
+        for(auto& view:views) {
+            auto& cost=view.feature_cost;
+            if(!cost.valid||cost.logged||!cost.adapter)continue;
+            if(cost.pending&&!cost.gpu_done) {
+                cost.first_evaluation.collect();
+                if(cost.first_evaluation.empty()) {
+                    DXGI_QUERY_VIDEO_MEMORY_INFO info{};
+                    if(SUCCEEDED(cost.adapter->QueryVideoMemoryInfo(0U,
+                        DXGI_MEMORY_SEGMENT_GROUP_LOCAL,&info))) {
+                        cost.first=info.CurrentUsage;cost.ready_ms=now;
+                        cost.gpu_done=true;
+                    }
+                }
+            }
+            if(cost.gpu_done && now>=cost.ready_ms &&
+               now-cost.ready_ms>=2000ULL) {
+                DXGI_QUERY_VIDEO_MEMORY_INFO info{};
+                if(SUCCEEDED(cost.adapter->QueryVideoMemoryInfo(0U,
+                    DXGI_MEMORY_SEGMENT_GROUP_LOCAL,&info))) {
+                    cost.settled=info.CurrentUsage;
+                    const auto delta=[&](std::uint64_t usage) {
+                        return (static_cast<double>(usage)-static_cast<double>(cost.before))/1048576.0;
+                    };
+                    trace_event("[CheekyNR][FeatureCost] view=%llu pass=%u work=%ux%u preset=%u createDeltaMiB=%.1f firstEvalDeltaMiB=%.1f settledDeltaMiB=%.1f approximate=process-wide",
+                        static_cast<unsigned long long>(view.view_id),cost.logical_pass+1U,
+                        cost.width,cost.height,cost.preset,
+                        delta(cost.after),delta(cost.first),delta(cost.settled));
+                }
+                cost.logged=true;cost.adapter.Reset();
+            }
+        }
+    }
+    const auto live = current_settings();''')
+print("PASS sparse NGX cost instrumentation: create, first GPU-completed evaluate, 2s settled")
+
 # 9. One-shot GPU-correct, non-blocking capture of the original source,
 # encoded input, neural output and decoded final image. Every allocation is
 # behind a manual request flag; buffers are READBACK (system-visible memory).
