@@ -117,7 +117,7 @@ patch("src/dlss_nr.cpp",
       '''    const auto selection = cheeky_nr_selection(settings, frame.view_id);
     const auto chosen = selection.passes;''')
 patch("src/dlss_nr.cpp",
-      '''    const auto role = cheeky_nr_source_role(frame.view_id);''',
+      '''    const auto role = cheeky_nr_source_role_for(settings, frame.view_id);''',
       '''    const auto role = selection.role;''')
 
 # C6: one temporal-history skip on non-target native source, not a duplicate
