@@ -38,12 +38,6 @@ patch("uevr/runtime.cpp",
 patch("uevr/settings_fields.inc",
       'CHEEKY_SETTING("NrDuoFoveaSource", nr_duo_fovea_source)',
       'CHEEKY_SETTING("NrDuoFoveaSizeHint", nr_duo_fovea_source)')
-patch("uevr/settings_io.cpp",
-      'key=="NrDuoFoveaSource"',
-      'key=="NrDuoFoveaSizeHint"')
-patch("uevr/settings_io.cpp",
-      'key=="NrDuoFoveaSource"',
-      'key=="NrDuoFoveaSizeHint"') if False else None
 # The previous patch's settings parser contains one string in the condition
 # and one in two bounds/assignments. Convert all remaining exact key literals
 # without touching the canonical C++ field name.
@@ -219,6 +213,9 @@ print("FABLE-C2: selective stale-source + pass-aware GPU-fenced retirement")
 
 # C4: a family change is a fresh-model allocation (not arbitrary flat 2 GiB).
 # Handle changed size hints and mask growth BEFORE old early-return tuning.
+patch("uevr/nr_lite_budget_policy.hpp",
+      '#include <cstdint>',
+      '#include <cstdint>\n#include <algorithm>')
 patch("uevr/nr_lite_budget_policy.hpp",
       '''    // Pass 2 has its own feature key. Changes here can allocate a new opaque''',
       '''    if (current.nr_enabled && requested.nr_enabled) {
