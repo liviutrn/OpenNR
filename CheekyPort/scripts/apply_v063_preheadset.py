@@ -777,4 +777,67 @@ edit("uevr/scripts/cheeky_foveated_dlss.lua",
         text("Button is one-shot; default running has no readback allocations.")''')
 print("PASS lossless one-shot capture: 4 GPU textures, deferred readback, existing lifetime")
 
+
+# 11. Compiled runtime and policy tests. All are opt-in and do not touch render
+# settings outside the test host.
+edit("tests/nr_processing_tests.cpp",
+'''        // Old INIs exposed intensity up to 2, although the model saturates at 1.''',
+'''        {
+            Settings baseline{};
+            require(baseline.nr_debug_view == 0U &&
+                baseline.nr_dark_pedestal == 0.0F &&
+                baseline.nr_create_flags_mode == 0U,
+                "Pre-headset flags and pedestal all default off");
+            Settings model=baseline;
+            model.nr_enabled=true;model.nr_target_mode=0U;model.nr_foveated=true;
+            model.nr_create_flags_mode=1U;
+            const auto model_reserve=nr_lite_required_headroom(baseline,model);
+            require(model_reserve>0U,
+                "NR creation with HDR override must still be budget gated");
+            auto already=model;
+            already.nr_create_flags_mode=0U;
+            require(nr_lite_required_headroom(model,already)>0U,
+                "Toggling NR create flag must charge a rekey allocation");
+            auto looks=model;
+            looks.nr_dark_pedestal=0.015F;
+            looks.nr_debug_view=2U;
+            require(nr_lite_effective_headroom(model,looks)==0U,
+                "Pedestal and debug view must not allocate new NGX models");
+        }
+        // Old INIs exposed intensity up to 2, although the model saturates at 1.''')
+edit("tests/uevr_tests.cpp",
+'''        require(std::filesystem::exists(root/"CheekyFoveatedDLSS-NR-Template-1.ini") &&
+            std::filesystem::exists(root/"CheekyFoveatedDLSS-NR-Template-2.ini"),
+            "Both template files persisted");''',
+'''        require(std::filesystem::exists(root/"CheekyFoveatedDLSS-NR-Template-1.ini") &&
+            std::filesystem::exists(root/"CheekyFoveatedDLSS-NR-Template-2.ini"),
+            "Both template files persisted");
+        command("1\\n218\\nset\\nNrDarkPedestal=0.015\\nNrDebugView=2\\nNrCreateFlagsMode=1");
+        require(field(received,"NrDarkPedestal")>0.014 &&
+            field(received,"NrDebugView")==2 &&
+            field(received,"NrCreateFlagsMode")==1,
+            "Pre-headset HDR experiment, pedestal and transient view can be set live");
+        const auto write_text=serialize_settings(configured_settings());
+        require(write_text.find("NrDebugView=")==std::string::npos &&
+            write_text.find("NrDarkPedestal=0.015")!=std::string::npos &&
+            write_text.find("NrCreateFlagsMode=1")!=std::string::npos,
+            "Only persistent experiments appear in INI; debug is session only");
+        command("1\\n219\\nset\\nNrCreateFlagsMode=0\\nNrDebugView=0\\nNrDarkPedestal=0");
+        command("1\\n220\\nset\\nNrEditBrighten=0.4");
+        command("1\\n221\\nnr_template_save_1");
+        command("1\\n222\\nset\\nNrEditBrighten=1.0\\nNrEditDarken=1.0\\nNrEditChroma=1.0\\nNrEditHue=1.0");
+        command("1\\n223\\nnr_template_save_2");
+        // Look-only template changes must not increment the explicit NR
+        // history-reset generation or recreate the already warm NGX feature.
+        const auto before_template_reset=requested_nr_reset_generation.load();
+        command("1\\n224\\nnr_template_load_1");
+        command("1\\n225\\nnr_template_load_2");
+        require(requested_nr_reset_generation.load()==before_template_reset,
+            "Look-only NR template swaps preserve NVIDIA temporal histories");''')
+edit("tests/uevr_tests.cpp",
+'''#include "settings_io.hpp"''',
+'''#include "settings_io.hpp"
+#include "../src/nr_parameters.hpp"''')
+print("PASS compiled host tests for live parsing, non-persistent view, budget and look-only template switching")
+
 print("PASS pre-headset setup, DLL version, optional pedestal & flags, look-only template swaps, downscale")
