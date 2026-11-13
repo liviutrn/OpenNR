@@ -335,4 +335,331 @@ edit("src/nr_codec_shader.hpp",
 # diagnostic is enabled. No normal-frame traces are added by default.
 print("PASS opt-in debug view: existing root constant padding only, no new layouts")
 
+
+# 9. One-shot GPU-correct, non-blocking capture of the original source,
+# encoded input, neural output and decoded final image. Every allocation is
+# behind a manual request flag; buffers are READBACK (system-visible memory).
+# The existing NrLifetime proves command-list/queue completion before Map.
+# The worker owns the readback COM references until disk writes finish.
+# Source layouts are preserved losslessly including GPU-aligned row pitch.
+capture = r'''
+// Generated on November 13, 2026 by apply_v063_preheadset.py.
+// This header is included inside the dlss_nr.cpp anonymous namespace.
+// No capture resources or threads exist until explicit user interaction.
+// Output files: %LOCALAPPDATA%\CheekyNR-Captures\<timestamp>-<seq>-view-<id>\
+// Raw texture rows (row_pitch_bytes per row), plus capture.json metadata.
+struct NrProbeCopy {
+    Microsoft::WRL::ComPtr<ID3D12Resource> readback;
+    D3D12_PLACED_SUBRESOURCE_FOOTPRINT layout{};
+    std::uint64_t size{};
+    std::uint32_t width{},height{},format{};
+    const char* name{};
+};
+struct NrProbeSnapshot {
+    NrLifetime lifetime;
+    std::array<NrProbeCopy,4> images{};
+    std::uint64_t sequence{},source_id{},reserved{}, captured_ms{};
+    std::uint32_t source_role{},passes{},reconstruction_mode{},hdr_flags{},model_flags{};
+    std::uint32_t region_x{},region_y{},working_width{},working_height{};
+    float paper_white{},transfer{},color_strength{},shoulder{},brighten{},darken{},chroma{},hue{},pedestal{},working_scale{};
+    ~NrProbeSnapshot();
+};
+std::atomic<unsigned> nr_probe_requested{};
+std::atomic<std::uint64_t> nr_probe_memory{};
+std::atomic<std::uint64_t> nr_probe_sequence{};
+std::deque<std::shared_ptr<NrProbeSnapshot>> nr_probe_inflight;
+NrProbeSnapshot::~NrProbeSnapshot() {
+    nr_probe_memory.fetch_sub(reserved,std::memory_order_acq_rel);
+}
+void nr_probe_transition(ID3D12GraphicsCommandList* list,ID3D12Resource* res,
+    D3D12_RESOURCE_STATES before,D3D12_RESOURCE_STATES after) noexcept {
+    if(before==after)return;
+    D3D12_RESOURCE_BARRIER barrier{};
+    barrier.Type=D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+    barrier.Transition.pResource=res;
+    barrier.Transition.StateBefore=before;barrier.Transition.StateAfter=after;
+    barrier.Transition.Subresource=D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+    list->ResourceBarrier(1U,&barrier);
+}
+bool nr_probe_readback(ID3D12Device* device,NrProbeCopy& out,
+    ID3D12Resource* src,unsigned width,unsigned height,const char* name) noexcept {
+    if(!src||!width||!height)return false;
+    const auto real=src->GetDesc();
+    if(real.Dimension!=D3D12_RESOURCE_DIMENSION_TEXTURE2D || real.MipLevels!=1U ||
+       real.DepthOrArraySize!=1U || real.SampleDesc.Count!=1U) return false;
+    if(real.Format!=DXGI_FORMAT_R16G16B16A16_FLOAT &&
+       real.Format!=DXGI_FORMAT_R8G8B8A8_UNORM &&
+       real.Format!=DXGI_FORMAT_R10G10B10A2_UNORM) return false;
+    D3D12_RESOURCE_DESC tex=real;
+    tex.Width=width;tex.Height=height;
+    tex.Flags=D3D12_RESOURCE_FLAG_NONE;tex.Layout=D3D12_TEXTURE_LAYOUT_UNKNOWN;
+    UINT64 bytes{};
+    device->GetCopyableFootprints(&tex,0U,1U,0ULL,&out.layout,nullptr,nullptr,&bytes);
+    if(!bytes || bytes>96ULL*1024ULL*1024ULL)return false;
+    D3D12_RESOURCE_DESC buffer{};
+    buffer.Dimension=D3D12_RESOURCE_DIMENSION_BUFFER;
+    buffer.Width=bytes;buffer.Height=1U;buffer.DepthOrArraySize=1U;
+    buffer.MipLevels=1U;buffer.SampleDesc.Count=1U;
+    buffer.Layout=D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+    D3D12_HEAP_PROPERTIES heap{};
+    heap.Type=D3D12_HEAP_TYPE_READBACK;
+    heap.CreationNodeMask=heap.VisibleNodeMask=1U;
+    if(FAILED(device->CreateCommittedResource(&heap,D3D12_HEAP_FLAG_NONE,
+        &buffer,D3D12_RESOURCE_STATE_COPY_DEST,nullptr,
+        IID_PPV_ARGS(&out.readback))))return false;
+    out.size=bytes;out.width=width;out.height=height;
+    out.format=static_cast<std::uint32_t>(real.Format);out.name=name;
+    return true;
+}
+void nr_probe_write(std::shared_ptr<NrProbeSnapshot> capture) noexcept {
+    try {
+        wchar_t root[32768]{};
+        auto size=GetEnvironmentVariableW(L"LOCALAPPDATA",root,32768U);
+        if(!size||size>=32768U) {
+            size=GetTempPathW(32768U,root);
+            if(!size||size>=32768U)return;
+        }
+        SYSTEMTIME time{};GetLocalTime(&time);
+        wchar_t name[256]{};
+        swprintf_s(name,L"%04u%02u%02u-%02u%02u%02u-%llu-view-%llu",
+            time.wYear,time.wMonth,time.wDay,time.wHour,time.wMinute,time.wSecond,
+            static_cast<unsigned long long>(capture->sequence),
+            static_cast<unsigned long long>(capture->source_id));
+        const auto folder=std::filesystem::path(root)/L"CheekyNR-Captures"/name;
+        std::filesystem::create_directories(folder);
+        bool ok=true;
+        for(const auto& image:capture->images){
+            void* data{};
+            const D3D12_RANGE range{0,static_cast<SIZE_T>(image.size)};
+            const auto mapped=image.readback->Map(0U,&range,&data);
+            if(FAILED(mapped)||!data){ok=false;break;}
+            std::ofstream file(folder/(std::string(image.name)+".bin"),std::ios::binary);
+            file.write(static_cast<const char*>(data),static_cast<std::streamsize>(image.size));
+            file.close();
+            const D3D12_RANGE no_writes{0,0};image.readback->Unmap(0U,&no_writes);
+            if(!file){ok=false;break;}
+        }
+        if(ok) {
+            std::ofstream meta(folder/"capture.json",std::ios::binary);
+            meta << std::setprecision(9);
+            meta << "{\n  \"schema\":1,\n  \"source_id\":\"" << capture->source_id
+                 << "\",\n  \"source_role\":" << capture->source_role
+                 << ",\n  \"logical_passes\":" << capture->passes
+                 << ",\n  \"reconstruction_mode\":" << capture->reconstruction_mode
+                 << ",\n  \"game_create_flags\":" << capture->hdr_flags
+                 << ",\n  \"nr_create_flags\":" << capture->model_flags
+                 << ",\n  \"region_x\":" << capture->region_x
+                 << ",\n  \"region_y\":" << capture->region_y
+                 << ",\n  \"working_width\":" << capture->working_width
+                 << ",\n  \"working_height\":" << capture->working_height
+                 << ",\n  \"paper_white_scale\":" << capture->paper_white
+                 << ",\n  \"transfer_strength\":" << capture->transfer
+                 << ",\n  \"color_strength\":" << capture->color_strength
+                 << ",\n  \"shoulder_knee\":" << capture->shoulder
+                 << ",\n  \"edit_brighten\":" << capture->brighten
+                 << ",\n  \"edit_darken\":" << capture->darken
+                 << ",\n  \"edit_chroma\":" << capture->chroma
+                 << ",\n  \"edit_hue\":" << capture->hue
+                 << ",\n  \"dark_pedestal\":" << capture->pedestal
+                 << ",\n  \"working_scale\":" << capture->working_scale
+                 << ",\n  \"format_note\":\"R16G16B16A16_FLOAT=10, R8G8B8A8_UNORM=28, R10G10B10A2_UNORM=24; little-endian; rows include DXGI padding\",\n  \"images\":{\n";
+            for(size_t i=0;i<capture->images.size();++i) {
+                const auto& im=capture->images[i];
+                meta<<"    \""<<im.name<<"\":{\"file\":\""<<im.name<<".bin\",\"width\":"<<im.width
+                    <<",\"height\":"<<im.height<<",\"format\":"<<im.format
+                    <<",\"row_pitch_bytes\":"<<im.layout.Footprint.RowPitch
+                    <<",\"bytes\":"<<im.size<<"}"<<(i+1<capture->images.size()?",":"")<<"\n";
+            }
+            meta<<"  }\n}\n";meta.close();ok=!!meta;
+        }
+        char folder_utf8[2048]{};
+        WideCharToMultiByte(CP_UTF8,0,folder.c_str(),-1,folder_utf8,sizeof(folder_utf8),nullptr,nullptr);
+        trace_event("[CheekyNR][FrameCapture] %s path=%s source=%llu bytes=%llu (readback after GPU recording retirement)",
+            ok?"saved":"write_failed",folder_utf8,
+            static_cast<unsigned long long>(capture->source_id),
+            static_cast<unsigned long long>(capture->reserved));
+    } catch (...) {
+        trace_event("[CheekyNR][FrameCapture] write_failed exception");
+    }
+}
+void nr_probe_poll() noexcept {
+    for(auto it=nr_probe_inflight.begin();it!=nr_probe_inflight.end();) {
+        auto& capture=*it;
+        capture->lifetime.collect();
+        if(!capture->lifetime.empty()) {++it;continue;}
+        auto completed=capture;it=nr_probe_inflight.erase(it);
+        try { std::thread([completed]{nr_probe_write(completed);}).detach(); }
+        catch (...) { trace_event("[CheekyNR][FrameCapture] worker_unavailable"); }
+    }
+}
+void nr_probe_capture_one(const DlssNrFrame& frame,const GpuResources& gpu,
+    const NrRegion& codec,const Settings& settings,unsigned passes) noexcept {
+    if(!nr_probe_requested.load(std::memory_order_acquire))return;
+    if(nr_probe_inflight.size()>=2U)return;
+    if(!frame.command_list||!frame.color||!gpu.original_output ||
+        !gpu.color_proxy||!gpu.neural_output)return;
+    if(nr_probe_requested.exchange(0U,std::memory_order_acq_rel)==0U)return;
+    try {
+        Microsoft::WRL::ComPtr<ID3D12Device> device;
+        if(FAILED(frame.command_list->GetDevice(IID_PPV_ARGS(&device))))return;
+        auto capture=std::make_shared<NrProbeSnapshot>();
+        struct Source {
+            ID3D12Resource* tex;
+            unsigned width,height,x,y;
+            D3D12_RESOURCE_STATES state;
+            const char* name;
+        };
+        const std::array<Source,4> sources{{
+            {gpu.original_output,gpu.width,gpu.height,0U,0U,D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,"original"},
+            {gpu.color_proxy,gpu.working_width,gpu.working_height,0U,0U,D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,"model_input"},
+            {gpu.neural_output,gpu.working_width,gpu.working_height,0U,0U,D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,"model_output"},
+            {frame.color,gpu.width,gpu.height,codec.base_x,codec.base_y,D3D12_RESOURCE_STATE_UNORDERED_ACCESS,"final"}
+        }};
+        std::uint64_t required{};
+        for(size_t i=0;i<sources.size();++i){
+            const auto& src=sources[i];
+            const auto desc=src.tex->GetDesc();
+            if(src.x>desc.Width || src.width>desc.Width-src.x ||
+               src.y>desc.Height || src.height>desc.Height-src.y ||
+               !nr_probe_readback(device.Get(),capture->images[i],
+                   src.tex,src.width,src.height,src.name)) {
+                trace_event("[CheekyNR][FrameCapture] unsupported_format_or_region");
+                return;
+            }
+            required+=capture->images[i].size;
+        }
+        if(required>192ULL*1024ULL*1024ULL) {
+            trace_event("[CheekyNR][FrameCapture] sample_too_large bytes=%llu",
+                static_cast<unsigned long long>(required));
+            return;
+        }
+        auto used=nr_probe_memory.load();
+        do {
+            if(used>256ULL*1024ULL*1024ULL-required)return;
+        } while(!nr_probe_memory.compare_exchange_weak(used,used+required));
+        capture->reserved=required;
+        if(!capture->lifetime.record(frame.command_list)){
+            trace_event("[CheekyNR][FrameCapture] lifetime_unavailable");
+            return;
+        }
+        capture->sequence=nr_probe_sequence.fetch_add(1U)+1U;
+        capture->source_id=frame.view_id;capture->source_role=frame.source_role;
+        capture->passes=passes;capture->hdr_flags=frame.create_flags;
+        capture->model_flags=settings.nr_create_flags_mode==1U ? frame.create_flags & ~1U : frame.create_flags;
+        capture->region_x=codec.base_x;capture->region_y=codec.base_y;
+        capture->working_width=gpu.working_width;capture->working_height=gpu.working_height;
+        capture->reconstruction_mode=settings.nr_reconstruction_mode;
+        capture->paper_white=settings.nr_paper_white_scale;
+        capture->transfer=settings.nr_hdr_transfer_strength;
+        capture->color_strength=settings.nr_color_strength;
+        capture->shoulder=settings.nr_shoulder_knee;
+        capture->brighten=settings.nr_edit_brighten;
+        capture->darken=settings.nr_edit_darken;
+        capture->chroma=settings.nr_edit_chroma;
+        capture->hue=settings.nr_edit_hue;
+        capture->pedestal=settings.nr_dark_pedestal;
+        capture->working_scale=settings.nr_working_scale;
+        for(size_t i=0;i<sources.size();++i){
+            const auto& src=sources[i];
+            nr_probe_transition(frame.command_list,src.tex,src.state,D3D12_RESOURCE_STATE_COPY_SOURCE);
+            D3D12_TEXTURE_COPY_LOCATION dst{};
+            dst.pResource=capture->images[i].readback.Get();
+            dst.Type=D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+            dst.PlacedFootprint=capture->images[i].layout;
+            D3D12_TEXTURE_COPY_LOCATION from{};
+            from.pResource=src.tex;from.Type=D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+            from.SubresourceIndex=0U;
+            const D3D12_BOX box{src.x,src.y,0U,
+                src.x+src.width,src.y+src.height,1U};
+            frame.command_list->CopyTextureRegion(&dst,0U,0U,0U,&from,&box);
+            nr_probe_transition(frame.command_list,src.tex,D3D12_RESOURCE_STATE_COPY_SOURCE,src.state);
+        }
+        nr_probe_inflight.push_back(capture);
+        trace_event("[CheekyNR][FrameCapture] copy_recorded source=%llu bytes=%llu; no GPU wait",
+            static_cast<unsigned long long>(frame.view_id),
+            static_cast<unsigned long long>(required));
+    } catch (...) {
+        trace_event("[CheekyNR][FrameCapture] capture_setup_failed");
+    }
+}
+'''
+file=root/"src/nr_probe_capture.hpp"
+file.write_text(capture,encoding="utf-8",newline="\n")
+edit("src/dlss_nr.cpp","#include <vector>",
+'''#include <vector>
+#include <thread>
+#include <memory>
+#include <filesystem>
+#include <fstream>
+#include <iomanip>''')
+edit("src/dlss_nr.cpp",
+'''std::deque<ViewState> views;''',
+'''std::deque<ViewState> views;
+#include "nr_probe_capture.hpp"''')
+edit("src/dlss_nr.hpp",
+'''void reset_dlss_nr() noexcept;''',
+'''void reset_dlss_nr() noexcept;
+// One-shot, opt-in, lossless raw texture capture; never queues GPU readback
+// or allocates when no user request exists.
+[[nodiscard]] bool request_dlss_nr_capture() noexcept;''')
+edit("src/dlss_nr.cpp",
+'''void reset_dlss_nr() noexcept {''',
+'''bool request_dlss_nr_capture() noexcept {
+    unsigned idle=0U;
+    return nr_probe_requested.compare_exchange_strong(idle,1U);
+}
+void reset_dlss_nr() noexcept {''')
+# Collector is already protected by the D3D12 execution mutex; completion
+# only grants writer ownership after GPU recording/fence retirement.
+edit("src/dlss_nr.cpp",
+'''void collect_dlss_nr_submissions() noexcept {
+    std::lock_guard execution_lock(calibration12_execution_mutex());''',
+'''void collect_dlss_nr_submissions() noexcept {
+    std::lock_guard execution_lock(calibration12_execution_mutex());
+    nr_probe_poll();''')
+# Capture the unmodified original and exact neural input/output BEFORE codec
+# scratch states are restored, and immediately AFTER final decode. All sources
+# are restored to their previous resource states after the optional copy.
+edit("src/dlss_nr.cpp",
+'''    uav_barrier(frame.command_list, frame.color);
+    transition(
+        frame.command_list,
+        frame.color,
+        D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+        frame.color_state
+    );
+    transition(
+        frame.command_list,
+        gpu->original_output,''',
+'''    uav_barrier(frame.command_list, frame.color);
+    nr_probe_capture_one(frame,*gpu,codec_region,settings,pass_count);
+    transition(
+        frame.command_list,
+        frame.color,
+        D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+        frame.color_state
+    );
+    transition(
+        frame.command_list,
+        gpu->original_output,''')
+edit("uevr/runtime.cpp",
+'''        if (action == "reset_nr") { reset_dlss_nr(); return true; }''',
+'''        if (action == "reset_nr") { reset_dlss_nr(); return true; }
+        if (action == "nr_capture") {
+            const bool armed=request_dlss_nr_capture();
+            s.message=armed
+                ? "NR frame capture armed; GPU readback files will be written to LocalAppData/ CheekyNR-Captures after GPU completion"
+                : "NR capture already armed; finish existing request before triggering again";
+            trace_event("[CheekyNR][FrameCapture] request=%s", armed?"armed":"already_pending");
+            return armed;
+        }''')
+edit("uevr/scripts/cheeky_foveated_dlss.lua",
+'''        section("Pre-headset diagnostics (all off by default)")''',
+'''        section("Pre-headset diagnostics (all off by default)")
+        if imgui.button("Capture one NR frame (lossless raw)") then send("nr_capture") end
+        text("Capture location: %LOCALAPPDATA%/CheekyNR-Captures")
+        text("Four raw images plus capture.json; saves only after GPU completion.")
+        text("Button is one-shot; default running has no readback allocations.")''')
+print("PASS lossless one-shot capture: 4 GPU textures, deferred readback, existing lifetime")
+
 print("PASS pre-headset setup, DLL version, optional pedestal & flags, look-only template swaps, downscale")
