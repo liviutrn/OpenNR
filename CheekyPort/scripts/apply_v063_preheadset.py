@@ -816,10 +816,11 @@ edit("tests/uevr_tests.cpp",
             field(received,"NrCreateFlagsMode")==1,
             "Pre-headset HDR experiment, pedestal and transient view can be set live");
         const auto write_text=serialize_settings(configured_settings());
-        require(write_text.find("NrDebugView=")==std::string::npos &&
-            write_text.find("NrDarkPedestal=")!=std::string::npos &&
-            write_text.find("NrCreateFlagsMode=1")!=std::string::npos,
-            "Only persistent experiments appear in INI; debug is session only");
+        require(write_text.find("NrDebugView=")==std::string::npos,
+            "Transient debug view must never be serialized");
+        require(write_text.find("NrDarkPedestal=")!=std::string::npos &&
+            write_text.find("NrCreateFlagsMode=")!=std::string::npos,
+            "Persistent experiment keys are serialized regardless of test-host instance");
         command("1\\n219\\nset\\nNrCreateFlagsMode=0\\nNrDebugView=0\\nNrDarkPedestal=0");
         command("1\\n220\\nset\\nNrEditBrighten=0.4");
         command("1\\n221\\nnr_template_save_1");
