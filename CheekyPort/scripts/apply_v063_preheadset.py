@@ -269,4 +269,70 @@ edit("uevr/scripts/cheeky_foveated_dlss.lua",
             {[0]="Original game flags (default)",
              [1]="NR-only: clear IsHDR bit"}, {0,1})
         text("Model create-flags experiment resets the NR model, not game DLSS SR.")''')
+
+# 8. Decode-only shader visualization. Reuse one existing padding DWORD:
+# faithful D3D12 codec root size remains exactly 48 DWORD and Vulkan stays 40.
+edit("src/nr_codec_shader.hpp","     uint ExposurePadding;","     uint DebugView;")
+edit("src/dlss_nr.cpp",
+'''    constants.padding[0] = std::bit_cast<std::uint32_t>(gpu.exposure''',
+'''    constants.padding[1] = settings.nr_debug_view; // Zero when OFF; unused old slot.
+    constants.padding[0] = std::bit_cast<std::uint32_t>(gpu.exposure''')
+edit("src/nr_codec_shader.hpp",
+'''[numthreads(16, 16, 1)]
+void EncodeMain''',
+'''float3 NrDebugApplied(float3 original, float3 final_result) {
+    const float white = CodecWhite();
+    const float3 a = max(original/white, 0.0);
+    const float3 b = max(final_result/white, 0.0);
+    const float ya = Luminance(a);
+    const float yb = Luminance(b);
+    if (DebugView == 1U) {
+        const float stops = clamp(log2(max(yb,1e-6) / max(ya,1e-6)), -1.0, 1.0);
+        const float gain = abs(stops);
+        return white * (stops >= 0.0 ?
+            lerp(float3(0.18,0.18,0.18),float3(0.85,0.12,0.12),gain) :
+            lerp(float3(0.18,0.18,0.18),float3(0.12,0.20,0.85),gain));
+    }
+    const float3 achroma = log2(max(a,1e-6)) - log2(max(ya,1e-6));
+    const float3 bchroma = log2(max(b,1e-6)) - log2(max(yb,1e-6));
+    const float amount = saturate(length(clamp(bchroma-achroma,-2.0,2.0)) * 0.35);
+    return white * lerp(float3(0.18,0.18,0.18),float3(0.90,0.25,0.80),amount);
+}
+
+[numthreads(16, 16, 1)]
+void EncodeMain''')
+edit("src/nr_codec_shader.hpp",
+'''        Output0[SourceBase + dispatch_id.xy] = original_sample;
+        return;
+    }
+    const float2 proxy_position''',
+'''        Output0[SourceBase + dispatch_id.xy] = DebugView == 0U
+            ? original_sample : float4(original_sample.rgb * 0.5, original_sample.a);
+        return;
+    }
+    const float2 proxy_position''')
+edit("src/nr_codec_shader.hpp",
+'''        Output0[SourceBase + dispatch_id.xy] = lerp(original_sample, processed, foveation_weight);
+        return;
+    }
+    const float3 original = original_sample.rgb / CodecWhite();''',
+'''        const float4 final_color = lerp(original_sample, processed, foveation_weight);
+        Output0[SourceBase + dispatch_id.xy] = DebugView == 0U ? final_color :
+            float4(NrDebugApplied(original_sample.rgb, final_color.rgb), original_sample.a);
+        return;
+    }
+    const float3 original = original_sample.rgb / CodecWhite();''')
+edit("src/nr_codec_shader.hpp",
+'''    Output0[SourceBase + dispatch_id.xy] = lerp(original_sample, processed, foveation_weight);
+}
+)";''',
+'''    const float4 final_color = lerp(original_sample, processed, foveation_weight);
+    Output0[SourceBase + dispatch_id.xy] = DebugView == 0U ? final_color :
+        float4(NrDebugApplied(original_sample.rgb, final_color.rgb), original_sample.a);
+}
+)";''')
+# Test-oriented metadata log makes the state understandable while the visual
+# diagnostic is enabled. No normal-frame traces are added by default.
+print("PASS opt-in debug view: existing root constant padding only, no new layouts")
+
 print("PASS pre-headset setup, DLL version, optional pedestal & flags, look-only template swaps, downscale")
