@@ -145,6 +145,17 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "Preheadset generated code patch failed" }
           python CheekyPort/tests/test_v063_preheadset.py upstream-cheeky
           if ($LASTEXITCODE -ne 0) { throw "Preheadset source and shadow reference contract failed" }
+      - name: Apply Claude capture-V2 review fixes and compiled tests
+        shell: pwsh
+        run: |
+          python -m py_compile CheekyPort/scripts/apply_v063_preheadset_capture_v2.py CheekyPort/scripts/apply_v063_capture_v2_tests.py CheekyPort/tests/test_v063_preheadset_capture_v2.py
+          if ($LASTEXITCODE -ne 0) { throw "Capture V2 scripts syntax failed" }
+          python CheekyPort/scripts/apply_v063_preheadset_capture_v2.py upstream-cheeky
+          if ($LASTEXITCODE -ne 0) { throw "Capture V2 generated patch failed" }
+          python CheekyPort/scripts/apply_v063_capture_v2_tests.py upstream-cheeky
+          if ($LASTEXITCODE -ne 0) { throw "Capture V2 compiled UEVR tests patch failed" }
+          python CheekyPort/tests/test_v063_preheadset_capture_v2.py upstream-cheeky
+          if ($LASTEXITCODE -ne 0) { throw "Capture V2 source/lifetime gate failed" }
       - name: Recompile every embedded HLSL shader from modified sources
         working-directory: upstream-cheeky
         shell: pwsh
