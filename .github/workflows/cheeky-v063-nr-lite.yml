@@ -2,12 +2,13 @@ name: Cheeky 0.6.3 NR Lite native-SR and atlas readiness
 on:
   push:
     branches:
-      - experiment/cheeky-v063-duotri-fourmodes-fable-reviewed-vram-20261110
+      - experiment/cheeky-v063-duotri-c1c6-vram-safe-vram-20261110
       - experiment/cheeky-v063-independent-pass-routing-gpu-trace-20261110
       - experiment/cheeky-v063-faithful-hdr-stability-20261110
       - experiment/cheeky-v063-duo-tri-foveas-only-20261112
       - experiment/cheeky-v063-manual-duo-tri-targets-20261112
       - experiment/cheeky-v063-fable-review-hardening-20261113
+      - experiment/cheeky-v063-fable-c1-c6-safe-20261113
   workflow_dispatch:
 permissions:
   contents: read
@@ -109,6 +110,19 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "Fable review safety hardening patch failed" }
           python CheekyPort/tests/test_v063_fable_review.py upstream-cheeky
           if ($LASTEXITCODE -ne 0) { throw "Fable review source policy contract failed" }
+      - name: Apply VRAM-safe Fable C1-C6 core repairs and C++ regression fixtures
+        shell: pwsh
+        run: |
+          python -m py_compile CheekyPort/scripts/apply_v063_fable_c1_c6.py CheekyPort/scripts/apply_v063_fable_status.py CheekyPort/scripts/apply_v063_fable_c1_c6_tests.py CheekyPort/tests/test_v063_fable_c1_c6.py
+          if ($LASTEXITCODE -ne 0) { throw "C1-C6 repair script syntax failed" }
+          python CheekyPort/scripts/apply_v063_fable_c1_c6.py upstream-cheeky
+          if ($LASTEXITCODE -ne 0) { throw "C1-C6 core source patch failed" }
+          python CheekyPort/scripts/apply_v063_fable_status.py upstream-cheeky
+          if ($LASTEXITCODE -ne 0) { throw "C5 live NR layout diagnostics patch failed" }
+          python CheekyPort/scripts/apply_v063_fable_c1_c6_tests.py upstream-cheeky
+          if ($LASTEXITCODE -ne 0) { throw "C1-C6 compiled test fixtures patch failed" }
+          python CheekyPort/tests/test_v063_fable_c1_c6.py upstream-cheeky
+          if ($LASTEXITCODE -ne 0) { throw "C1-C6 source contract failed" }
       - name: Recompile every embedded HLSL shader from modified sources
         working-directory: upstream-cheeky
         shell: pwsh
@@ -175,10 +189,10 @@ jobs:
           # The upstream PowerShell packager verifies its ZIP hashes internally.
           # Its last cmdlet may retain an unrelated native LASTEXITCODE, so verify
           # the actual output rather than trusting that inherited exit code.
-          ./scripts/package-uevr.ps1 -Configuration Release -Label v063-duotri-fourmodes-fable-reviewed
-          $zip = @(Get-ChildItem bin/Release/*-UEVR-v063-duotri-fourmodes-fable-reviewed.zip)
+          ./scripts/package-uevr.ps1 -Configuration Release -Label v063-duotri-c1c6-vram-safe
+          $zip = @(Get-ChildItem bin/Release/*-UEVR-v063-duotri-c1c6-vram-safe.zip)
           if ($zip.Count -ne 1) { throw "Missing or ambiguous UEVR archive" }
-          if ($zip[0].Name -ne "CheekyFoveatedDLSS-0.6.3-UEVR-v063-duotri-fourmodes-fable-reviewed.zip") {
+          if ($zip[0].Name -ne "CheekyFoveatedDLSS-0.6.3-UEVR-v063-duotri-c1c6-vram-safe.zip") {
             throw "Incorrect version-stamped UEVR archive: $($zip[0].Name)"
           }
           $test = [IO.Compression.ZipFile]::OpenRead($zip[0].FullName)
@@ -201,9 +215,9 @@ jobs:
       - name: Upload experimental headset-test package
         uses: actions/upload-artifact@v4
         with:
-          name: Cheeky-0.6.3-UEVR-DuoTri-Fable-Reviewed-Experimental
+          name: Cheeky-0.6.3-UEVR-DuoTri-C1C6-VramSafe-Experimental
           path: |
-            upstream-cheeky/bin/Release/*-UEVR-v063-duotri-fourmodes-fable-reviewed.zip
+            upstream-cheeky/bin/Release/*-UEVR-v063-duotri-c1c6-vram-safe.zip
             upstream-cheeky/bin/installer/CheekyOpenXRSetup.exe
           if-no-files-found: error
           retention-days: 20
