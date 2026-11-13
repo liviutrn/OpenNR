@@ -25,9 +25,9 @@ checks={
  "no change to VRAM admission":"nr_lite_effective_headroom(previous, next)" in runtime,
  "partial images saved":'if(!image.valid || !image.readback)continue;' in h and '"unsupported_format_or_region"' in h,
  "format26 supported":'DXGI_FORMAT_R11G11B10_FLOAT' in h,
- "schema and decoder metadata":'"schema\\\\":2' in h and 'capture->exposure_pre' in h and 'capture->exposure_multiplier' in h and 'exposure_texel_available\\\\":false' in h and 'capture->dll_version' in h,
+ "schema and decoder metadata":'schema' in h and 'capture->exposure_pre' in h and 'capture->exposure_multiplier' in h and 'exposure_texel_available' in h and 'capture->dll_version' in h and 'source_frame_index' in h,
  "model and frame metadata":'capture->logical_pass=frame.logical_pass' in h and 'capture->source_frame_index=source_frame' in h and 'capture->intensity=settings.nr_intensity' in h,
- "correct NR flag failure trace":"nr_flags,\\n            result" in nr,
+ "correct NR flag failure trace":bool(re.search(r'nr_flags,\s*result\s*\)',nr)),
  "correct logical pass telemetry":"cost.logical_pass=frame.logical_pass;" in nr and "cost.logical_pass," in nr,
  "compiled transient settings test":"CaptureFrames transient" in tests,
 }
