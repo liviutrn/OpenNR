@@ -287,7 +287,12 @@ replace("src/nr_probe_capture.hpp",
         nr_probe_source_count=0U;
         nr_probe_source_progress={};
         nr_probe_started_ms=GetTickCount64();
-        nr_probe_session=nr_probe_sequence.fetch_add(1U,std::memory_order_acq_rel)+1U;
+        // FILETIME is globally unique enough to prevent folder overwrites
+        // across game restarts and multiple capture requests.
+        FILETIME session_time{};
+        GetSystemTimeAsFileTime(&session_time);
+        nr_probe_session=(static_cast<std::uint64_t>(session_time.dwHighDateTime)<<32U) |
+            session_time.dwLowDateTime;
         trace_event("[CheekyNR][FrameCapture] session_start=%llu frames=%u foveaSources=%u",
             static_cast<unsigned long long>(nr_probe_session),requested,nr_probe_expected_sources);
     }
