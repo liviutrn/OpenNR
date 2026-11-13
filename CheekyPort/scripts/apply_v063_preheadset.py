@@ -406,11 +406,9 @@ edit("src/dlss_nr.cpp",
 edit("src/dlss_nr.cpp",
 '''void collect_dlss_nr_submissions() noexcept {
     std::lock_guard execution_lock(calibration12_execution_mutex());
-    nr_probe_poll();
     const auto live = current_settings();''',
 '''void collect_dlss_nr_submissions() noexcept {
     std::lock_guard execution_lock(calibration12_execution_mutex());
-    nr_probe_poll();
     {
         std::lock_guard lock(nr_mutex);
         const auto now=GetTickCount64();
