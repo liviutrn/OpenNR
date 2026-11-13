@@ -47,7 +47,7 @@ checks={
       settings.index("CheekyNrObservedSources cheeky_nr_observed_sources()"):
       settings.index("void note_stereo_view_output_subrect(")],
   "runtime effective masks and source-role status":
-    '\"nr_routing\"' in runtime and "cheeky_nr_selection(nr_layout,source.view_id)" in runtime
+    'nr_routing' in runtime and "cheeky_nr_selection(nr_layout,source.view_id)" in runtime
     and "layout_mismatch" in runtime,
   "UI explicit family and mismatch warning":
     "NrDuoFoveaSizeHint" in ui and "LAYOUT MISMATCH" in ui
