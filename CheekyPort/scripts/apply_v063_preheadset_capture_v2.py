@@ -45,8 +45,7 @@ replace("uevr/settings_io.cpp",
     if(key=="NrDebugView" || key=="NrCreateFlagsMode") {''')
 replace("uevr/settings_io.cpp",
 '''if (std::string_view(name) != "NrDebugView") out''',
-'''if (std::string_view(name) != "NrDebugView" &&
-    std::string_view(name) != "NrCaptureFrames") out''')
+'''if (std::string_view(name) != "NrDebugView" && std::string_view(name) != "NrCaptureFrames") out''')
 replace("uevr/settings_io.cpp",
 '''    candidate.nr_debug_view = 0U; // Session-only; never load saved debug mode.''',
 '''    candidate.nr_debug_view = 0U; // Session-only; never load saved debug mode.
@@ -56,8 +55,7 @@ replace("uevr/settings_io.cpp",
 '''            if (key == "NrDebugView" || key == "NrCaptureFrames") continue; // Transient only.''')
 replace("uevr/runtime.cpp",
 '''std::string_view(name) != "NrDebugView") settings.field = stored.field;''',
-'''std::string_view(name) != "NrDebugView" &&
-    std::string_view(name) != "NrCaptureFrames") settings.field = stored.field;''')
+'''std::string_view(name) != "NrDebugView" && std::string_view(name) != "NrCaptureFrames") settings.field = stored.field;''')
 replace("uevr/scripts/cheeky_foveated_dlss.lua",
 '''        if imgui.button("Capture one NR frame (lossless raw)") then send("nr_capture") end''',
 '''        combo("NR capture length (next consecutive evaluations)", "NrCaptureFrames",
