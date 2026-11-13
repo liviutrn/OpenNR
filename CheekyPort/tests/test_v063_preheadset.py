@@ -28,7 +28,7 @@ checks={
     "DebugView == 0U ? final_color" in shader and "DebugView == 0U" in shader,
  "zero pedestal preserves faithful decode":
     "if (DarkPedestal > 0.0)" in shader
-    and "result *= exp2(stops); // DEFAULT" in shader,
+    and "result *= exp2(stops);" in shader,
  "model gets NR-only effective flags":
     "settings.nr_create_flags_mode == 1U" in dll
     and 'parameters->Set("DLSS.Feature.Create.Flags", nr_flags)' in dll
