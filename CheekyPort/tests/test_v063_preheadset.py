@@ -69,5 +69,20 @@ for c in (.000001,.015,.05):
     for o in (0,.003,.1,4,50):
         for n in (0,.006,.01,1,20,100):
             assert stop_ratio(o,max(o,1e-5),n,c)>=0
+# Above the pixel-classification threshold, the opt-in pedestal branch
+# deliberately returns the original Faithful ratio transfer exactly.
+def smoothstep(lo,hi,v):
+    t=max(0,min(1,(v-lo)/(hi-lo)))
+    return t*t*(3-2*t)
+for py in (0.10,0.5,4.0):
+    for oy in (0.0001,0.03,0.5,10):
+        old=oy*2**(0.4)
+        pedestal=stop_ratio(oy,py,py*1.3,0.015)
+        t=smoothstep(0.02,0.10,max(oy,py))
+        reconstructed=pedestal*(1-t)+old*t
+        assert abs(reconstructed-old)<=1e-8*max(1,old)
+assert "max(oy, py)" in shader
+print("PASS opt-in pedestal matches unchanged daylight branch at proxy>=0.1")
+
 print("PASS pedestal CPU reference neutral identity, dark +1 stop, nonnegative")
 print("PASS pre-headset source and CPU reference gates")
