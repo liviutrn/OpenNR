@@ -268,6 +268,17 @@ replace("src/nr_probe_capture.hpp",
     // The cheap disabled check is the only normal-frame cost.
     if(!nr_probe_busy.load(std::memory_order_acquire))return;
     if(frame.source_role==4U)return; // Capture fovea(s), not Tri periphery.
+    // Split pass-2 uses a synthetic source ID. Its original is already relit,
+    // so four-surface decoder comparisons need pass 2 disabled for that mode.
+    const auto source_mask=cheeky_nr_selected_passes(current_settings(),
+        frame.view_id & ~(1ULL<<63U));
+    if(frame.logical_pass!=1U ||
+       (settings.nr_passes==1U && (source_mask&2U)!=0U)) {
+        static std::atomic<unsigned> split_warning{};
+        if(split_warning.fetch_add(1U,std::memory_order_relaxed)<4U)
+            trace_event("[CheekyNR][FrameCapture] skipped split pass chain; disable pass 2 for objective capture");
+        return;
+    }
     if(!frame.command_list||!frame.color||!gpu.original_output ||
         !gpu.color_proxy||!gpu.neural_output)return;
     if(!nr_probe_active) {
