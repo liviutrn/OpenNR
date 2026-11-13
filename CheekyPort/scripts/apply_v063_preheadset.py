@@ -155,7 +155,7 @@ edit("src/nr_codec_shader.hpp",
         // Above the shadow region retain precisely the existing luminance
         // expression to avoid a visible daylight colour shift.
         const float original_y = oy * exp2(stops);
-        const float daylight = smoothstep(0.02, 0.10, oy);
+        const float daylight = smoothstep(0.02, 0.10, max(oy, py));
         const float final_y = lerp(pedestal_y, original_y, daylight);
         if (oy > 1e-6) {
             result *= final_y / max(oy, 1e-6);
